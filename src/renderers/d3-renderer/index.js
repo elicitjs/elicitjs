@@ -46,6 +46,7 @@ export class D3Renderer {
       planeCursor = "pointer",
       responsive = "fixed",
       overflow = "hidden",
+      focusOutline = false,
     } = context;
     const effects = context.effects || DEFAULT_EFFECTS;
 
@@ -87,7 +88,8 @@ export class D3Renderer {
     // responds before you press it. See _makeHover.
     const hover = this._makeHover(onEvent, effects.hovered);
     // Keyboard access rides along with drag: same nodes, same edits.
-    const keys = this._makeKeyboard(onEvent);
+    // focusOutline gates only the native ring — tabindex / nudge stay on.
+    const keys = this._makeKeyboard(onEvent, focusOutline);
     // A mark-scoped click (routed to the mark's click edits, e.g. cycle /
     // remove). d3.drag suppresses the click after a real drag, so this only
     // fires on a click without movement — drag moves, click edits.
@@ -95,6 +97,18 @@ export class D3Renderer {
     const markClick = (event, d) => {
       const [px, py] = pointer(event);
       onEvent({ type: "click", x: px, y: py, node: d, rawEvent: event });
+    };
+    // A mark-scoped double click (edit.stack.merge, or any direct edit that takes
+    // `gesture: 'dblclick'`). Without this the gesture existed only on the PLANE,
+    // so a dblclick edit on a node could never fire — and stopPropagation is what
+    // keeps it from also reaching the plane, where a create edit would mint a row
+    // on top of it.
+    /** @param {any} event @param {any} d */
+    const markDblClick = (event, d) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const [px, py] = pointer(event);
+      onEvent({ type: "dblclick", x: px, y: py, node: d, rawEvent: event });
     };
 
     // Role layers are fixed (background → guide regions → marks → guide
@@ -124,6 +138,7 @@ export class D3Renderer {
     this._drawPaths(layers.marks, ofType(marks, "path"), {
       drag,
       markClick,
+      markDblClick,
       keys,
       hover,
     });
@@ -131,17 +146,19 @@ export class D3Renderer {
       layers.marks,
       ofType(marks, "rect"),
       ofType(marks, "circle"),
-      { drag, markClick, keys, hover },
+      { drag, markClick, markDblClick, keys, hover },
     );
     this._drawEllipses(layers.marks, ofType(marks, "ellipse"), {
       drag,
       markClick,
+      markDblClick,
       keys,
       hover,
     });
     this._drawLines(layers.marks, ofType(marks, "line"), {
       drag,
       markClick,
+      markDblClick,
       keys,
       hover,
     });
@@ -467,11 +484,13 @@ export class D3Renderer {
    *
    * Only `editable` nodes take focus: a node with no direct-pick edit has nothing
    * a keypress could do, so putting it in the tab order would be a dead stop for
-   * anyone tabbing through.
+   * anyone tabbing through. `focusOutline` (default false) is the native browser
+   * ring — off suppresses it; keyboard nudge still works either way.
    * @param {(e: any) => void} onEvent
+   * @param {boolean} [focusOutline]
    * @returns {(sel: any) => void}
    */
-  _makeKeyboard(onEvent) {
+  _makeKeyboard(onEvent, focusOutline = false) {
     /** @type {Record<string, [-1 | 0 | 1, -1 | 0 | 1]>} */
     const ARROWS = {
       // [dx, dy] in PIXEL space — ArrowUp is negative y, which is why it reads
@@ -485,6 +504,9 @@ export class D3Renderer {
       sel
         .attr("tabindex", (/** @type {any} */ d) => (d.editable ? 0 : null))
         .attr("role", (/** @type {any} */ d) => (d.editable ? "button" : null))
+        // Suppress the browser's default focus ring unless the chart asked for it.
+        // Cleared (null) when on so the UA stylesheet paints its usual outline.
+        .style("outline", focusOutline ? null : "none")
         .on("keydown", (/** @type {any} */ event, /** @type {any} */ d) => {
           if (!d || !d.editable) return;
           const arrow = ARROWS[event.key];
@@ -1041,9 +1063,9 @@ export class D3Renderer {
    * @param {any} layer
    * @param {any[]} markRects
    * @param {any[]} markCircles
-   * @param {{ drag: any, markClick: (e: any, d: any) => void, keys: (sel: any) => void, hover: (sel: any) => void }} io
+   * @param {{ drag: any, markClick: (e: any, d: any) => void, markDblClick?: (e: any, d: any) => void, keys: (sel: any) => void, hover: (sel: any) => void }} io
    */
-  _drawMarks(layer, markRects, markCircles, { drag, markClick, keys, hover }) {
+  _drawMarks(layer, markRects, markCircles, { drag, markClick, markDblClick, keys, hover }) {
     // A mark may opt OUT of the pointer (pointerEvents: 'none') — a ghost/affordance
     // node, or a glyph part that must not swallow the plane's hover/click. Without
     // this a decorative circle would eat the gesture the plane driver needs, the
@@ -1061,6 +1083,7 @@ export class D3Renderer {
         d.editable ? d.cursor || "ns-resize" : "default",
       )
       .on("click", markClick)
+      .on("dblclick", markDblClick)
       .call(drag)
       .call(hover)
       .call(keys);
@@ -1098,9 +1121,17 @@ export class D3Renderer {
       // a tilted collapsed bar hands its grab area to the wrong patch of the plane.
       .attr("transform", (/** @type {any} */ d) => this._angleTransform(d))
       .on("click", markClick)
+      .on("dblclick", markDblClick)
       .call(drag)
       .call(hover);
-    hitSel.raise();
+    // BOTTOM of the mark layer, not the top. A hit rect is a FALLBACK grab target —
+    // it exists only where the drawn shape has no area to hit — so it must never
+    // outrank a node that really is drawn there. Raised, it did: collapse one segment
+    // of a stacked bar and its floored box covered the boundary handles sitting at
+    // that same height, which silently swallowed every gesture on them. Nothing else
+    // overlaps it (the degenerate rect it stands in for has no area, and sibling bars
+    // are in adjacent bands), so lowering costs it nothing.
+    hitSel.lower();
 
     const circleSel = layer
       .selectAll("circle.mark")
@@ -1119,6 +1150,7 @@ export class D3Renderer {
         d.editable ? d.cursor || "move" : "default",
       )
       .on("click", markClick)
+      .on("dblclick", markDblClick)
       .call(drag)
       .call(hover)
       .call(keys);
@@ -1134,9 +1166,9 @@ export class D3Renderer {
    * separate join because SVG binds shape to element type.
    * @param {any} layer
    * @param {any[]} ellipses
-   * @param {{ drag: any, markClick: (e: any, d: any) => void, keys: (sel: any) => void, hover: (sel: any) => void }} io
+   * @param {{ drag: any, markClick: (e: any, d: any) => void, markDblClick?: (e: any, d: any) => void, keys: (sel: any) => void, hover: (sel: any) => void }} io
    */
-  _drawEllipses(layer, ellipses, { drag, markClick, keys, hover }) {
+  _drawEllipses(layer, ellipses, { drag, markClick, markDblClick, keys, hover }) {
     const sel = layer
       .selectAll("ellipse.mark")
       .data(ellipses)
@@ -1150,6 +1182,7 @@ export class D3Renderer {
         d.editable ? d.cursor || "move" : "default",
       )
       .on("click", markClick)
+      .on("dblclick", markDblClick)
       .call(drag)
       .call(hover)
       .call(keys);
@@ -1167,9 +1200,9 @@ export class D3Renderer {
    *     interactive cursor; d3.drag is inert on the rest.
    * @param {any} layer
    * @param {any[]} lines
-   * @param {{ drag: any, markClick: (e: any, d: any) => void, keys: (sel: any) => void, hover: (sel: any) => void }} io
+   * @param {{ drag: any, markClick: (e: any, d: any) => void, markDblClick?: (e: any, d: any) => void, keys: (sel: any) => void, hover: (sel: any) => void }} io
    */
-  _drawLines(layer, lines, { drag, markClick, keys, hover }) {
+  _drawLines(layer, lines, { drag, markClick, markDblClick, keys, hover }) {
     const sel = layer
       .selectAll("line.mark")
       .data(lines)
@@ -1183,6 +1216,7 @@ export class D3Renderer {
         d.editable ? d.cursor || "move" : "default",
       )
       .on("click", markClick)
+      .on("dblclick", markDblClick)
       .call(drag)
       .call(hover)
       .call(keys);
@@ -1198,7 +1232,7 @@ export class D3Renderer {
    * gets the same click + drag wiring as other marks.
    * @param {any} layer
    * @param {any[]} paths
-   * @param {{ drag: any, markClick: (e: any, d: any) => void, keys: (sel: any) => void, hover: (sel: any) => void }} [io]
+   * @param {{ drag: any, markClick: (e: any, d: any) => void, markDblClick?: (e: any, d: any) => void, keys: (sel: any) => void, hover: (sel: any) => void }} [io]
    */
   _drawPaths(layer, paths, io) {
     const sel = layer
@@ -1226,7 +1260,12 @@ export class D3Renderer {
     });
     this._applyEffectStyle(sel, "pointer");
     if (io) {
-      sel.on("click", io.markClick).call(io.drag).call(io.hover).call(io.keys);
+      sel
+        .on("click", io.markClick)
+        .on("dblclick", io.markDblClick)
+        .call(io.drag)
+        .call(io.hover)
+        .call(io.keys);
     }
   }
 
@@ -1236,7 +1275,7 @@ export class D3Renderer {
    * Double-click opens an inline editor for content editing (see _editText).
    * @param {any} layer
    * @param {any[]} texts
-   * @param {{ drag: any, markClick: (e: any, d: any) => void, keys: (sel: any) => void, hover: (sel: any) => void }} io
+   * @param {{ drag: any, markClick: (e: any, d: any) => void, markDblClick?: (e: any, d: any) => void, keys: (sel: any) => void, hover: (sel: any) => void }} io
    */
   _drawTextMarks(layer, texts, { drag, markClick, keys, hover }) {
     const sel = layer

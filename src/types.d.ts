@@ -57,6 +57,16 @@ export interface FieldSchema {
   type: MeasureType;
   domain?: any[];
   default?: any;
+  // Is the domain a CEILING or a STARTING SET? Closed (the default) means the
+  // declared categories are the whole vocabulary: an edit that mints one — see
+  // edit.stack.cut — assigns the next unused value and refuses once they run out,
+  // and validateDataset reports a seed value outside the domain. `open: true`
+  // means the domain grows: the cut appends a new category to the schema, and the
+  // out-of-domain check is skipped because an unseen value is expected.
+  //
+  // Only meaningful for a discrete field. A field with no `domain` at all is open
+  // by nature — resolveScales infers its domain from the data values.
+  open?: boolean;
 }
 
 // Which rows of the dataset are READ-ONLY (see ElicitSpec.lock, core/lock.js).
@@ -232,7 +242,7 @@ export interface Edit {
   // isAxis — and the engine dev-warns when the mark it's attached to lacks it,
   // instead of leaving you a silently dead gesture. See SCOPE_CAPABILITY in
   // core/elicit.js.
-  scope: 'line' | 'axis' | 'arc' | 'waffle' | 'geo' | 'trend' | null;
+  scope: 'line' | 'axis' | 'arc' | 'stack' | 'waffle' | 'geo' | 'trend' | null;
   threshold: number;
   // anchor()/draw(): which line a new point joins.
   into?: 'nearest' | 'new';
@@ -897,6 +907,12 @@ export interface Mark {
   supportsGeo?: boolean;
   supportsWaffle?: boolean;
   supportsArc?: boolean;
+  // Does this mark partition a total among a group of rows — so a boundary between
+  // two of them exists to cut, drag or merge? Set by arc/pie/donut always, and by
+  // `bar` only when it is actually stacking (an unstacked bar is a set of
+  // independent lengths, with no boundary at all). Gates edit.stack.* via
+  // SCOPE_CAPABILITY.
+  supportsStack?: boolean;
   supportsTrend?: boolean;
 
   /**
@@ -1032,6 +1048,34 @@ export interface FeatureNode {
   // the global map when resolving an edit's channels, so a gesture inverts through
   // the same mapping that drew the node (see frameScalesFor in core/elicit.js).
   frame?: ScaleMap;
+  // The STACK this node belongs to, stamped by any mark that partitions a total
+  // among its rows (a `bar` with `stack`, arc/pie/donut — see plot/stack.js). Same
+  // idea as `frame`: the mark that encoded the layout carries the means to invert
+  // it, so edit.stack.* works on both marks without knowing which it is on.
+  //   members  the group's rows, as global dataset indices in stack order
+  //   local    this node's position within members
+  //   field    the magnitude column
+  //   geometry how a pointer becomes a position along the stack — pure data,
+  //            { kind: 'linear', axis } or { kind: 'angular', cx, cy, spanStart,
+  //            spanEnd, pad }. Never a closure: a commit re-renders, so an edit
+  //            re-derives the shares from the live dataset every tick.
+  stack?: {
+    members: number[];
+    local?: number;
+    field?: string;
+    geometry?: any;
+  };
+  // True on a node a boundary drag grabs (edit.stack.edge / .merge), as opposed to
+  // a segment body (which edit.stack.cut divides). Paired with `loIndex`/`hiIndex`,
+  // the two rows the boundary separates.
+  edge?: boolean;
+  loIndex?: number;
+  hiIndex?: number;
+  // Filled-region hit geometry for an annular sector, stamped by `arc`. The pick
+  // layer measures distance to a path's polyline, which a bare `d` string has none
+  // of — so without this a slice BODY is unclickable under the canvas renderer
+  // (SVG hit-tests the filled shape in the DOM and never needed it).
+  sector?: { cx: number; cy: number; r0: number; r1: number; a0: number; a1: number };
   [key: string]: any;
 }
 
@@ -1340,6 +1384,11 @@ export interface ElicitSpec {
   // content in the margin band show — needed for radial/gauge axis labels that
   // sit just outside the plot area.
   overflow?: 'hidden' | 'visible';
+  // Browser focus ring on editable marks (the blue box after a click / Tab).
+  // Off by default — keyboard nudge still works (`tabindex` stays); only the
+  // native outline is suppressed. Set `true` to show the browser's focus ring
+  // (useful when teaching Tab / arrow-key editing). SVG/D3 renderer only.
+  focusOutline?: boolean;
   // The drawing backend. Defaults to a new `D3Renderer` (SVG). Any object satisfying
   // the `Renderer` contract works — `CanvasRenderer` is a second, canvas-2D
   // implementation of the same contract, which is what proves the seam is real.
@@ -1473,6 +1522,9 @@ export interface RenderContext {
   planeCursor?: string;
   responsive?: 'fixed' | 'scale' | 'reflow';
   overflow?: 'hidden' | 'visible';
+  // See ElicitSpec.focusOutline. Renderers that focus mark nodes honour this;
+  // CanvasRenderer has no keyboard focus path today, so it ignores it.
+  focusOutline?: boolean;
   effects?: any;
   // The chart's resolved theme. A renderer reads it for the font family (emitted on
   // the root svg) and text-size fallback; all mark/chrome colours arrive pre-resolved

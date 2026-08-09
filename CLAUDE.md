@@ -112,9 +112,54 @@ draws — so the line the author sees IS the mapping, not a redrawing of it.
 
 **One guide path.** `src/edit/guide.js`'s `buildEditGuide` is the only constraint-guide drawer. If you add a constraint, either let it fall through to no guide (acceptable for cardinality rules like `count`/`unique`) or add a case in `constraintGuide`'s switch — don't create a second standalone guide module that reads the constraint set independently.
 
+**A STACK is one structure, not two marks' worth of geometry.** A stacked `bar` and a
+`pie` both divide one total among a group of rows along a 1-D parameter — data units up
+the value axis, degrees around a ring. `plot/stack.js` answers the three shared questions
+once (`groupByPosition` — which rows form a group, and the ENCODING is the grouping, so
+there is no `groupBy` vocabulary anywhere; `stackLayout` — shares and cumulative bounds in
+DATA units, never pixels; `stackDescriptor` — what to stamp). The mark then stamps
+`node.stack` and `edit.stack.{cut,edge,merge}` inverts through it, exactly as a composite's
+`node.frame` lets the universal edits invert through the object that encoded. `geometry` on
+that stamp is PURE DATA (`{ kind: 'linear', axis }` / `{ kind: 'angular', cx, cy, … }`),
+never a closure: a commit re-renders, so the node an in-flight gesture holds is a frame
+behind, and every stack edit re-derives magnitudes from live `ctx.data` each tick. The
+pointer→cumulative inversion is a two-entry table keyed by `kind` (a declared capability,
+like `KIND_SATISFIES`) — a third kind of stack is a row in it, not a branch in a mark. The
+total is preserved by ARITHMETIC in every case; don't reach for `maintainSum`, whose modes
+all sum over the whole dataset and would enforce the wrong invariant on a grid of donuts.
+
+**A domain is a CEILING or a STARTING SET, and the schema says which.** `FieldSchema.open`
+exists because a gesture that mints a category has to get the name from somewhere, and the
+answer must not be the keyboard — a chart you can only build by typing is not elicitation.
+Closed (the default, whenever a `domain` is declared) means the declared values are the
+whole vocabulary: `edit.stack.cut` hands out the ones that GROUP doesn't yet use (not the
+dataset — every band of a stacked bar holds its own copy of the vocabulary) and refuses
+once they run out, and `validateDataset` reports a seed value outside it. `open: true`
+makes it a starting set: the cut appends, and the out-of-domain check is skipped because an
+unseen value is the declared behaviour. Naming is a SEPARATE act from creating —
+`edit.axis.categories().rename` and `edit.cycle()` already cover it, so a cut mints a
+placeholder and never blocks. Don't reintroduce a null-category path; a row whose identity
+is null is one the user can only fix by typing.
+
+**A domain edit's coupled `data` is still a datum proposal.** `computeEdit` routes
+`target: 'domain'` before the dataset's constraints, which is right for the SCHEMA half — a
+domain is not a datum, the same reason `setData` is trusted. It is wrong for the `data` an
+edit couples to it (a rename relabels rows, a cut splices one in), so those rows now run
+the invariants like any other proposal. Skipping them let a `count({ max })` be ignored by
+exactly the edits that change how many categories exist.
+
 **Constraints are pure data invariants, scoped to the dataset.** A constraint (`defineConstraint` in `src/constraints/define.js`) receives `{ data, oldData, activeIndex, active, field, value, domain }` — never pixels, never a scale used as geometry. It may *gate* a proposal (`false`) or *repair* it (return the corrected rows). The canonical home is `spec.constraints`; a mark's `constraints` is sugar the engine **promotes** into one dataset-wide set (`datasetConstraints`, deduped by identity), so an invariant holds for every edit from every mark. Don't scope a constraint back to the feature that declared it — that would let a glyph's cap drag bypass a rule declared on its dot. If a constraint's *guide* only makes sense for certain mark shapes (e.g. `maintainSum`'s cap-tick needs a band axis), guard the guide function, not the constraint itself.
 
 ## Adding a new mark
+
+**First: is it a mark at all, or an option on one?** The discriminator is the DATA MODEL,
+not the visual resemblance. `dotStack` is its own mark beside `point` because one row is
+one TOKEN and the stack offset is fixed token geometry (`2r + gap`), not a value scale —
+the belief is `data.filter(d => d.bin === b).length`. `bar({ stack })` is an option because
+a stacked bar keeps one row = one value and one rect per row; only the baseline moves, and
+the offsets still go through the value scale. Same rule that keeps `bar` and `rect` separate
+while `barY`/`barX` are one factory. A new mark when the data model changes; an option when
+only the geometry does.
 
 The contract is the `Mark` interface in `src/types.d.ts` (prose version at the top of `src/plot/mark.js`). Annotate your factory `@returns {import('../types').Mark}` — not `any`. Concretely:
 - `build(currentData, scales, width, height) -> FeatureNode[]` is the one required method. `currentData` is the chart's dataset, handed in by the engine — the mark takes no `data` option and no `onChange`.
@@ -188,7 +233,7 @@ would let an immovable glyph swallow the plane gesture aimed past it.
 - `pick` values are target-selection strategies or driver keys (`direct`, `nearest`, `plane`, `sweep`, `draw`) — not arbitrary interaction descriptors.
 - `constrain` (edit-scoped, singular) vs `constraints` (plural, the dataset's invariants — canonical on `spec`, accepted on a mark as sugar and promoted) — keep the distinction; don't rename one to match the other.
 - `guide: true` on an `Edit` means "self-draw"; a `Constraint.guide` is a drawer *function*. Same word, deliberately different shapes, both documented in `types.d.ts` — don't try to unify them into one meaning.
-- Don't add a second alias for an existing edit (we removed `youDrawIt` as a redundant alias of `sweep`). One documented name per behavior.
+- Don't add a second alias for an existing edit (we removed `youDrawIt` as a redundant alias of `sweep`). One documented name per behavior. `edit.arc.edge` survives only as a deprecated wrapper that dev-warns — it IS `edit.stack.edge` under its old name.
 - `marks` is the public spec key (`ElicitSpec.marks`) and the word used in docs and dev-facing warnings/errors shown to a spec author. `feature`/`FeatureNode`/`featureId` is the internal engine term for one flattened dispatch unit after `composite` desugars a glyph into parts — a mark can expand into several features. Don't blur the two into a single rename: the public surface and dev-facing messages say "mark," internal dispatch code and comments say "feature."
 
 ## Before committing a structural change
@@ -222,6 +267,13 @@ would let an immovable glyph swallow the plane gesture aimed past it.
 - A mark factory that accepts `edits` / `constraints` and drops them.
 - A diagnostic gated on `import.meta.env.DEV` or any other bundler-specific global, or a `console.warn` that bypasses `core/dev.js`'s `warn()`.
 - A `@returns {any}` on a mark factory. The `Mark` interface exists now.
+- A second stack layout. One mark computing group membership or cumulative shares its own
+  way, when `plot/stack.js` answers both — or an edit re-deriving a mark's layout from
+  scratch instead of inverting through the `node.stack` the mark stamped.
+- A `groupBy` option on any mark. The encoding is the grouping.
+- A category minted as `null`, or any creator that can only be completed by typing.
+- A hit/grab overlay `raise()`d above the marks. It is a FALLBACK for a shape with no area
+  to hit, so it must never outrank a node that really is drawn there (`hitSel.lower()`).
 - Docs (`../elicitjs-docs`) or anything generated in `package.json`'s `files`.
 - A mark that attaches its own `edit`. Inert until the spec names the column.
 - `normalizeMarkOptions` with a `mark` but no `allow` — that silently disables every

@@ -38,7 +38,7 @@ export { move, moveSpan, brushSpan, brushRect, slide, resize, rotate, cycle, cre
 
 export { when } from './when.js';
 // Authoring kit — public so custom edits / marks can reuse the same primitives.
-export { makeEdit, nextSeriesKey, invertChannel, recenterSpan, markCenter, schemaDefaults, linearInvert, channelDomain } from './shared.js';
+export { makeEdit, nextSeriesKey, nextCategory, invertChannel, recenterSpan, markCenter, schemaDefaults, linearInvert, channelDomain } from './shared.js';
 export { nearestMark, nearestSeries, nearestMarkOnAxis, distanceToMark } from './pick.js';
 export { registerDriver } from './drivers/index.js';
 
@@ -54,10 +54,19 @@ import { scale as axisScale, categories as axisCategories } from './axis.js';
 // `categories` = discrete add/rename/remove (returns an array of edits).
 export const axis = { scale: axisScale, categories: axisCategories };
 
+import { cut as stackCut, edge as stackEdge, merge as stackMerge } from './stack.js';
+
+// Stack-scoped edits: the three things you can do to a whole that is divided among
+// rows. `cut` divides a segment in two, `edge` moves value across a boundary,
+// `merge` fuses two back into one — each preserving the group's total by
+// construction. They need a mark that partitions a total (a `bar` with `stack`, or
+// arc/pie/donut), so the scope is in the name like line/axis/geo.
+export const stack = { cut: stackCut, edge: stackEdge, merge: stackMerge };
+
 import { edge as arcEdge } from './arc.js';
 
-// Arc-scoped edit, namespaced so the API shows it belongs on an arc/pie/donut mark:
-// drag a slice boundary to redistribute the two adjacent rows (total preserved).
+// @deprecated `edit.arc.edge` is `edit.stack.edge` under its old name — a slice
+// boundary and a stacked bar's boundary are one edit. Kept so existing specs run.
 export const arc = { edge: arcEdge };
 
 import {

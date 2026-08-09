@@ -169,6 +169,41 @@ export function nextSeriesKey(data, seriesField) {
     return n;
 }
 
+/**
+ * A category for a row an edit is minting — the categorical sibling of
+ * `nextSeriesKey`, and the reason `edit.stack.cut` needs no keyboard.
+ *
+ * The schema owns the domain, and the domain says which categories COULD exist; the
+ * data says which are in play. So a new segment takes the first declared category
+ * nothing currently uses. Which leaves the case where they run out, and that is
+ * where `FieldSchema.open` speaks:
+ *
+ *   closed (the default) — the domain is the whole vocabulary. Return undefined and
+ *     let the caller refuse: minting a category the author didn't declare would put
+ *     a value on an axis that has no room for it.
+ *   open — the domain is a starting set. Mint a placeholder that collides with
+ *     nothing, for the author (or the user, via edit.axis.categories) to rename.
+ *     Creating and NAMING are separate acts; blocking the first on the second is
+ *     what forces a gesture to become a text field.
+ *
+ * @param {any[]} data
+ * @param {string | null | undefined} field
+ * @param {any[]} domain the field's declared/resolved domain
+ * @param {{ open?: boolean, label?: string }} [options] `label` is the placeholder stem
+ * @returns {any} the category, or undefined when a closed domain is exhausted
+ */
+export function nextCategory(data, field, domain, { open = false, label = 'Category' } = {}) {
+    if (!field) return undefined;
+    const used = new Set((data || []).map((d) => d[field]));
+    for (const c of domain || []) if (!used.has(c)) return c;
+    if (!open) return undefined;
+    // Number from the domain's length so the first minted name follows the declared
+    // ones, and step past anything already taken (including a previous placeholder).
+    let n = (domain || []).length + 1;
+    while (used.has(`${label} ${n}`) || (domain || []).includes(`${label} ${n}`)) n++;
+    return `${label} ${n}`;
+}
+
 // The starting values a minted datum gets from the schema. The SCHEMA owns that
 // (core/schema.js), not the edit layer — but a creator reaches for it constantly
 // (mintDatum below, line.js), so it stays part of the authoring kit re-exported from

@@ -116,7 +116,13 @@ export function inferSchema(data) {
         const discrete = type === 'categorical' || type === 'ordinal';
         out[field] = {
             type,
-            domain: inferDomainFromValues(discrete ? 'band' : 'linear', values)
+            domain: inferDomainFromValues(discrete ? 'band' : 'linear', values),
+            // A discrete domain read off the seed rows is a GUESS — the categories
+            // that happened to be present — not a vocabulary the author fixed. Mark
+            // it open so the suggestion doesn't quietly become a ceiling the moment
+            // it's pasted in (a continuous [min,max] is a genuine extent, so it
+            // stays closed).
+            ...(discrete ? { open: true } : {})
         };
     }
     return out;
@@ -129,7 +135,8 @@ export function inferSchema(data) {
  */
 function schemaSource(schema) {
     const body = Object.entries(schema)
-        .map(([f, s]) => `  ${JSON.stringify(f)}: { type: ${JSON.stringify(s.type)}, domain: ${JSON.stringify(s.domain)} }`)
+        .map(([f, s]) => `  ${JSON.stringify(f)}: { type: ${JSON.stringify(s.type)}, domain: ${JSON.stringify(s.domain)}`
+            + `${s.open ? ', open: true' : ''} }`)
         .join(',\n');
     return `schema: {\n${body}\n}`;
 }
@@ -203,6 +210,8 @@ function outsideDomain(value, type, domain) {
  *   schema:type:<f>       a value contradicting the declared measure type.
  *   schema:domain:<f>     a value outside the declared domain. The domain is what
  *                         the axis spans, so such a row draws clipped or off-plot.
+ *                         Skipped for an `open` field, whose domain is a starting
+ *                         set rather than a ceiling.
  *
  * @param {Record<string, import('../types').FieldSchema> | undefined} schema
  * @param {any[]} data
@@ -266,7 +275,11 @@ export function validateDataset(schema, data, label = 'data') {
         }
 
         const domain = spec.domain;
-        if (!domain) continue;
+        // An OPEN domain is a starting set, not a ceiling: it admits values it has
+        // not seen (edit.stack.cut appends one, and resolveScales widens the scale on
+        // the next render), so a value outside it is the declared behaviour rather
+        // than a defect. Every other check above still applies.
+        if (!domain || spec.open) continue;
         const out = values.find((v) => outsideDomain(v, spec.type, domain));
         if (out !== undefined) {
             warn(

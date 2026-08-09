@@ -1007,7 +1007,7 @@ async function main() {
         const sliceCount = await arcSvg.locator('path').count();
         check('arc: value channel drives slices', sliceCount >= 3, `${sliceCount} slice paths`);
         const handleCount = await arcSvg.locator('circle').count();
-        check('arc: edits:[edit.arc.edge()] emits boundary handles', handleCount >= 2, `${handleCount} handles`);
+        check('arc: edits:[edit.stack.edge()] emits boundary handles', handleCount >= 2, `${handleCount} handles`);
 
         const sharesOf = (s) => page.$eval(`${s} .data-body`, (el) =>
             [...el.textContent.matchAll(/share:\s*(-?\d+(?:\.\d+)?)/g)].map((m) => Number(m[1])));
@@ -1096,6 +1096,180 @@ async function main() {
         check('arc grid: dragging IL rebalances IL', JSON.stringify(ilBefore) !== JSON.stringify(ilAfter), `${ilBefore} -> ${ilAfter}`);
         check('arc grid: IL total held fixed by the pair-shift', Math.abs(sum(ilBefore) - sum(ilAfter)) < 0.01, `${sum(ilBefore)} -> ${sum(ilAfter)}`);
         check('arc grid: NC untouched — edge is scoped per donut', JSON.stringify(ncBefore) === JSON.stringify(ncAfter), `${ncBefore} -> ${ncAfter}`);
+
+        // ---- Slicing a stack: cut / edge / merge ----------------------------
+        // The three edit.stack.* gestures, on both marks they serve. What only proves
+        // out under real pointer events: a click has to land INSIDE a segment and
+        // divide it there, the row it mints has to arrive next to its sibling (a
+        // splice, not an append — an appended row would jump to the top of the stack),
+        // and each gesture has to hold its group's total to the last decimal. A closed
+        // domain also has to run out and REFUSE, which is a no-op — the failure mode
+        // being guarded against is a chart that looks fine while minting null rows.
+        console.log('\nStack slicing: bar (/marks/bar #slice)');
+        await open('/marks/bar', '#slice svg rect.mark');
+
+        const sliceEl = '#slice .chart > div';
+        const barStack = () => page.$eval(sliceEl, (e) => e.getData());
+        const bandOf = (rows, y) => rows.filter((r) => r.year === y);
+        const bandSum = (rows, y) => bandOf(rows, y).reduce((a, r) => a + Number(r.pct), 0);
+        const sliceSvg = page.locator('#slice svg').first();
+
+        await page.locator('#slice svg rect.mark').first().scrollIntoViewIfNeeded();
+        await page.waitForTimeout(150);
+        const stackSeed = await barStack();
+        check('stack: seeds one full-height segment per band', stackSeed.length === 2, JSON.stringify(stackSeed.map((r) => r.pct)));
+        check('stack: no boundary handles until there is a boundary',
+            (await sliceSvg.locator('circle').count()) === 0, 'n=1 -> 0 handles');
+
+        // Cut the first band's segment in half.
+        const cutIn = async (nth, frac) => {
+            const b = await page.locator('#slice svg rect.mark').nth(nth).boundingBox();
+            await page.mouse.click(b.x + b.width / 2, b.y + b.height * frac);
+            await page.waitForTimeout(200);
+        };
+        await cutIn(0, 0.5);
+        const cut1 = await barStack();
+        check('stack cut: a click inside a segment mints exactly one row',
+            cut1.length === stackSeed.length + 1, `${stackSeed.length} -> ${cut1.length}`);
+        check('stack cut: the new row lands beside its sibling, not at the end',
+            cut1[0].year === '2023' && cut1[1].year === '2023' && cut1[2].year === '2024',
+            JSON.stringify(cut1.map((r) => r.year)));
+        check('stack cut: the band total is unchanged',
+            Math.abs(bandSum(cut1, '2023') - bandSum(stackSeed, '2023')) < 1e-6,
+            `${bandSum(stackSeed, '2023')} -> ${bandSum(cut1, '2023')}`);
+        check('stack cut: the other band is untouched',
+            JSON.stringify(bandOf(cut1, '2024')) === JSON.stringify(bandOf(stackSeed, '2024')), '2024 held');
+        check('stack cut: the new row takes a category from the schema domain (not null)',
+            cut1[1].asset != null && ['stocks', 'bonds', 'cash', 'gold'].includes(cut1[1].asset),
+            `asset=${JSON.stringify(cut1[1].asset)}`);
+        check('stack cut: a boundary handle appears for the new division',
+            (await sliceSvg.locator('circle').count()) === 1, 'n=2 -> 1 handle');
+
+        // Exhaust the 4-value domain, then confirm the 5th cut is refused.
+        for (let k = 0; k < 3; k++) await cutIn(0, 0.5);
+        const full = await barStack();
+        check('stack cut: each cut takes a distinct category',
+            new Set(bandOf(full, '2023').map((r) => r.asset)).size === bandOf(full, '2023').length,
+            JSON.stringify(bandOf(full, '2023').map((r) => r.asset)));
+        await cutIn(0, 0.5);
+        const refused = await barStack();
+        check('stack cut: a closed domain refuses once its categories run out',
+            refused.length === full.length, `${full.length} rows, still ${refused.length}`);
+        check('stack cut: the refusal is a no-op, not a null row',
+            refused.every((r) => r.asset != null), 'no null categories');
+        check('stack cut: total still exact after four cuts',
+            Math.abs(bandSum(refused, '2023') - 100) < 1e-6, `${bandSum(refused, '2023')}`);
+
+        // Drag a boundary: exactly two rows move, the total does not.
+        const preDrag = await barStack();
+        const bHandle = sliceSvg.locator('circle').first();
+        await bHandle.scrollIntoViewIfNeeded();
+        const bBox = await bHandle.boundingBox();
+        await page.mouse.move(bBox.x + bBox.width / 2, bBox.y + bBox.height / 2);
+        await page.mouse.down();
+        for (let i = 1; i <= 8; i++) await page.mouse.move(bBox.x + bBox.width / 2, bBox.y + bBox.height / 2 - i * 4);
+        await page.mouse.up();
+        await page.waitForTimeout(200);
+        const postDrag = await barStack();
+        const moved = postDrag.filter((r, i) => Number(r.pct) !== Number(preDrag[i].pct));
+        check('stack edge: dragging a boundary moves value', moved.length > 0, `${moved.length} rows changed`);
+        check('stack edge: exactly two rows change — the pair it separates',
+            moved.length === 2, `${moved.length} rows changed`);
+        check('stack edge: the band total is held fixed',
+            Math.abs(bandSum(postDrag, '2023') - bandSum(preDrag, '2023')) < 1e-6,
+            `${bandSum(preDrag, '2023')} -> ${bandSum(postDrag, '2023')}`);
+        check('stack edge: the other band is untouched',
+            JSON.stringify(bandOf(postDrag, '2024')) === JSON.stringify(bandOf(preDrag, '2024')), '2024 held');
+
+        // Merge: the inverse of a cut, and the only node-level dblclick in the library.
+        const preMerge = await barStack();
+        const stk_mBox = await sliceSvg.locator('circle').first().boundingBox();
+        await page.mouse.dblclick(stk_mBox.x + stk_mBox.width / 2, stk_mBox.y + stk_mBox.height / 2);
+        await page.waitForTimeout(250);
+        const postMerge = await barStack();
+        check('stack merge: a dblclick on a boundary drops exactly one row',
+            postMerge.length === preMerge.length - 1, `${preMerge.length} -> ${postMerge.length}`);
+        check('stack merge: the band total is held fixed',
+            Math.abs(bandSum(postMerge, '2023') - bandSum(preMerge, '2023')) < 1e-6,
+            `${bandSum(preMerge, '2023')} -> ${bandSum(postMerge, '2023')}`);
+
+        // Undo has to round-trip a cut, which writes the schema AND the rows.
+        await page.$eval(sliceEl, (e) => e.undo());
+        await page.waitForTimeout(150);
+        const stk_undone = await barStack();
+        check('stack: undo round-trips a merge',
+            stk_undone.length === preMerge.length, `${postMerge.length} -> ${stk_undone.length}`);
+
+        // ---- An OPEN domain grows instead of running out --------------------
+        console.log('\nStack slicing: open domain (/marks/bar #slice)');
+        // The open-domain chart is the section's SECOND chart (the closed one above it
+        // is what the block before this drove).
+        const openRows = () => page.$$eval('#slice .chart > div', (els) => els[1].getData());
+        const openSvg = page.locator('#slice svg').nth(1);
+        await openSvg.scrollIntoViewIfNeeded();
+        await page.waitForTimeout(150);
+        const oSeed = await openRows();
+        for (let k = 0; k < 3; k++) {
+            const b = await openSvg.locator('rect.mark').first().boundingBox();
+            await page.mouse.click(b.x + b.width / 2, b.y + b.height * 0.5);
+            await page.waitForTimeout(200);
+        }
+        const oAfter = await openRows();
+        check('stack cut (open): every cut mints a row — the domain never runs out',
+            oAfter.length === oSeed.length + 3, `${oSeed.length} -> ${oAfter.length}`);
+        check('stack cut (open): each new row gets a distinct minted category',
+            new Set(oAfter.map((r) => r.holding)).size === oAfter.length,
+            JSON.stringify(oAfter.map((r) => r.holding)));
+        check('stack cut (open): the minted names use the `label` option',
+            oAfter.filter((r) => String(r.holding).startsWith('Holding ')).length === 3,
+            JSON.stringify(oAfter.map((r) => r.holding)));
+        check('stack cut (open): the total is held across every cut',
+            Math.abs(oAfter.reduce((a, r) => a + Number(r.pct), 0) - 100) < 1e-6,
+            `${oAfter.reduce((a, r) => a + Number(r.pct), 0)}`);
+
+        // ---- The same three gestures on a PIE -------------------------------
+        // The point of the whole exercise: one edit family, two marks. A pie inverts
+        // the pointer through an ANGLE rather than an axis, so a cut has to land by
+        // direction from the centre and a merge has to work on a rim handle.
+        console.log('\nStack slicing: pie (/marks/arc #slice)');
+        await open('/marks/arc', '#slice svg path');
+        const pieEl = '#slice .chart > div';
+        const pieRows = () => page.$eval(pieEl, (e) => e.getData());
+        const pieTotal = (rows) => rows.reduce((a, r) => a + Number(r.share), 0);
+        const pieSvg = page.locator('#slice svg').first();
+        await pieSvg.scrollIntoViewIfNeeded();
+        await page.waitForTimeout(200);
+        const pBox = await pieSvg.boundingBox();
+        const pc = { x: pBox.x + pBox.width / 2, y: pBox.y + pBox.height / 2 };
+
+        const pSeed = await pieRows();
+        check('pie stack: seeds one full circle', pSeed.length === 1, `${pSeed.length} slice`);
+        for (let k = 0; k < 4; k++) {
+            const ang = ((-60 - k * 25) * Math.PI) / 180;
+            await page.mouse.click(pc.x + Math.cos(ang) * 55, pc.y + Math.sin(ang) * 55);
+            await page.waitForTimeout(220);
+        }
+        const pCut = await pieRows();
+        check('pie stack cut: a click inside a slice divides it',
+            pCut.length === 5, `${pSeed.length} -> ${pCut.length}`);
+        check('pie stack cut: categories come from the declared domain',
+            new Set(pCut.map((r) => r.category)).size === 5,
+            JSON.stringify(pCut.map((r) => r.category)));
+        check('pie stack cut: the pie total is held across every cut',
+            Math.abs(pieTotal(pCut) - pieTotal(pSeed)) < 1e-6, `${pieTotal(pSeed)} -> ${pieTotal(pCut)}`);
+        check('pie stack: n slices give n-1 handles',
+            (await pieSvg.locator('circle').count()) === 4, `${await pieSvg.locator('circle').count()} handles`);
+
+        // Merge a pie boundary — the dblclick has to reach a rim handle.
+        const preP = await pieRows();
+        const pHandle = await pieSvg.locator('circle').first().boundingBox();
+        await page.mouse.dblclick(pHandle.x + pHandle.width / 2, pHandle.y + pHandle.height / 2);
+        await page.waitForTimeout(250);
+        const postP = await pieRows();
+        check('pie stack merge: a dblclick on a rim handle drops one slice',
+            postP.length === preP.length - 1, `${preP.length} -> ${postP.length}`);
+        check('pie stack merge: the total is held fixed',
+            Math.abs(pieTotal(postP) - pieTotal(preP)) < 1e-6, `${pieTotal(preP)} -> ${pieTotal(postP)}`);
 
         // ---- Keyboard editing + undo/redo ---------------------------------
         // Both are gesture-shaped and only prove out under real input: the nudge has

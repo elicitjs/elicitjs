@@ -6,7 +6,9 @@
 //
 // The contract, mirrored from D3Renderer:
 //   - `render(context)` where context carries { container, scene, width, height,
-//     margins, planeOnTop, planeCursor, responsive, overflow, effects, onEvent, ... }.
+//     margins, planeOnTop, planeCursor, responsive, overflow, focusOutline,
+//     effects, onEvent, ... }. (focusOutline is SVG-only; ignored here — canvas
+//     has no keyboard focus path yet.)
 //   - Emits renderer events back through `context.onEvent` (see events.js).
 //
 // Retained-mode SVG diffs a scene graph; a canvas has nothing to retain, so each

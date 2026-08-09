@@ -53,9 +53,9 @@ N/A = use a different edit family (documented).
 <td><code>bar</code> / <code>barX</code> / <code>barY</code></td>
 <td>data</td>
 <td>band + value (or x1/x2, y1/y2 span); stack</td>
-<td>remove ok; create awkward (aggregates)</td>
-<td>whole bar</td>
-<td>band on category</td>
+<td>remove ok; create awkward (aggregates). Stacked: <code>edit.stack.cut</code> / <code>merge</code></td>
+<td>whole bar; stacked also boundary dots (<code>node.edge</code>)</td>
+<td>band on category; <code>supportsStack</code> when stacked</td>
 </tr>
 <tr>
 <td><code>rect</code> / <code>rectX</code> / <code>rectY</code></td>
@@ -149,9 +149,9 @@ N/A = use a different edit family (documented).
 <td><code>arc</code> / <code>pie</code> / <code>donut</code></td>
 <td>data</td>
 <td><code>value</code> magnitudes; optional x/y</td>
-<td>N/A → <code>edit.arc.edge</code></td>
+<td><code>edit.stack.cut</code> / <code>merge</code></td>
 <td>rim boundary dots (<code>node.edge</code>)</td>
-<td><code>supportsArc</code></td>
+<td><code>supportsArc</code>, <code>supportsStack</code></td>
 </tr>
 <tr>
 <td><code>composite</code> (alias <code>group</code>)</td>
@@ -336,3 +336,5 @@ N/A = use a different edit family (documented).
 3. Schema owns type + domain; data must not invent undeclared columns.
 4. Guide = rules; Effect = state; never paint state as presentation attributes.
 5. Encoding path: `encodeChannel` / `categoryOf` / `encodeValue` — not raw `scale.encode` in mark `build`.
+6. A mark that partitions a total among a group of rows stamps `node.stack` (`plot/stack.js`) and
+   sets `supportsStack`, so `edit.stack.*` inverts through the layout that drew it.

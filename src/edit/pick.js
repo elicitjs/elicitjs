@@ -299,6 +299,25 @@ function containsPoint(mark, px, py) {
         return p.x >= box.x - HIT_TOLERANCE && p.x <= box.x + box.w + HIT_TOLERANCE
             && p.y >= box.y - HIT_TOLERANCE && p.y <= box.y + box.h + HIT_TOLERANCE;
     }
+    // An annular sector (a pie/donut slice) is the one FILLED region the renderers
+    // draw as a bare `d` string, which the polyline test below cannot see at all —
+    // it measures to `points`, and a slice has none. Under SVG that never showed,
+    // because the DOM hit-tests the filled shape itself; under canvas it meant a
+    // slice body was unclickable and only its rim handle could be grabbed. The mark
+    // stamps the sector it drew, so both renderers agree on where a slice IS.
+    if (mark.sector) {
+        const { cx, cy, r0, r1, a0, a1 } = mark.sector;
+        const d = Math.hypot(px - cx, py - cy);
+        if (d < Math.max(0, r0) - HIT_TOLERANCE || d > r1 + HIT_TOLERANCE) return false;
+        // Sweep direction is the layout's, not the compass's — compare the pointer's
+        // offset from a0 against the sweep, both measured the same way round, so a
+        // slice that crosses the ±180° seam is not two pieces.
+        const sweep = a1 - a0;
+        const dir = Math.sign(sweep) || 1;
+        const theta = Math.atan2(-(py - cy), px - cx) * 180 / Math.PI;
+        const from = ((((theta - a0) * dir) % 360) + 360) % 360;
+        return from <= Math.abs(sweep);
+    }
     if (mark.type === 'line' || mark.type === 'path') {
         const half = (mark.strokeWidth || 1) / 2;
         return distanceToMark(mark, px, py) <= half + HIT_TOLERANCE;

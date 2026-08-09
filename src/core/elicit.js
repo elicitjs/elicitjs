@@ -50,6 +50,7 @@ const SCOPE_CAPABILITY = {
     line: { flag: 'supportsSeries', expects: 'a line mark (line/area)' },
     geo: { flag: 'supportsGeo', expects: 'a geo* mark (geoPoint, geoLine, …)' },
     arc: { flag: 'supportsArc', expects: 'an arc mark (arc/pie/donut)' },
+    stack: { flag: 'supportsStack', expects: 'a stacked mark (bar with `stack`, or arc/pie/donut)' },
     waffle: { flag: 'supportsWaffle', expects: 'a waffle mark' },
     axis: { flag: 'isAxis', expects: 'an axis mark (axisX/axisY/axisRadial)' },
     trend: { flag: 'supportsTrend', expects: 'a trend mark (trend/trendBand)' },
@@ -405,6 +406,9 @@ export function Elicit(spec) {
         // content in the margin band show — needed for radial/gauge axis labels that
         // sit just outside the plot area.
         overflow = 'hidden',
+        // Browser focus ring on editable marks. Off by default — Tab / arrow keys
+        // still work; only the native outline is suppressed. See types.ElicitSpec.
+        focusOutline = false,
         renderer = new D3Renderer()
     } = spec;
 
@@ -1069,6 +1073,7 @@ export function Elicit(spec) {
             planeCursor,
             responsive: mode,
             overflow,
+            focusOutline,
             effects,
             theme,
             onEvent: handleEvent
@@ -1161,15 +1166,71 @@ export function Elicit(spec) {
         const result = edit.apply(ctx);
         if (result === undefined) return null;
 
-        // A DOMAIN edit (edit.axis.*) writes the SCHEMA, not the dataset: apply
-        // returns { domains, data?, resize? }. It bypasses the datum-splice and the
-        // data-layer constraints (a schema change isn't a datum proposal — the same
-        // reason setData is trusted). runEdit's domain-commit path handles the write;
-        // wrap it so runEdit/previewEdit can tell it apart from a dataset proposal.
+        // Which datum the gesture touched, for invariants that resolve a violation
+        // relative to it. Read from the edit's DECLARED cardinality (see makeEdit),
+        // never from its type — a custom append/delete edit gets the same treatment
+        // as the built-in create/remove without the engine knowing either exists.
+        /** @param {any[]} rows @returns {number | null} */
+        const activeIndexOf = (rows) => (edit.cardinality === 'append' ? rows.length - 1
+            : edit.cardinality === 'delete' ? null
+                : /** @type {number | null} */ (index));
+
+        // Data-layer invariants: the dataset's first (they hold for every edit from
+        // every mark), then any edit-scoped guard sugar. Pure data context — no
+        // scales-as-geometry. A constraint may reject the proposal (false) or repair
+        // it (return an array); the marks re-derive from the repaired rows.
+        //
+        // The lock (spec.lock) runs LAST so it has the final word: a repair by any
+        // other invariant still can't write a read-only row.
+        /** @param {any[]} rows @returns {any[] | null} the repaired rows, or null if rejected */
+        const runInvariants = (rows) => {
+            const invariants = [...datasetConstraints, ...edit.constrain, ...(lockRows ? [lockRows] : [])];
+            const cctx = { activeIndex: activeIndexOf(rows), scales, markChannels };
+            let out = rows;
+            for (const constraint of invariants) {
+                const r = constraint(out, currentData, cctx);
+                if (r === false) return null;
+                if (r === true || r === undefined) continue;
+                // A constraint may GATE (false) or REPAIR (the corrected rows). Anything
+                // else is a bug in the constraint, and unvalidated it becomes the dataset:
+                // a number or object makes `for (const d of dataset)` throw from inside
+                // resolve.js with nothing naming the culprit, and a string iterates its
+                // CHARACTERS and blanks the chart. Constraints built with defineConstraint
+                // are normalized, so this only catches the hand-written form — which
+                // spec.constraints accepts with no type checking at all.
+                if (!Array.isArray(r)) {
+                    warn(
+                        `constraint:return:${constraintLabel(constraint)}`,
+                        `constraint ${constraintLabel(constraint)} returned ${describe(r)}; a constraint must ` +
+                        `return the repaired rows (an array), false to reject the edit, or ` +
+                        `true/undefined to accept it unchanged. Ignoring the return value.`
+                    );
+                    continue;
+                }
+                out = r;
+            }
+            return out;
+        };
+
+        // A DOMAIN edit (edit.axis.*, edit.stack.cut on an open field) writes the
+        // SCHEMA: apply returns { domains, data?, resize? }. The schema half bypasses
+        // the datum-splice and the data-layer constraints — a domain is not a datum,
+        // the same reason setData is trusted.
+        //
+        // Its COUPLED `data`, though, is an ordinary datum proposal (a category rename
+        // relabels rows, a remove drops them, an open-domain cut splices one in), so it
+        // meets the invariants like any other. Skipping them there let a constraint the
+        // author declared — `count({ max })` capping how many categories may exist — be
+        // silently ignored by exactly the edits that change how many there are.
+        //
+        // runEdit's domain-commit path handles the write; wrap it so runEdit/previewEdit
+        // can tell it apart from a dataset proposal.
         if (edit.target === 'domain') {
-            return (result && typeof result === 'object' && result.domains)
-                ? /** @type {any} */ ({ __domain: result })
-                : null;
+            if (!(result && typeof result === 'object' && result.domains)) return null;
+            if (!Array.isArray(result.data)) return /** @type {any} */ ({ __domain: result });
+            const checked = runInvariants(result.data);
+            if (!checked) return null;
+            return /** @type {any} */ ({ __domain: { ...result, data: checked } });
         }
 
         // A SELECTION edit (edit.select) writes transient pipeline state, not the
@@ -1184,53 +1245,11 @@ export function Elicit(spec) {
 
         // A whole-dataset edit (create appends, remove filters) returns an array; a
         // mark edit returns the new datum, spliced in at `index`.
-        let newData = Array.isArray(result)
+        const newData = Array.isArray(result)
             ? result
             : currentData.map((d, i) => (i === index ? result : d));
 
-        // Which datum the gesture touched, for invariants that resolve a violation
-        // relative to it. Read from the edit's DECLARED cardinality (see makeEdit),
-        // never from its type — a custom append/delete edit gets the same treatment
-        // as the built-in create/remove without the engine knowing either exists.
-        const activeIndex = edit.cardinality === 'append' ? newData.length - 1
-            : edit.cardinality === 'delete' ? null
-                : index;
-
-        // Data-layer invariants: the dataset's first (they hold for every edit from
-        // every mark), then any edit-scoped guard sugar. Pure data context — no
-        // scales-as-geometry. A constraint may reject the proposal (false) or repair
-        // it (return an array); the marks re-derive from the repaired rows.
-        //
-        // The lock (spec.lock) runs LAST so it has the final word: a repair by any
-        // other invariant still can't write a read-only row.
-        const invariants = [...datasetConstraints, ...edit.constrain, ...(lockRows ? [lockRows] : [])];
-        const cctx = { activeIndex, scales, markChannels };
-        let rejected = false;
-        for (const constraint of invariants) {
-            const r = constraint(newData, currentData, cctx);
-            if (r === false) { rejected = true; break; }
-            if (r === true || r === undefined) continue;
-            // A constraint may GATE (false) or REPAIR (the corrected rows). Anything
-            // else is a bug in the constraint, and unvalidated it becomes the dataset:
-            // a number or object makes `for (const d of dataset)` throw from inside
-            // resolve.js with nothing naming the culprit, and a string iterates its
-            // CHARACTERS and blanks the chart. Constraints built with defineConstraint
-            // are normalized, so this only catches the hand-written form — which
-            // spec.constraints accepts with no type checking at all.
-            if (!Array.isArray(r)) {
-                warn(
-                    `constraint:return:${constraintLabel(constraint)}`,
-                    `constraint ${constraintLabel(constraint)} returned ${describe(r)}; a constraint must ` +
-                    `return the repaired rows (an array), false to reject the edit, or ` +
-                    `true/undefined to accept it unchanged. Ignoring the return value.`
-                );
-                continue;
-            }
-            newData = r;
-        }
-        if (rejected) return null;
-
-        return newData;
+        return runInvariants(newData);
     };
 
     // Commit an edit: compute its proposal, write it to the belief store, drop any

@@ -49,6 +49,7 @@
 import { encodeChannel, resolveStyle, normalizeMarkOptions, markDefaults, resolveHandles } from './mark.js';
 import { arcSpan, arcPath, polarToXY } from './polar.js';
 import { isBand, bandwidthOf } from '../core/scales.js';
+import { groupByPosition, stackLayout, stackDescriptor } from './stack.js';
 
 /**
  * @param {any} [options]
@@ -108,8 +109,11 @@ export function arc(options = {}) {
         // (a pie's rows are its own layout order), so xKey stays undefined rather
         // than aliasing the same field twice.
         yKey: valueField,
-        // Capability flag: what edit.arc.* needs to work (see SCOPE_CAPABILITY).
+        // Capability flags: what edit.arc.* and edit.stack.* need (SCOPE_CAPABILITY).
+        // A pie IS a stack — it partitions one total among its rows — so the same cut
+        // and boundary drag that work on a stacked bar work here, in polar form.
         supportsArc: true,
+        supportsStack: true,
         /**
          * @param {any[]} currentData
          * @param {any} scales
@@ -125,29 +129,12 @@ export function arc(options = {}) {
             // the slot's x/y (a band category's centre, or a scatter coordinate). No
             // group transform: the ENCODING is the grouping. Bind neither x nor y and
             // every row is one bucket — the classic single donut, unchanged.
-            const posFields = ['x', 'y']
-                .filter((/** @type {string} */ c) => channels[c] && channels[c].field != null)
-                .map((/** @type {string} */ c) => channels[c].field);
-            // NUL joins the slot's x/y into one key because it cannot occur in a
-            // field value, so two different pairs can never collide. Write it as the
-            // ESCAPE, never as a literal NUL byte: a raw one makes git classify the
-            // whole file as binary, which silently costs you diffs, line-level review
-            // and merges — this file was in exactly that state.
-            /** @param {any} d */
-            const keyOf = (d) => (posFields.length ? posFields.map((f) => d[f]).join('\u0000') : '__all__');
-
-            // Bucket rows, keeping each row's GLOBAL index (its address in the engine's
-            // one dataset) and first-seen order — both for the slot and within it — so
-            // slice/handle indices and the edge edit still address that one dataset.
-            /** @type {Map<string, { rep: any, members: number[] }>} */
-            const buckets = new Map();
-            currentData.forEach((/** @type {any} */ d, /** @type {number} */ i) => {
-                const k = keyOf(d);
-                let b = buckets.get(k);
-                if (!b) { b = { rep: d, members: [] }; buckets.set(k, b); }
-                b.members.push(i);
-            });
-            const bucketList = [...buckets.values()];
+            // Rows keep their GLOBAL index (their address in the engine's one dataset)
+            // and first-seen order — both for the slot and within it — so slice/handle
+            // indices and the edge edit still address that one dataset. Which rows form
+            // a group is the same question for a donut in a slot and a stacked bar in a
+            // band, so it is answered once in plot/stack.js and shared with `bar`.
+            const bucketList = groupByPosition(currentData, channels, ['x', 'y']);
 
             // Default outer radius that FITS a slot. A band position axis gives a
             // natural cell (its bandwidth); a continuous scatter has none, so shrink
@@ -191,18 +178,25 @@ export function arc(options = {}) {
 
                 // Magnitude per slice: prefer the raw field (so stacking is in data
                 // units), not the encoded angle — pie layout owns the angular math.
-                const mags = members.map((/** @type {number} */ gi) => {
-                    const d = currentData[gi];
-                    if (valueField != null) {
-                        const v = Number(d[valueField]);
-                        return Number.isFinite(v) && v > 0 ? v : 0;
-                    }
-                    const enc = encodeChannel(scales, channels, 'value', d, 0, gi, currentData);
-                    return Number.isFinite(enc) && enc > 0 ? Number(enc) : 0;
-                });
+                // The field case IS the shared stack walk (plot/stack.js), so a pie
+                // and a stacked bar agree on what a share is, including that a
+                // negative or non-finite magnitude occupies no interval.
+                const mags = valueField != null
+                    ? stackLayout(members, currentData, valueField).mags
+                    : members.map((/** @type {number} */ gi) => {
+                        const enc = encodeChannel(scales, channels, 'value', currentData[gi], 0, gi, currentData);
+                        return Number.isFinite(enc) && enc > 0 ? Number(enc) : 0;
+                    });
                 const total = mags.reduce((/** @type {number} */ a, /** @type {number} */ b) => a + b, 0);
                 const nSlices = members.length;
                 const usable = total > 0 ? span - pad * nSlices : 0;
+
+                // How a pointer becomes a position along THIS donut's stack: an angle
+                // about its own centre, over its own span. Pure data — edit/stack.js
+                // re-derives the magnitudes from the live dataset and inverts through
+                // the same layout that encoded them.
+                /** @type {any} */
+                const geometry = { kind: 'angular', cx, cy, spanStart, spanEnd, pad };
 
                 // Trailing edge angle of each drawn slice, by LOCAL slice position —
                 // the interior boundaries a handle sits on, within this donut.
@@ -242,6 +236,18 @@ export function arc(options = {}) {
                         // so every slice was being spun about its own centre.
                         midAngle: (a0 + a1) / 2,
                         a0, a1,
+                        // The stack this slice belongs to — what edit.stack.cut needs
+                        // to split it, and the same stamp a stacked bar's segments
+                        // carry. The mark that encoded the layout carries the means to
+                        // invert it (the node.frame idea, applied to a stack).
+                        stack: stackDescriptor({ members, local, field: valueField, geometry }),
+                        // Filled-region hit geometry. The pick layer measures distance
+                        // to a path's polyline, which for a bare `d` string is nothing
+                        // at all — so under the canvas renderer a slice BODY was not
+                        // clickable and only its rim handles could be grabbed. SVG
+                        // hit-tests the filled shape in the DOM and never needed this;
+                        // edit/pick.js reads `sector` so both renderers agree.
+                        sector: { cx, cy, r0: innerR, r1: outer, a0, a1 },
                     });
                 });
 
@@ -273,9 +279,14 @@ export function arc(options = {}) {
                             edge: true,
                             loIndex: members[local],
                             hiIndex: members[local + 1],
+                            // `members` / `pivot*` / `span*` / `pad` are the pre-stack
+                            // payload edit.arc.edge read directly. edit.stack.* reads
+                            // `stack` instead; they are kept so a spec still pinned to
+                            // the deprecated edge edit keeps working.
                             members,
                             pivotX: cx, pivotY: cy,
                             spanStart, spanEnd, pad,
+                            stack: stackDescriptor({ members, local, field: valueField, geometry }),
                         });
                     }
                 }

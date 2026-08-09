@@ -162,6 +162,12 @@ export function bindCanvasEvents(canvas, getCtx) {
     canvas.addEventListener('dblclick', (e) => {
         const ctx = getCtx();
         const [x, y] = toInner(e);
-        ctx.onEvent({ type: 'dblclick', x, y, rawEvent: e });
+        // Route to the mark under the pointer when there is one, exactly as the
+        // click path does — a dblclick edit sits on a NODE (edit.stack.merge grabs a
+        // boundary handle) just as often as on the plane. Emitting only the plane
+        // form here meant such an edit could never fire on canvas, while `create`'s
+        // plane dblclick still worked, so the gesture looked half-implemented.
+        const node = ctx.planeOnTop ? null : hitTest(ctx.scene.children, x, y);
+        ctx.onEvent({ type: 'dblclick', x, y, ...(node ? { node } : {}), rawEvent: e });
     });
 }
