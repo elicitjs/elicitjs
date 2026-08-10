@@ -225,14 +225,29 @@ export { schemaDefaults };
  *      projected lon/lat, a line's series key. These win last and, being present, count
  *      as "placed" on their own.
  *   4. the inverted pointer, per positional channel — the exact inverse of `encode`.
+ *   5. an IDENTITY, when the table declares one (see below).
  * Returns the datum, or `undefined` when nothing could be placed (no invertible
  * positional channel and no `seed`) — the "this mark can't create here" signal a
  * caller turns into a no-op (see also warnCreateOnNonMark in elicit.js).
+ *
+ * ── Identity ───────────────────────────────────────────────────────────────
+ * A table may declare one field as its `key` — the column that identifies a row,
+ * and the one a `ref` in another table points at. A minted row has to carry one:
+ * a row whose identity is null can be referenced by nothing, so a link drawn to it
+ * connects nothing and a gesture can never complete it.
+ *
+ * That is a property of the SCHEMA, not of any particular edit, so it belongs here
+ * rather than in a creator of its own — `create`, `toggle` and every other minting
+ * edit get it for free, on any table under any structure. `nextCategory` is the
+ * same primitive `edit.stack.cut` uses, which is what keeps CREATING and NAMING
+ * separate acts: the row arrives with a placeholder, and an `editText` renames it.
+ * A closed vocabulary that has run out returns undefined, and the caller refuses —
+ * the author declared exactly which rows may exist.
  * @param {import('../types').EditContext} ctx
- * @param {{ defaults?: Record<string, any>, seed?: Record<string, any> }} [opts]
+ * @param {{ defaults?: Record<string, any>, seed?: Record<string, any>, label?: string }} [opts]
  * @returns {Record<string, any> | undefined}
  */
-export function mintDatum(ctx, { defaults = {}, seed = {} } = {}) {
+export function mintDatum(ctx, { defaults = {}, seed = {}, label } = {}) {
     const datum = { ...schemaDefaults(ctx.schema), ...defaults, ...seed };
     let placed = Object.keys(seed).length > 0;
     for (const ch of ctx.channels) {
@@ -241,7 +256,36 @@ export function mintDatum(ctx, { defaults = {}, seed = {} } = {}) {
         datum[ch.field] = value;
         placed = true;
     }
-    return placed ? datum : undefined;
+    if (!placed) return undefined;
+
+    const key = keyFieldOf(ctx.schema);
+    if (key && datum[key] == null) {
+        const spec = /** @type {import('../types').FieldSchema} */ ((ctx.schema && ctx.schema[key]) || {});
+        const id = nextCategory(ctx.data, key, spec.domain || [], {
+            // A key with no declared domain is open by nature — there is no
+            // vocabulary to exhaust — so only an explicit `open: false` closes one.
+            open: spec.open !== false,
+            label: label || 'Item',
+        });
+        if (id === undefined) return undefined;   // closed vocabulary, exhausted
+        datum[key] = id;
+    }
+    return datum;
+}
+
+/**
+ * The field a table declares as its identity, or null. Read off the field map
+ * rather than the canonical TableSchema so it works from an edit's `ctx.schema`,
+ * which is already the target table's fields.
+ * @param {Record<string, import('../types').FieldSchema> | undefined} schema
+ * @returns {string | null}
+ */
+function keyFieldOf(schema) {
+    if (!schema) return null;
+    for (const [field, spec] of Object.entries(schema)) {
+        if (spec && spec.key === true) return field;
+    }
+    return null;
 }
 
 /**

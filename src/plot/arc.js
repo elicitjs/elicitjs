@@ -46,7 +46,7 @@
 // polar form). Slice boundaries are draggable via edit.arc.edge(); sibling controls
 // work with maintainSum.
 
-import { encodeChannel, resolveStyle, normalizeMarkOptions, markDefaults, resolveHandles } from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, markDefaults, resolveHandles, markCommon} from './mark.js';
 import { arcSpan, arcPath, polarToXY } from './polar.js';
 import { isBand, bandwidthOf } from '../core/scales.js';
 import { groupByPosition, stackLayout, stackDescriptor } from './stack.js';
@@ -94,11 +94,10 @@ export function arc(options = {}) {
     const valueField = channels.value && channels.value.field;
 
     return {
-        id,
+        ...markCommon(opts),
         markName: 'arc',
         channels,
         edits: markEdits,
-        constraints,
         // When `x`/`y` carry a categorical field, each category is a SLOT that holds
         // one donut, so a discrete position axis wants a band (an interval to fit the
         // ring into), not a point tick. Harmless when nothing is gridded — arc's

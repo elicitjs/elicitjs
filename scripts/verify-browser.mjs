@@ -59,7 +59,24 @@ async function main() {
         const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
         const errors = [];
         page.on('pageerror', (e) => errors.push(String(e)));
-        page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+        page.on('console', (m) => {
+            if (m.type() !== 'error') return;
+            // "Failed to load resource" carries no URL on the console message, so it
+            // cannot be told apart from a real missing asset here. The `response`
+            // listener below judges those precisely instead.
+            if (m.text().startsWith('Failed to load resource')) return;
+            errors.push(`[${page.url().replace(BASE, '')}] ${m.text()}`);
+        });
+        // A failed REQUEST, with its URL. Next's own dev chunks race during on-demand
+        // route compilation — a 404 for a chunk that is about to be rebuilt says
+        // nothing about the docs — so they are excluded and everything else (an
+        // example's missing image or data file) still fails the gate.
+        page.on('response', (r) => {
+            if (r.status() < 400) return;
+            const url = r.url();
+            if (url.includes('/_next/')) return;
+            errors.push(`[${page.url().replace(BASE, '')}] ${r.status()} ${url}`);
+        });
 
         // Open a route and wait for its charts. Next dev compiles on demand and the
         // examples mount after hydration, so a cold route can be slow — and a gate
@@ -100,7 +117,7 @@ async function main() {
             '/marks/ellipse', '/marks/curve',
             '/marks/symbol', '/marks/face', '/marks/text', '/marks/line', '/marks/composite',
             '/marks/dotstack', '/marks/waffle', '/marks/needle',
-            '/marks/axis-radial', '/marks/arc', '/marks/geo', '/marks/trend', '/marks/axes',
+            '/marks/axis-radial', '/marks/arc', '/marks/geo', '/marks/network', '/marks/trend', '/marks/axes',
             '/marks/legend',
             '/editing', '/editing/gestures', '/editing/sweep', '/editing/lock',
             '/editing/existence', '/editing/probe', '/editing/stages', '/editing/axis',
@@ -2177,6 +2194,215 @@ async function main() {
         const darkBar = await page.$eval('#dark .chart svg rect:not(.plane)', (r) => r.getAttribute('fill'));
         check('theme: dark background paints the chart', /rgb\(15,\s*23,\s*42\)|#0f172a/i.test(darkBg), `bg=${darkBg}`);
         check('theme: dark ink recolours the bars', darkBar === '#38bdf8', `fill=${darkBar}`);
+
+        // ---- Network: two tables, one dataset ------------------------------
+        // Nothing here is provable by typecheck: the join, the cross-table
+        // proposal (a drag on a NODE mark that appends a LINK row), and the
+        // delete cascade are all pointer/state-machine behaviour.
+        console.log('\nNetwork: nodes + links (/marks/network)');
+        await open('/marks/network', '#draw .chart svg circle');
+        // Off-screen elements still report a bounding box, but page.mouse works in
+        // VIEWPORT coordinates — so a gesture computed from one lands nowhere.
+        await page.locator('#draw .chart svg').scrollIntoViewIfNeeded();
+        await page.waitForTimeout(200);
+        const netEl = '#draw .chart > div';
+        const netData = () => page.$eval(netEl, (el) => el.getData());
+        // Node circles carry the point mark's fill; a link's endpoint handle is a
+        // circle too, so index alone would not tell them apart.
+        const nodeAt = (i) => page.$$eval('#draw .chart svg circle', (cs, k) => {
+            const c = cs.filter((n) => (n.getAttribute('fill') || '').toLowerCase() === '#4e79a7')[k];
+            if (!c) return null;
+            const b = c.getBoundingClientRect();
+            return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+        }, i);
+        const linkPaths = () => page.$$eval('#draw .chart svg path', (ps) => ps.map((p) => p.getAttribute('d')));
+
+        const net0 = await netData();
+        check('network: getData is keyed by the schema\'s table names',
+            !!(net0 && net0.claims && net0.supports), Object.keys(net0 || {}).join(','));
+        check('network: both tables seed', net0.claims.length === 3 && net0.supports.length === 2,
+            `claims=${net0.claims.length} supports=${net0.supports.length}`);
+
+        // A link's geometry lives in the OTHER table, so moving a node must move it.
+        const pathsBefore = await linkPaths();
+        const n0 = await nodeAt(0);
+        await page.mouse.move(n0.x, n0.y);
+        await page.mouse.down();
+        await page.mouse.move(n0.x + 40, n0.y - 30, { steps: 8 });
+        await page.mouse.up();
+        await page.waitForTimeout(250);
+        const movedData = await netData();
+        check('network: dragging a node writes only the node table',
+            movedData.claims[0].x !== net0.claims[0].x
+            && JSON.stringify(movedData.supports) === JSON.stringify(net0.supports),
+            JSON.stringify(movedData.claims[0]));
+        check('network: its links follow on the same frame',
+            JSON.stringify(await linkPaths()) !== JSON.stringify(pathsBefore));
+
+        // connect: a drag on the NODE mark appends to the LINK table.
+        const a = await nodeAt(1);
+        const b2 = await nodeAt(2);
+        await page.keyboard.down('Shift');
+        await page.mouse.move(a.x, a.y);
+        await page.mouse.down();
+        await page.mouse.move(b2.x, b2.y, { steps: 10 });
+        await page.mouse.up();
+        await page.keyboard.up('Shift');
+        await page.waitForTimeout(250);
+        const linked = await netData();
+        check('network: connect appends exactly one link',
+            linked.supports.length === movedData.supports.length + 1, JSON.stringify(linked.supports));
+        check('network: connect leaves the node table untouched',
+            linked.claims.length === movedData.claims.length, `claims=${linked.claims.length}`);
+
+        // Shift-drag into empty space must commit nothing.
+        const plotBox = await page.$eval('#draw .chart svg', (svg) => {
+            const r = svg.getBoundingClientRect();
+            return { x: r.x, y: r.y, w: r.width, h: r.height };
+        });
+        const n1 = await nodeAt(0);
+        await page.keyboard.down('Shift');
+        await page.mouse.move(n1.x, n1.y);
+        await page.mouse.down();
+        await page.mouse.move(plotBox.x + plotBox.w - 8, plotBox.y + plotBox.h - 8, { steps: 8 });
+        await page.mouse.up();
+        await page.keyboard.up('Shift');
+        await page.waitForTimeout(250);
+        check('network: a drag released on empty space appends no link',
+            (await netData()).supports.length === linked.supports.length);
+
+        // Plain `create()` mints the identity, because the node table declares a
+        // `key` — there is no addNode, and this is the check that says so.
+        await page.mouse.click(plotBox.x + plotBox.w * 0.12, plotBox.y + plotBox.h * 0.88);
+        await page.waitForTimeout(250);
+        const added = await netData();
+        const fresh = added.claims[added.claims.length - 1];
+        check('network: create() appends a node', added.claims.length === linked.claims.length + 1,
+            `claims=${added.claims.length}`);
+        check('network: create() mints an identity from the key column, with no keyboard',
+            !!fresh && fresh.id != null, JSON.stringify(fresh));
+        check('network: create() still applies its own defaults',
+            !!fresh && fresh.text === 'New claim', JSON.stringify(fresh));
+
+        // node(): ONE mark, a dot and a label per row. The dot is the composite's
+        // last part, which is what makes an x/y edit grab the dot and not the label.
+        const dotCount = await page.$$eval('#draw .chart svg circle',
+            (cs) => cs.filter((c) => (c.getAttribute('fill') || '').toLowerCase() === '#4e79a7').length);
+        const labelCount = await page.$$eval('#draw .chart svg text', (t) => t.length);
+        check('node(): a dot per row', dotCount === added.claims.length, `dots=${dotCount}`);
+        check('node(): a label per row', labelCount >= added.claims.length, `labels=${labelCount}`);
+
+        // Deleting a node must take its links with it — the schema's `ref` says so,
+        // and a dangling link is a dataset defect, not just a drawing one.
+        const preDelete = await netData();
+        const doomed = preDelete.claims[0].id;
+        const stranded = preDelete.supports.filter((l) => l.source === doomed || l.target === doomed).length;
+        check('network: the node being deleted has links to strand', stranded > 0, `n=${stranded}`);
+        const victim = await nodeAt(0);
+        await page.keyboard.down('Alt');
+        await page.mouse.click(victim.x, victim.y);
+        await page.keyboard.up('Alt');
+        await page.waitForTimeout(250);
+        const afterDelete = await netData();
+        check('network: remove deletes the node',
+            afterDelete.claims.length === preDelete.claims.length - 1, `claims=${afterDelete.claims.length}`);
+        check('network: remove cascades to its links',
+            afterDelete.supports.length === preDelete.supports.length - stranded,
+            JSON.stringify(afterDelete.supports));
+        check('network: no dangling reference survives',
+            afterDelete.supports.every((l) =>
+                afterDelete.claims.some((c) => c.id === l.source)
+                && afterDelete.claims.some((c) => c.id === l.target)),
+            JSON.stringify(afterDelete.supports));
+
+        // rewire: drag a link endpoint handle onto another node (second example).
+        await open('/marks/network', '#gestures .chart svg circle');
+        await page.locator('#gestures .chart svg').scrollIntoViewIfNeeded();
+        await page.waitForTimeout(200);
+        const wireEl = '#gestures .chart > div';
+        const wireData = () => page.$eval(wireEl, (el) => el.getData());
+        const handleAt = (i) => page.$$eval('#gestures .chart svg circle', (cs, k) => {
+            const c = cs.filter((n) => (n.getAttribute('fill') || '').toLowerCase() !== '#1f2937')[k];
+            if (!c) return null;
+            const b = c.getBoundingClientRect();
+            return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+        }, i);
+        const personAt = (i) => page.$$eval('#gestures .chart svg circle', (cs, k) => {
+            const c = cs.filter((n) => (n.getAttribute('fill') || '').toLowerCase() === '#1f2937')[k];
+            if (!c) return null;
+            const b = c.getBoundingClientRect();
+            return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+        }, i);
+        const wireBefore = await wireData();
+        const h0 = await handleAt(0);
+        const p3 = await personAt(2);
+        if (h0 && p3) {
+            await page.mouse.move(h0.x, h0.y);
+            await page.mouse.down();
+            await page.mouse.move(p3.x, p3.y, { steps: 10 });
+            await page.mouse.up();
+            await page.waitForTimeout(250);
+            const wireAfter = await wireData();
+            check('network: rewire re-points the endpoint',
+                wireAfter.links[0].source !== wireBefore.links[0].source,
+                JSON.stringify(wireAfter.links[0]));
+            check('network: rewire adds no row',
+                wireAfter.links.length === wireBefore.links.length, `links=${wireAfter.links.length}`);
+            check('network: rewire touches no node rows',
+                JSON.stringify(wireAfter.nodes) === JSON.stringify(wireBefore.nodes));
+        }
+
+        // `table` on an ORDINARY mark. This is what makes `table` a universal option
+        // rather than a link() private: a plain barY drawing, and editing, the OTHER
+        // table. It only works if every factory passes `table` through (markCommon).
+        console.log('\n`table` on an ordinary mark (/schema #table)');
+        await open('/schema', '#table .chart svg');
+        await page.locator('#table .chart svg').scrollIntoViewIfNeeded();
+        await page.waitForTimeout(200);
+        const tblEl = '#table .chart > div';
+        const tblData = () => page.$eval(tblEl, (el) => el.getData());
+        const tbl0 = await tblData();
+        const barCount = await page.$$eval('#table .chart svg rect.mark', (rs) => rs.length);
+        check('table: barY({ table }) drew one bar per LINK row',
+            barCount === tbl0.links.length, `bars=${barCount} links=${tbl0.links.length}`);
+        const linkBar = await page.$eval('#table .chart svg rect.mark', (r) => {
+            const b = r.getBoundingClientRect();
+            return { x: b.x + b.width / 2, y: b.y + 6 };
+        });
+        await page.mouse.move(linkBar.x, linkBar.y);
+        await page.mouse.down();
+        await page.mouse.move(linkBar.x, linkBar.y + 40, { steps: 6 });
+        await page.mouse.up();
+        await page.waitForTimeout(250);
+        const tbl1 = await tblData();
+        check('table: dragging it writes the LINK table',
+            tbl1.links[0].strength !== tbl0.links[0].strength, JSON.stringify(tbl1.links[0]));
+        check('table: the node table is untouched',
+            JSON.stringify(tbl1.nodes) === JSON.stringify(tbl0.nodes));
+
+        // A `key` is a SCHEMA feature, not a network one: a flat single-table chart
+        // gets minted identities from plain create() too.
+        console.log('\nA keyed flat table (/schema #ref)');
+        await page.locator('#ref .chart svg').scrollIntoViewIfNeeded();
+        await page.waitForTimeout(200);
+        const keyEl = '#ref .chart > div';
+        const keyRows = () => page.$eval(keyEl, (el) => el.getData());
+        const keyBefore = await keyRows();
+        const keyBox = await page.$eval('#ref .chart svg', (svg) => {
+            const r = svg.getBoundingClientRect();
+            return { x: r.x, y: r.y, w: r.width, h: r.height };
+        });
+        await page.mouse.click(keyBox.x + keyBox.w * 0.5, keyBox.y + keyBox.h * 0.5);
+        await page.waitForTimeout(250);
+        const keyAfter = await keyRows();
+        check('key: create() appends to a flat table', keyAfter.length === keyBefore.length + 1,
+            `rows=${keyAfter.length}`);
+        check('key: the new row carries an identity, on a chart with no network',
+            keyAfter[keyAfter.length - 1] && keyAfter[keyAfter.length - 1].id != null,
+            JSON.stringify(keyAfter[keyAfter.length - 1]));
+        check('key: the minted identity is unique',
+            new Set(keyAfter.map((/** @type {any} */ d) => d.id)).size === keyAfter.length,
+            JSON.stringify(keyAfter.map((/** @type {any} */ d) => d.id)));
 
         check('no page/console errors', errors.length === 0, errors.slice(0, 3).join(' | '));
     } finally {

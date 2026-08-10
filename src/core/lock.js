@@ -55,13 +55,19 @@ const sameRow = (a, b) => a === b || (a != null && b != null && rowKey(a) === ro
  *                     setData re-seeds the chart.
  *   (datum, index) -> an arbitrary predicate, for a lock that is a property of the
  *                     row itself (`d => d.year <= 1990`, `d => d.source === 'observed'`).
+ *
+ * A lock is declared once for the whole dataset but resolved PER TABLE: "seeded"
+ * means "the rows THIS table started with", so the caller passes that table's live
+ * seed count and its name. A predicate gets the name as a third argument, which is
+ * how one `lock` can say different things about nodes and links.
  * @param {import('../types').LockSpec | undefined} lock
- * @param {() => number} seedCount how many rows are currently seeded
+ * @param {() => number} seedCount how many rows of this table are currently seeded
+ * @param {string} [table] the table's name, passed on to a predicate lock
  * @returns {((datum: any, index: number) => boolean) | null} null = nothing locked
  */
-export function resolveLock(lock, seedCount) {
+export function resolveLock(lock, seedCount, table) {
     if (lock == null || lock === false) return null;
-    if (typeof lock === 'function') return (d, i) => !!lock(d, i);
+    if (typeof lock === 'function') return (d, i) => !!lock(d, i, table);
     if (lock === true || lock === 'seed') return (_d, i) => i < seedCount();
     console.warn(
         `[elicit] spec.lock: expected "seed", true, or a (datum, index) => boolean ` +

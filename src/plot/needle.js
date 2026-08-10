@@ -23,7 +23,7 @@
 //   tapered path + hub → the mark itself; hub is the shared-contract handle
 //   handles: true|false|'hit' — false emits no hub and silences the path
 
-import { encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions, markDefaults, resolveHandles } from './mark.js';
+import { encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions, markDefaults, resolveHandles, markCommon} from './mark.js';
 import { arcSpan, needleTriangle } from './polar.js';
 
 /**
@@ -58,11 +58,9 @@ export function needle(options = {}) {
     const yField = channels.y && channels.y.field;
 
     return {
-        id,
+        ...markCommon(opts),
         markName: 'needle',
         channels,
-        edits,
-        constraints,
         discreteScale: 'point',
         xKey: xField || angleField,
         yKey: yField || angleField,

@@ -26,7 +26,7 @@
 // mark in this codebase follows.
 
 import { isDiscrete } from '../core/scales.js';
-import { encodeChannel, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys } from './mark.js';
+import { encodeChannel, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon} from './mark.js';
 
 /**
  * The discrete slots along the category axis — the ghost/label layer iterates
@@ -65,11 +65,9 @@ function buildDotStack(options, forcedAxis) {
     const { xKey, yKey } = positionalKeys(channels);
 
     return {
-        id,
+        ...markCommon(opts),
         markName: 'dotStack',
         channels,
-        edits,
-        constraints,
         // Tokens sit in discrete slots; a point scale gives each slot a tick.
         discreteScale: 'point',
         xKey,

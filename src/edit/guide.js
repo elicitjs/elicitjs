@@ -160,7 +160,13 @@ export function autoEditGuides(features) {
  * @returns {import('../types').FeatureNode[]}
  */
 export function buildEditGuide(feature, edit, ctx) {
-    const { scales, data, constraints, width, height } = ctx;
+    const { scales, width, height } = ctx;
+    // A guide is drawn ABOUT a mark, so it reads that mark's own table and that
+    // table's invariants — a bounds rule over node rows must not be computed from
+    // link rows. On a single-table chart both resolve to what ctx.data/ctx.constraints
+    // already held, so nothing changes there.
+    const data = ctx.tableOf ? ctx.tableOf(feature) : ctx.data;
+    const constraints = ctx.constraintsIn ? ctx.constraintsIn(feature.table) : ctx.constraints;
     const markChannels = feature.channels || {};
     const resolved = resolveChannels(edit.channels, markChannels, scales);
     const primary = resolved[0];

@@ -19,7 +19,12 @@ export type ScaleType =
 // opposed to a ScaleType (how a channel draws it). scaleTypeFor translates one to
 // the other per channel. `quantitative`/`temporal` are continuous;
 // `categorical`/`ordinal` are discrete (ordinal's domain order is significant).
-export type MeasureType = 'quantitative' | 'categorical' | 'ordinal' | 'temporal';
+// `ref` is a REFERENCE: the value names a row of another table by its key. It is a
+// statement about what the data means (this column identifies something elsewhere),
+// which is why it lives here beside the other measures rather than in a join block.
+// It behaves as a category everywhere a scale is concerned — a key IS a category —
+// but its DOMAIN is derived from the column it points at, so the two can't drift.
+export type MeasureType = 'quantitative' | 'categorical' | 'ordinal' | 'temporal' | 'ref';
 
 // A scale's own configuration — everything about HOW a field is drawn that isn't
 // the data's business. The domain is deliberately absent: it belongs to the data,
@@ -67,18 +72,84 @@ export interface FieldSchema {
   // Only meaningful for a discrete field. A field with no `domain` at all is open
   // by nature — resolveScales infers its domain from the data values.
   open?: boolean;
+  // This field is the table's IDENTITY: the column a `ref` in another table points
+  // at, and the one a gesture mints a new value into when it creates a row. At most
+  // one per table. Pair with `open: true` so a gesture can mint an identity without
+  // demanding the keyboard (see nextCategory in edit/shared.js).
+  key?: boolean;
+  // For a `ref` field: which column it points at.
+  //   omitted        the NODES-role table's `key: true` field — the case essentially
+  //                  every time, and why a link's source/target need no `to` at all
+  //   'id'           that column of the nodes table, named explicitly
+  //   'links.id'     a column of another table (table.column), for a cross-reference
+  // A ref's domain is DERIVED from the target column, so it is never declared here.
+  to?: string;
 }
 
 // Which rows of the dataset are READ-ONLY (see ElicitSpec.lock, core/lock.js).
 // 'seed' (or true) fixes the rows the chart was seeded with — they are given, not
 // elicited — and leaves every row an edit adds free. A predicate locks rows by
 // what they are (`d => d.year <= 1990`).
-export type LockSpec = 'seed' | boolean | ((datum: Datum, index: number) => boolean);
+// `table` is the name of the table the row belongs to — so one predicate can lock
+// a network's seeded nodes while leaving its links free.
+export type LockSpec =
+  | 'seed'
+  | boolean
+  | ((datum: Datum, index: number, table?: string) => boolean);
 
-// The dataset-wide schema: what data is being elicited, keyed by field name. It
-// is the source of truth for a field's scale (ranked above data inference), so a
-// chart resolves its scales — and can mint new data — with zero starter data.
+// One TABLE's schema: what data is being elicited, keyed by field name. It is the
+// source of truth for a field's scale (ranked above data inference), so a chart
+// resolves its scales — and can mint new data — with zero starter data.
 export type Schema = Record<string, FieldSchema>;
+
+// ── Structure: which tables the dataset has ─────────────────────────────────
+// A chart elicits ONE dataset; its STRUCTURE says what shape that dataset is —
+// a set of named tables, each filling a ROLE the structure defines.
+//
+//   'table'   (the default)  one table, role `data`
+//   'network'                roles `nodes` and `links`
+//
+// The NAME is the data key; the ROLE is what the structure means by it. Marks and
+// edits resolve a table by ROLE, which is what lets an argument map call its tables
+// `claims` / `supports` with no `table:` written anywhere. See core/schema.js for
+// the role table (STRUCTURES) — adding a structure is a row there and nowhere else.
+export type Structure = 'table' | 'network';
+
+// A table in the author's LONG form. `role` is only needed when the table's NAME
+// differs from the role it fills; a bare `Schema` in its place is the short form.
+export interface TableSpec {
+  role?: string;
+  fields: Schema;
+}
+
+// `ElicitSpec.schema` as an author may write it. A bare field map is a single-table
+// schema (the form every pre-structure spec uses, valid forever); the long form
+// names its tables. normalizeSchema brings both to SchemaSpec.
+export type SchemaInput =
+  | Schema
+  | { structure: Structure; tables: Record<string, Schema | TableSpec> };
+
+// One table, canonical: what every internal reader sees after normalizeSchema.
+export interface TableSchema {
+  // The table's name — its key in `data`, in `getData()`, and in a mark's `table`.
+  name: string;
+  role: string;
+  fields: Schema;
+  // The `key: true` field, or null. What a `ref` points at by default.
+  key: string | null;
+}
+
+// The canonical schema. `core/schema.js` is the only module that builds one, and
+// every other reader takes it — so nothing re-sniffs how the author spelled it.
+export interface SchemaSpec {
+  structure: Structure;
+  tables: Record<string, TableSchema>;
+  // role -> table NAME. The indirection that makes table names renameable.
+  byRole: Record<string, string>;
+  // The primary table's NAME: `data` for a table, the `nodes` table for a network.
+  // A bare-array `data` seeds this one, and a mark with no `table` draws it.
+  primary: string;
+}
 
 // What a scale can DO, sniffed from the scale object itself and stamped once at
 // creation/adoption. Marks, edits and axes branch on `kind` — never on `type`,
@@ -242,7 +313,13 @@ export interface Edit {
   // isAxis — and the engine dev-warns when the mark it's attached to lacks it,
   // instead of leaving you a silently dead gesture. See SCOPE_CAPABILITY in
   // core/elicit.js.
-  scope: 'line' | 'axis' | 'arc' | 'stack' | 'waffle' | 'geo' | 'trend' | null;
+  scope: 'line' | 'axis' | 'arc' | 'stack' | 'waffle' | 'geo' | 'trend' | 'network' | null;
+  // Which TABLE this edit's proposal replaces, named by ROLE. Omitted (all but the
+  // graph edits), it writes the table its own mark draws — which is what every edit
+  // did before structures, and still is on a single-table chart. `edit.network.connect`
+  // sets `'links'`: it is placed on a NODE mark, so its gesture lands on a node row
+  // while its proposal is a link row.
+  table?: string;
   threshold: number;
   // anchor()/draw(): which line a new point joins.
   into?: 'nearest' | 'new';
@@ -846,6 +923,18 @@ export interface MarkRequirement {
   why?: string;
 }
 
+// What a joining mark gets as build()'s fifth argument. Read-only.
+export interface MarkBuildContext {
+  // Every table's committed rows, keyed by table NAME.
+  tables: Record<string, Datum[]>;
+  // The canonical schema, so a mark can find another table by ROLE (`byRole.nodes`)
+  // and read its key column — never by hard-coding a name the author may have changed.
+  schema: SchemaSpec;
+  // Which table THIS mark is drawing, already resolved (an explicit `table`, else
+  // the one filling the mark's `tableRole`).
+  table: string;
+}
+
 export interface Mark {
   /**
    * The one required method: emit this mark's scene nodes for the current rows.
@@ -855,8 +944,25 @@ export interface Mark {
     currentData: Datum[],
     scales: ScaleMap,
     width: number,
-    height: number
+    height: number,
+    // The rest of the dataset, for a mark whose geometry JOINS to another table —
+    // `link` resolves an edge's endpoints in the node table. Optional and additive:
+    // every other mark takes four parameters and ignores this one.
+    context?: MarkBuildContext
   ): FeatureNode[];
+
+  /**
+   * Which TABLE of the dataset this mark is a view over, by NAME. Omitted, the mark
+   * takes the table filling its `tableRole` — which is how a spec that renamed its
+   * tables needs no `table:` written anywhere. Ignored on a single-table chart.
+   */
+  table?: string;
+  /**
+   * The ROLE whose table this mark draws when it states no `table`. Set by the mark
+   * factory, not the author: `link` declares `'links'`, everything else leaves it
+   * unset and gets the structure's primary table.
+   */
+  tableRole?: string;
 
   /** The channel map — also the source resolveScales reads to build scales. */
   channels?: Channels;
@@ -1334,13 +1440,22 @@ export interface ElicitSpec {
   // encoding some columns and (where it carries an edit) writing them back. Marks
   // never own data. May be omitted: with a `schema`, scales resolve and `create`
   // mints rows from nothing.
-  data?: Datum[];
+  //
+  // A bare array is the PRIMARY table's rows — which is every single-table chart.
+  // A multi-table structure keys its rows by table NAME (`{ nodes, links }`, or
+  // whatever the schema called them); a table left out seeds `[]`, so a diagram
+  // built entirely by gesture needs no `data` at all.
+  data?: Datum[] | Record<string, Datum[]>;
   // The elicited-dataset schema (field -> measurement type/domain/default), and
   // the contract of the chart. REQUIRED: it owns every field's data type and
   // DOMAIN, so a mark never declares one. A field encoded but left out of the
   // schema is inferred from `data` with a dev-warning; a field with neither a
   // schema entry nor data throws (there is nothing to build a scale from).
-  schema: Schema;
+  //
+  // A bare field map is a single-table schema (the form every pre-structure spec
+  // uses, and it stays valid); declare a `structure` to elicit a network. See
+  // SchemaInput / SchemaSpec above.
+  schema: SchemaInput;
   // Read-only rows. `'seed'` (or `true`) fixes the rows in `data` — they are given,
   // not elicited — while every row an edit ADDS stays free; a predicate locks rows
   // by what they are. A locked row can't be changed or deleted by any gesture (a
@@ -1353,8 +1468,11 @@ export interface ElicitSpec {
   // re-derive from the repaired rows on the next render. A mark's own `constraints`
   // are promoted into this set (see MarkOptions.constraints).
   constraints?: Constraint[];
-  // Called with the committed dataset after each edit. Hover previews never fire it.
-  onChange?: (data: Datum[]) => void;
+  // Called with the committed dataset after each edit, shaped like `data` itself
+  // (a bare array for a single-table chart). Hover previews never fire it.
+  // Declared as a METHOD, not a function-valued property, so it stays bivariant: a
+  // single-table consumer (every widget) may hand in a plain (rows: Datum[]) => void.
+  onChange?(data: Datum[] | Record<string, Datum[]>): void;
   // Global axis convenience: `false` = no axes; `{ x, y }` = per-channel config or
   // `false` to suppress that channel; omitted = default axes on both positional
   // channels. Desugars into composable axis/grid marks.
@@ -1436,14 +1554,17 @@ export interface WidgetOptions {
 // dataset; `on` subscribes to commits and stage changes. These add no interaction
 // path — edits + constraints remain the only way a gesture mutates data.
 export interface ElicitElement extends HTMLDivElement {
-  // A deep copy of the committed dataset.
-  getData(): Datum[];
+  // A deep copy of the committed dataset. Shaped like `spec.data`: a bare array for
+  // a single-table chart, one array per table NAME for a multi-table structure.
+  getData(): Datum[] | Record<string, Datum[]>;
   // A deep copy of the engine-owned schema, including any DOMAIN an editable axis
   // (edit.axis.*) reshaped. The caller's original spec.schema is never mutated.
-  getSchema(): Schema;
+  // Returned in the spelling it was GIVEN in — a single-table chart gets its bare
+  // field map back, so the engine's canonical form never leaks.
+  getSchema(): SchemaInput;
   // Replace the dataset and re-render. Bypasses constraints (trusted seed/reset).
   // Also clears the undo history: a reseed is a new starting point, not an edit.
-  setData(data: Datum[]): void;
+  setData(data: Datum[] | Record<string, Datum[]>): void;
   // Step back / forward one GESTURE. A drag is one entry however many commits it
   // made along the way; a click or a typed commit is its own. Both restore the
   // dataset AND the schema (an axis edit reshapes a domain) and fire 'change'.
@@ -1457,6 +1578,10 @@ export interface ElicitElement extends HTMLDivElement {
   // (primaryIndex | null, indices[])). Selection is not the belief data, so it has
   // its OWN event — a 'select' listener hears it, 'change'/getData never do.
   // Returns an unsubscribe function.
+  //
+  // 'select' second argument: bare row indices for a single-table chart (a bare
+  // index names a row unambiguously there), `{ table, index }` for a multi-table
+  // one — where a number alone would name a row in no particular table.
   on(type: 'change' | 'stage' | 'select', cb: (...args: any[]) => void): () => void;
   // ── Selection: transient pipeline state, NOT the belief data. Its own tiny API
   // beside getData/setData because a `selected` data column is exactly what this

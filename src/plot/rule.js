@@ -26,7 +26,7 @@
 // handle's drag while an editable one still receives its own.
 
 import { baselineOf, isBand, bandStartOf, bandwidthOf } from '../core/scales.js';
-import { encodeChannel, categoryOf, resolveStyle, normalizeMarkOptions, positionalKeys } from './mark.js';
+import { encodeChannel, categoryOf, resolveStyle, normalizeMarkOptions, positionalKeys, markCommon} from './mark.js';
 
 /**
  * @param {any} options
@@ -59,11 +59,9 @@ function buildRule(options, forcedValueAxis) {
     const { xKey, yKey } = positionalKeys(channels);
 
     return {
-        id,
+        ...markCommon(opts),
         markName: 'rule',
         channels,
-        edits,
-        constraints,
         // A rule spans; it has no opinion about the discrete scale of the axis it
         // crosses. Left undefined so a composite can stamp its own onto it.
         discreteScale,

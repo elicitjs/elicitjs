@@ -40,7 +40,7 @@
 
 import { isBand, bandwidthOf, bandStartOf, baselineOf } from '../core/scales.js';
 import { warn } from '../core/dev.js';
-import { encodeChannel, categoryOf, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys } from './mark.js';
+import { encodeChannel, categoryOf, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon} from './mark.js';
 
 /** @param {any} scale @returns {[number, number]} */
 function domainExtent(scale) {
@@ -87,11 +87,9 @@ function buildWaffle(options, forcedOrientation) {
     const { xKey, yKey } = positionalKeys(channels);
 
     return {
-        id,
+        ...markCommon(opts),
         markName: 'waffle',
         channels,
-        edits,
-        constraints,
         discreteScale: 'band',
         xKey,
         yKey,

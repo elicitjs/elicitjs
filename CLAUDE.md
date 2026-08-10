@@ -18,11 +18,76 @@ Entry points: `src/index.js` (public API), `src/core/elicit.js` (engine), `src/p
 
 **Never branch on `scale.type`.** `type` is a label. Control flow reads the capability flags `createScale`/`adoptScale` stamp on every scale: `kind` (`band` | `point` | `continuous` | `discrete`), `temporal`, `invertible`. A `log` scale behaves exactly like a `linear` one everywhere it matters, and a user-supplied `d3.scaleBand()` has no `type` at all — an allowlist of type strings silently marks it non-invertible, so the chart draws and **every edit on that channel dies with no error**. Adding a scale type means adding a case in `core/scales.js` and nowhere else.
 
-**One dataset. `Elicit` owns it; marks never do.** A chart elicits exactly one dataset — even a slider elicits a one-row dataset. `data` lives on `ElicitSpec`; the engine holds it as a single array (`dataset` in `elicit.js`). A mark is a *view* over those rows: it encodes some columns and, where a channel carries an `edit`, writes them back. Do not add a `data` (or `onChange`) option to a mark factory, and do not reintroduce a per-feature data store keyed by feature id — that model made two marks over the same rows impossible and is what forced `composite` to fake a glyph inside one feature.
+**One dataset, whose STRUCTURE is declared. `Elicit` owns it; marks never do.** A
+chart elicits exactly one dataset — even a slider elicits a one-row dataset. Its
+STRUCTURE says what shape that dataset is: a set of named TABLES, each filling a
+ROLE the structure defines (`core/schema.js`'s `STRUCTURES` — `table` has the one
+role `data`, `network` has `nodes` and `links`). The engine holds them as
+`tables` in `elicit.js`, and a mark is a *view* over exactly ONE of them
+(`feature.table`): it encodes some columns and, where a channel carries an `edit`,
+writes them back. Do not add a `data` (or `onChange`) option to a mark factory, and
+do not reintroduce a per-feature data store keyed by feature id — that model made
+two marks over the same rows impossible and is what forced `composite` to fake a
+glyph inside one feature.
 
-**A whole-dataset edit belongs on exactly one mark.** A plane gesture carries no node, so it fans to *every* feature's plane-pick edits (`dispatchPlaneEdits`). With one dataset that means `create()` on two marks appends twice per click, and two `rotate()`s rotate twice. Direct-pick edits are immune — they route to the touched node's feature alone. The engine dev-warns (`warnDuplicatePlaneEdits`) rather than branching; keep it that way. Sequential composition of *direct* edits within one event is intended: a coupled edit writes fields, sibling marks re-derive on the next render.
+**A mark passes `id` / `edits` / `constraints` / `table` through VERBATIM, via
+`markCommon(opts)`.** One helper, spread first in every factory's returned object,
+because "a mark factory that accepts an option and drops it" has shipped here twice
+now: `rule` silently dropped all four for a long time (a draggable whisker was
+impossible), and `table` was added as a "universal" option that only `link` actually
+honoured — every other mark warned "unknown option" and drew the primary table. Four
+names in one place cannot drift the way four names in 29 places did. A key the mark
+states itself after the spread still wins (`bar`'s `edits: markEdits`).
 
-**A PROPOSAL is about the dataset, so every mark ghosts it.** `ui.preview` is keyed by feature id only so two probe marks can't clobber each other's parked proposal — it is not a statement about who *draws* one. When exactly one proposal is in flight, `update()`'s ghost pass builds **every** feature from it (see the `sole` fallback). This is load-bearing for any glyph split across marks: `trendBand` reads a spread that `trend` carries the edit for, and keying the ghost to the editing feature alone left the band frozen until the click, with no feedback while the reader aimed. Don't "optimize" the ghost pass back to the owning feature.
+**Which TABLE a mark draws.** A mark is a view over exactly one table. `table:` names
+it. With none, the mark takes the table filling its `tableRole` — `link` declares
+`'links'`, every other mark leaves it unset and gets the structure's PRIMARY table.
+The engine resolves this once, where features are flattened, and dev-warns on a name
+the schema doesn't declare. NAMES go in `table:`; ROLES go in `tableRole` and
+`Edit.table`. Chart elements (`views: 'scale'`) have no `table` — they draw a scale,
+not rows. A `composite` stamps its table onto its box and every part, because it
+desugars into features that each resolve their own.
+
+**The reason structures were affordable is that a mark, an edit and a constraint
+each still see ONE array.** The engine hands `tableOf(feature)` wherever it used to
+hand the single dataset, so no mark's `build()`, no edit's `apply()` and no
+constraint body changed. Keep it that way: if you find yourself passing a table map
+into a mark or an edit, you are about to build the second data path. (`build`'s
+optional 5th argument is the one exception, and it exists for `link` alone — a mark
+whose geometry JOINS to another table.)
+
+**`normalizeSchema` is the only place an author's schema spelling is read.** It
+applies the three sugars (a bare field map is a single-table schema; a bare table
+entry takes its role from its name; a bare-array `data` is the primary table) and
+returns the canonical `SchemaSpec`. Nothing else re-sniffs the shape. `getSchema()`
+and `getData()` DENORMALIZE on the way out, so a single-table chart still hands back
+the bare field map and the bare array it always did — the canonical form must never
+leak to a caller.
+
+**NAME and ROLE are different things, and defaults resolve by ROLE.** The name is
+the data key (`data.claims`); the role is what the structure means by it (`nodes`).
+A mark states a table by NAME (`table: 'links'`) but resolves its default by ROLE
+(`Mark.tableRole`), and `Edit.table` is a ROLE. That indirection is the whole reason
+an argument map can call its tables `claims`/`supports` and write no `table:`
+anywhere. Never hard-code `'nodes'`/`'links'` as a lookup key — go through
+`byRole`.
+
+**A `ref` is a data type, and referential integrity is not optional.** `type: 'ref'`
+declares that a column names a row of another table by its key (`key: true`); its
+domain is DERIVED from that column, so the two can never drift and a vocabulary is
+never declared twice. `key` also makes `mintDatum` give every minted row an IDENTITY
+(via `nextCategory`), because a row whose identity is null can be referenced by
+nothing — which is a SCHEMA fact, so it belongs in the shared minting core and not in
+an edit of its own. That is why there is no `addNode`: plain `create()` does it, on
+any table under any structure. Because the schema declares the rule, the ENGINE enforces it —
+`enforceRefs` drops rows whose reference no longer resolves after every commit, so
+deleting a node takes its links with it. Don't reimplement that as a user-supplied
+constraint: a constraint judges one table's rows and returns that table's rows,
+while a dangling reference is created in one table and repaired in another.
+
+**A whole-dataset edit belongs on exactly one mark PER TABLE.** A plane gesture carries no node, so it fans to *every* feature's plane-pick edits (`dispatchPlaneEdits`). Over one table that means `create()` on two marks appends twice per click, and two `rotate()`s rotate twice. `warnDuplicatePlaneEdits` groups by the table each edit WRITES, because two marks over different tables are not duplicates — a node mark's `create` and a link mark's own creator append to different arrays, and reporting them would make every network chart open with a warning telling you to delete one of two unrelated edits. Direct-pick edits are immune — they route to the touched node's feature alone. The engine dev-warns (`warnDuplicatePlaneEdits`) rather than branching; keep it that way. Sequential composition of *direct* edits within one event is intended: a coupled edit writes fields, sibling marks re-derive on the next render.
+
+**A PROPOSAL is about a TABLE, so every mark over that table ghosts it.** `ui.preview` is keyed by feature id only so two probe marks can't clobber each other's parked proposal — it is not a statement about who *draws* one. A parked proposal carries the table it is about (`{ table, rows }`), and when exactly one is in flight, `update()`'s ghost pass builds every feature OVER THAT TABLE from it (see the `sole` fallback). Both halves are load-bearing: an edit may propose rows for a table its own mark doesn't draw (`edit.network.connect` fires on a node mark and proposes a link row), and it is the LINK mark that has to draw the rubber band. This is load-bearing for any glyph split across marks: `trendBand` reads a spread that `trend` carries the edit for, and keying the ghost to the editing feature alone left the band frozen until the click, with no feedback while the reader aimed. Don't "optimize" the ghost pass back to the owning feature.
 
 **A mark is INERT until an edit names the column it writes.** No mark attaches an
 edit of its own — not even one whose whole point is manipulation. `trend` used to
@@ -100,6 +165,8 @@ draws — so the line the author sees IS the mapping, not a redrawing of it.
 
 **Scope goes in the name.** An edit that only works on marks with series grouping (a `line` family capability) belongs under `edit.line.*` and must set `scope: 'line'` in its descriptor (the engine dev-warns on a scope mismatch — see `warnScopeMismatch` and the `SCOPE_CAPABILITY` table in `elicit.js`). A genuinely universal edit (works on any mark) stays top-level in `edit.*`. Don't add a mark-specific edit to the top-level namespace "because it's simpler" — that's the flat-namespace problem the namespacing fixed.
 
+Note the namespace and the `scope` are separate decisions. `edit.network.*` is a namespace of two edits and only `rewire` sets `scope: 'network'` — it goes on a `link` mark, which declares `supportsNetwork`. `connect` goes on the NODE mark, which is an ordinary `point`/`rect`/`composite`, so there is no capability to check and setting a scope would only produce a false warning. Namespace by what the edit is ABOUT; scope only when a real mark capability is required.
+
 **One positional-resolution path.** Every mark resolves a datum → pixel through `encodeChannel` (`src/plot/mark.js`) for its value axis, and a datum → CATEGORY through `categoryOf` for its category axis, before handing that category to the band-geometry helpers (`bandwidthOf`/`bandStartOf`/`baselineOf`/`isBand`/`isDiscrete` in `core/scales.js`). `categoryOf` exists because the band axis used to read `datum[key]` raw in every band mark, so `{ fn }`/`{ datum }` worked on a bar's value axis and were silently ignored on its category axis. It also owns the last-resort "column named after the channel" fallback (and warns when it is used), which used to be spelled `(channels.x && channels.x.field) || 'x'` four different ways — see `positionalKeys`, the one source of `xKey`/`yKey` now. Pass `index`/`data` to every `encodeChannel`/`resolveStyle`/`resolveSymbol` call: a derived `{ fn }` channel takes `(d, i, data)`, and ten marks used to hand it `undefined` for the last two. Do not call `scale(d[key])` directly in a new mark — that reintroduces the "four different ways to place a point" inconsistency that existed across `bar`/`dot`/`rule` before the cleanup. `core/encoding.js` once carried a whole *second*, unused resolution path (`resolveChannel`/`resolveEncoding`/`adjustDatum`/`assignChannel`/`datumFromPointer`); it was deleted. Don't grow another.
 
 **`value` is visual space; `datum` is data space.** On a channel, `{ value: 25 }` is the output — it skips the scale, so on `y` it means pixel 25. `{ datum: 25 }` is in the field's own units and goes *through* the scale, so it lands where y = 25 is. Top-level constant shorthands (`fill: 'red'`, `size: 9`) desugar to `{ value }` via `normalizeMarkOptions`. Keep `SHORTHANDS` (what desugars) distinct from `STANDARD_STYLE_CHANNELS` (what `resolveStyle` sweeps onto a node): `size` belongs to the first only, because marks read it themselves.
@@ -153,7 +220,10 @@ exactly the edits that change how many categories exist.
 ## Adding a new mark
 
 **First: is it a mark at all, or an option on one?** The discriminator is the DATA MODEL,
-not the visual resemblance. `dotStack` is its own mark beside `point` because one row is
+not the visual resemblance. `link` is its own mark because its geometry comes from a
+JOIN — it draws a row of one table using positions held in another, which nothing else
+here does and no option on an existing mark could express (`rule`'s span mode reads
+its two endpoints off the SAME row). `dotStack` is its own mark beside `point` because one row is
 one TOKEN and the stack offset is fixed token geometry (`2r + gap`), not a value scale —
 the belief is `data.filter(d => d.bin === b).length`. `bar({ stack })` is an option because
 a stacked bar keeps one row = one value and one rect per row; only the baseline moves, and
@@ -218,6 +288,7 @@ would let an immovable glyph swallow the plane gesture aimed past it.
 
 - Universal (any mark) → `src/edit/basic.js`, exported top-level from `edit/index.js`.
 - Line-scoped → `src/edit/line.js`, added to the `line` object export (`edit.line.yourEdit`), `scope: 'line'` set.
+- Writing a table other than the one its mark draws → set `Edit.table` to the target ROLE. `computeEdit` then keeps `ctx.data` (the rows the proposal is about) and `ctx.index`/`ctx.datum` (the row the gesture touched) apart, and `targetTableOf` is the ONE place the destination is resolved — computeEdit and runEdit both read it, so a proposal can never be spliced over the wrong table.
 - Build it with `makeEdit` from `shared.js`; reuse `schemaDefaults`/`nextSeriesKey`/`markCenter` rather than reimplementing them.
 - If it needs proximity/target resolution, use `edit/pick.js`'s `nearestMark`/`nearestSeries`/`nearestMarkOnAxis` — don't write a second distance function.
 - If it needs a multi-event lifecycle, see "Multi-event lifecycles are drivers" above.
@@ -226,7 +297,10 @@ would let an immovable glyph swallow the plane gesture aimed past it.
 ## Naming conventions to preserve
 
 - `channels` is the mark's channel map (Observable Plot's word). `EditContext.markChannels` is that map as an edit sees it; `EditContext.channels` / `Edit.channels` are a *list of channel names*. Don't collapse the two.
-- `type` is always a **data** type (`MeasureType`). A scale type is named by `scale`, or by `ScaleSpec.type`. The two vocabularies never share a key.
+- `type` is always a **data** type (`MeasureType`). A scale type is named by `scale`, or by `ScaleSpec.type`. The DATASET's shape is named by `structure`. The three vocabularies never share a key — `structure` is spelled that way precisely because `type` was already taken twice (`shape`, `kind` and `mode` are all taken elsewhere too).
+- A structure's values are singular nouns naming the DATA's structure, never the visual: `table`, `network`, and later `hierarchy` / `matrix`. `network` rather than `graph`, because "graph" means "chart" in a viz library.
+- `table` is a NAME (the data key, the author's word); `role` is what the structure means by it. A mark's `table:` takes a name; `Mark.tableRole` and `Edit.table` take a role.
+- The structure, its edits and its capability flag share ONE word: `structure: 'network'`, `edit.network.*`, `scope: 'network'`, `supportsNetwork`. A driver keeps its own name (`connectDriver`) — that names a lifecycle, not a scope.
 - `size` is a radius in px, on every mark. Not `r`, not `handleRadius` — those were three names for one idea. A sub-element's radius is `handleSize`.
 - `fill` / `stroke` are the colour channels. There is no `color` channel (it used to mean a fill fallback on `point`/`line` *and* the label colour on `axis`).
 - `series` is the public option name; `seriesKey` is the internal feature field. Don't introduce a third synonym.
@@ -258,10 +332,19 @@ would let an immovable glyph swallow the plane gesture aimed past it.
 - A glyph-local position computed as pixel arithmetic on a radius, with an edit that reverses that arithmetic through a hand-rolled track. A composite box's local channel is a real scale; the edit inverts through it.
 - A second glyph mark beside `composite`. Box mode IS the local-frame case; `group` is an alias.
 - A discriminator for box mode read off a channel the composite DECLARES. Several plain glyphs set `x`/`y` on the composite so the parts inherit them; only a part asking for local units switches the mode.
-- Two edits on one mark that read the same component of a drag, or a `rotate` on a handle you grab at its own pivot.
+- Two edits on one mark that read the same component of a drag, or a `rotate` on a handle you grab at its own pivot. `edit.network.connect` beside a plain `move` is the sharpest case yet — `move` drags the source node along under the pointer, so connect resolves the release back to the node it started from and creates nothing at all. `warnConnectConflict` reports it; the fix is `when.shift` / `when.noShift`, not removing one.
 - A multi-event lifecycle that forces its edit onto the plane when all it needs is a dragstart snapshot. Claim it by capability and read `ctx.index`.
 - A per-mark scoped edit namespace for a glyph whose parameters are plain fields on ordinary parts. (`edit.face.*` existed for exactly that and is gone.)
 - A `domain` or `range` on a channel, or a `spec.x` / `spec.y` scale block. Domains live on the schema; scale config lives on `scale` (per channel) or `spec.scales` (per chart).
+- A second reading of the author's schema spelling. `normalizeSchema` is the only one; everything downstream takes the canonical `SchemaSpec`.
+- A hard-coded `'nodes'` / `'links'` / `'data'` table lookup. Resolve through `byRole`, or a table's name is not really renameable.
+- A `domain` declared on a `ref` field, or a second list of node ids beside the key column. A ref's domain is derived.
+- Referential integrity as a user-supplied constraint, or a constraint that returns rows for a table other than the one it was given.
+- A bare row index used as a chart-wide selection key. `ui.selection` is qualified by table (node 3 and link 3 are different rows); the index-based public API means the PRIMARY table.
+- A second glyph-joining mark beside `link`, or a mark that reads another FEATURE's built nodes. A join goes through the tables, not the scene.
+- A creating edit that exists only to fill a column the schema already describes. `addNode` was exactly that, and `create` + `key: true` replaced it.
+- A mark factory that returns `id`/`edits`/`constraints`/`table` by hand instead of spreading `markCommon(opts)`.
+- A network-shaped preset that is secretly network-aware. `node()` is a dot with a label over whatever table it is pointed at; it reads no schema (a preset runs at factory time, before there is a chart to ask).
 - A `scale.type === '…'` branch anywhere outside `core/scales.js`. Read `kind` / `temporal` / `invertible`.
 - A second name for a field on a mark: `channels` is the only place a field is named. (`x` once meant a field name on `bar`, a constant on `rule`, a scale config on `spec`, and nothing on `point`.)
 - A mark factory that accepts `edits` / `constraints` and drops them.

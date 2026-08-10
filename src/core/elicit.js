@@ -13,7 +13,10 @@ import { resolveEffects, stateEffectNodes, effectStyleFor, elementEffectOf } fro
 import { resolveTheme } from './theme.js';
 import { autoAxes } from './axes.js';
 import { reserveLegends, autoLegends } from './legends.js';
-import { validateDataset, inferMeasureOfDomain } from './schema.js';
+import {
+    validateTables, inferMeasureOfDomain,
+    normalizeSchema, denormalizeSchema, normalizeData, isBareForm, enforceRefs,
+} from './schema.js';
 import { axisOf, pointerForChannel } from './encoding.js';
 import { warn } from './dev.js';
 
@@ -54,6 +57,7 @@ const SCOPE_CAPABILITY = {
     waffle: { flag: 'supportsWaffle', expects: 'a waffle mark' },
     axis: { flag: 'isAxis', expects: 'an axis mark (axisX/axisY/axisRadial)' },
     trend: { flag: 'supportsTrend', expects: 'a trend mark (trend/trendBand)' },
+    network: { flag: 'supportsNetwork', expects: 'a link mark' },
 };
 
 // What a scale `kind` satisfies. A mark declares the CAPABILITY it needs, never a
@@ -152,23 +156,71 @@ function warnProjectionCartesianMix(features, scales) {
 }
 
 // A plane gesture carries no node, so it fans to EVERY feature's plane-pick edits.
-// With one dataset that means two marks each declaring `create()` append twice per
+// Two marks over the SAME table each declaring `create()` therefore append twice per
 // click. Direct-pick edits are immune (routed to the touched node's feature alone).
-// So: a whole-dataset edit belongs on exactly one mark. Warn rather than branch —
-// the engine stays ignorant of specific edit types.
-/** @param {any[]} features @param {(f: any) => import('../types').Edit[]} editsOf */
-function warnDuplicatePlaneEdits(features, editsOf) {
-    const owners = features.filter(f => editsOf(f).some(e => e.pick !== 'direct'));
-    if (owners.length < 2) return;
-    // Keyed by the offending mark set, not a module-level boolean: a docs page
-    // renders many charts, and a single global one-shot meant the second broken
-    // chart on a page never reported at all.
+// So: a whole-dataset edit belongs on exactly one mark PER TABLE. Warn rather than
+// branch — the engine stays ignorant of specific edit types.
+//
+// Scoped by the TABLE each edit writes, because two marks over different tables are
+// not duplicates at all: a node mark's `create` and a creator on a link mark append
+// to different arrays. Reporting them would make every network chart open with a
+// warning that says to delete one of two edits that do unrelated things.
+/**
+ * @param {any[]} features
+ * @param {(f: any) => import('../types').Edit[]} editsOf
+ * @param {(f: any, e: import('../types').Edit) => string} tableOfEdit
+ */
+function warnDuplicatePlaneEdits(features, editsOf, tableOfEdit) {
+    /** @type {Record<string, any[]>} */
+    const byTable = {};
+    for (const f of features) {
+        for (const e of editsOf(f)) {
+            if (e.pick === 'direct') continue;
+            const t = tableOfEdit(f, e);
+            const list = byTable[t] || (byTable[t] = []);
+            if (!list.includes(f)) list.push(f);
+        }
+    }
+    for (const [table, owners] of Object.entries(byTable)) {
+        if (owners.length < 2) continue;
+        // Keyed by the offending mark set, not a module-level boolean: a docs page
+        // renders many charts, and a single global one-shot meant the second broken
+        // chart on a page never reported at all.
+        warn(
+            `planedup:${table}:${owners.map(markLabel).join(',')}`,
+            `${owners.length} marks carry a plane-pick edit over the same rows ` +
+            `(marks ${owners.map(markLabel).join(', ')}). A plane gesture fans to all ` +
+            `of them, so a whole-dataset edit (create/remove/rotate/toggle) will apply once per ` +
+            `mark. Declare it on exactly one.`
+        );
+    }
+}
+
+// `connect` resolves its TARGET by finding the node nearest the pointer when the
+// drag ends. Any other unarbitrated drag edit on the same mark defeats that
+// completely: `move` drags the SOURCE node along under the pointer, so the nearest
+// node at release is the one the drag started from, and connect reads that as
+// "released on itself" and does nothing. Both gestures look reasonable in the spec
+// and neither reports anything — the whole feature is just silently dead, which is
+// the failure mode this codebase warns about rather than tolerates.
+//
+// The fix is arbitration, not removal: `move({ when: when.noShift })` beside
+// `connect({ when: when.shift })`, which is also how every diagram editor
+// distinguishes the two.
+/** @param {any} feature @param {import('../types').Edit[]} edits */
+function warnConnectConflict(feature, edits) {
+    const connects = edits.filter(e => e.type === 'connect' && !e.when);
+    if (!connects.length) return;
+    const rivals = edits.filter(e =>
+        e.type !== 'connect' && e.pick === 'direct' && e.gesture === 'drag' && !e.when);
+    if (!rivals.length) return;
     warn(
-        `planedup:${owners.map(markLabel).join(',')}`,
-        `${owners.length} marks carry a plane-pick edit over the one dataset ` +
-        `(marks ${owners.map(markLabel).join(', ')}). A plane gesture fans to all ` +
-        `of them, so a whole-dataset edit (create/remove/rotate/toggle) will apply once per ` +
-        `mark. Declare it on exactly one.`
+        `connectconflict:${markLabel(feature)}`,
+        `mark ${markLabel(feature)} carries edit.network.connect() beside ` +
+        `${rivals.map(e => `${e.type}()`).join(', ')}, and neither arbitrates with \`when\`. ` +
+        `A plain drag fans to both: the other edit moves the source node along under the ` +
+        `pointer, so connect finds that same node at release and creates nothing. Split ` +
+        `them — connect({ when: when.shift }) and ${rivals[0].type}({ when: when.noShift }).`
     );
 }
 
@@ -472,50 +524,146 @@ export function Elicit(spec) {
         if (!feature.id) { feature.id = `feature-${index}`; feature.autoId = true; }
     });
 
-    // 1. The belief store: ONE dataset for the chart. A chart elicits exactly one
-    //    dataset; every mark is a view over these rows, encoding some columns and
-    //    (where it carries an edit) writing them back. structuredClone rather than a
-    //    JSON round-trip so seed `Date` values survive for a time-scale edit.
-    /** @type {any[]} */
-    let dataset = structuredClone(spec.data || []);
+    // The engine OWNS the schema — an editable axis (edit.axis.*) reshapes a field's
+    // DOMAIN, which lives on the schema. Clone it so a domain edit never mutates the
+    // caller's spec object; resolveScales reads this copy every render, so a domain
+    // write reflows axis, grid, guides and marks for free.
+    //
+    // `normalizeSchema` (core/schema.js, the schema's owner) applies the author-side
+    // sugars once, here, and returns the canonical SchemaSpec — the structure, its
+    // named tables, and the role -> name binding. Nothing downstream re-sniffs how
+    // the author spelled it. `el.getSchema()` denormalizes on the way back out, so a
+    // single-table chart still sees the bare field map it always has.
+    /** @type {import('../types').SchemaSpec} */
+    const schemaSpec = normalizeSchema(structuredClone(spec.schema || {}));
+    // The PRIMARY table's field map, by identity — so the in-place domain writes
+    // below (and undo's restore) keep the canonical spec consistent for free.
+    /** @type {Record<string, import('../types').FieldSchema>} */
+    const schema = schemaSpec.tables[schemaSpec.primary].fields;
+
+    // 1. The belief store: ONE dataset for the chart, whose STRUCTURE the schema
+    //    declares. Every mark is a view over one of its tables, encoding some
+    //    columns and (where it carries an edit) writing them back. structuredClone
+    //    rather than a JSON round-trip so seed `Date` values survive for a
+    //    time-scale edit; `normalizeData` splits them per table (a bare array is the
+    //    primary table, which is every single-table chart).
+    /** @type {Record<string, any[]>} */
+    let tables = normalizeData(structuredClone(spec.data ?? null), schemaSpec);
+
+    // Every mark draws exactly ONE table, so the engine hands `tableOf(feature)`
+    // wherever it used to hand the single dataset — which is why no mark's build(),
+    // no edit's apply() and no constraint body had to change for structures.
+    /** @param {any} feature @returns {any[]} */
+    const tableOf = (feature) => tables[feature.table] || [];
+    // WHICH TABLE an edit writes. THE one place this is decided — computeEdit reads
+    // it to build the proposal and runEdit reads it to commit, so the two can never
+    // disagree and splice a link proposal over the node rows. An edit names its
+    // target by ROLE (`table: 'links'`) so a renamed schema still resolves; with none
+    // it writes the table its own mark draws, which is every pre-structure edit.
+    /** @param {any} feature @param {import('../types').Edit} edit @returns {string} */
+    const targetTableOf = (feature, edit) =>
+        (edit && edit.table && schemaSpec.byRole[edit.table]) || feature.table;
+    // The PRIMARY table: what a bare-array `data` seeds, what a mark with no `table`
+    // draws, and what the index-addressed selection API means.
+    const primaryRows = () => tables[schemaSpec.primary];
+    // The dataset in the caller's own spelling, for getData/onChange: a bare array
+    // when that is how it came in (every single-table chart), else keyed by table.
+    const shapeData = () => (isBareForm(schemaSpec) ? primaryRows() : tables);
+
+    // Which TABLE each feature is a view over, resolved once. A mark states a table
+    // by NAME (`table: 'links'`); with none, it takes the table filling its ROLE —
+    // `link` asks for `links`, every other mark for the structure's primary. Going
+    // through the role is what makes renaming free: a schema that calls its tables
+    // `claims`/`supports` needs no `table:` written anywhere.
+    features.forEach((feature) => {
+        const named = feature.table;
+        if (named != null && !schemaSpec.tables[named]) {
+            warn(
+                `${markLabel(feature)}:table:${named}`,
+                `mark ${markLabel(feature)} draws table "${named}", which the schema does not ` +
+                `declare. Declared tables: ${Object.keys(schemaSpec.tables).map((n) => `"${n}"`).join(', ')}. ` +
+                `Falling back to "${schemaSpec.primary}".`
+            );
+        }
+        feature.table = (named != null && schemaSpec.tables[named])
+            ? named
+            : (schemaSpec.byRole[feature.tableRole] || schemaSpec.primary);
+    });
 
     // Read-only rows (see core/lock.js). `lock: 'seed'` fixes the rows the chart was
     // seeded with — they are given, not elicited — while leaving every later row
     // free; a predicate locks rows by what they ARE. Two halves: a dataset invariant
     // (run last in computeEdit, so a lock has the final word) and a `locked` stamp on
     // those rows' scene nodes, which makes them pointer-transparent and invisible to
-    // proximity picking. `seedCount` is a live read because setData re-seeds.
-    let seedCount = dataset.length;
-    const isLocked = resolveLock(spec.lock, () => seedCount);
-    const lockRows = isLocked ? lockConstraint(isLocked) : null;
+    // proximity picking.
+    //
+    // Seeding is PER TABLE — "the rows this table started with" — so the predicate
+    // and its constraint are resolved per table and memoized. The counts are read
+    // live because setData re-seeds.
+    /** @type {Record<string, number>} */
+    let seedCounts = {};
+    for (const name of Object.keys(tables)) seedCounts[name] = tables[name].length;
+    /** @type {Record<string, ((d: any, i: number) => boolean) | null>} */
+    const lockPredicates = {};
+    /** @type {Record<string, import('../types').Constraint | null>} */
+    const lockConstraints = {};
+    /** @param {string} name @returns {((d: any, i: number) => boolean) | null} */
+    const isLockedIn = (name) => {
+        if (!(name in lockPredicates)) {
+            lockPredicates[name] = resolveLock(spec.lock, () => seedCounts[name] || 0, name);
+        }
+        return lockPredicates[name];
+    };
+    /** @param {string} name @returns {import('../types').Constraint | null} */
+    const lockRowsIn = (name) => {
+        if (!(name in lockConstraints)) {
+            const pred = isLockedIn(name);
+            lockConstraints[name] = pred ? lockConstraint(pred) : null;
+        }
+        return lockConstraints[name];
+    };
 
-    // The engine OWNS the schema too — an editable axis (edit.axis.*) reshapes a
-    // field's DOMAIN, which lives on the schema. Clone it so a domain edit never
-    // mutates the caller's spec object; resolveScales reads this copy every render,
-    // so a domain write reflows axis, grid, guides and marks for free. Exposed
-    // read-only via el.getSchema(). A `{ ...spec, schema }` view is what the
-    // resolver sees (spec.scales and the rest pass through untouched).
-    /** @type {Record<string, import('../types').FieldSchema>} */
-    const schema = structuredClone(spec.schema || {});
     // Check the SEED rows against that contract once, here (see core/schema.js for
     // the checks and why each is a defect). Seed rows are the only place a mismatch
     // can originate: an edit mints from schemaDefaults and writes through a channel's
     // own field, so it cannot introduce an undeclared column.
-    validateDataset(schema, dataset);
+    validateTables(schemaSpec, tables);
     // The resolver sees the RESOLVED theme (not the raw spec.theme partial), so its
     // colour-scale range fallback can read theme.palette/ramp/diverging.
-    const liveSpec = { ...spec, schema, theme };
+    const liveSpec = { ...spec, schema, schemaSpec, theme };
 
     // The dataset's invariants, gathered once. A mark may declare `constraints` as
     // sugar; they are promoted here, so an invariant holds for EVERY edit over the
     // rows, whichever mark fired it — that is what makes a constraint declared on
     // one part of a glyph gate a drag on another. Deduped by identity so the same
     // constraint object listed on several marks runs once.
-    /** @type {import('../types').Constraint[]} */
-    const datasetConstraints = [...new Set([
-        ...(spec.constraints || []),
-        ...features.flatMap(f => f.constraints || [])
-    ])];
+    //
+    // Promotion is scoped to a TABLE, because a constraint is an invariant over ROWS
+    // and two tables' rows are different things — a rule written about nodes must not
+    // run on a link edit and see columns it has never heard of. A mark's constraint
+    // takes that mark's table; one declared on `spec.constraints` takes the primary
+    // table unless it names another (`constraint.table`, a role or a name). On a
+    // single-table chart every constraint lands in the one bucket, exactly as before.
+    /** @type {Record<string, import('../types').Constraint[]>} */
+    const constraintsByTable = {};
+    /** @param {import('../types').Constraint} c @param {string} table */
+    const promoteConstraint = (c, table) => {
+        const list = constraintsByTable[table] || (constraintsByTable[table] = []);
+        if (!list.includes(c)) list.push(c);
+    };
+    for (const c of spec.constraints || []) {
+        const named = /** @type {any} */ (c).table;
+        promoteConstraint(c, (named && (schemaSpec.byRole[named] || (schemaSpec.tables[named] && named)))
+            || schemaSpec.primary);
+    }
+    for (const f of features) {
+        for (const c of f.constraints || []) promoteConstraint(c, f.table);
+    }
+    /** @param {string} table @returns {import('../types').Constraint[]} */
+    const constraintsIn = (table) => constraintsByTable[table] || [];
+    // The primary table's invariants, for the guide layer (a guide draws a rule about
+    // a mark, and resolves the mark's own table through guideCtx.tableOf).
+    const datasetConstraints = constraintsIn(schemaSpec.primary);
 
     // Auto-guides: an edit declared `guide: true` self-draws its guide (constraint
     // bounds + nearest snap ring) without the caller repeating the feature id in a
@@ -583,15 +731,43 @@ export function Elicit(spec) {
     // than being painted by the renderer straight off d3.drag — that split is why
     // `grabbed` used to honour `filter` and silently ignore the rest of its vocabulary
     // (and never drew an outline at all).
-    /** @type {{ session: Record<string, any>, preview: Record<string, any[]> | null, selection: Set<number>, hover: { featureId: string, index: number } | null, grab: { featureId: string, index: number } | null }} */
+    /** @type {{ session: Record<string, any>, preview: Record<string, { table: string, rows: any[] }> | null, selection: Set<string>, hover: { featureId: string, index: number } | null, grab: { featureId: string, index: number } | null }} */
     const ui = { session: {}, preview: null, selection: new Set(), hover: null, grab: null };
+
+    // Selection is stored QUALIFIED BY TABLE. A bare row index is ambiguous the
+    // moment a dataset has more than one table — node 3 and link 3 are different
+    // rows — and the effects pass keys its highlight by index, so an unqualified set
+    // would light up a link because a node with the same index was selected.
+    //
+    // The public surface stays index-based: every existing chart has one table, and
+    // `el.select(3)` / `getSelection()` mean that table's row 3. The qualification is
+    // internal, and only a multi-table chart ever sees it.
+    /** @param {string} table @param {number} index @returns {string} */
+    const selKey = (table, index) => `${table}\u0000${index}`;
+    /** @param {string} key @returns {{ table: string, index: number }} */
+    const selParse = (key) => {
+        const at = key.indexOf('\u0000');
+        return { table: key.slice(0, at), index: Number(key.slice(at + 1)) };
+    };
+    /** The selected row indices belonging to one table, as a Set. */
+    /** @param {string} table @returns {Set<number>} */
+    const selectionIn = (table) => {
+        /** @type {Set<number>} */
+        const out = new Set();
+        for (const key of ui.selection) {
+            const s = selParse(key);
+            if (s.table === table) out.add(s.index);
+        }
+        return out;
+    };
 
     // The primary selected datum index (the sole member under single-exclusive
     // selection), or null. Stale indices — a selected row later removed — read as
-    // null rather than pointing at a shifted row.
+    // null rather than pointing at a shifted row. Reads the PRIMARY table, which is
+    // what a single-table chart's "the selection" has always meant.
     const selectionPrimary = () => {
-        for (const i of ui.selection) {
-            if (i >= 0 && i < dataset.length) return i;
+        for (const i of selectionIn(schemaSpec.primary)) {
+            if (i >= 0 && i < primaryRows().length) return i;
         }
         return null;
     };
@@ -628,7 +804,7 @@ export function Elicit(spec) {
     let txn = null;
 
     const snapshot = () => ({
-        data: structuredClone(dataset),
+        tables: structuredClone(tables),
         schema: structuredClone(schema),
         width: curW,
         height: curH,
@@ -636,7 +812,7 @@ export function Elicit(spec) {
 
     /** @param {any} snap */
     const restoreSnapshot = (snap) => {
-        dataset = structuredClone(snap.data);
+        tables = structuredClone(snap.tables);
         // Replace the schema's CONTENTS: `schema` is captured by closures (and read
         // by resolveScales each render), so rebinding the name would strand them.
         for (const k of Object.keys(schema)) delete schema[k];
@@ -670,8 +846,8 @@ export function Elicit(spec) {
     // Notify a committed change. One place, so undo/redo tell the caller exactly
     // what an edit does.
     const notifyChange = () => {
-        if (spec.onChange) spec.onChange(dataset);
-        for (const cb of listeners.change) cb(structuredClone(dataset));
+        if (spec.onChange) spec.onChange(shapeData());
+        for (const cb of listeners.change) cb(structuredClone(shapeData()));
     };
 
     // Notify a selection change. Selection is not the belief data, so it is a
@@ -679,7 +855,13 @@ export function Elicit(spec) {
     // `getData` never do.
     const notifySelect = () => {
         const primary = selectionPrimary();
-        for (const cb of listeners.select) cb(primary, [...ui.selection]);
+        // A single-table chart reports bare row indices, as it always has. A
+        // multi-table one reports {table, index}, because a bare number there names
+        // no particular row.
+        const all = isBareForm(schemaSpec)
+            ? [...selectionIn(schemaSpec.primary)]
+            : [...ui.selection].map(selParse);
+        for (const cb of listeners.select) cb(primary, /** @type {any} */ (all));
     };
 
     // Commit a SELECTION edit's proposal. Like a domain edit it writes engine state
@@ -692,9 +874,9 @@ export function Elicit(spec) {
     // the gesture path renders once. The external el.select* wrappers, which call
     // this OUTSIDE a dispatch, render themselves.
     /** @param {{ index?: number | null, exclusive?: boolean, toggle?: boolean, clear?: boolean }} sel */
-    const commitSelectionEdit = (sel) => {
+    const commitSelectionEdit = (sel, table = schemaSpec.primary) => {
         const before = [...ui.selection].join(',');
-        applySelection(sel);
+        applySelection(sel, table);
         const after = [...ui.selection].join(',');
         if (before === after) return false;
         notifySelect();
@@ -705,13 +887,14 @@ export function Elicit(spec) {
     // an `exclusive` write clears the set first; `toggle` deselects a row that is
     // already the sole selection (click-to-toggle-off); `clear` empties it.
     /** @param {{ index?: number | null, exclusive?: boolean, toggle?: boolean, clear?: boolean }} sel */
-    const applySelection = (sel) => {
+    const applySelection = (sel, table = schemaSpec.primary) => {
         if (sel.clear || sel.index == null) { ui.selection.clear(); return; }
-        const has = ui.selection.has(sel.index);
+        const key = selKey(table, sel.index);
+        const has = ui.selection.has(key);
         const sole = has && ui.selection.size === 1;
         if (sel.exclusive !== false) ui.selection.clear();
         if (sel.toggle && sole) return; // toggled the sole selection off — leave empty
-        ui.selection.add(sel.index);
+        ui.selection.add(key);
     };
 
     // The most recently built scene nodes per feature, so plane-pick edits can
@@ -747,7 +930,7 @@ export function Elicit(spec) {
     //    mutate it. `scales` is a channel map { x, y, fill, size, … }; unused
     //    channels are absent.
     const dims = { width: innerWidth, height: innerHeight };
-    let scales = resolveScales(features, dataset, liveSpec, dims);
+    let scales = resolveScales(features, tables, liveSpec, dims);
 
     // Set up container. 'fixed' pins pixel dims; the responsive modes fill the
     // parent's width (the SVG scales via viewBox in 'scale', or is redrawn at the
@@ -800,7 +983,7 @@ export function Elicit(spec) {
         if (hasLegends) {
             effectiveMargins = { ...authorMargins };
             recomputeInner();
-            const provisional = resolveScales(features, dataset, liveSpec, dims);
+            const provisional = resolveScales(features, tables, liveSpec, dims);
             /** @type {any} */ (provisional).theme = theme; // measure reads legend font tokens
             const bands = reserveLegends(features, provisional, authorMargins);
             effectiveMargins = {
@@ -814,7 +997,7 @@ export function Elicit(spec) {
 
         // Re-resolve global scales so inferred domains follow the live data, and
         // an edited schema domain (edit.axis.*) reshapes every axis/grid/mark.
-        scales = resolveScales(features, dataset, liveSpec, dims);
+        scales = resolveScales(features, tables, liveSpec, dims);
         // Chart-level geographic projection (Plot model): shared apply/invert/path
         // for every geo mark and edit.geo.*. Attached on the scale map so build()
         // and edit ctx see the same object without a second argument.
@@ -852,16 +1035,22 @@ export function Elicit(spec) {
             }
         }
 
-        warnDuplicatePlaneEdits(features, activeEdits);
-
-        // The committed rows are ALWAYS what the marks draw. A hover/drag preview no
-        // longer substitutes the dataset (that made committed marks jump/flicker —
-        // worst on a matrix); instead the proposal is drawn as an inert ghost of only
-        // the rows it would change, layered on top by the ghost pass below.
-        const currentData = dataset;
+        warnDuplicatePlaneEdits(features, activeEdits, targetTableOf);
 
         features.forEach(feature => {
-            const nodes = feature.build(currentData, scales, innerWidth, innerHeight);
+            // The committed rows of the feature's OWN table are always what it draws.
+            // A hover/drag preview no longer substitutes them (that made committed
+            // marks jump/flicker — worst on a matrix); instead the proposal is drawn
+            // as an inert ghost of only the rows it would change, by the pass below.
+            const currentData = tableOf(feature);
+            const isLocked = isLockedIn(feature.table);
+            // A mark that joins ACROSS tables (link) needs more than its own rows: the
+            // whole dataset, the canonical schema (to find another table by ROLE), and
+            // which table it is itself drawing. Passed as a 5th argument, so every
+            // existing mark's four-parameter build() is untouched.
+            const nodes = feature.build(currentData, scales, innerWidth, innerHeight, {
+                tables, schema: schemaSpec, table: feature.table,
+            });
             featureNodes[feature.id] = nodes;
 
             const declaredEdits = collectEdits(feature);
@@ -871,6 +1060,7 @@ export function Elicit(spec) {
             warnCreateOnNonMark(feature, declaredEdits, scales);
             warnCreateEmptyExtent(feature, declaredEdits, liveSpec.schema);
             warnDeadEditChannels(feature, declaredEdits, scales);
+            warnConnectConflict(feature, declaredEdits);
 
             // A feature with an ACTIVE direct-pick edit is interactive on its marks,
             // so the renderer should show an editable cursor on them. Plane-pick
@@ -921,25 +1111,40 @@ export function Elicit(spec) {
             // exactly one proposal in flight it is THE proposal and every feature
             // renders it. With two, each proposing feature keeps its own — there is
             // no single answer for a bystander, so it stays out of it.
+            //
+            // A proposal names the TABLE it is about, because an edit can propose
+            // rows for a table other than the one its mark draws — `edit.network.connect`
+            // fires on a node mark and proposes a LINK row. Only features over that
+            // table ghost it, which is both what makes the rubber band appear on the
+            // link mark and what stops a node mark from ghosting rows that aren't its.
             const inFlight = Object.values(ui.preview);
             const sole = inFlight.length === 1 ? inFlight[0] : null;
             for (const feature of features) {
                 // A chart element draws a SCALE, not rows, so it has no ghost to show.
                 if (feature.views === 'scale') continue;
-                const proposed = ui.preview[feature.id] || sole;
-                if (!proposed) continue;
+                const proposal = ui.preview[feature.id] || sole;
+                if (!proposal || proposal.table !== feature.table) continue;
+                const proposed = proposal.rows;
+                const committed = tableOf(feature);
 
                 // Which rows the proposal changes, by reference identity.
                 /** @type {Set<number>} */
                 const changedIdx = new Set();
-                let anyChanged = proposed.length !== dataset.length;
-                const n = Math.max(proposed.length, dataset.length);
+                let anyChanged = proposed.length !== committed.length;
+                const n = Math.max(proposed.length, committed.length);
                 for (let i = 0; i < n; i++) {
-                    if (proposed[i] !== dataset[i]) { changedIdx.add(i); anyChanged = true; }
+                    if (proposed[i] !== committed[i]) { changedIdx.add(i); anyChanged = true; }
                 }
                 if (!anyChanged) continue;
 
-                const ghostNodes = feature.build(proposed, scales, innerWidth, innerHeight);
+                const ghostNodes = feature.build(proposed, scales, innerWidth, innerHeight, {
+                    // A ghosted LINK has to resolve its endpoints against the proposed
+                    // rows too — otherwise a preview that moves a node draws the ghost
+                    // link to where the node used to be.
+                    tables: { ...tables, [proposal.table]: proposed },
+                    schema: schemaSpec,
+                    table: feature.table,
+                });
                 ghostNodes.forEach((/** @type {any} */ node) => {
                     const keep = node.index != null ? changedIdx.has(node.index) : anyChanged;
                     if (!keep) return;
@@ -957,7 +1162,12 @@ export function Elicit(spec) {
         // purely visual (non-interactive) annotations.
         const guideCtx = {
             scales,
-            data: currentData,
+            // The primary table's rows — what a chart-level guide means by "the data".
+            // A guide drawn about a MARK reads that mark's own table (and that table's
+            // invariants) through tableOf / constraintsIn.
+            data: primaryRows(),
+            tableOf,
+            constraintsIn,
             constraints: datasetConstraints,
             features,
             featureNodes,
@@ -1001,11 +1211,15 @@ export function Elicit(spec) {
         // dragging is still the selected one, so the two merge rather than compete
         // (effectStyleFor resolves the overlap in EFFECT_STATES order).
         //
-        // Drawn per FEATURE and keyed by DATUM index — one dataset, so hovering a bar
-        // lights its label up too.
-        const selected = new Set(ui.selection);
+        // Drawn per FEATURE and keyed by DATUM index, so hovering a bar lights its
+        // label up too — and per TABLE, so selecting node 3 does not also light up
+        // link 3 in a network.
+        /** @type {Record<string, Set<number>>} */
+        const selectedByTable = {};
         for (const feature of features) {
             if (feature.views === 'scale') continue;
+            const selected = selectedByTable[feature.table]
+                || (selectedByTable[feature.table] = selectionIn(feature.table));
             const marks = featureNodes[feature.id] || [];
 
             /** @type {Set<number>} */
@@ -1099,7 +1313,15 @@ export function Elicit(spec) {
      * @returns {any[] | { __domain?: import('../types').DomainEditResult, __selection?: any } | null}
      */
     const computeEdit = (feature, edit, event, index) => {
-        const currentData = dataset;
+        // WHERE the gesture landed and WHAT it writes are usually the same table, and
+        // for every edit that existed before structures they are the same by
+        // construction. They come apart for a cross-table edit — `edit.network.connect`
+        // is placed on a NODE mark (so `index` addresses a node row) but proposes a
+        // LINK row — so the edit may name its target by ROLE, and the two are tracked
+        // separately rather than conflated.
+        const sourceRows = tableOf(feature);
+        const targetTable = targetTableOf(feature, edit);
+        const currentData = tables[targetTable] || [];
         const markChannels = feature.channels || {};
         // A node built inside a composite's local FRAME carries the very scales it was
         // encoded through (plot/composite.js stamps `node.frame`). Overlay them so the
@@ -1111,9 +1333,18 @@ export function Elicit(spec) {
         const editScales = frameScalesFor(feature, event.node, index) || scales;
         const resolved = resolveChannels(edit.channels, markChannels, editScales, feature.views === 'scale');
         const ctx = {
+            // The rows the proposal is ABOUT (apply returns rows for this table)...
             data: currentData,
-            datum: index != null ? currentData[index] : undefined,
+            // ...while `index`/`datum` address the row the gesture actually touched,
+            // which belongs to the mark's own table. Identical on every same-table
+            // edit, which is all of them but the graph pair.
+            datum: index != null ? sourceRows[index] : undefined,
             index,
+            // The whole dataset, for an edit that has to look ACROSS tables (rewire
+            // resolves a node id from the node rows while writing a link row). Named
+            // by table, and read-only by convention like every other ctx member.
+            tables,
+            table: targetTable,
             pointer: { x: event.x, y: event.y },
             node: event.node || null,
             event: event.rawEvent,
@@ -1136,10 +1367,15 @@ export function Elicit(spec) {
             // axis edit recovers the outer size from an inner axis length (inner +
             // margins). Harmless to other edits.
             margins: effectiveMargins,
-            // The engine-owned dataset schema, so a mint (create) can populate
-            // every declared field with its default (or null) — not just the
-            // positional ones — and an axis domain edit reads a field's domain.
-            schema,
+            // The engine-owned schema of the table this edit WRITES, so a mint
+            // (create) populates every declared field with its default (or null) —
+            // not just the positional ones — and an axis domain edit reads a field's
+            // domain. Table-scoped, so a connect() mints a link row from the link
+            // table's defaults rather than the node table's.
+            schema: (schemaSpec.tables[targetTable] || schemaSpec.tables[schemaSpec.primary]).fields,
+            // The whole canonical schema, for a cross-table edit that has to find
+            // another table's key column (rewire reads the node table's key).
+            schemaSpec,
             xKey: feature.xKey || 'x',
             yKey: feature.yKey || 'y',
             // The feature's series (grouping) field and its current scene nodes, so
@@ -1184,8 +1420,17 @@ export function Elicit(spec) {
         // other invariant still can't write a read-only row.
         /** @param {any[]} rows @returns {any[] | null} the repaired rows, or null if rejected */
         const runInvariants = (rows) => {
-            const invariants = [...datasetConstraints, ...edit.constrain, ...(lockRows ? [lockRows] : [])];
-            const cctx = { activeIndex: activeIndexOf(rows), scales, markChannels };
+            const lockRows = lockRowsIn(targetTable);
+            const invariants = [
+                ...constraintsIn(targetTable), ...edit.constrain, ...(lockRows ? [lockRows] : []),
+            ];
+            const cctx = {
+                activeIndex: activeIndexOf(rows), scales, markChannels,
+                // The rest of the dataset and which table these rows are, for an
+                // invariant that spans tables. Pure data, like everything else a
+                // constraint sees — still no pixels.
+                tables, table: targetTable,
+            };
             let out = rows;
             for (const constraint of invariants) {
                 const r = constraint(out, currentData, cctx);
@@ -1266,14 +1511,21 @@ export function Elicit(spec) {
         if (!proposed) return false;
         // A domain edit reshapes the schema (and maybe the dataset / chart size).
         if (proposed && !Array.isArray(proposed) && proposed.__domain) {
-            return commitDomainEdit(proposed.__domain);
+            return commitDomainEdit(proposed.__domain, targetTableOf(feature, edit));
         }
         // A selection edit writes ui.selection, not the belief data.
         if (proposed && !Array.isArray(proposed) && proposed.__selection) {
-            return commitSelectionEdit(proposed.__selection);
+            return commitSelectionEdit(proposed.__selection, targetTableOf(feature, edit));
         }
         recordHistory();
-        dataset = /** @type {any[]} */ (proposed);
+        // A proposal replaces the table the EDIT targets, which is not always the
+        // table its mark draws (see computeEdit). Getting this wrong would overwrite
+        // the wrong table wholesale, so the target is resolved the one way, there.
+        tables[targetTableOf(feature, edit)] = /** @type {any[]} */ (proposed);
+        // Deleting a row can strand REFERENCES to it in another table, which no
+        // single-table constraint can see or repair. The schema already declares the
+        // rule (`type: 'ref'`), so the engine enforces it — see enforceRefs.
+        enforceRefs(schemaSpec, tables);
         ui.preview = null;
         notifyChange();
         return true;
@@ -1285,14 +1537,24 @@ export function Elicit(spec) {
     // remove/rename deletes/relabels rows), and resize the chart for grow-mode
     // numeric drag. Then notify. The next update() re-resolves scales from the new
     // schema, so axis/grid/guides/marks all reflow.
-    /** @param {import('../types').DomainEditResult} result @returns {boolean} */
-    const commitDomainEdit = (result) => {
+    /**
+     * @param {import('../types').DomainEditResult} result
+     * @param {string} [table] the table the edit writes; its schema owns the domains,
+     *   and its rows are what a coupled data change replaces.
+     * @returns {boolean}
+     */
+    const commitDomainEdit = (result, table = schemaSpec.primary) => {
         recordHistory();
+        const fields = (schemaSpec.tables[table] || schemaSpec.tables[schemaSpec.primary]).fields;
         for (const [field, domain] of Object.entries(result.domains || {})) {
-            const prev = schema[field];
-            schema[field] = { ...(prev || { type: inferMeasureOfDomain(domain) }), domain };
+            const prev = fields[field];
+            fields[field] = { ...(prev || { type: inferMeasureOfDomain(domain) }), domain };
         }
-        if (Array.isArray(result.data)) dataset = result.data;
+        if (Array.isArray(result.data)) {
+            tables[table] = result.data;
+            // A category removal deletes rows, which can strand references to them.
+            enforceRefs(schemaSpec, tables);
+        }
         if (result.resize) applyResize(result.resize);
         ui.preview = null;
         notifyChange();
@@ -1333,8 +1595,13 @@ export function Elicit(spec) {
         if (!newData || !Array.isArray(newData)) return false;
         // Park the proposal under THIS feature's id, so a second probe mark's preview
         // can't overwrite it. update()'s ghost pass renders only the changed rows.
+        //
+        // It carries the TABLE it is about, because the ghost is drawn by whichever
+        // marks view that table — which is not always the mark that proposed it. A
+        // connect drag proposes a link row from a node mark, and it is the link mark
+        // that has to draw the rubber band.
         if (!ui.preview) ui.preview = {};
-        ui.preview[feature.id] = newData;
+        ui.preview[feature.id] = { table: targetTableOf(feature, edit), rows: newData };
         return true;
     };
 
@@ -1438,7 +1705,7 @@ export function Elicit(spec) {
             const dctx = {
                 feature, event, edits: matching,
                 marks: featureNodes[fid] || [],
-                data: dataset,
+                data: tableOf(feature),
                 // Read-only: lets a driver (e.g. brush) encode a channel's current
                 // pixel position for hit-zone classification, without reinventing
                 // scale lookup — the same global scales every edit already inverts through.
@@ -1515,7 +1782,7 @@ export function Elicit(spec) {
             if (!from) return;
             const feature = features.find((f) => f.id === node.featureId);
             const channels = (feature && feature.channels) || {};
-            const datum = node.index != null ? dataset[node.index] : node.data;
+            const datum = node.index != null ? (feature ? tableOf(feature) : [])[node.index] : node.data;
             // Inside a composite's frame the datum's position is a LOCAL one, so read it
             // (and step it) through the node's own frame scales — the same overlay
             // computeEdit applies when the resulting drag arrives.
@@ -1589,19 +1856,24 @@ export function Elicit(spec) {
     const el = /** @type {import('../types').ElicitElement} */ (/** @type {any} */ (container));
     // A deep copy so callers can't mutate the live store; structuredClone (not a
     // JSON round-trip) preserves Date values a time-scale edit may have written.
-    el.getData = () => structuredClone(dataset);
+    el.getData = () => structuredClone(shapeData());
     // A deep copy of the engine-owned schema, so a caller can read a DOMAIN an
     // editable axis reshaped (the caller's original spec.schema is never mutated).
-    el.getSchema = () => structuredClone(schema);
+    // Denormalized back to the spelling it was GIVEN in: a single-table chart gets
+    // its bare field map, so the engine's canonical form never leaks outward.
+    el.getSchema = () => structuredClone(denormalizeSchema(schemaSpec));
     // Replace the dataset and re-render. Bypasses constraints by design:
     // constraints gate GESTURES; caller-supplied data is trusted (seeding/reset).
     // That includes the lock: setData RE-SEEDS the chart, so under `lock: 'seed'`
     // the rows it hands in become the new read-only seed.
-    el.setData = (/** @type {any[]} */ data) => {
-        dataset = structuredClone(data);
+    el.setData = (/** @type {any[] | Record<string, any[]>} */ data) => {
+        // Same split as the seed: a bare array is the primary table, a keyed object
+        // names its tables. So a caller's setData(rows) keeps working verbatim.
+        tables = normalizeData(structuredClone(data ?? null), schemaSpec);
         // A reseed is new seed data, so it gets the same contract check as spec.data.
-        validateDataset(schema, dataset, 'setData()');
-        seedCount = dataset.length;
+        validateTables(schemaSpec, tables, 'setData()');
+        seedCounts = {};
+        for (const name of Object.keys(tables)) seedCounts[name] = tables[name].length;
         ui.preview = null;
         ui.hover = null;   // the pointer's row index is new too
         ui.grab = null;    // and any in-flight grab points at a row that just moved
@@ -1640,7 +1912,8 @@ export function Elicit(spec) {
     // Exclusive: the named row becomes the sole selection, replacing whatever was
     // selected.
     el.select = (/** @type {number | null} */ index) => {
-        const i = index == null || index < 0 || index >= dataset.length ? null : index;
+        const rows = primaryRows();
+        const i = index == null || index < 0 || index >= rows.length ? null : index;
         return driveSelection({ index: i, exclusive: true, toggle: false, clear: i == null });
     };
 
@@ -1652,7 +1925,7 @@ export function Elicit(spec) {
         const match = typeof where === 'function'
             ? /** @type {(d: any, i: number) => boolean} */ (where)
             : (/** @type {any} */ d) => d && d[where] === value;
-        const i = dataset.findIndex(match);
+        const i = primaryRows().findIndex(match);
         return el.select(i < 0 ? null : i);
     };
 
@@ -1717,7 +1990,7 @@ export function Elicit(spec) {
         const dragPointer = (/** @type {any} */ feature, /** @type {any} */ edit, /** @type {any} */ value) => {
             const node = nodeAt(feature, index);
             const center = markCenter(node);
-            const datum = dataset[index];
+            const datum = primaryRows()[index];
             const channels = feature.channels || {};
             // Forward-encode through the SAME scales the edit will invert — which,
             // inside a composite's frame, are the node's own (see frameScalesFor).

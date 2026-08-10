@@ -493,7 +493,44 @@ export function seriesFieldOf(opts, channels = {}) {
  * Options every mark accepts, whatever it draws.
  * @type {string[]}
  */
-const UNIVERSAL_OPTIONS = ['channels', 'id', 'edits', 'constraints'];
+const UNIVERSAL_OPTIONS = ['channels', 'id', 'edits', 'constraints', 'table'];
+
+/**
+ * The options every mark must pass through VERBATIM, gathered in one place.
+ *
+ * Spread this first in a factory's returned object; any key the mark states
+ * itself afterwards wins (`bar` renames its own to `edits: markEdits`). One
+ * helper because "a mark factory that accepts `edits`/`constraints` and drops
+ * them" is a bug this codebase has already shipped once — `rule` silently
+ * dropped all four for a long time, which made a draggable whisker impossible.
+ * Four names in one place cannot drift the way four names in 29 places did.
+ *
+ * ── WHICH TABLE A MARK DRAWS ───────────────────────────────────────────────
+ * A mark is a view over exactly ONE table of the dataset. `table:` names it.
+ * With none, the mark takes the table filling its `tableRole` — `link` declares
+ * `'links'`, every other mark leaves it unset and so gets the structure's
+ * PRIMARY table, which on a single-table chart is the only one there is. The
+ * engine resolves this once, where features are flattened, and dev-warns on a
+ * name the schema doesn't declare.
+ *
+ * NAMES go in `table:`; ROLES go in `tableRole` and `Edit.table`. That
+ * indirection is what lets a schema call its tables `claims`/`supports` and
+ * need no `table:` written anywhere.
+ * @param {any} opts the result of normalizeMarkOptions
+ * @returns {{ id: any, edits: any, constraints: any, table: any }}
+ */
+export function markCommon(opts) {
+    return {
+        id: opts.id,
+        // Mark-level edits (joint / arbitrary); channel-level edits live in
+        // channels[ch].edit. Both are gathered by the engine via collectEdits.
+        edits: opts.edits,
+        // Data invariants, promoted by the engine into the dataset's constraint
+        // set and run on every edit commit, from any mark (see elicit.js).
+        constraints: opts.constraints,
+        table: opts.table,
+    };
+}
 
 /**
  * Option names that are WRONG in a specific, diagnosable way, each with the

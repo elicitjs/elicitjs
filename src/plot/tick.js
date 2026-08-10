@@ -1,6 +1,6 @@
 // @ts-check
 import { isBand, bandSpan } from '../core/scales.js';
-import { encodeChannel, categoryOf, encodeAngle, resolveStyle, normalizeMarkOptions, themeOf, markDefaults, positionalKeys } from './mark.js';
+import { encodeChannel, categoryOf, encodeAngle, resolveStyle, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon} from './mark.js';
 
 // tick: a thin line-segment mark (Observable Plot's tick). It marks a VALUE on
 // one axis (the linear/continuous axis) and SPANS the other axis — a category
@@ -82,11 +82,9 @@ function buildTick(options, forcedValueAxis) {
     const { xKey, yKey } = positionalKeys(channels);
 
     return {
-        id,
+        ...markCommon(opts),
         markName: 'tick',
         channels,
-        edits,
-        constraints,
         // A tick sits within a band (like a bar) — it wants the band interval to
         // span, so it asks for the band variant of the categorical scale.
         discreteScale: 'band',

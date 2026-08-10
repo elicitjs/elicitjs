@@ -1,7 +1,7 @@
 // @ts-check
 import { isBand, baselineOf } from '../core/scales.js';
 import { claimEdge } from '../edit/shared.js';
-import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles } from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon} from './mark.js';
 
 // area: a filled path under a series (the distributional sibling of line). Same
 // grouping / ordering knobs as line; emits one filled `path` per series plus
@@ -88,11 +88,9 @@ function buildArea(options, forcedValueAxis) {
     const { channels, edits } = claimSpanEdges(spanPair, rawChannels, rawEdits);
 
     return {
-        id,
+        ...markCommon(opts),
         markName: 'area',
         channels,
-        edits,
-        constraints,
         discreteScale: 'point',
         xKey,
         yKey,

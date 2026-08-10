@@ -12,7 +12,7 @@
 //   geoLine     — coordinate lists / MultiLineString paths + vertex handles
 //   geoRect     — geographic AABB (west/south/east/north)
 
-import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, resolveHandles } from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, resolveHandles, markCommon} from './mark.js';
 import { textNodeAt, hasEditText } from './text.js';
 import { resolveFormat } from '../format.js';
 import { warn } from '../core/dev.js';
@@ -77,11 +77,9 @@ export function geoBasemap(options = {}) {
     const object = geojson || geoFeatures || null;
 
     return {
-        id,
+        ...markCommon(opts),
         markName: 'geoBasemap',
         channels,
-        edits,
-        constraints,
         supportsGeo: true,
         /**
          * @param {any[]} _currentData
@@ -173,13 +171,11 @@ export function geoTile(options = {}) {
     } = opts;
 
     return {
-        id,
+        ...markCommon(opts),
         markName: 'geoTile',
         channels,
         // Verbatim — map chrome rarely edits, but dropping these after normalize
         // made geoTile the only mark that silently discarded author-supplied edits.
-        edits,
-        constraints,
         supportsGeo: true,
         /**
          * @param {any[]} _currentData
@@ -248,11 +244,9 @@ export function geoPoint(options = {}) {
     const latKey = fieldOf(channels, 'lat') || 'lat';
 
     return {
-        id,
+        ...markCommon(opts),
         markName: 'geoPoint',
         channels,
-        edits,
-        constraints,
         supportsGeo: true,
         lonKey,
         latKey,
@@ -302,11 +296,9 @@ export function geoPolygon(options = {}) {
     const geomKey = fieldOf(channels, 'geometry') || 'geometry';
 
     return {
-        id,
+        ...markCommon(opts),
         markName: 'geoPolygon',
         channels,
-        edits,
-        constraints,
         supportsGeo: true,
         geometryKey: geomKey,
         /**
@@ -404,11 +396,9 @@ export function geoLine(options = {}) {
 
     if (rowMode) {
         return {
-            id,
+            ...markCommon(opts),
             markName: 'geoLine',
             channels,
-            edits,
-            constraints,
             supportsGeo: true,
             lonKey,
             latKey,
@@ -484,11 +474,9 @@ export function geoLine(options = {}) {
     }
 
     return {
-        id,
+        ...markCommon(opts),
         markName: 'geoLine',
         channels,
-        edits,
-        constraints,
         supportsGeo: true,
         coordinatesKey: coordsKey,
         geometryKey: geomKey,
@@ -585,11 +573,9 @@ export function geoText(options = {}) {
     const format = resolveFormat(formatOpt);
 
     return {
-        id,
+        ...markCommon(opts),
         markName: 'geoText',
         channels,
-        edits,
-        constraints,
         supportsGeo: true,
         lonKey,
         latKey,
@@ -628,11 +614,9 @@ export function geoRect(options = {}) {
     const northKey = fieldOf(channels, 'north') || 'north';
 
     return {
-        id,
+        ...markCommon(opts),
         markName: 'geoRect',
         channels,
-        edits,
-        constraints,
         supportsGeo: true,
         westKey,
         southKey,

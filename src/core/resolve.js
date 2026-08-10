@@ -35,6 +35,7 @@ import {
 // Scales re-resolve on every render, so a warning would repeat forever — `warn`
 // dedups once per key. See core/dev.js for why this is not gated on a build flag.
 import { warn as warnOnce } from "./dev.js";
+import { refDomain } from "./schema.js";
 
 /**
  * Bring the three forms a `scale` option can take to one shape.
@@ -55,25 +56,46 @@ function normalizeScaleOption(opt) {
 /**
  * Resolves global scales across features.
  * @param {any[]} features
- * @param {any[]} dataset the chart's one dataset (every mark is a view over it)
- * @param {import('../types').ElicitSpec} spec
+ * @param {Record<string, any[]>} tables the chart's dataset, one rows array per
+ *   TABLE name. Every mark is a view over exactly one of them (`feature.table`).
+ * @param {import('../types').ElicitSpec & { schema: import('../types').Schema, schemaSpec: import('../types').SchemaSpec }} spec
+ *   the engine's live spec view. `schema` is the PRIMARY table's field map (kept for
+ *   the single-table paths that predate structures); `schemaSpec` is the canonical
+ *   schema, which is how a field is looked up in its own table's contract.
  * @param {{ width: number, height: number }} dims
  * @returns {import('../types').ScaleMap}
  */
-export function resolveScales(features, dataset, spec, dims) {
+export function resolveScales(features, tables, spec, dims) {
   /** @type {Record<string, import('../types').FieldSchema>} */
   const schema = spec.schema || {};
+  /** @type {import('../types').SchemaSpec | null} */
+  const schemaSpec = spec.schemaSpec || null;
   /** @type {Record<string, import('../types').ScaleSpec>} */
   const chartScales = spec.scales || {};
 
-  // Accumulate, per channel: the fields feeding it (in first-seen order), any
-  // explicit data type or scale option, the mark's preferred discrete scale, and
-  // the flat list of values across all marks (for inference).
-  /** @type {Record<string, { fields: string[], measure?: any, scaleOpt?: any, discretePref?: any, values: any[] }>} */
+  // A feature's rows and its own table's field map. A scale is GLOBAL per channel,
+  // so several tables can feed one axis — but each field must be looked up in the
+  // contract of the table it came from, or a node's `weight` would be validated
+  // against a link's.
+  /** @param {any} feature @returns {any[]} */
+  const rowsOf = (feature) =>
+    (tables && (tables[feature.table] || tables[spec.schemaSpec ? spec.schemaSpec.primary : ''])) || [];
+  /** @param {any} feature @returns {Record<string, import('../types').FieldSchema>} */
+  const fieldsOf = (feature) => {
+    const t = schemaSpec && schemaSpec.tables[feature.table];
+    return (t && t.fields) || schema;
+  };
+
+  // Accumulate, per channel: the fields feeding it (in first-seen order), the
+  // FieldSchema each one resolved to (in the same order — a field name alone can't
+  // find its declaration once two tables share an axis), any explicit data type or
+  // scale option, the mark's preferred discrete scale, and the flat list of values
+  // across all marks (for inference).
+  /** @type {Record<string, { fields: string[], schemas: any[], undeclared: string[], measure?: any, scaleOpt?: any, discretePref?: any, values: any[] }>} */
   const acc = {};
 
   /** @param {string} ch */
-  const ensure = (ch) => acc[ch] || (acc[ch] = { fields: [], values: [] });
+  const ensure = (ch) => acc[ch] || (acc[ch] = { fields: [], schemas: [], undeclared: [], values: [] });
 
   // A channel's scale is keyed by the AXIS it shares, not its own literal name —
   // x1/x2 (span endpoints) union into the same bucket as x, y1/y2 into y, so they
@@ -156,7 +178,22 @@ export function resolveScales(features, dataset, spec, dims) {
 
       if (chSpec.field != null) {
         if (!a.fields.includes(chSpec.field)) a.fields.push(chSpec.field);
-        for (const d of dataset) a.values.push(d[chSpec.field]);
+        // The declaration is taken from the field's OWN table, here, while we still
+        // know which feature it came from — the bucket only keeps names.
+        const declared = fieldsOf(feature)[chSpec.field];
+        // A `ref` IS a category (its values are identities), but its domain belongs
+        // to the column it points at, so it is derived rather than declared — that is
+        // what keeps a link's source in step with the nodes that exist. Substituted
+        // here so the rest of resolution never learns that refs exist.
+        if (declared && declared.type === 'ref' && schemaSpec) {
+          a.schemas.push({
+            type: 'categorical',
+            domain: refDomain(schemaSpec, declared, tables),
+            open: true,
+          });
+        } else if (declared) a.schemas.push(declared);
+        else if (!a.undeclared.includes(chSpec.field)) a.undeclared.push(chSpec.field);
+        for (const d of rowsOf(feature)) a.values.push(d[chSpec.field]);
       } else if (chSpec.datum !== undefined) {
         // A data-space constant still needs the axis to exist and to span it.
         a.values.push(chSpec.datum);
@@ -175,9 +212,8 @@ export function resolveScales(features, dataset, spec, dims) {
     // 1D plot with a dropped axis relies on this too (marks fall back to centre).
     if (!a.fields.length && !hasData) continue;
 
-    const entries = a.fields.map((f) => schema[f]).filter(Boolean);
-    for (const f of a.fields) {
-      if (schema[f]) continue;
+    const entries = a.schemas;
+    for (const f of a.undeclared) {
       warnOnce(
         `schema:${f}:${bucket}`,
         `field "${f}" is encoded on channel "${bucket}" but not declared in ` +

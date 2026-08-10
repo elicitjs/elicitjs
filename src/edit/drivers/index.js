@@ -37,6 +37,7 @@ import { geoBrushDriver } from './geoBrush.js';
 import { probeDriver } from './probe.js';
 import { axisDragDriver } from './axisDrag.js';
 import { slideDriver } from './slide.js';
+import { connectDriver } from './connect.js';
 
 /**
  * @typedef {Object} DriverSession
@@ -45,7 +46,9 @@ import { slideDriver } from './slide.js';
  * @property {() => void} clear
  *
  * @typedef {Object} DriverPreview
- * @property {() => any[] | null} get
+ * @property {() => { table: string, rows: any[] } | null} get the parked proposal:
+ *   the rows it would commit, and WHICH TABLE they replace (an edit may propose for
+ *   a table other than the one its mark draws — see edit.network.connect).
  * @property {() => boolean} clear
  *
  * @typedef {Object} DriverStage
@@ -79,7 +82,7 @@ import { slideDriver } from './slide.js';
  */
 
 /** @type {Driver[]} */
-export const drivers = [planeDriver, nearestDriver, sweepDriver, drawDriver, brushDriver, brushRectDriver, geoBrushDriver, probeDriver, axisDragDriver, slideDriver];
+export const drivers = [planeDriver, nearestDriver, sweepDriver, drawDriver, brushDriver, brushRectDriver, geoBrushDriver, probeDriver, axisDragDriver, slideDriver, connectDriver];
 
 /**
  * Register a custom driver (or replace a built-in by the same `name`). The engine

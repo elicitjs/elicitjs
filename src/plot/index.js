@@ -13,6 +13,10 @@ export { text, textX, textY } from './text.js';
 export { dotStack, dotStackX, dotStackY } from './dotStack.js';
 export { waffle, waffleX, waffleY } from './waffle.js';
 export { needle } from './needle.js';
+// A network's edge: one row of the links table, drawn between the nodes it names.
+export { link } from './link.js';
+// A dot with a label, as one mark — a preset over composite (not network-specific).
+export { node } from './node.js';
 // Chart elements — prefer `elicit.elements.*`. Re-exported here as aliases so
 // existing `plot.axis` / `plot.legend` / `plot.axisRadial` specs keep working.
 export { axisRadial } from './axisRadial.js';
@@ -23,7 +27,7 @@ export { axis, axisX, axisY, grid, gridX, gridY } from './axis.js';
 export { legend, legendColor, legendSize, legendSymbol } from './legend.js';
 // Shared mark foundation — for authoring new marks (channel resolution + the
 // standard style surface). See mark.js.
-export { encodeChannel, encodeValue, encodeAngle, resolveStyle, normalizeMarkOptions, STANDARD_STYLE_CHANNELS } from './mark.js';
+export { encodeChannel, encodeValue, encodeAngle, resolveStyle, normalizeMarkOptions, markCommon, STANDARD_STYLE_CHANNELS } from './mark.js';
 export {
     polarToXY, arcPath, arcSpine, arcSpan, angularBand, needleTriangle, degToRad,
     ORIENT_SPAN,

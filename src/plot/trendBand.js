@@ -40,7 +40,7 @@
 // would run twice per gesture — see warnDuplicatePlaneEdits. Declare the edit on
 // the mark the reader grabs; the band re-derives on the next render.
 
-import { resolveStyle, normalizeMarkOptions, markDefaults, themeOf, encodeValue, positionalKeys, resolveHandles } from './mark.js';
+import { resolveStyle, normalizeMarkOptions, markDefaults, themeOf, encodeValue, positionalKeys, resolveHandles, markCommon} from './mark.js';
 import {
     paramChannels, readParams, anchorsOf, valueAt,
     lineSegment, envelopePolygon, nestedEnvelopes, sampleLines
@@ -57,9 +57,7 @@ export function trendBand(options = {}) {
             'anchor', 'probe', 'handles', 'handleSize', 'handleColor']
     });
     const {
-        id,
         edits,
-        constraints,
         render = 'region',
         levels = 5,
         samples = 60,
@@ -83,11 +81,9 @@ export function trendBand(options = {}) {
     const anchors = { anchor: anchorOpt, probe: probeOpt };
 
     return {
-        id,
+        ...markCommon(opts),
         markName: 'trendBand',
         channels,
-        edits,
-        constraints,
         supportsTrend: true,
         // Shares the trend's origin-crossing axis frame — a band without its line
         // is still a statement about intercept and slope.

@@ -51,8 +51,7 @@
 
 import {
     encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions,
-    themeOf, markDefaults, positionalKeys,
-} from './mark.js';
+    themeOf, markDefaults, positionalKeys, markCommon,} from './mark.js';
 
 // How many segments the hit polyline samples the quadratic into. Enough that the
 // straight-line error is well under the hit stroke's own width at any curvature.
@@ -109,11 +108,9 @@ function buildCurve(options, forcedSpanAxis) {
     const { xKey, yKey } = positionalKeys(channels);
 
     return {
-        id,
+        ...markCommon(opts),
         markName: 'curve',
         channels,
-        edits,
-        constraints,
         // A curve sits on a tick, not in an interval — it marks a position, and its
         // span is stated by its own endpoint channels.
         discreteScale: 'point',

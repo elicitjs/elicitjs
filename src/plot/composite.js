@@ -325,12 +325,17 @@ function frameTracks(channels, names, frame) {
 export function composite(options = {}) {
     // Desugar top-level shorthands (fill, angle, size, …) into composite channels
     // so `composite({ fill: 'steelblue', angle: 45, parts })` works like a mark.
-    const opts = normalizeMarkOptions(options, { mark: 'composite', allow: ['parts', 'discreteScale'] });
+    const opts = normalizeMarkOptions(options, { mark: 'composite', allow: ['parts', 'discreteScale', 'table'] });
     const {
         id,
         parts = [],
         constraints,
         edits,
+        // Which TABLE this glyph is a view over. A composite DESUGARS into separate
+        // features that each resolve their own table, so it has to be stamped onto
+        // the box and every part — otherwise a composite({ table }) would draw its
+        // parts from the primary table while its box drew the named one.
+        table,
         channels: groupChannels = {},
         // Glyphs usually sit in category slots; a band gives each part a centred
         // slot. Stamped onto parts that don't state their own preference. (Scale
@@ -443,6 +448,9 @@ export function composite(options = {}) {
             // Deterministic, stable ids so a part keeps its identity across renders
             // (the engine keys scene nodes and driver sessions by feature id).
             id: part.id || `${name}/${i}`,
+            // A part states its own table only to override the glyph's; otherwise
+            // the whole composite is one view over one table.
+            table: part.table || table,
             discreteScale: part.discreteScale || discreteScale,
             // Composite-level invariants ride on the first part in plain mode (in box
             // mode the box feature carries them). Placement is immaterial — the engine
@@ -492,6 +500,7 @@ export function composite(options = {}) {
         channels: boxChannels,
         constraints,
         edits,
+        table,
         discreteScale,
         ...positionalKeys(boxChannels),
         /**

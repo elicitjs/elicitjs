@@ -1,6 +1,6 @@
 // @ts-check
 import { isBand, bandwidthOf, bandStartOf, baselineOf } from '../core/scales.js';
-import { encodeChannel, encodeValue, categoryOf, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles } from './mark.js';
+import { encodeChannel, encodeValue, categoryOf, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon} from './mark.js';
 import { groupByPosition, stackLayout, stackDescriptor } from './stack.js';
 
 // bar: a rectangular mark that composes across orientations. The band axis is
@@ -136,11 +136,10 @@ function buildBar(options, forcedOrientation) {
     const hasStackEdit = markEdits.some((/** @type {any} */ e) => e && e.scope === 'stack');
 
     return {
-        id,
+        ...markCommon(opts),
         markName: 'bar',
         channels,
         edits: markEdits,
-        constraints,
         // Capability flag: what edit.stack.* needs to work (see SCOPE_CAPABILITY).
         // Only a STACKED bar partitions a total — an unstacked one is a set of
         // independent lengths, with no boundary between two rows to cut or drag.

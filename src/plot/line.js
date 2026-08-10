@@ -1,6 +1,6 @@
 // @ts-check
 import { isBand } from '../core/scales.js';
-import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles } from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon} from './mark.js';
 
 // line: a connected-path mark over an ordered set of points. It is deliberately
 // GENERAL — a you-draw-it curve, a multi-series line chart, a connected scatter
@@ -57,11 +57,9 @@ function buildLine(options, forcedValueAxis, defaultOrder = 'domain') {
     const seriesField = seriesFieldOf(opts, channels);
 
     return {
-        id,
+        ...markCommon(opts),
         markName: 'line',
         channels,
-        edits,
-        constraints,
         // A line's domain axis is continuous (a point per datum, no band width).
         discreteScale: 'point',
         xKey,

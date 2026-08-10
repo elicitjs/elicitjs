@@ -34,8 +34,7 @@
 
 import {
     encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions,
-    themeOf, markDefaults, positionalKeys,
-} from './mark.js';
+    themeOf, markDefaults, positionalKeys, markCommon,} from './mark.js';
 
 /**
  * @param {any} [options]
@@ -46,11 +45,9 @@ export function ellipse(options = {}) {
     const { channels = {}, id, edits, constraints } = opts;
 
     return {
-        id,
+        ...markCommon(opts),
         markName: 'ellipse',
         channels,
-        edits,
-        constraints,
         // Like a dot: its categorical axis wants a tick per category, not an interval.
         discreteScale: 'point',
         ...positionalKeys(channels),

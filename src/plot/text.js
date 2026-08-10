@@ -33,7 +33,7 @@
 //   textX — value on x, y parked at the vertical centre (a 1-D label along x)
 //   textY — value on y, x parked at the horizontal centre (a 1-D label along y)
 
-import { encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions, callChannelFn, markDefaults, positionalKeys } from './mark.js';
+import { encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions, callChannelFn, markDefaults, positionalKeys, markCommon} from './mark.js';
 import { warn } from '../core/dev.js';
 import { resolveFormat } from '../format.js';
 
@@ -163,11 +163,9 @@ function buildText(options, forcedAxis) {
     const format = resolveFormat(formatOpt);
 
     return {
-        id,
+        ...markCommon(opts),
         markName: 'text',
         channels,
-        edits,
-        constraints,
         // A label sits AT a category (a tick, no interval) when an axis is discrete.
         discreteScale: 'point',
         ...positionalKeys(channels),

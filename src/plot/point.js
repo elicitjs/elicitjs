@@ -26,7 +26,7 @@
 // A missing positional channel parks the dot at the centre of that dimension —
 // symmetric across x and y, so 1D-along-x and 1D-along-y are the same code path.
 
-import { encodeChannel, encodeAngle, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys } from './mark.js';
+import { encodeChannel, encodeAngle, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon} from './mark.js';
 
 /**
  * @param {any} [options]
@@ -37,15 +37,9 @@ export function point(options = {}) {
     const { channels = {}, id, edits, constraints, shape = 'circle' } = opts;
 
     return {
-        id,
+        ...markCommon(opts),
         markName: 'point',
         channels,
-        // Mark-level edits (joint / arbitrary); channel-level edits live in
-        // channels[ch].edit. Both are gathered by the engine via collectEdits.
-        edits,
-        // Data invariants, promoted by the engine into the dataset's constraint set
-        // and run on every edit commit, from any mark (see elicit.js).
-        constraints,
         // A dot's categorical axis wants a point per category (a tick, no width).
         discreteScale: 'point',
         // Field keys the interaction/constraint layer reads, derived from channels.

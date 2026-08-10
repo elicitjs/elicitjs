@@ -63,7 +63,7 @@
 // exists to state, and a default that cannot be turned off is not a default. Staging
 // goes on the edit (`edit.trend.slope({ stage: 1 })`), like every other edit's stage.
 
-import { resolveStyle, normalizeMarkOptions, markDefaults, encodeValue, positionalKeys, resolveHandles } from './mark.js';
+import { resolveStyle, normalizeMarkOptions, markDefaults, encodeValue, positionalKeys, resolveHandles, markCommon} from './mark.js';
 import { paramChannels, readParams, anchorsOf, lineSegment, valueAt } from './trendGeometry.js';
 
 /**
@@ -76,9 +76,7 @@ export function trend(options = {}) {
         allow: ['anchor', 'probe', 'handles', 'handleSize', 'handleColor']
     });
     const {
-        id,
         edits,
-        constraints,
         anchor: anchorOpt,
         probe: probeOpt,
         handles = true,
@@ -93,13 +91,9 @@ export function trend(options = {}) {
     const anchors = { anchor: anchorOpt, probe: probeOpt };
 
     return {
-        id,
+        ...markCommon(opts),
         markName: 'trend',
         channels,
-        constraints,
-        // Passed through verbatim, like every other mark. See the header: a trend
-        // attaches no edits of its own.
-        edits,
         // Signals autoAxes to cross at the origin when the chart leaves `axes` unset.
         isTrend: true,
         supportsTrend: true,
