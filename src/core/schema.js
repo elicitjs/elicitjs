@@ -111,12 +111,19 @@ function looksLikeFieldSchema(v) {
 }
 
 /**
- * Is this a table entry in WRAPPER form (`{ role?, fields }`) rather than the bare
- * field-map sugar?
+ * The keys a table WRAPPER may carry beside its columns. `role` is what the
+ * structure means by the table; `directed` is what an ordered pair of its `ref`
+ * columns means (see normalizeTable).
+ */
+const WRAPPER_KEYS = ['role', 'fields', 'directed'];
+
+/**
+ * Is this a table entry in WRAPPER form (`{ role?, directed?, fields }`) rather than
+ * the bare field-map sugar?
  *
  * A string `role` settles it: the wrapper's role is a string and a FieldSchema is
  * an object, so a COLUMN called `role` never trips this. Otherwise the entry must
- * consist of nothing BUT `role`/`fields` — checking only for a `fields` key would
+ * consist of nothing BUT the wrapper keys — checking only for a `fields` key would
  * read `{ fields: {type:'quantitative'}, x: {…} }` (a table with a column called
  * `fields`) as a wrapper and silently drop every other column.
  * @param {any} entry
@@ -126,7 +133,7 @@ function isTableWrapper(entry) {
     if (!entry || typeof entry !== 'object') return false;
     if (typeof entry.role === 'string') return true;
     if (!entry.fields || typeof entry.fields !== 'object') return false;
-    return Object.keys(entry).every((k) => k === 'role' || k === 'fields');
+    return Object.keys(entry).every((k) => WRAPPER_KEYS.includes(k));
 }
 
 /**
@@ -149,7 +156,20 @@ function keyFieldOf(fields, name) {
 }
 
 /**
- * Bring a table entry to `{ role, fields, key }`.
+ * Bring a table entry to `{ role, fields, key, directed }`.
+ *
+ * `directed` is a fact about what an ORDERED PAIR of this table's `ref` columns
+ * means, which is why it lives on the table rather than on a channel or on the
+ * schema root: it survives renaming (it is resolved through `byRole` like
+ * everything else), and it leaves room for further link semantics later without
+ * adding a key to the root that only one structure would ever read.
+ *
+ * It is deliberately TRI-STATE. `true` says source→target is a direction (arrows
+ * by default, reciprocal pairs drawn apart, `edit.network.reverse` meaningful);
+ * `false` says the pair is unordered (A→B and B→A are the same edge, so `connect`
+ * refuses the duplicate); `undefined` says the schema has no opinion, which is
+ * every chart written before this existed and must keep behaving identically.
+ *
  * @param {string} name the table's name (its data key)
  * @param {any} entry
  * @returns {import('../types').TableSchema}
@@ -177,7 +197,13 @@ function normalizeTable(name, entry) {
             );
         }
         const fields = entry.fields || {};
-        return { name, role: entry.role || name, fields, key: keyFieldOf(fields, name) };
+        return {
+            name,
+            role: entry.role || name,
+            fields,
+            key: keyFieldOf(fields, name),
+            ...(typeof entry.directed === 'boolean' ? { directed: entry.directed } : {}),
+        };
     }
     // Bare field-map sugar: the role is the table's own name.
     if (Object.prototype.hasOwnProperty.call(entry, RESERVED_FIELD)) {
@@ -275,7 +301,38 @@ export function normalizeSchema(schema) {
         );
     }
 
+    // `directed` says what an ordered pair of `ref` columns means, so it is only
+    // meaningful on the table that HAS such a pair. Declared anywhere else it reads
+    // as a statement that quietly does nothing.
+    for (const [name, table] of Object.entries(tables)) {
+        if (table.directed !== undefined && table.role !== 'links') {
+            warn(
+                `schema:directed:${name}`,
+                `table "${name}" declares \`directed\`, but that describes what an ordered ` +
+                `pair of \`ref\` columns means and this table fills the "${table.role}" role. ` +
+                `Move it to the table filling the "links" role, or drop it.`
+            );
+        }
+    }
+
     return { structure, tables, byRole, primary: byRole[def.primary] };
+}
+
+/**
+ * Is the network this schema describes DIRECTED? The one place the flag is read, so
+ * `link`, `connect` and `reverse` cannot disagree about it — and so nothing outside
+ * here has to know it lives on a table rather than on the structure.
+ *
+ * Returns `undefined` when the schema has no opinion, which callers must keep
+ * distinct from `false`: "unordered pair" and "not stated" ask for different
+ * defaults (see link's `arrow: 'auto'`).
+ * @param {import('../types').SchemaSpec} spec
+ * @returns {boolean | undefined}
+ */
+export function isDirected(spec) {
+    const name = spec && spec.byRole && spec.byRole.links;
+    const table = name ? spec.tables[name] : null;
+    return table ? table.directed : undefined;
 }
 
 /**
@@ -305,7 +362,10 @@ export function denormalizeSchema(spec) {
     /** @type {Record<string, any>} */
     const tables = {};
     for (const [name, t] of Object.entries(spec.tables)) {
-        tables[name] = t.role === name ? t.fields : { role: t.role, fields: t.fields };
+        const extra = t.directed !== undefined ? { directed: t.directed } : null;
+        tables[name] = t.role === name && !extra
+            ? t.fields
+            : { ...(t.role === name ? {} : { role: t.role }), ...extra, fields: t.fields };
     }
     return { structure: spec.structure, tables };
 }

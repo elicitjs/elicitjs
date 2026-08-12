@@ -49,8 +49,10 @@ export const STYLE_FIELDS = [
 /**
  * Partition scene nodes into paint layers. Role flags (`background`, `guide`,
  * `effect`) pin axes, edit guides, and interaction overlays; among ordinary
- * marks, **array order is z-order** (later features / composite parts / nodes
- * within a feature paint on top).
+ * marks, **array order is z-order** (later features / nodes within a feature
+ * paint on top). The engine has already settled that order — including a
+ * glyph's parts, which group per row rather than per part (`paintOrder` in
+ * core/scene.js) — so a renderer only has to preserve it.
  *
  * Paint stack (bottom → top):
  *   background → guideRegions → marks → guideFront → effects

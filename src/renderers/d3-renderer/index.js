@@ -165,6 +165,7 @@ export class D3Renderer {
     this._drawTextMarks(layers.marks, ofType(marks, "text"), {
       drag,
       markClick,
+      markDblClick,
       keys,
       hover,
     });
@@ -588,6 +589,20 @@ export class D3Renderer {
     return d3
       .drag()
       .clickDistance(4)
+      // THE POINTER, not the node. d3.drag's default subject is the bound datum,
+      // and it then reports `event.x/y` as `subject.x + (pointer - grabPointer)` —
+      // so on any node that happens to carry `x`/`y` the gesture arrives shifted by
+      // that node's own coordinate. A circle has cx/cy, so `s.x - p[0] || 0` fell
+      // to 0 and the whole library looked correct; a rect carries its TOP-LEFT, so
+      // every drag on one reported a pointer half a box up and to the left, and
+      // `move` wrote that as the centre — a sticker jumped (-w/2, -h/2) the moment
+      // you pressed it. It is not only `move`: ctx.pointer is what every edit
+      // inverts, what pick.js measures distance with, and what a driver anchors to.
+      // The canvas renderer sends the raw scene coordinate (renderers/canvas/
+      // events.js), so this was also the two renderers disagreeing about what a
+      // drag means. Stating the subject makes dx/dy zero: `event.x/y` is the
+      // pointer in scene coordinates, on every node type, in both renderers.
+      .subject((/** @type {any} */ event) => ({ x: event.x, y: event.y }))
       .on("start", function (event, d) {
         onEvent({
           type: "dragstart",
@@ -700,6 +715,13 @@ export class D3Renderer {
       .attr("y", (/** @type {any} */ d) => d.y)
       .attr("width", (/** @type {any} */ d) => d.width)
       .attr("height", (/** @type {any} */ d) => Math.max(0, d.height)) // no negative height
+      // Corner radius. GEOMETRY, not paint — it belongs here rather than in the
+      // style sweep, which is colours and stroke only. `ry` follows `rx` unless
+      // stated, so one number rounds a corner the way it reads.
+      .attr("rx", (/** @type {any} */ d) => (d.rx != null ? d.rx : null))
+      .attr("ry", (/** @type {any} */ d) =>
+        d.ry != null ? d.ry : d.rx != null ? d.rx : null,
+      )
       .attr("transform", (/** @type {any} */ d) => this._angleTransform(d));
   }
 
@@ -755,8 +777,35 @@ export class D3Renderer {
         d.fontSize != null ? d.fontSize : this._themeFontSize(),
       )
       // Math degrees on the node; _angleTransform converts to SVG rotate.
-      .attr("transform", (/** @type {any} */ d) => this._angleTransform(d))
-      .text((/** @type {any} */ d) => d.text);
+      .attr("transform", (/** @type {any} */ d) => this._angleTransform(d));
+
+    // Content. A WRAPPED label carries its painted lines in `lines` while `text`
+    // stays the whole string — so the single-line path below is the common case
+    // and the inline editor is still seeded with the paragraph, not one line.
+    sel.each(/** @this {SVGTextElement} */ function (/** @type {any} */ d) {
+      const node = d3.select(this);
+      const lines = Array.isArray(d.lines) ? d.lines : null;
+      if (!lines || lines.length <= 1) {
+        node.selectAll("tspan").remove();
+        node.text(lines ? lines[0] || "" : d.text);
+        return;
+      }
+      const size = d.fontSize != null ? d.fontSize : 12;
+      const step = d.lineHeight != null ? d.lineHeight : Math.round(size * 1.35);
+      // Centre the block on the node's own y: the anchor means the same thing
+      // whether one line or five are painted at it.
+      const first = (-(lines.length - 1) * step) / 2;
+      node.text(null);
+      node
+        .selectAll("tspan")
+        .data(lines)
+        .join("tspan")
+        .attr("x", d.x)
+        .attr("dy", (/** @type {any} */ _l, /** @type {number} */ i) =>
+          i === 0 ? first : step,
+        )
+        .text((/** @type {any} */ l) => l);
+    });
   }
 
   // -- semantic draws ------------------------------------------------------
@@ -1056,6 +1105,32 @@ export class D3Renderer {
   }
 
   /**
+   * The dblclick handler for a mark node: open the inline content editor when the
+   * node opted in, else the caller's ordinary handler.
+   *
+   * Routed by the FLAG, not by the node's shape. `editText` used to be a text-mark
+   * affair, so only `<text>` could be typed into — which is wrong for anything whose
+   * typable surface is a BOX (a sticker's body, a labelled rect), and forced such a
+   * glyph to put the edit on its glyphs, where the pick layer's `fontSize`-radius
+   * hit disc sits dead centre and swallows the drag that should move it.
+   * @param {((e: any, d: any) => void) | undefined} markDblClick
+   * @returns {(e: any, d: any) => void}
+   */
+  _dblClick(markDblClick) {
+    return (/** @type {any} */ event, /** @type {any} */ d) => {
+      if (d && d.editText) {
+        // Stop the browser's synthetic click/drag noise and keep dblclick from
+        // racing a dragstart when drag + editText share one mark.
+        event.preventDefault();
+        event.stopPropagation();
+        this._editText(event, d);
+        return;
+      }
+      if (markDblClick) markDblClick(event, d);
+    };
+  }
+
+  /**
    * Interactive marks: rects (bars) and circles (dots). Both get the click +
    * drag wiring; only nodes flagged `editable` (their feature has a direct-pick
    * edit) show an interactive cursor — d3.drag/click is inert on the rest.
@@ -1083,7 +1158,7 @@ export class D3Renderer {
         d.editable ? d.cursor || "ns-resize" : "default",
       )
       .on("click", markClick)
-      .on("dblclick", markDblClick)
+      .on("dblclick", this._dblClick(markDblClick))
       .call(drag)
       .call(hover)
       .call(keys);
@@ -1121,7 +1196,7 @@ export class D3Renderer {
       // a tilted collapsed bar hands its grab area to the wrong patch of the plane.
       .attr("transform", (/** @type {any} */ d) => this._angleTransform(d))
       .on("click", markClick)
-      .on("dblclick", markDblClick)
+      .on("dblclick", this._dblClick(markDblClick))
       .call(drag)
       .call(hover);
     // BOTTOM of the mark layer, not the top. A hit rect is a FALLBACK grab target —
@@ -1150,7 +1225,7 @@ export class D3Renderer {
         d.editable ? d.cursor || "move" : "default",
       )
       .on("click", markClick)
-      .on("dblclick", markDblClick)
+      .on("dblclick", this._dblClick(markDblClick))
       .call(drag)
       .call(hover)
       .call(keys);
@@ -1182,7 +1257,7 @@ export class D3Renderer {
         d.editable ? d.cursor || "move" : "default",
       )
       .on("click", markClick)
-      .on("dblclick", markDblClick)
+      .on("dblclick", this._dblClick(markDblClick))
       .call(drag)
       .call(hover)
       .call(keys);
@@ -1216,7 +1291,7 @@ export class D3Renderer {
         d.editable ? d.cursor || "move" : "default",
       )
       .on("click", markClick)
-      .on("dblclick", markDblClick)
+      .on("dblclick", this._dblClick(markDblClick))
       .call(drag)
       .call(hover)
       .call(keys);
@@ -1262,7 +1337,7 @@ export class D3Renderer {
     if (io) {
       sel
         .on("click", io.markClick)
-        .on("dblclick", io.markDblClick)
+        .on("dblclick", this._dblClick(io.markDblClick))
         .call(io.drag)
         .call(io.hover)
         .call(io.keys);
@@ -1277,7 +1352,7 @@ export class D3Renderer {
    * @param {any[]} texts
    * @param {{ drag: any, markClick: (e: any, d: any) => void, markDblClick?: (e: any, d: any) => void, keys: (sel: any) => void, hover: (sel: any) => void }} io
    */
-  _drawTextMarks(layer, texts, { drag, markClick, keys, hover }) {
+  _drawTextMarks(layer, texts, { drag, markClick, markDblClick, keys, hover }) {
     const sel = layer
       .selectAll("text.mark")
       .data(texts)
@@ -1291,13 +1366,9 @@ export class D3Renderer {
         d.editable ? d.cursor || "move" : "default",
       )
       .on("click", markClick)
-      .on("dblclick", (/** @type {any} */ event, /** @type {any} */ d) => {
-        // Stop the browser's synthetic click/drag noise and keep dblclick
-        // from racing a dragstart when drag + editText share one mark.
-        event.preventDefault();
-        event.stopPropagation();
-        this._editText(event, d);
-      })
+      // Opens the inline editor on a node that opted in; a text mark carrying an
+      // ordinary dblclick edit now reaches it, which it could not before.
+      .on("dblclick", this._dblClick(markDblClick))
       .call(drag)
       .call(hover)
       .call(keys);
@@ -1325,28 +1396,60 @@ export class D3Renderer {
     g.selectAll("foreignObject.text-editor").remove();
 
     const size = d.fontSize != null ? d.fontSize : 12;
-    const w = 140;
-    const h = size + 10;
+    // Where the editor sits, in three steps down. A node may state it outright
+    // (`editBox`); a RECT already is a box, so it needs no second statement of its
+    // own geometry; anything else falls back to the literal that has always been
+    // here, which is sized for a label hanging off a dot rather than for a shape.
+    const box =
+      d.editBox ||
+      (d.type === "rect" && d.width != null
+        ? { x: d.x, y: d.y, width: d.width, height: Math.max(0, d.height) }
+        : null);
+    const w = box ? box.width : 140;
+    const h = box ? box.height : size + 10;
+    const x = box ? box.x : d.x - w / 2;
+    const y = box ? box.y : d.y - h + 4;
+
     const fo = g
       .append("foreignObject")
       .attr("class", "text-editor")
-      .attr("x", d.x - w / 2)
-      .attr("y", d.y - h + 4)
+      .attr("x", x)
+      .attr("y", y)
       .attr("width", w)
       .attr("height", h);
-    const input = /** @type {HTMLInputElement} */ (
+    // A declared capability, never inferred from the box's height.
+    const multiline = !!d.multiline;
+    const input = /** @type {HTMLInputElement | HTMLTextAreaElement} */ (
       fo
-        .append("xhtml:input")
-        .attr("type", "text")
+        .append(multiline ? "xhtml:textarea" : "xhtml:input")
+        .attr("type", multiline ? null : "text")
         .style("width", "100%")
+        .style("height", multiline ? "100%" : null)
         .style("box-sizing", "border-box")
         .style("font-size", size + "px")
+        .style("font-family", "inherit")
         .style("text-align", "center")
+        .style("resize", multiline ? "none" : null)
         .node()
     );
-    input.value = d.text != null ? String(d.text) : "";
+    // Open with what is ALREADY there, so typing amends the note rather than
+    // replacing it. A node that paints text carries the string; one that only OWNS
+    // the edit (a sticker's box, whose label is a sibling mark) carries `editValue`,
+    // the engine's read of the column the edit writes. Painted text wins where both
+    // exist, so a formatted label still opens showing exactly what it displays.
+    input.value =
+      d.text != null
+        ? String(d.text)
+        : d.editValue != null
+          ? String(d.editValue)
+          : "";
     input.focus();
-    input.select();
+    // Where the caret lands. A single-line editor holds a NAME you replace (an axis
+    // category, a short label), so it opens selected — double-click-to-rename. A
+    // multi-line one holds a paragraph you AMEND, where select-all means the first
+    // keystroke wipes the note, so the caret goes to the end instead.
+    if (multiline) input.setSelectionRange(input.value.length, input.value.length);
+    else input.select();
 
     let done = false;
     const commit = () => {
@@ -1368,10 +1471,15 @@ export class D3Renderer {
       done = true;
       fo.remove();
     };
-    input.addEventListener("keydown", (/** @type {KeyboardEvent} */ e) => {
+    input.addEventListener("keydown", (/** @type {any} */ e) => {
       if (e.key === "Enter") {
-        e.preventDefault();
-        commit();
+        // In a multi-line box Enter is a newline — the only way to type a second
+        // line — so committing takes a modifier, blur, or Escape's sibling. On a
+        // single-line editor Enter commits, exactly as it always has.
+        if (!multiline || e.metaKey || e.ctrlKey) {
+          e.preventDefault();
+          commit();
+        }
       } else if (e.key === "Escape") {
         e.preventDefault();
         cancel();

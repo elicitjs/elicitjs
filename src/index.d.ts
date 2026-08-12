@@ -17,7 +17,10 @@ import type {
   FaceOptions,
   CompositeOptions,
   LegendEditOptions,
+  LinkOptions,
   MarkOptions,
+  NetworkConnectOptions,
+  NetworkEndpointOptions,
   NewSeriesOptions,
   Renderer,
   RotateOptions,
@@ -25,7 +28,9 @@ import type {
   TrendBandOptions,
   TrendEditOptions,
   TrendOptions,
+  MoveOptions,
   SlideOptions,
+  StickerOptions,
   Theme,
   ToggleOptions,
   WidgetOptions,
@@ -82,6 +87,11 @@ export const plot: {
   composite(options?: CompositeOptions): Mark;
   // Alias of `composite` — box mode used to be a separate mark.
   group(options?: CompositeOptions): Mark;
+  // One row of the links table, drawn between the two nodes it references.
+  link(options?: LinkOptions): Mark;
+  // Presets over `composite`: a dot with a label, and a note you can type into.
+  node(options?: MarkOptions): Mark;
+  sticker(options?: StickerOptions): Mark;
   axis(options?: MarkOptions): Mark;
   axisX(options?: MarkOptions): Mark;
   axisY(options?: MarkOptions): Mark;
@@ -121,7 +131,7 @@ export const elements: {
 };
 
 export const edit: {
-  move(options?: EditOptions): Edit;
+  move(options?: MoveOptions): Edit;
   moveSpan(options?: EditOptions): Edit;
   brushSpan(options?: BrushSpanOptions): Edit;
   brushRect(options?: BrushRectOptions): Edit;
@@ -161,6 +171,16 @@ export const edit: {
   };
   waffle: {
     fill(options?: EditOptions): Edit;
+  };
+  network: {
+    // Drag from one node to another. Goes on the NODE mark; the proposal is a
+    // link row, so it carries no `scope` (a node mark declares no capability).
+    connect(options?: NetworkConnectOptions): Edit;
+    // Drag a link's endpoint handle onto a different node. Goes on the `source`
+    // or `target` channel of a link mark.
+    rewire(options?: NetworkEndpointOptions): Edit;
+    // Swap a link's two ends. Goes on a link mark and lands on its hit path.
+    reverse(options?: NetworkEndpointOptions): Edit;
   };
   geo: {
     move(options?: EditOptions): Edit;
@@ -234,3 +254,26 @@ export const themes: Record<string, Theme>;
 export function setTheme(theme: DeepPartial<Theme> | null): void;
 export function resolveTheme(partial?: DeepPartial<Theme>): Theme;
 export const DEFAULT_THEME: Theme;
+
+/**
+ * The box a padded note of text occupies — `sticker`'s own sizing rule. Pass it the
+ * same options you gave the sticker, then hand the result to a connector that docks
+ * to the node's edge:
+ * `link({ channels: { nodeWidth: { fn: d => noteBox(d.label).width } } })`.
+ */
+export function noteBox(
+  text: string,
+  opts?: {
+    padding?: number;
+    maxWidth?: number;
+    minWidth?: number;
+    minHeight?: number;
+    fontSize?: number;
+    fontFamily?: string;
+    lineHeight?: number;
+  },
+): {
+  block: { lines: string[]; width: number; height: number; lineHeight: number };
+  width: number;
+  height: number;
+};

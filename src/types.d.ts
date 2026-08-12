@@ -120,6 +120,9 @@ export type Structure = 'table' | 'network';
 export interface TableSpec {
   role?: string;
   fields: Schema;
+  // Links only: does an ordered pair of this table's `ref` columns mean a
+  // DIRECTION? See TableSchema.directed — the flag is tri-state on purpose.
+  directed?: boolean;
 }
 
 // `ElicitSpec.schema` as an author may write it. A bare field map is a single-table
@@ -129,6 +132,30 @@ export type SchemaInput =
   | Schema
   | { structure: Structure; tables: Record<string, Schema | TableSpec> };
 
+// How a link is drawn between its two endpoints. A STYLE choice resolved per row,
+// not a manipulable geometry: there are no anchor points to drag.
+//   line                            straight
+//   step | stepBefore | stepAfter   elbow off the chord between two POINTS
+//   orthogonal                      elbow docked to each node's BOX, leaving it
+//                                   perpendicular to an edge chosen from where the
+//                                   two nodes sit (see `nodeWidth`/`nodeHeight`)
+//   arc                             quadratic bow, signed by `curvature`
+//   bezier | smooth                 cubic with axis-aligned tangents
+//   loop                            implicit when source === target
+export type LinkCurve =
+  | 'line' | 'step' | 'stepBefore' | 'stepAfter' | 'orthogonal'
+  | 'arc' | 'bezier' | 'smooth' | 'loop';
+
+// Which edge of a node a routed connector leaves by. `auto` derives it from the two
+// nodes' relative position. PRESENTATION, not data: stated on the mark or derived
+// with `{ fn }`, and a column only if the spec explicitly points it at a field.
+export type LinkSide = 'auto' | 'top' | 'right' | 'bottom' | 'left';
+
+// Which ends of a link carry an arrowhead. `auto` means "the target end iff the
+// links table declares `directed: true`", which is how a schema-level statement
+// about the DATA reaches the drawing without the mark hard-coding a default.
+export type LinkArrow = 'none' | 'target' | 'source' | 'both' | 'auto';
+
 // One table, canonical: what every internal reader sees after normalizeSchema.
 export interface TableSchema {
   // The table's name — its key in `data`, in `getData()`, and in a mark's `table`.
@@ -137,6 +164,15 @@ export interface TableSchema {
   fields: Schema;
   // The `key: true` field, or null. What a `ref` points at by default.
   key: string | null;
+  // Links only. Does an ordered pair of this table's `ref` columns mean a
+  // DIRECTION? TRI-STATE, and callers must keep all three apart:
+  //   true       source→target is a direction — arrows by default, reciprocal
+  //              pairs bow apart, `edit.network.reverse` is meaningful.
+  //   false      the pair is unordered — `connect` refuses B→A once A→B exists.
+  //   undefined  the schema has no opinion; every chart written before this flag
+  //              existed, and the reason `arrow: 'auto'` resolves to none.
+  // Read it through `isDirected(spec)` rather than reaching for the table.
+  directed?: boolean;
 }
 
 // The canonical schema. `core/schema.js` is the only module that builds one, and
@@ -363,6 +399,15 @@ export interface Edit {
   // that both mints and drops (toggle), or appends many rows at once (newSeries,
   // draw), leaves this null: "the touched datum" has no single answer there.
   cardinality?: 'append' | 'delete' | null;
+  // This edit is completed by TYPING, so a node its feature draws should open the
+  // renderer's inline editor on double-click. A declared CAPABILITY, read by the
+  // engine's tagging pass into `FeatureNode.editText` — which is why the engine
+  // never has to ask whether an edit is an editText, and why a mark never has to
+  // sniff its own edit list to decide whether its nodes are typable.
+  inline?: boolean;
+  // With `inline`: the editor is a textarea and Enter inserts a newline rather
+  // than committing. Declared, never inferred from how tall the shape is drawn.
+  multiline?: boolean;
   // A creator (create/toggle) stamps its `defaults` here so the dev-only create
   // guards can see which fields the author seeds (e.g. a rect's span endpoints) —
   // introspection only; the value the datum gets is applied inside `apply` via the
@@ -441,6 +486,16 @@ export interface TrendEditOptions extends EditOptions {
   // plane/probe pick), where the pointer's own x is used so the line follows the
   // cursor. Defaults to the x domain's other end.
   probe?: number;
+}
+
+export interface MoveOptions extends EditOptions {
+  // 'absolute' (default): the pointer's POSITION is the value — stateless, and what
+  // a plane/nearest pick requires. 'relative': the value moves by the drag DELTA
+  // from where you grabbed, preserving the grab offset, which is what a mark with
+  // real AREA needs (pressing a sticker near its corner must not teleport its
+  // centre to the pointer). Relative is direct-pick and uses the `move` driver's
+  // dragstart snapshot.
+  mode?: 'absolute' | 'relative';
 }
 
 export interface SlideOptions extends EditOptions {
@@ -708,6 +763,99 @@ export interface FaceOptions extends MarkOptions {
   // The colour of the drawn FEATURES (eyes, brows, mouth). The head's own paint is
   // the ordinary `fill` / `stroke`.
   ink?: string;
+}
+
+// `link` — one row of the links table drawn between the two nodes it references.
+// Nearly everything is a schema read, so a bare `link()` works; these are the
+// drawing choices the schema can't state. `curve` and `arrow` are also readable
+// PER ROW as channels (`channels: { curve: { field: 'kind' } }`), which is how one
+// link mark draws several kinds of connector.
+export interface LinkOptions extends MarkOptions {
+  // The node column holding identities. Defaults to the node table's `key: true`
+  // field — an override only for a table that declares none.
+  key?: string;
+  // Connector shape. Default 'line'; promoted to 'arc' when separation bows it.
+  curve?: LinkCurve;
+  // Apex offset as a fraction of the chord. 'auto' (the default) asks the TABLE:
+  // links sharing a pair of nodes fan apart, a lone link stays straight.
+  curvature?: number | 'auto';
+  // The step between adjacent links of one pair under `curvature: 'auto'`.
+  spread?: number;
+  // Which ends carry an arrowhead. Default 'auto' — the target end iff the links
+  // table declares `directed: true`.
+  arrow?: LinkArrow | boolean;
+  arrowSize?: number;
+  // Pull the ends in, so a link stops short of a node instead of running under it.
+  inset?: number;
+  sourceInset?: number;
+  targetInset?: number;
+  // How far a self-loop reaches from its node, in px.
+  loopRadius?: number;
+  // The node RECTANGLE a `curve: 'orthogonal'` connector docks to, in px. A
+  // constant here, a column on the node table (`channels: { nodeWidth: { field:
+  // 'w' } }`), or derived (`{ fn: d => noteBox(d.label).width }` for an auto-sized
+  // sticker). With neither stated the connector falls back to a small square about
+  // the node's position, so a bare `orthogonal` still leaves each node square-on.
+  nodeWidth?: number;
+  nodeHeight?: number;
+  // Corner rounding for the routed connector, in px. Default 0 (square corners).
+  // The corner is sampled into the same polyline, so a rounded link stays
+  // grabbable and canvas-drawable.
+  cornerRadius?: number;
+  // Which edge each end leaves by. Default 'auto' — chosen from where the two
+  // nodes sit. Also readable per row as a channel, like `curve` and `arrow`.
+  sourceSide?: LinkSide;
+  targetSide?: LinkSide;
+  // A plate behind `channels.text`, so a label sitting on its own connector stays
+  // readable. Off by default. `true` takes the theme's backdrop (white when the
+  // theme leaves it transparent); a colour string sets it outright.
+  labelBackground?: boolean | string;
+  // Space between the label and the plate's edge, in px (default 3).
+  labelPadding?: number;
+  // The plate's corner radius, in px (default 3).
+  labelRadius?: number;
+  // The plate's fill opacity (default 0.9) — lower it to let the connector show
+  // through the mask.
+  labelOpacity?: number;
+  format?: string | ((v: any) => any);
+}
+
+// `sticker` — a rounded box with text in it, sized by the text. A preset over
+// `composite`: a `rect` that owns every edit, and an inert `text` drawn on top.
+export interface StickerOptions extends MarkOptions {
+  // Space between the text and the box's edge, in px.
+  padding?: number;
+  // Corner radius, in px.
+  radius?: number;
+  // The box stops growing here and the text wraps instead.
+  maxWidth?: number;
+  minWidth?: number;
+  minHeight?: number;
+  // Baseline step between wrapped lines, in px. Defaults to 1.35 × the font size.
+  lineHeight?: number;
+  // Used for MEASUREMENT as well as drawing, so the box matches what is painted.
+  fontSize?: number;
+  fontFamily?: string;
+  format?: string | ((v: any) => any);
+}
+
+// `edit.network.connect` — drag from one node to another to create a link.
+export interface NetworkConnectOptions extends CreateOptions {
+  // Endpoint columns, when they aren't the link table's two `ref`s in order.
+  source?: string;
+  target?: string;
+  // How near the pointer must come to a node for the drag to land on it.
+  threshold?: number;
+  // Allow a link from a node to itself. Off by default: meaningless in an
+  // argument map, meaningful in a flowchart, so it is a choice rather than a rule.
+  selfLoops?: boolean;
+}
+
+// `edit.network.rewire` / `edit.network.reverse`.
+export interface NetworkEndpointOptions extends EditOptions {
+  source?: string;
+  target?: string;
+  threshold?: number;
 }
 
 // A parametric line's channel map: the ordinary positional/style channels plus the
@@ -979,12 +1127,29 @@ export interface Mark {
    * composite can stamp its own.
    */
   discreteScale?: 'band' | 'point';
+  /**
+   * Channels the mark resolves ITSELF, with no scale — `resolveScales` skips them.
+   * For a channel naming a column of a table this pass cannot see (`link`'s
+   * `nodeWidth` reads the NODE table), resolution would otherwise report a
+   * well-declared field as undeclared.
+   */
+  rawChannels?: string[];
   /** Value field names the edit/constraint layer reads back, derived from channels. */
   xKey?: string;
   yKey?: string;
 
   /** The factory name, stamped for dev messages (`bar()` beats `mark "undefined"`). */
   markName?: string;
+
+  /**
+   * The GLYPH this feature is a part of, stamped by `composite` on every feature it
+   * desugars into (one key per composite call). Paint order only: a glyph is one
+   * OBJECT, so `paintOrder` (core/scene.js) orders its group's nodes by ROW rather
+   * than by part, and a later glyph covers an earlier one whole instead of one
+   * sticker's label landing on the next sticker's paper. Nothing else reads it —
+   * dispatch, picking and data are still per FEATURE.
+   */
+  glyph?: string;
 
   /**
    * What this mark needs from the resolved SCALES, checked once per render by the
@@ -1065,6 +1230,9 @@ export interface FeatureNode {
   r?: number;
   // Ellipse radii, in px. A circle is the rx === ry case, but is kept its own node
   // type: `r` is one number a `size` channel drives, and most marks want that.
+  // On a RECT the same pair is the corner radius (`ry` defaults to `rx`) — both
+  // readings are "a radius on x", and both are GEOMETRY: the renderer sets them in
+  // its rect/ellipse geometry pass, never in the style sweep.
   rx?: number;
   ry?: number;
   x?: number;
@@ -1093,6 +1261,10 @@ export interface FeatureNode {
   // without re-fetching.
   href?: string;
   key?: string;
+  // The node's string content. On a WRAPPED label this stays the WHOLE string
+  // while `lines` holds what is painted — which is what keeps the inline editor
+  // (seeded from `text`, or from `editValue` on a typable node that paints none)
+  // and an editText write working unchanged.
   text?: string;
   fontSize?: number;
   textAnchor?: string;
@@ -1101,6 +1273,12 @@ export interface FeatureNode {
   // the renderer's inline content editor on dblclick.
   lineAnchor?: string;
   dominantBaseline?: string;
+  // A WRAPPED label's painted lines, and the baseline step between them in px.
+  // Deliberately one node carrying many lines rather than one node per line: a
+  // second node sharing an `index` would mean a second tab stop, a second hit
+  // area, and an effect outline around the first line only.
+  lines?: string[];
+  lineHeight?: number;
   // Orientation in math degrees (0° = +x, CCW). Any geometry node may carry it;
   // the renderer applies SVG rotate(-deg) about markCenter. Marks that bake
   // orientation into path geometry (needle) omit this to avoid double-rotating.
@@ -1116,7 +1294,23 @@ export interface FeatureNode {
   // state, which is what takes the effect off. Never a data channel: nothing in a
   // mark's build() writes this.
   effectStyle?: Record<string, any>;
+  // Opts the node into the renderer's inline content editor on double-click. Set
+  // by the engine's tagging pass for any node whose feature carries an `inline`
+  // edit — one place decides, so a mark never has to sniff its own edit list.
   editText?: boolean;
+  // What that editor OPENS WITH when the node paints no text of its own — the
+  // engine's read of the column the inline edit writes, stamped by the same pass.
+  // A sticker's typable surface is its BOX, whose string is drawn by a sibling
+  // mark, so seeding from `text` alone opened the editor empty and turned every
+  // double-click into a retype-from-scratch. `text` still wins where both exist.
+  editValue?: string;
+  // Where the inline editor should sit, in the node's own pixel space. A plain
+  // data descriptor (the node.frame / node.stack / node.sector family), so a
+  // sticker's editor fills its box instead of the renderer's 140px default.
+  editBox?: { x: number; y: number; width: number; height: number };
+  // The editor takes a <textarea> and Enter inserts a newline rather than
+  // committing. A declared capability — never inferred from editBox's height.
+  multiline?: boolean;
   data?: Datum;
   index?: number;
   featureId?: string;
@@ -1235,6 +1429,12 @@ export interface Session {
   // relative slides on one feature (an eye's rx and ry) keep separate anchors.
   index?: number | null;
   slide?: Record<string, { startPx: number, startValue: number }>;
+  // move driver (relative mode): the same snapshot, under ONE key so dragend can
+  // null it without wiping a co-resident driver's state (a sticker carries both a
+  // relative move and edit.network.connect). Anchors are keyed by FIELD — one move
+  // edit owns both axes of one datum, and a field sits on exactly one of them —
+  // and `startPx` is the grab pixel on that field's own axis (axisOf the channel).
+  move?: { index: number, anchors: Record<string, { startPx: number, startValue: any }> } | null;
 }
 
 // Config for a single positional axis (the `axes` convenience, or an explicit

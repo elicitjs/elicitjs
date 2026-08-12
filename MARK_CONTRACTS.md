@@ -159,7 +159,48 @@ N/A = use a different edit family (documented).
 <td>composite channels → parts. BOX MODE (switched on by a part stating <code>frame:</code>): x/y/size define a per-datum box and are withheld from the trickle; a local part with no x/y sits at the ORIGIN</td>
 <td>depends on parts; mark-level edits ride the LAST part, or the BOX in box mode</td>
 <td>per-part features; in box mode <code>node.frame</code> carries the scales an edit inverts through, and <code>node.dm</code> the positional local channels</td>
-<td>stamps <code>discreteScale</code>; in box mode emits the BOX first — one <code>hit</code> circle per row, so an edit on x/y/size grabs the whole glyph</td>
+<td>stamps <code>discreteScale</code> and a <code>glyph</code> key (the parts PAINT as one object: nodes ordered by ROW, parts in declared order within it, so a later glyph covers an earlier one whole); in box mode emits the BOX first — one <code>hit</code> circle per row, kept at the bottom of the group, so an edit on x/y/size grabs the whole glyph without outranking a part</td>
+</tr>
+</tbody>
+</table>
+
+## Network
+
+<table>
+<thead>
+<tr>
+<th>Factory</th>
+<th>Kind</th>
+<th>Channels (notes)</th>
+<th>create/remove</th>
+<th>Handles / signifiers</th>
+<th>requires / capability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>link</code></td>
+<td>data (a <b>JOIN</b> — the only mark whose geometry comes from another table)</td>
+<td>source/target name the <code>ref</code> columns (default: the link table's two, in declaration order); x/y override the NODE placement channels; <b><code>curve</code></b>, <b><code>arrow</code></b> and <b><code>sourceSide</code>/<code>targetSide</code></b> read raw, so any of them can be a column — but each is a mark option first, which is what keeps a drawing preference out of the elicited data unless the spec asks for it. <b><code>nodeWidth</code>/<code>nodeHeight</code></b> resolve against the NODE row (like x/y) and are what <code>curve: "orthogonal"</code> docks to; for an auto-sized sticker, <code>{ fn: d =&gt; noteBox(d.label).width }</code>. TWO SURFACES, one channel map: <code>stroke</code>/<code>strokeWidth</code> are the LINE (and an arrowhead's fill), <code>fill</code> is the LABEL — the stroke family never reaches the text, or a 2px connector outlines every glyph of its own label</td>
+<td><code>edit.network.connect</code> (on the NODE mark) / plain <code>remove</code></td>
+<td>fat transparent HIT path first (sampled <code>points</code>) so the BODY is grabbable; endpoint circles only where <code>source</code>/<code>target</code> carries an edit, <code>channel</code>-tagged for <code>claimEdge</code>; every node states <code>editBox</code> (a path has no x/y, so the inline editor had nowhere to mount); <code>labelBackground</code> adds a plate under the label, emitted before it</td>
+<td><code>tableRole: 'links'</code>, <code>supportsNetwork</code>; reads <code>directed</code> off the links table for arrows and separation</td>
+</tr>
+<tr>
+<td><code>node</code></td>
+<td><b>preset</b> → <code>composite</code> (plain)</td>
+<td>x/y shared; text/font/anchor/dx → the label; everything else → the dot</td>
+<td>natural (the dot is LAST, so it takes the composite's channel edits)</td>
+<td>the dot</td>
+<td>none — it reads no schema and knows nothing about networks</td>
+</tr>
+<tr>
+<td><code>sticker</code></td>
+<td><b>preset</b> → <code>composite</code> (plain)</td>
+<td>x/y shared; text/font/anchor → the label; everything else → the box. <b><code>width</code>/<code>height</code> auto-size from the MEASURED text</b> (core/measure.js) unless stated; a stated <code>width</code> is the WRAP width too, so a resize re-flows the note instead of cropping it</td>
+<td>natural via the BOX</td>
+<td>the RECT owns every edit and is drawn first; the label is inert and drawn on top — putting <code>editText</code> on the label would give it a <code>fontSize</code>-radius hit disc dead centre of the note</td>
+<td>none; pair with <code>editText({ multiline: true })</code> for a typable paragraph, and drag it with <code>move({ mode: 'relative' })</code> — a box has AREA, so an absolute move snaps its centre to the pointer on press</td>
 </tr>
 </tbody>
 </table>

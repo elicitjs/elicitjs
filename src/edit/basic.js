@@ -14,26 +14,69 @@
 // is the object outcome; the gesture string is the physical action — they differ
 // deliberately (a `move` is driven by a 'drag').
 
-import { makeEdit, markCenter, resolveMarkNode, invertChannel, recenterSpan, mintDatum, linearInvert, channelDomain, claimPick } from './shared.js';
+import { makeEdit, markCenter, resolveMarkNode, invertChannel, recenterSpan, mintDatum, linearInvert, channelDomain, discreteDomain, claimPick } from './shared.js';
 import { axisOf, pointerDegrees, unwrapDegrees } from '../core/encoding.js';
+import { warn } from '../core/dev.js';
 
 /**
  * move — position transform. Inversion: cartesian — invert the pointer
  * coordinate on each positional channel. On x AND y it's a 2D move; on y alone
  * it's a bar drag. Works on any invertible scale (linear pixel, band -> nearest
  * category) via scale.invertValue. Driven by a 'drag' gesture.
- * @param {import('../types').EditOptions} [options]
+ *
+ * Two modes, the same inversion, different anchor — the pair `slide` already
+ * draws, for the same reason:
+ *   - `absolute` (default): the pointer's POSITION is the value. Stateless, and
+ *     right whenever the mark is about as big as the pointer's reach — a point, a
+ *     handle, a bar's edge — and required by a plane/nearest pick, where the
+ *     gesture may begin nowhere near the datum it moves.
+ *   - `relative`: the value moves by the drag DELTA from where you grabbed, so the
+ *     grab OFFSET is preserved and pressing the mark changes nothing. That is what
+ *     a mark with real AREA needs: press a 140x40 sticker near its corner and an
+ *     absolute move teleports its centre to the pointer. It needs a dragstart
+ *     snapshot, which the `move` driver stashes in the feature's session, so it is
+ *     direct-pick by construction.
+ * @param {import('../types').MoveOptions} [options]
  * @returns {import('../types').Edit}
  */
 export function move(options = {}) {
+    const { mode = 'absolute', ...rest } = options;
+    const relative = mode === 'relative';
+    if (relative && rest.pick != null && rest.pick !== 'direct') {
+        warn(
+            'move:relative:pick',
+            `move({ mode: "relative" }) is direct-pick: it measures from where you GRABBED ` +
+            `the mark, so there has to be a mark under the press. { pick: "${rest.pick}" } is ` +
+            `ignored. Use the default mode: "absolute" with that pick.`
+        );
+    }
     return makeEdit({
         type: 'move',
         gesture: 'drag',
-        ...options,
+        mode,
+        ...rest,
+        ...(relative ? { pick: 'direct' } : {}),
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
             const next = { ...ctx.datum };
             const center = markCenter(resolveMarkNode(ctx));
+            // The driver froze the grab pixel and each field's value at dragstart.
+            // Re-encode that value and add the pointer's displacement, rather than
+            // doing arithmetic in data units: the inversion still runs through the
+            // channel's own scale, so a relative move onto a band axis still lands
+            // on a category the same way an absolute one does.
+            const lock = relative ? (/** @type {any} */ (ctx.session || {}).move) : null;
+            const anchor = lock && lock.anchors;
             for (const ch of ctx.channels) {
+                if (relative) {
+                    const a = anchor && anchor[ch.field];
+                    const axis = axisOf(ch.name);
+                    if (!a || !axis || !ch.scale || !ch.scale.invertible) continue;
+                    const from = ch.scale.encode(a.startValue);
+                    if (typeof from !== 'number' || Number.isNaN(from)) continue;
+                    const moved = (axis === 'x' ? ctx.pointer.x : ctx.pointer.y) - a.startPx;
+                    next[ch.field] = ch.scale.invertValue(from + moved);
+                    continue;
+                }
                 const value = invertChannel(ch, ctx.pointer, center);
                 if (value !== undefined) next[ch.field] = value;
             }
@@ -445,7 +488,12 @@ export function rotate(options = {}) {
 /**
  * cycle — discrete transform. Inversion: step — advance the channel to the next
  * value in its domain. Driven by a 'click'. Usually placed on an ordinal
- * `color`. Needs a stable domain (see notes).
+ * `fill`. Needs a stable domain (see notes).
+ *
+ * The domain comes from `discreteDomain` (shared.js): the channel's scale when it
+ * has one, the field's SCHEMA domain when it doesn't — a `scale: null` colour
+ * column or a raw channel a mark reads itself resolves no scale, and stepping only
+ * `ch.scale.domain()` made the click a silent no-op on exactly those.
  * @param {import('../types').EditOptions} [options]
  * @returns {import('../types').Edit}
  */
@@ -456,9 +504,9 @@ export function cycle(options = {}) {
         ...options,
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
             const ch = ctx.channels[0];
-            if (!ch || !ch.scale || !ch.scale.domain || !ctx.datum) return undefined;
-            const domain = ch.scale.domain();
-            if (!domain.length) return undefined;
+            if (!ch || !ctx.datum) return undefined;
+            const domain = discreteDomain(ch, ctx.schema);
+            if (!domain || !domain.length) return undefined;
             const i = domain.indexOf(ctx.datum[ch.field]);
             return { ...ctx.datum, [ch.field]: domain[(i + 1) % domain.length] };
         }
@@ -646,6 +694,19 @@ export function set(options = {}) {
  *
  * Placed on the text channel (`text: { field:'label', edit: editText() }`) or at
  * mark level (`edits: [editText({ channels:['text'] })]`).
+ *
+ * `inline: true` is the CAPABILITY that opens the editor: the engine's tagging pass
+ * flags every node of a feature carrying such an edit, so which shape becomes
+ * typable follows from where the edit was placed. Put it on a `text` mark and you
+ * type on the label; put it on the `rect` of a sticker and you type on the body,
+ * with the label left inert — which is the right way round for anything whose
+ * typable surface is a box.
+ *
+ * `multiline: true` makes the editor a textarea in which Enter inserts a newline
+ * (Cmd/Ctrl+Enter, blur or clicking away commits; Escape still cancels). It is
+ * declared here rather than sniffed from the shape's height, because "can this hold
+ * a paragraph" is a statement about the data being elicited, not about how big the
+ * box happens to be drawn.
  * @param {import('../types').EditOptions} [options]
  * @returns {import('../types').Edit}
  */
@@ -655,6 +716,7 @@ export function editText(options = {}) {
         gesture: 'commit',
         pick: 'direct',
         channels: ['text'],
+        inline: true,
         ...options,
         apply: writeValue
     });

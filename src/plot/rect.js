@@ -91,8 +91,22 @@ function resolveExtent(axis, channels, scales, scale, datum, key, forcedValue, f
  * @returns {import('../types').Mark}
  */
 function buildRect(options, forcedValueAxis) {
-    const opts = normalizeMarkOptions(options, { mark: 'rect', allow: [] });
-    const { channels = {}, id, edits, constraints } = opts;
+    // `width`/`height` are pixel EXTENTS (see resolveExtent's SIZE branch) and `rx`
+    // a corner radius — all three are read as channels, so they are listed here to
+    // let the top-level shorthand `rect({ width: 120 })` through rather than have it
+    // warn and be silently dropped. They are deliberately NOT style SHORTHANDS: a
+    // shorthand desugars to `{ value }` for every mark, and `width` means nothing on
+    // a point or a line.
+    const opts = normalizeMarkOptions(options, {
+        mark: 'rect', allow: ['width', 'height', 'rx'],
+    });
+    const { channels = {}, id, edits, constraints, width: widthOpt, height: heightOpt, rx: rxOpt } = opts;
+    // A top-level constant is visual space, exactly like a `{ value }` channel —
+    // and it must not become a `{ field }`, whose bucket scale would default to a
+    // [0, 1] range and draw a one-pixel box.
+    if (widthOpt !== undefined && !channels.width) channels.width = { value: widthOpt };
+    if (heightOpt !== undefined && !channels.height) channels.height = { value: heightOpt };
+    if (rxOpt !== undefined && !channels.rx) channels.rx = { value: rxOpt };
 
     const { xKey, yKey } = positionalKeys(channels);
 
@@ -130,6 +144,10 @@ function buildRect(options, forcedValueAxis) {
                 else if (yExt.band && !xExt.band) bandAxis = 'y';
 
                 const angle = encodeAngle(scales, channels, d, 0, i, currentData);
+                // Corner radius, in px like every other geometry channel here.
+                const rx = channels.rx
+                    ? encodeChannel(scales, channels, 'rx', d, 0, i, currentData)
+                    : undefined;
 
                 return {
                     type: 'rect',
@@ -141,6 +159,7 @@ function buildRect(options, forcedValueAxis) {
                     data: d,
                     index: i,
                     ...(angle ? { angle } : {}),
+                    ...(rx ? { rx } : {}),
                     ...(bandAxis ? { bandAxis } : {})
                 };
             });

@@ -4,6 +4,7 @@
 //
 //   edit.network.connect()   drag from one node to another  -> a new link row
 //   edit.network.rewire()    drag a link's endpoint onto a node -> that link re-points
+//   edit.network.reverse()   click a link -> its two ends swap
 //
 // Everything else a diagram editor needs is already universal, and stays that way:
 // `create` mints a node — with an identity, because the node table declares a `key`
@@ -28,6 +29,7 @@
 import { makeEdit, claimEdge, mintDatum } from './shared.js';
 import { encodeChannel } from '../plot/mark.js';
 import { nodeChannelsOf } from '../plot/link.js';
+import { isDirected } from '../core/schema.js';
 import { warn } from '../core/dev.js';
 
 /** How near the pointer must come to a node for a drag to land on it. */
@@ -102,7 +104,7 @@ function endpointFields(ctx, options) {
  * @returns {import('../types').Edit}
  */
 export function connect(options = {}) {
-    const { defaults = {}, source, target, threshold, ...rest } = options;
+    const { defaults = {}, source, target, threshold, selfLoops = false, ...rest } = options;
     return makeEdit({
         type: 'connect',
         gesture: 'drag',
@@ -129,18 +131,26 @@ export function connect(options = {}) {
 
             const from = nodes.rows[session.fromIndex];
             const to = nearestNodeRow(ctx, nodes, (ctx.edit && ctx.edit.threshold) || CONNECT_THRESHOLD);
-            // Released over empty space, or back on the node it started from: no
-            // link. A self-loop has no geometry to draw and no meaning in an
-            // argument map, so it is a no-op rather than a rejected commit.
-            if (!from || !to || to.index === session.fromIndex) return undefined;
+            // Released over empty space: no link.
+            if (!from || !to) return undefined;
+            // Released back on the node it started from. Meaningless in an argument
+            // map and meaningful in a flowchart, so it is an OPTION rather than a
+            // rule — and `link` draws the loop when it happens.
+            if (to.index === session.fromIndex && !selfLoops) return undefined;
 
             const fromId = from[nodes.key];
             const toId = to.row[nodes.key];
             if (fromId == null || toId == null) return undefined;
-            // Already connected that way round: nothing to add.
-            if (ctx.data.some((d) => d && d[fields.source] === fromId && d[fields.target] === toId)) {
-                return undefined;
-            }
+            // Already connected: nothing to add. What counts as "already" is the
+            // schema's statement — on an undirected table B→A IS the edge A→B, and
+            // adding its mirror would draw two lines over one relationship.
+            const undirected = isDirected(/** @type {any} */ (ctx).schemaSpec) === false;
+            const exists = ctx.data.some((d) => {
+                if (!d) return false;
+                if (d[fields.source] === fromId && d[fields.target] === toId) return true;
+                return undirected && d[fields.source] === toId && d[fields.target] === fromId;
+            });
+            if (exists) return undefined;
 
             // mintDatum seeds every declared column of the LINK table from its
             // schema (ctx.schema is the target table's — see computeEdit), so a link
@@ -193,4 +203,62 @@ export function rewire(options = {}) {
     // The tag is the channel the edit sits on, so `source` and `target` handles
     // arbitrate without either needing a hand-written `when`.
     return claimEdge(edit, options.channel || (options.channels && options.channels[0]) || 'source');
+}
+
+/**
+ * reverse — swap a link's two ends.
+ *
+ * The missing directed gesture: `rewire` re-points ONE end at a different node, and
+ * `connect` builds a new edge, but nothing could turn A→B into B→A. That is the one
+ * thing a reader of a directed diagram most often wants to correct, and re-drawing
+ * the link is a poor substitute — it loses every other column on the row.
+ *
+ * Goes on the `link` mark, which declares `supportsNetwork`, so `scope: 'network'`
+ * is a real capability check here (unlike `connect`, which sits on an ordinary node
+ * mark and therefore sets none). It lands on the link's hit path — which is why
+ * `link` draws one.
+ *
+ * @param {any} [options]
+ * @returns {import('../types').Edit}
+ */
+export function reverse(options = {}) {
+    const { source, target, ...rest } = options;
+    return makeEdit({
+        type: 'reverse',
+        gesture: 'click',
+        pick: 'direct',
+        scope: 'network',
+        ...rest,
+        apply: (/** @type {import('../types').EditContext} */ ctx) => {
+            if (!ctx.datum) return undefined;
+            const fields = endpointFields(ctx, { source, target });
+            if (!fields) {
+                warn(
+                    'reverse:refs',
+                    'edit.network.reverse() cannot find the link table\'s endpoint columns. ' +
+                    'Declare them as references — source: { type: "ref" }, target: { type: "ref" } ' +
+                    '— or name them: reverse({ source: "from", target: "to" }).'
+                );
+                return undefined;
+            }
+            // On an unordered table the two ends mean the same thing, so this
+            // rewrites the row and changes nothing anyone can see. Say so rather
+            // than letting a gesture that appears to do nothing look broken.
+            if (isDirected(/** @type {any} */ (ctx).schemaSpec) === false) {
+                warn(
+                    'reverse:undirected',
+                    'edit.network.reverse() is on a links table declared directed: false, ' +
+                    'where source and target name the same relationship either way round — ' +
+                    'so swapping them has no visible effect. Declare directed: true, or drop ' +
+                    'the edit.'
+                );
+                return undefined;
+            }
+            return {
+                ...ctx.datum,
+                [fields.source]: ctx.datum[fields.target],
+                [fields.target]: ctx.datum[fields.source],
+            };
+        },
+    });
 }

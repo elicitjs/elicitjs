@@ -67,7 +67,13 @@ export const slideDriver = {
             if (!lock || lock.index == null || !lock.slide) return false;
             for (const edit of edits) if (runEdit(edit, lock.index)) changed = true;
         } else if (event.type === 'dragend' || event.type === 'hoverout') {
-            session.clear();
+            // Null this driver's own keys rather than clearing the feature's whole
+            // session: it is shared with every other driver on the mark, and drivers
+            // run in registry order — a wholesale clear() here would delete a connect
+            // driver's `fromIndex` before its own dragend could build the link from
+            // it (see drivers/move.js, where exactly that shipped).
+            if (!session.get()) return false;
+            session.set({ index: null, slide: null });
             changed = true;
         }
         return changed;

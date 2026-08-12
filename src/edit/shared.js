@@ -422,6 +422,31 @@ export function channelDomain(ch) {
 }
 
 /**
+ * The DISCRETE value set a channel steps through — what `cycle` advances along.
+ *
+ * The scale's domain when the channel HAS a scale; the field's SCHEMA domain when
+ * it doesn't. That second half is not a fallback for a broken case, it is the
+ * ordinary one: the schema OWNS the domain, and two perfectly well-formed channels
+ * resolve no scale at all — `scale: null` (the datum holds a literal colour, a
+ * sticker's `tone`) and a raw non-positional channel a mark reads itself (a link's
+ * `curve`). Reading only `ch.scale.domain()` made `cycle()` a silent no-op on both:
+ * the cursor turns editable, the click lands, `apply` returns undefined, nothing
+ * happens and nothing is logged.
+ * @param {import('../types').ResolvedChannel | null | undefined} ch
+ * @param {Record<string, any> | undefined} [schema] the target table's field map
+ * @returns {any[] | null}
+ */
+export function discreteDomain(ch, schema) {
+    const fromScale = ch && ch.scale && typeof ch.scale.domain === 'function'
+        ? ch.scale.domain()
+        : null;
+    if (Array.isArray(fromScale) && fromScale.length) return fromScale;
+    const spec = ch && ch.field != null && schema ? schema[ch.field] : null;
+    const declared = spec && spec.domain;
+    return Array.isArray(declared) && declared.length ? declared : null;
+}
+
+/**
  * Invert the pointer through ONE channel's scale — the single-field half of
  * `move()`, factored out so `brushSpan`'s edge-zone tick can reuse the
  * exact same computation instead of a second copy. Pass `center` for radial

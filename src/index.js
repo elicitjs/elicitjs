@@ -13,6 +13,7 @@ import { CanvasRenderer } from "./renderers/canvas/index.js";
 import { setTheme, resolveTheme, DEFAULT_THEME } from "./core/theme.js";
 import { themes } from "./core/themes.js";
 import { setWarnings } from "./core/dev.js";
+import { noteBox } from "./core/measure.js";
 
 export {
   Elicit,
@@ -37,4 +38,8 @@ export {
   // Developer warnings are ON by default (and off automatically when a bundler
   // inlines NODE_ENV=production). Call setWarnings(false) to silence them.
   setWarnings,
+  // The box a padded note of text occupies — `sticker`'s own sizing rule. Exported
+  // so a `link` docking to an auto-sized note can reach the same answer:
+  // `nodeWidth: { fn: d => noteBox(d.label).width }`.
+  noteBox,
 };

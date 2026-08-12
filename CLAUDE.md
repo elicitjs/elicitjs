@@ -85,6 +85,45 @@ deleting a node takes its links with it. Don't reimplement that as a user-suppli
 constraint: a constraint judges one table's rows and returns that table's rows,
 while a dangling reference is created in one table and repaired in another.
 
+**Whether a network is DIRECTED is the schema's statement, and it is TRI-STATE.**
+`directed` sits on the LINKS TABLE (`normalizeTable`), because it says what an
+ordered pair of that table's `ref` columns MEANS — not on a channel (it isn't
+per-row) and not on the schema root (only one structure would ever read it). Read
+it through `isDirected(spec)`, the one accessor, so `link`, `connect` and `reverse`
+cannot disagree; never reach for the table yourself and never hard-code `'links'`.
+`true` puts arrowheads on by default (`arrow: 'auto'`), bows every link to the same
+side of its OWN travel so a reciprocal pair separates, and makes `reverse`
+meaningful. `false` makes A→B and B→A the same edge, so `connect` refuses the
+mirror and `reverse` warns. `undefined` — the default — is every chart written
+before the flag existed, and must keep behaving identically; collapsing the three
+into a boolean would silently grow arrows on existing specs.
+
+**A connector's SHAPE is a row in `plot/linkGeometry.js`, never a branch in `link`.**
+`LINK_SHAPES` is keyed by kind and each entry is `{ anchors, build }`, where `build`
+returns `{ d? | points?+curve?, hit?, start, end, mid, tangentIn, tangentOut }` — the
+same "declared capability, a row not a branch" shape `plot/stack.js` uses for its two
+stack geometries. `anchors` says what the `seg` handed to `build` MEANS: `'chord'`
+is the segment already pulled in by `inset`, `'box'` is the two node CENTRES plus
+each node's half-extents. That distinction is declared rather than branched on
+because a box-docking kind (`orthogonal`) insets along the EDGE NORMAL, not along the
+chord, and must still route when a chord inset would have reported the whole segment
+consumed. `start`/`end` are the shape's OWN endpoints, and the mark draws arrowheads
+and endpoint handles there — pairing the segment's ends with a tangent that no longer
+ran along the chord is what left a step's arrowhead sitting off the end of its line.
+A node's rectangle reaches `link` as `nodeWidth`/`nodeHeight` read off the NODE row;
+asking the mark that DRAWS the nodes what it drew would be a mark reading another
+feature's built geometry, which is why `core/measure.js` owns `noteBox` — one sizing
+rule, reachable from both marks and from a spec. `mid` is where a label sits
+and the tangents are what an arrowhead points down, so adding `bezier` did not touch
+the arrow code and adding the next kind won't either. Prefer `points` over `d`
+wherever the shape allows: a polyline is the ONLY geometry `edit/pick.js` can
+measure, so a `points` shape is proximity-pickable and canvas-drawable for free,
+while a `d` shape must hand back a sampled `hit` polyline (`plot/hitpath.js`) or its
+body is untouchable. `link` emits that hit path FIRST, beneath the paint — that is
+what gives `edit.network.reverse` and a link-body `remove` something to land on.
+Curvature is signed and dimensionless (an apex fraction of the chord), which is what
+lets `separationBows` fan a pair apart with arithmetic and no layout.
+
 **A whole-dataset edit belongs on exactly one mark PER TABLE.** A plane gesture carries no node, so it fans to *every* feature's plane-pick edits (`dispatchPlaneEdits`). Over one table that means `create()` on two marks appends twice per click, and two `rotate()`s rotate twice. `warnDuplicatePlaneEdits` groups by the table each edit WRITES, because two marks over different tables are not duplicates — a node mark's `create` and a link mark's own creator append to different arrays, and reporting them would make every network chart open with a warning telling you to delete one of two unrelated edits. Direct-pick edits are immune — they route to the touched node's feature alone. The engine dev-warns (`warnDuplicatePlaneEdits`) rather than branching; keep it that way. Sequential composition of *direct* edits within one event is intended: a coupled edit writes fields, sibling marks re-derive on the next render.
 
 **A PROPOSAL is about a TABLE, so every mark over that table ghosts it.** `ui.preview` is keyed by feature id only so two probe marks can't clobber each other's parked proposal — it is not a statement about who *draws* one. A parked proposal carries the table it is about (`{ table, rows }`), and when exactly one is in flight, `update()`'s ghost pass builds every feature OVER THAT TABLE from it (see the `sole` fallback). Both halves are load-bearing: an edit may propose rows for a table its own mark doesn't draw (`edit.network.connect` fires on a node mark and proposes a link row), and it is the LINK mark that has to draw the rubber band. This is load-bearing for any glyph split across marks: `trendBand` reads a spread that `trend` carries the edit for, and keying the ghost to the editing feature alone left the band frozen until the click, with no feedback while the reader aimed. Don't "optimize" the ghost pass back to the owning feature.
@@ -99,6 +138,44 @@ the channel map exists to state, and a default that cannot be turned off is not 
 default. Staging goes on the edit (`edit.trend.slope({ stage: 1 })`), never on the
 mark. (`edit.face.*` was exported to make face's handles reachable; it is gone —
 face is a `composite` of ordinary marks now, so its parameters take the universal edits.)
+
+**Which shape is TYPABLE follows from where the edit sits, and the engine decides.**
+`editText` declares `inline: true`; the engine's tagging pass flags every node of a
+feature carrying such an edit as `node.editText`, and the renderer routes dblclick by
+THAT FLAG rather than by the node being a `<text>`. Before this the text mark asked
+its own edit list (`hasEditText`) and only a `<text>` could be typed into, which is
+the wrong way round for anything whose typable surface is a BOX. A sticker puts
+`editText` on its RECT and leaves the label inert — not a style preference: an edit
+makes its feature's nodes pointer-active, and `edit/pick.js` gives a text node a hit
+area of `fontSize + 4` about its ANCHOR, a disc sitting dead centre of the note. On
+canvas, `hitTest` walks the scene in reverse, so that disc outranks the body and
+dragging the sticker by its middle does nothing at all. Put the edit on the shape you
+mean to grab and let the pointer-transparency pass silence the rest. Don't
+reintroduce a mark that sniffs its own edits to decide, and don't branch on
+`e.type === 'editText'` in the engine — read the capability.
+
+That decision has a second half: **the editor OPENS WITH the column's current
+value.** A node that paints text carries the string (`node.text`), but the node
+that OWNS the edit may paint none — a sticker's typable surface is its box, whose
+label is a sibling mark — so seeding from `text` alone opened the editor EMPTY and
+turned every double-click into "retype the note from scratch". The same tagging
+pass resolves the edit's channel to a field and stamps `node.editValue`; `text`
+still wins where both exist, so a formatted label opens showing what it displays.
+Caret placement follows the declared `multiline` capability, not the shape: a
+single-line editor holds a NAME and opens selected (double-click-to-rename), a
+multi-line one holds a paragraph you AMEND, where select-all means the first
+keystroke wipes the note.
+
+**A wrapped label is ONE node carrying `lines`, and `text` stays the whole string.**
+Measurement lives in `core/measure.js` and nowhere else; its 2D context is created
+LAZILY behind a `typeof document` guard, because the docs site imports the library at
+module scope from a client component and Next server-renders it — a module-level
+`document.createElement` throws in Node, and `check:warnings` reports that as a PASS,
+since it only listens for `[elicit]` console output and a page that died server-side
+emits none. Emitting one text node per line "works" and then costs a tab stop per
+line, a hit disc per line, an effect outline around line one only, and an inline
+editor seeded with a fragment instead of the paragraph. Keep the one-node-per-(feature,
+index) invariant: `lines` is what gets painted, `text` is what gets edited.
 
 **A mark declares what it needs from a scale (`Mark.requires`); it never degrades in
 silence.** Silent degradation is the worst failure mode available here, because the
@@ -160,6 +237,40 @@ draws — so the line the author sees IS the mapping, not a redrawing of it.
 **Multi-event lifecycles are drivers, not engine branches.** If you're adding an interaction mode that needs `hover`/`dragstart`/`drag`/`dragend` state (like `nearest`, `sweep`, `draw`), write a new file in `src/edit/drivers/` implementing `{ name, wants(edit), onEvent(ctx) }` and register it in `drivers/index.js`. **Never** add a new `if (pick === '...')` branch inside `core/elicit.js`'s dispatch — that's the god-module pattern the drivers refactor eliminated. The engine must stay ignorant of specific modes. A driver is not the same thing as a raised plane: it may claim a **direct**-pick edit by CAPABILITY (`wants: e => e.type === 'slide' && e.mode === 'relative'`), and then `runDrivers` hands it `ctx.index` — the datum the gesture landed on — so it skips target selection and `needsPlaneOnTop` stays false. That is what lets a lifecycle edit sit on a glyph part beside the other direct edits; a relative `slide` needs a dragstart ANCHOR, not a target search, and conflating the two once forced every jump-free drag onto the plane.
 
 **Two edits on one mark must read different COMPONENTS of the gesture.** A drag fans to every direct edit on the touched feature, which is intended (that's how a brow's height and tilt, or an eye's `rx` and `ry`, come off one gesture). It only works if they read orthogonal things: `slide({ axis: 'x' })` beside `slide({ axis: 'y' })`, or a positional `move({ channels: ['y'] })` beside an x-slide. Two edits reading the same component fight, and the loser is whichever applies first. Note the corollary for `rotate`: its sensitivity is the pointer's DISTANCE TO THE PIVOT, so on a glyph part — where you grab the thing at its own centre — a few pixels swing the pointer most of a half-turn and pin the value to a domain end. `rotate` is for a needle or a dial you grab at arm's length; a tilt you grab on top of is a `slide`, even though the channel is an `angle`.
+
+**A gesture's `x`/`y` are the POINTER, in scene coordinates, in every renderer.**
+Everything downstream assumes it: every edit inverts `ctx.pointer`, `edit/pick.js`
+measures distance from it, a driver anchors to it. d3.drag's default subject is the
+BOUND DATUM, so it reports `subject.x + (pointer - grabPointer)` — on a node that
+happens to carry `x`/`y` the whole gesture arrives displaced by that node's own
+coordinate. A circle carries `cx`/`cy`, so d3's `|| 0` guard made it look correct
+everywhere it was tested; a rect carries its TOP-LEFT, so every drag on one reported
+a pointer half a box up and left, `move` wrote that as the centre, and a sticker
+jumped `(-w/2, -h/2)` the instant you pressed it — while the canvas renderer, which
+sends the raw coordinate, did the right thing. `_makeDrag` states `.subject(event =>
+({ x: event.x, y: event.y }))` for that reason. Never drop it, and never "fix" a
+mark by subtracting its own geometry back out.
+
+**A driver's session is PER FEATURE, not per driver, so a driver may only clear its
+OWN keys.** One mark can carry two lifecycles at once — a network sticker has a
+relative `move` AND `edit.network.connect` — and `runDrivers` hands both the same
+`ui.session[featureId]`. Drivers run in registry order, so `session.clear()` on
+dragend deletes whatever the driver after you was about to read: `move` shipped with
+one and took `connect`'s `fromIndex` with it, so shift-drag drew the rubber band all
+the way across and created nothing, then left the parked proposal ghosting forever
+because `connect`'s dragend never ran. Namespace your state under one key and null
+THAT (`session.set({ move: null })`). Nothing warns; both charts render.
+
+**A mark with AREA needs `move({ mode: 'relative' })`, and the default stays
+absolute.** Same pair as `slide`, for the same reason and with the same machinery (a
+`move` driver freezing `{ startPx, startValue }` per FIELD at dragstart, claimed by
+capability, so the plane is never raised). Absolute — the pointer's position IS the
+value — is right for a point or a handle, and REQUIRED by a plane/nearest pick where
+the gesture may begin nowhere near the datum it moves; that is why it stays the
+default and why relative forces `pick: 'direct'`. It is wrong for anything you can
+grab far from its centre: press a 140×40 sticker near a corner and an absolute move
+teleports it. Don't make relative the default to "fix stickers" — it would silently
+change every bar and dot chart already written.
 
 **`slide` is RELATIVE by default, and that default is load-bearing.** Absolute mode reads the value off the pointer's POSITION on a track centred on the mark, so it is right only when the handle already sits at its value's place on that track (a dot on a rail). Anywhere else — an eye whose `rx` grows about a fixed centre, a brow that moves along the very axis it slides on — merely PRESSING the mark teleports the value, and a channel that moves the mark along its own slide axis feeds back and runs away. Both bugs shipped. Relative mode freezes `{ startPx, startValue }` per edit at dragstart (keyed `${axis}:${field}` via `slideAnchorKey`, so two slides on one feature don't clobber each other) and moves proportionally from there. `extent` — the drag distance that sweeps the domain — defaults to the frame's `frameExtent` inside a composite's box, so the gesture scales with the glyph instead of being a 120px constant that is enormous on a small face.
 
@@ -284,6 +395,19 @@ otherwise it leaves the field alone so the engine's pointer-transparency pass si
 it, exactly like any other mark with no direct-pick edit. Setting it unconditionally
 would let an immovable glyph swallow the plane gesture aimed past it.
 
+**A glyph PAINTS as one object, even though it dispatches as several features.**
+Array order is z-order and the engine builds feature by feature, so a composite's
+parts would paint every row's part 1, then every row's part 2 — every sticker's
+paper, then every sticker's text — and two overlapping notes come out interleaved,
+the lower note's label sitting on the upper note's paper. `composite` stamps a
+`glyph` key on every feature it returns and `paintOrder` (`core/scene.js`) orders
+that group's nodes by ROW first, parts in declared order within a row. PAINT ONLY:
+dispatch, picking, ghosting and data stay per FEATURE, which is what keeps a drag
+on one part off its siblings. The box is the one exception inside the group — as a
+`hit` node it stays at the bottom of it, the same rule as `hitSel.lower()`, because
+a box covers its whole glyph and interleaved by row it would swallow every gesture
+aimed at the row before it.
+
 ## Adding a new edit
 
 - Universal (any mark) → `src/edit/basic.js`, exported top-level from `edit/index.js`.
@@ -342,6 +466,36 @@ would let an immovable glyph swallow the plane gesture aimed past it.
 - Referential integrity as a user-supplied constraint, or a constraint that returns rows for a table other than the one it was given.
 - A bare row index used as a chart-wide selection key. `ui.selection` is qualified by table (node 3 and link 3 are different rows); the index-based public API means the PRIMARY table.
 - A second glyph-joining mark beside `link`, or a mark that reads another FEATURE's built nodes. A join goes through the tables, not the scene.
+- A connector shape written as a branch in `link.build()` instead of a row in `LINK_SHAPES`, or a second Bézier sampler beside `plot/hitpath.js`. A rounded corner IS a quadratic — it goes through `sampleQuadratic` with a smaller `samples`, and the result stays a `points` polyline so the pick layer and canvas keep working.
+- A `link` that reads a node mark's drawn geometry to find its box, or a second copy of `sticker`'s sizing rule. `noteBox` (`core/measure.js`) is the one rule; `nodeWidth`/`nodeHeight` are how it reaches a connector.
+- A link SIDE stored as data by default. `sourceSide`/`targetSide` are read raw like `curve`/`arrow`: a mark option or a `{ fn }`, and a column only when the spec names a field. A drawing preference does not belong in an elicited dataset unless its author put it there — and a side the READER drags would have to be a column, because `ui.*` is ephemeral and "an edit writes to a COLUMN".
+- A link that emits only `d` when `points` would express it. The pick layer measures polylines; a `d`-only body is untouchable under both renderers.
+- `directed` read off the links table directly, collapsed to a boolean, or moved to a channel or the schema root. `isDirected(spec)` is the one accessor.
+- A renderer that reports a drag in anything but scene coordinates — d3.drag's
+  default subject (the bound datum) is the one that bit us, and it reads as a mark
+  that drifts from the pointer by its own geometry.
+- `move({ mode: 'relative' })` made the default, or its dragstart anchor re-derived
+  in `apply` instead of frozen by the `move` driver.
+- A driver that calls `session.clear()` while another driver on the same mark holds
+  state in it.
+- A typable node with no box that leaves its editor to the renderer's label-shaped
+  fallback. A path has no `x`/`y`, so the editor mounts at `NaN`; state `editBox`.
+- A mark that hands its whole channel map to a LABEL it also draws. `resolveStyle`
+  sweeps the style channels onto every node, so a link's 2px connector stroke
+  outlined every glyph of its own text. Split by what the paint MEANS — the line's
+  stroke, the label's fill — the way `sticker` splits box channels from label ones.
+- A wrap width that isn't the box's own width when a sticker pins one. It crops one
+  way and leaves dead paper the other, and the page renders fine either way.
+- A second text-measurement path, or a measuring context created at module scope. `core/measure.js`, lazily, behind a `typeof document` guard.
+- One text node per wrapped line. One node, `lines[]` + `lineHeight`; `text` stays the whole string.
+- A mark that decides for itself whether its nodes are typable (`hasEditText`), or an engine branch on `e.type === 'editText'`. The `inline` capability, stamped by the tagging pass.
+- `editText` on the label of a glyph whose typable surface is a box. It hands the label a hit disc dead centre of the shape and eats the drag — put it on the box and let the label go inert.
+- An inline editor seeded from `node.text` alone. A typable node need not paint the
+  string it edits; the column is the truth, and the engine stamps it as `editValue`.
+- A discrete edit that reads only `ch.scale.domain()`. `scale: null` (a literal
+  colour column) and a raw channel a mark reads itself resolve NO scale, so the
+  click is a silent no-op — `discreteDomain` (edit/shared.js) falls back to the
+  schema's declared domain, which is where a domain lives anyway.
 - A creating edit that exists only to fill a column the schema already describes. `addNode` was exactly that, and `create` + `key: true` replaced it.
 - A mark factory that returns `id`/`edits`/`constraints`/`table` by hand instead of spreading `markCommon(opts)`.
 - A network-shaped preset that is secretly network-aware. `node()` is a dot with a label over whatever table it is pointed at; it reads no schema (a preset runs at factory time, before there is a chart to ask).
@@ -355,6 +509,8 @@ would let an immovable glyph swallow the plane gesture aimed past it.
   scratch instead of inverting through the `node.stack` the mark stamped.
 - A `groupBy` option on any mark. The encoding is the grouping.
 - A category minted as `null`, or any creator that can only be completed by typing.
+- A glyph painted part by part, so every row's last part sits above every row's
+  first. It reads fine until two glyphs overlap; group by `glyph` and order by row.
 - A hit/grab overlay `raise()`d above the marks. It is a FALLBACK for a shape with no area
   to hit, so it must never outrank a node that really is drawn there (`hitSel.lower()`).
 - Docs (`../elicitjs-docs`) or anything generated in `package.json`'s `files`.

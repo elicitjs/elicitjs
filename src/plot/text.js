@@ -33,7 +33,8 @@
 //   textX — value on x, y parked at the vertical centre (a 1-D label along x)
 //   textY — value on y, x parked at the horizontal centre (a 1-D label along y)
 
-import { encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions, callChannelFn, markDefaults, positionalKeys, markCommon} from './mark.js';
+import { encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions, callChannelFn, markDefaults, positionalKeys, markCommon, themeOf} from './mark.js';
+import { measureBlock } from '../core/measure.js';
 import { warn } from '../core/dev.js';
 import { resolveFormat } from '../format.js';
 
@@ -55,6 +56,11 @@ function dominantBaselineOf(anchor) {
  * Read a non-positional channel raw: a field's value, a `{ value }` constant, else
  * the fallback. No scale — these channels (text/fontSize/textAnchor/…) are literals.
  * A derived channel (`{ fn }`, e.g. `text: d => …`) is computed per datum.
+ *
+ * Exported because it is the general "this channel has no scale" reader, not a
+ * text-mark detail: `link` resolves its per-row `curve` and `arrow` through it, so
+ * a `kind` column can drive a connector's shape with no new scale machinery and no
+ * second way to read a literal channel.
  * @param {Record<string, any>} channels
  * @param {string} name
  * @param {any} datum
@@ -63,7 +69,7 @@ function dominantBaselineOf(anchor) {
  * @param {import('../types').Datum[]} [data] the dataset, passed to a derived fn
  * @returns {any}
  */
-function rawChannel(channels, name, datum, fallback, index, data) {
+export function rawChannel(channels, name, datum, fallback, index, data) {
     const spec = channels[name];
     if (!spec) return fallback;
     if (spec.field != null) {
@@ -90,38 +96,40 @@ function rawChannel(channels, name, datum, fallback, index, data) {
 }
 
 /**
- * Does this mark wire content editing (an editText edit, at mark level or on a
- * channel)? The renderer only opens its inline text editor for nodes that opt in,
- * so a merely-draggable label doesn't pop an input on double-click.
- * @param {any[]} edits
- * @param {Record<string, any>} channels
- * @returns {boolean}
- */
-export function hasEditText(edits, channels) {
-    if ((edits || []).some((e) => e && e.type === 'editText')) return true;
-    return Object.values(channels).some((c) => c && c.edit && c.edit.type === 'editText');
-}
-
-/**
  * A text FeatureNode at an ALREADY-RESOLVED pixel position. Everything about a
  * label except where it sits — the string, font, anchors, rotation, dx/dy nudge,
- * the editText opt-in, the style sweep — is positional-system agnostic, so it is
- * defined once here. `text` resolves (px, py) through the global x/y scales;
- * `geoText` projects lon/lat through the chart projection and hands the pixels in.
+ * wrapping, the style sweep — is positional-system agnostic, so it is defined once
+ * here. `text` resolves (px, py) through the global x/y scales; `geoText` projects
+ * lon/lat through the chart projection and hands the pixels in.
  *
  * dx/dy are visual-only offsets applied AFTER positioning (a drag still inverts
  * the raw pointer, so a nudged label doesn't poison its own edit).
+ *
+ * `wrap` breaks the string into `lines` the renderer paints, while `text` stays
+ * the WHOLE string — one node either way. That is what keeps the inline editor
+ * seeded with the paragraph rather than a line of it, and what keeps a wrapped
+ * label to one tab stop, one hit area, and one effect outline.
+ *
+ * Note what is NOT here any more: the editText opt-in. Whether a node is typable
+ * follows from its feature carrying an `inline` edit, which the engine stamps —
+ * so a mark no longer has to inspect its own edit list to find out.
  *
  * @param {import('../types').ScaleMap} scales
  * @param {Record<string, any>} channels
  * @param {any} d the datum
  * @param {number} i its index in the dataset
+ * `wrap` is a pixel width, or a function of the row — the per-datum form exists
+ * because a box CAN be sized per row (a sticker with a `width` channel), and the
+ * width the text wraps at has to be the width of the box it is sitting in, or a
+ * resized note overflows its own paper.
+ *
  * @param {number} px @param {number} py resolved position, before dx/dy
- * @param {{ format?: (v: any) => any, canEditText?: boolean, data?: import('../types').Datum[] }} [opts]
+ * @param {{ format?: (v: any) => any, data?: import('../types').Datum[], wrap?: number | ((d: any, i: number, data: any[]) => number), lineHeight?: number }} [opts]
  * @returns {import('../types').FeatureNode}
  */
 export function textNodeAt(scales, channels, d, i, px, py, opts = {}) {
-    const { format = (/** @type {any} */ v) => v, canEditText = false, data } = opts;
+    const { format = (/** @type {any} */ v) => v, data, wrap: wrapOpt, lineHeight } = opts;
+    const wrap = typeof wrapOpt === 'function' ? wrapOpt(d, i, data || [d]) : wrapOpt;
     const style = resolveStyle(scales, channels, d, markDefaults(scales, 'text', { fill: '#111' }), i, data);
 
     const dx = +rawChannel(channels, 'dx', d, 0, i, data) || 0;
@@ -133,18 +141,33 @@ export function textNodeAt(scales, channels, d, i, px, py, opts = {}) {
     const angle = encodeAngle(scales, channels, d, 0, i, data);
 
     const lineAnchor = rawChannel(channels, 'lineAnchor', d, 'middle', i, data);
+    const fontSize = rawChannel(channels, 'fontSize', d, 12, i, data);
+    const text = format(rawChannel(channels, 'text', d, '', i, data));
+
+    // Only measured when the mark asked to wrap: measurement is cheap but not free,
+    // and every label in the library that isn't in a box wants its one line.
+    const block = wrap || lineHeight
+        ? measureBlock(text, {
+            maxWidth: wrap,
+            fontSize: +fontSize || 12,
+            fontFamily: (themeOf(scales).font && themeOf(scales).font.family) || undefined,
+            lineHeight,
+        })
+        : null;
 
     return {
         type: 'text',
         x: px + dx,
         y: py + dy,
-        text: format(rawChannel(channels, 'text', d, '', i, data)),
-        fontSize: rawChannel(channels, 'fontSize', d, 12, i, data),
+        text,
+        fontSize,
         textAnchor: rawChannel(channels, 'textAnchor', d, 'middle', i, data),
         lineAnchor,
         dominantBaseline: dominantBaselineOf(lineAnchor),
         ...(angle ? { angle } : {}),
-        ...(canEditText ? { editText: true } : {}),
+        ...(block && block.lines.length > 1
+            ? { lines: block.lines, lineHeight: block.lineHeight }
+            : {}),
         ...style,
         data: d,
         index: i,
@@ -157,9 +180,10 @@ export function textNodeAt(scales, channels, d, i, px, py, opts = {}) {
  * @returns {import('../types').Mark}
  */
 function buildText(options, forcedAxis) {
-    const opts = normalizeMarkOptions(options, { mark: 'text', allow: ['format'] });
-    const { channels = {}, id, edits, constraints, format: formatOpt } = opts;
-    const canEditText = hasEditText(edits, channels);
+    const opts = normalizeMarkOptions(options, {
+        mark: 'text', allow: ['format', 'wrap', 'lineHeight'],
+    });
+    const { channels = {}, id, edits, constraints, format: formatOpt, wrap, lineHeight } = opts;
     const format = resolveFormat(formatOpt);
 
     return {
@@ -187,7 +211,9 @@ function buildText(options, forcedAxis) {
                 const y = forcedAxis === 'x'
                     ? height / 2
                     : encodeChannel(scales, channels, 'y', d, height / 2, i, currentData);
-                return textNodeAt(scales, channels, d, i, x, y, { format, canEditText, data: currentData });
+                return textNodeAt(scales, channels, d, i, x, y, {
+                    format, data: currentData, wrap, lineHeight,
+                });
             });
         }
     };

@@ -141,8 +141,19 @@ function ellipse(ctx, node, defaults) {
 /** @param {CanvasRenderingContext2D} ctx @param {any} node @param {Record<string,any>} defaults */
 function rect(ctx, node, defaults) {
     withAngle(ctx, node, () => {
+        const h = Math.max(0, node.height);
         ctx.beginPath();
-        ctx.rect(node.x, node.y, node.width, Math.max(0, node.height));
+        // Corner radius, when the node carries one and the platform can draw it.
+        // `roundRect` is recent enough (Chrome 99, Safari 16) to be worth guarding;
+        // a square corner is a graceful loss where it is missing, and this path is
+        // shared with the effect overlay so a rounded shape's outline rounds too.
+        if (node.rx != null && typeof (/** @type {any} */ (ctx).roundRect) === 'function') {
+            const rx = Math.max(0, node.rx);
+            const ry = node.ry != null ? Math.max(0, node.ry) : rx;
+            /** @type {any} */ (ctx).roundRect(node.x, node.y, node.width, h, [rx, ry]);
+        } else {
+            ctx.rect(node.x, node.y, node.width, h);
+        }
         paint(ctx, styleOf(node, defaults));
     });
 }
@@ -184,17 +195,27 @@ function text(ctx, node, defaults, anchorDefault) {
         ctx.font = `${size}px ${family}`;
         ctx.textAlign = ALIGN[node.textAnchor || anchorDefault] || 'start';
         ctx.textBaseline = BASELINE[node.dominantBaseline] || 'alphabetic';
+
+        // A WRAPPED label paints its `lines`; `text` stays the whole string, so
+        // the single-line case is just a one-element list. The block is centred on
+        // the node's own y — the anchor means the same thing at any line count.
+        const lines = Array.isArray(node.lines) ? node.lines : [String(node.text)];
+        const step = node.lineHeight != null ? node.lineHeight : Math.round(size * 1.35);
+        const first = node.y - ((lines.length - 1) * step) / 2;
+
         const op = s.opacity != null ? s.opacity : 1;
         if (s.fill && s.fill !== 'none') {
             ctx.globalAlpha = op * (s.fillOpacity != null ? s.fillOpacity : 1);
             ctx.fillStyle = s.fill;
-            ctx.fillText(String(node.text), node.x, node.y);
+            lines.forEach((/** @type {any} */ l, /** @type {number} */ i) =>
+                ctx.fillText(String(l), node.x, first + i * step));
         }
         if (s.stroke && s.stroke !== 'none') {
             ctx.globalAlpha = op * (s.strokeOpacity != null ? s.strokeOpacity : 1);
             ctx.strokeStyle = s.stroke;
             ctx.lineWidth = s.strokeWidth != null ? s.strokeWidth : 1;
-            ctx.strokeText(String(node.text), node.x, node.y);
+            lines.forEach((/** @type {any} */ l, /** @type {number} */ i) =>
+                ctx.strokeText(String(l), node.x, first + i * step));
         }
         ctx.globalAlpha = 1;
     });

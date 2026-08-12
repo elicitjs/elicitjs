@@ -116,6 +116,22 @@
 // so it must not block one). Put visuals first and handles last in `parts` so
 // handles paint on top; pointer-transparency still covers an inert part that
 // overlaps a later handle.
+//
+// ── One glyph paints as one OBJECT ──────────────────────────────────────────
+// The parts being separate features has one consequence that is NOT wanted: the
+// engine draws feature by feature, so it would paint every row's part 1, then
+// every row's part 2 — every sticker's paper, then every sticker's text. Two
+// overlapping notes then come out interleaved, the lower note's label sitting on
+// the upper note's paper, which reads as a z-order bug and is one.
+//
+// So every feature this returns is stamped with a `glyph` key, and `paintOrder`
+// (core/scene.js) orders that group's nodes by ROW first: each glyph paints
+// whole, in its parts' declared order, and a later row covers an earlier one
+// completely. Paint order ONLY — dispatch, picking and data stay per feature, so
+// a drag on one part still cannot reach its sibling. The box is the exception
+// inside the group: as a `hit` node it stays at the bottom of it, because a box
+// covers its whole glyph and interleaved by row would swallow every gesture
+// aimed at the row before it.
 
 import { normalizeMarkOptions, encodeChannel, positionalKeys, themeOf } from './mark.js';
 import { createFrameScale, bandwidthOf, isBand } from '../core/scales.js';
@@ -130,6 +146,10 @@ import { warn } from '../core/dev.js';
 // the opposite of a local frame. (A local part reaches the origin by stating
 // nothing; see the origin defaults below.)
 const FRAME_KEYS = ['x', 'y', 'size'];
+
+// Counts composite CALLS, so every glyph gets its own paint group. See the
+// `glyph` key below and `paintOrder` in core/scene.js.
+let glyphSeq = 0;
 
 /**
  * Shallow-merge composite channels under part channels. Part keys win entirely
@@ -323,6 +343,11 @@ function frameTracks(channels, names, frame) {
  *   Elicit's flattened `features` list
  */
 export function composite(options = {}) {
+    // This glyph's paint group. Per CALL, not per id: two id-less composites are
+    // two glyphs, and the key must not merge them. It is stable for the life of
+    // the spec (a mark object is built once and rebuilt every render), which is
+    // what the engine needs — see `paintOrder` in core/scene.js.
+    const glyph = `glyph#${++glyphSeq}`;
     // Desugar top-level shorthands (fill, angle, size, …) into composite channels
     // so `composite({ fill: 'steelblue', angle: 45, parts })` works like a mark.
     const opts = normalizeMarkOptions(options, { mark: 'composite', allow: ['parts', 'discreteScale', 'table'] });
@@ -441,6 +466,12 @@ export function composite(options = {}) {
             ...part,
             channels: closed,
             build,
+            // One glyph paints as one OBJECT: the engine orders this group's nodes
+            // by ROW rather than by part, so a later row covers an earlier one
+            // whole instead of every part's row 1 sitting under every part's row 0
+            // (a sticker's text over the next sticker's paper). Within a row the
+            // parts keep the order they were declared in.
+            glyph,
             // Inherited x/y may arrive after the mark factory stamped xKey/yKey
             // from its own (then-empty) channels — refresh from the merge.
             xKey: (closed.x && closed.x.field) || part.xKey,
@@ -497,6 +528,10 @@ export function composite(options = {}) {
     const box = {
         id: `${name}/frame`,
         markName: 'composite',
+        // In the glyph's paint group, but as a `hit` node it stays at the bottom of
+        // it: a box covers its whole glyph, so interleaved by row it would take
+        // every gesture aimed at the row before it.
+        glyph,
         channels: boxChannels,
         constraints,
         edits,

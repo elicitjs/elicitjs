@@ -1,5 +1,5 @@
 // @ts-check
-import { SceneGraph } from './scene.js';
+import { SceneGraph, paintOrder } from './scene.js';
 import { resolveScales } from './resolve.js';
 import { createProjection } from './projection.js';
 import { resolveLock, lockConstraint, isNodeLocked } from './lock.js';
@@ -1037,6 +1037,14 @@ export function Elicit(spec) {
 
         warnDuplicatePlaneEdits(features, activeEdits, targetTableOf);
 
+        // Built nodes per feature, in feature order, so paint order can be decided
+        // once the whole scene is known. It is the FEATURE order for everything
+        // except a glyph, whose parts paint as one object per row — see
+        // `paintOrder`. Collected rather than added straight to the scene because
+        // that decision spans several features.
+        /** @type {{ glyph?: string, nodes: any[] }[]} */
+        const built = [];
+
         features.forEach(feature => {
             // The committed rows of the feature's OWN table are always what it draws.
             // A hover/drag preview no longer substitutes them (that made committed
@@ -1068,6 +1076,30 @@ export function Elicit(spec) {
             // they don't mark nodes editable.
             const editable = activeEdits(feature).some(e => e.pick === 'direct');
 
+            // An edit completed by TYPING (`inline`) makes this feature's nodes
+            // typable — the renderer opens its inline editor on a double-click of a
+            // node flagged `editText`. A declared CAPABILITY, read the same way
+            // `editable` reads `pick`, so the engine never asks whether an edit is
+            // an editText and a mark never sniffs its own edit list to find out.
+            //
+            // Which SHAPE gets it matters: a glyph whose typable surface is a box
+            // (a sticker) puts the edit on the box, and the text it contains stays
+            // inert — otherwise the label's nodes keep the pointer, and pick.js
+            // gives a text node a fontSize-radius hit disc that sits dead centre of
+            // the shape and swallows the drag that should move it.
+            const inlineEdit = activeEdits(feature).find(e => e.inline);
+
+            // What that editor OPENS WITH, for a typable node that paints no text.
+            // A label carries its string (`node.text`) and always did; the box of a
+            // sticker does not — its text is drawn by a SIBLING mark — so the editor
+            // opened empty and every double-click silently became "retype the note
+            // from scratch". The COLUMN is the truth in both cases, so resolve it
+            // from the edit's own channel (the one place a field is named) and stamp
+            // the current value where the renderer can find it.
+            const inlineField = inlineEdit
+                ? (resolveChannels(inlineEdit.channels, feature.channels || {}, scales, feature.views === 'scale')[0] || {}).field
+                : null;
+
             // Tag every node with its feature so gesture events can find the
             // feature's edits, and flag interactive marks for the cursor.
             //
@@ -1086,9 +1118,19 @@ export function Elicit(spec) {
                 if (locked) node.locked = true;
                 if (editable && !locked) node.editable = true;
                 else if (node.pointerEvents == null) node.pointerEvents = 'none';
-                scene.add(node);
+                if (inlineEdit && !locked) {
+                    node.editText = true;
+                    if (inlineEdit.multiline) node.multiline = true;
+                    if (inlineField != null && node.data) {
+                        const current = node.data[inlineField];
+                        if (current != null) node.editValue = String(current);
+                    }
+                }
             });
+            built.push({ glyph: feature.glyph, nodes });
         });
+
+        paintOrder(built).forEach((/** @type {any} */ node) => scene.add(node));
 
         // Ghost-preview pass. For each feature carrying an uncommitted proposal, build
         // it from the PROPOSED rows and add only the nodes that DIFFER from committed —
@@ -1119,6 +1161,10 @@ export function Elicit(spec) {
             // link mark and what stops a node mark from ghosting rows that aren't its.
             const inFlight = Object.values(ui.preview);
             const sole = inFlight.length === 1 ? inFlight[0] : null;
+            // Ghosts paint in the same order committed nodes do — a ghosted glyph
+            // is one object too, so its parts group by row (`paintOrder`).
+            /** @type {{ glyph?: string, nodes: any[] }[]} */
+            const ghostBuilt = [];
             for (const feature of features) {
                 // A chart element draws a SCALE, not rows, so it has no ghost to show.
                 if (feature.views === 'scale') continue;
@@ -1145,17 +1191,19 @@ export function Elicit(spec) {
                     schema: schemaSpec,
                     table: feature.table,
                 });
-                ghostNodes.forEach((/** @type {any} */ node) => {
+                const kept = ghostNodes.filter((/** @type {any} */ node) => {
                     const keep = node.index != null ? changedIdx.has(node.index) : anyChanged;
-                    if (!keep) return;
+                    if (!keep) return false;
                     node.ghost = true;
                     node.featureId = feature.id;
                     node.editable = false;
                     node.pointerEvents = 'none';
                     applyGhostStyle(node, theme.ghost);
-                    scene.add(node);
+                    return true;
                 });
+                ghostBuilt.push({ glyph: feature.glyph, nodes: kept });
             }
+            paintOrder(ghostBuilt).forEach((/** @type {any} */ node) => scene.add(node));
         }
 
         // Build guides last so they can read the freshly-updated data. Guides are

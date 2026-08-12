@@ -43,7 +43,9 @@ export { nearestMark, nearestSeries, nearestMarkOnAxis, distanceToMark } from '.
 export { registerDriver } from './drivers/index.js';
 
 import { anchor, newSeries, draw, sweep, removeSeries } from './line.js';
-import { connect as networkConnect, rewire as networkRewire } from './network.js';
+import {
+    connect as networkConnect, rewire as networkRewire, reverse as networkReverse,
+} from './network.js';
 
 // Line-scoped edits, namespaced so the API shows they need a `line` mark.
 export const line = { anchor, newSeries, draw, sweep, removeSeries };
@@ -100,14 +102,16 @@ import { fill as waffleFill } from './waffle.js';
 // geometry only a waffle stamps, so the scope is in the name like line/arc/geo.
 export const waffle = { fill: waffleFill };
 
-// Network-scoped edits: the two gestures that build a network's TOPOLOGY. Creating
-// and deleting a node are `create`/`remove` like any other mark — a node table's
-// `key` is what makes a minted row carry an identity (see mintDatum), not a special
-// edit. `connect` goes on a node mark and `rewire` on a link mark's endpoint
-// channel, so only `rewire` carries scope: 'network' — the engine's capability guard
-// checks the mark an edit is attached to, and a node mark is an ordinary
-// point/rect/composite with no network capability to declare.
-export const network = { connect: networkConnect, rewire: networkRewire };
+// Network-scoped edits: the gestures that build a network's TOPOLOGY. Creating and
+// deleting a node are `create`/`remove` like any other mark — a node table's `key`
+// is what makes a minted row carry an identity (see mintDatum), not a special edit.
+// `connect` goes on a node mark, `rewire` and `reverse` on a link mark, so only the
+// latter two carry scope: 'network' — the engine's capability guard checks the mark
+// an edit is attached to, and a node mark is an ordinary point/rect/composite with
+// no network capability to declare.
+export const network = {
+    connect: networkConnect, rewire: networkRewire, reverse: networkReverse,
+};
 
 import {
     move as geoMove,

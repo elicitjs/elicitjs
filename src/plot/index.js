@@ -17,6 +17,7 @@ export { needle } from './needle.js';
 export { link } from './link.js';
 // A dot with a label, as one mark — a preset over composite (not network-specific).
 export { node } from './node.js';
+export { sticker } from './sticker.js';
 // Chart elements — prefer `elicit.elements.*`. Re-exported here as aliases so
 // existing `plot.axis` / `plot.legend` / `plot.axisRadial` specs keep working.
 export { axisRadial } from './axisRadial.js';

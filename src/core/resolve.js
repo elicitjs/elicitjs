@@ -120,6 +120,7 @@ export function resolveScales(features, tables, spec, dims) {
     // disagree on a shared axis, 'band' wins — a bar needs the interval, and a
     // dot renders fine on a band (it just uses the centre).
     const pref = feature.discreteScale || "band";
+    const rawChannels = new Set(feature.rawChannels || []);
     for (const [ch, chSpec] of Object.entries(channels)) {
       if (!chSpec) continue;
       // `scale: null` reads the field raw (the datum holds a literal colour /
@@ -134,6 +135,14 @@ export function resolveScales(features, tables, spec, dims) {
       // at local x -0.4 must not widen the x domain, demand a band, or conjure
       // an axis for a box that isn't in the data's units at all.
       if (frameSpecOf(chSpec)) continue;
+
+      // A channel the mark reads RAW (`Mark.rawChannels`) resolves no scale by
+      // construction, so there is nothing here to build. `link`'s `nodeWidth` is
+      // the case that forced this: it names a column of the NODE table, and this
+      // pass can only see the mark's own table — so a perfectly well-declared
+      // field looked undeclared and the chart opened with a warning telling the
+      // author to declare what they already had.
+      if (rawChannels.has(ch)) continue;
 
       // A derived channel (`{ fn }`) is computed per datum in VISUAL space —
       // its result is used as-is, never scaled — so it declares no field and

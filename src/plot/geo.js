@@ -13,7 +13,7 @@
 //   geoRect     — geographic AABB (west/south/east/north)
 
 import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, resolveHandles, markCommon} from './mark.js';
-import { textNodeAt, hasEditText } from './text.js';
+import { textNodeAt } from './text.js';
 import { resolveFormat } from '../format.js';
 import { warn } from '../core/dev.js';
 import { projectPoint, projectBounds } from '../core/projection.js';
@@ -569,7 +569,6 @@ export function geoText(options = {}) {
     const { channels = {}, id, edits, constraints, format: formatOpt } = opts;
     const lonKey = fieldOf(channels, 'lon') || 'lon';
     const latKey = fieldOf(channels, 'lat') || 'lat';
-    const canEditText = hasEditText(edits, channels);
     const format = resolveFormat(formatOpt);
 
     return {
@@ -593,7 +592,7 @@ export function geoText(options = {}) {
             currentData.forEach((d, i) => {
                 const pt = projectPoint(projection, d[lonKey], d[latKey]);
                 if (!pt) return;
-                nodes.push(textNodeAt(scales, channels, d, i, pt.x, pt.y, { format, canEditText, data: currentData }));
+                nodes.push(textNodeAt(scales, channels, d, i, pt.x, pt.y, { format, data: currentData }));
             });
             return nodes;
         },

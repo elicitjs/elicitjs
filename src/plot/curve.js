@@ -52,12 +52,7 @@
 import {
     encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions,
     themeOf, markDefaults, positionalKeys, markCommon,} from './mark.js';
-
-// How many segments the hit polyline samples the quadratic into. Enough that the
-// straight-line error is well under the hit stroke's own width at any curvature.
-const HIT_SAMPLES = 16;
-// Minimum grab width for the invisible hit path, in px.
-const HIT_WIDTH = 16;
+import { HIT_WIDTH, sampleQuadratic } from './hitpath.js';
 
 /**
  * A point rotated about a pivot by `deg` MATH degrees (CCW, y-up), which in
@@ -76,25 +71,6 @@ function rotatePoint(p, pivot, deg) {
     const dx = p[0] - pivot.cx;
     const dy = p[1] - pivot.cy;
     return [pivot.cx + dx * cos - dy * sin, pivot.cy + dx * sin + dy * cos];
-}
-
-/**
- * Sample a quadratic Bézier into a polyline, for the pick layer.
- * @param {[number, number]} p1 @param {[number, number]} c @param {[number, number]} p2
- * @returns {[number, number][]}
- */
-function sampleQuadratic(p1, c, p2) {
-    /** @type {[number, number][]} */
-    const pts = [];
-    for (let i = 0; i <= HIT_SAMPLES; i++) {
-        const t = i / HIT_SAMPLES;
-        const u = 1 - t;
-        pts.push([
-            u * u * p1[0] + 2 * u * t * c[0] + t * t * p2[0],
-            u * u * p1[1] + 2 * u * t * c[1] + t * t * p2[1],
-        ]);
-    }
-    return pts;
 }
 
 /**

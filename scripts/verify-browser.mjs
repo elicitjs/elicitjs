@@ -118,7 +118,7 @@ async function main() {
             '/marks/symbol', '/marks/face', '/marks/text', '/marks/line', '/marks/composite',
             '/marks/dotstack', '/marks/waffle', '/marks/needle',
             '/marks/axis-radial', '/marks/arc', '/marks/geo', '/marks/network', '/marks/trend', '/marks/axes',
-            '/marks/legend',
+            '/marks/legend', '/marks/sticker',
             '/editing', '/editing/gestures', '/editing/sweep', '/editing/lock',
             '/editing/existence', '/editing/probe', '/editing/stages', '/editing/axis',
             '/editing/external-controls',
@@ -2403,6 +2403,627 @@ async function main() {
         check('key: the minted identity is unique',
             new Set(keyAfter.map((/** @type {any} */ d) => d.id)).size === keyAfter.length,
             JSON.stringify(keyAfter.map((/** @type {any} */ d) => d.id)));
+
+        // ---- Sticker: a box sized by its text, typed into ------------------
+        // Every check here is invisible to typecheck and check:warnings — the page
+        // renders either way. The drag one in particular: with `editText` on the
+        // LABEL rather than the box, the pick layer's text hit disc sits dead
+        // centre of the note and eats the gesture, so a sticker you cannot pick up
+        // by its middle is exactly what this catches.
+        console.log('\nSticker (/marks/sticker)');
+        await open('/marks/sticker', '#editing .chart svg rect.mark');
+        await page.locator('#editing .chart svg').scrollIntoViewIfNeeded();
+        await page.waitForTimeout(200);
+        const stEl = '#editing .chart > div';
+        const stData = () => page.$eval(stEl, (el) => el.getData());
+        const stickerBoxes = () => page.$$eval('#editing .chart svg rect.mark',
+            (rs) => rs.map((r) => ({
+                w: +r.getAttribute('width'), h: +r.getAttribute('height'),
+                rx: r.getAttribute('rx'),
+            })));
+
+        const boxes0 = await stickerBoxes();
+        check('sticker: one box per row', boxes0.length === 3, `${boxes0.length} boxes`);
+        check('sticker: corners are rounded', boxes0.every((b) => b.rx && +b.rx > 0),
+            JSON.stringify(boxes0.map((b) => b.rx)));
+        check('sticker: a long note wraps and makes a taller box',
+            Math.max(...boxes0.map((b) => b.h)) > Math.min(...boxes0.map((b) => b.h)),
+            JSON.stringify(boxes0.map((b) => b.h)));
+        check('sticker: the label is ONE node per row, not one per line',
+            (await page.$$('#editing .chart svg text.mark')).length === 3);
+        check('sticker: a wrapped label paints as tspans',
+            (await page.$$('#editing .chart svg text.mark tspan')).length > 1);
+        const labelPE = await page.$$eval('#editing .chart svg text.mark',
+            (ts) => ts.map((t) => getComputedStyle(t).pointerEvents));
+        check('sticker: labels are pointer-transparent, so the box keeps the gesture',
+            labelPE.every((v) => v === 'none'), labelPE.join(','));
+
+        // Paint order. A glyph is one OBJECT, so its parts group per ROW: box,
+        // label, box, label. Painting feature by feature — every box, then every
+        // label — reads fine until two notes overlap, and then the lower note's
+        // text sits on top of the upper note's paper. Only the DOM order sees it.
+        const stOrder = await page.$$eval('#editing .chart svg g.mark-layer > *',
+            (ns) => ns.map((n) => n.tagName.toLowerCase()).join(','));
+        check('sticker: each note paints whole (box,label per row), not all boxes then all labels',
+            stOrder === 'rect,text,rect,text,rect,text', stOrder);
+
+        // WHERE it lands, not just that it moved. Two bugs live in this gap and
+        // both shipped. (1) d3.drag's default subject is the bound datum, so on a
+        // node carrying x/y — a rect carries its TOP-LEFT — every drag reported a
+        // pointer displaced by that corner, and the note jumped (-w/2, -h/2) the
+        // moment you pressed it. (2) An absolute `move` puts the box's CENTRE at
+        // the pointer, so grabbing a note near its corner teleports it; the example
+        // uses mode:'relative', where the grabbed point stays under the pointer.
+        // Both draw a perfectly good chart, so only a measured drag sees them.
+        const stBox = () => page.$eval('#editing .chart svg rect.mark', (r) => {
+            const b = r.getBoundingClientRect();
+            return { cx: b.x + b.width / 2, cy: b.y + b.height / 2, w: b.width, h: b.height };
+        });
+        const st0 = await stData();
+        const stFrom = await stBox();
+        // Grab well off centre, so an absolute move would be visibly wrong.
+        const stGrab = { x: stFrom.cx - stFrom.w / 2 + 8, y: stFrom.cy - stFrom.h / 2 + 6 };
+        await page.mouse.move(stGrab.x, stGrab.y);
+        await page.mouse.down();
+        await page.mouse.move(stGrab.x + 45, stGrab.y - 35, { steps: 10 });
+        await page.mouse.up();
+        await page.waitForTimeout(250);
+        const stMoved = await stData();
+        const stTo = await stBox();
+        check('sticker: dragging by the box centre moves the note',
+            stMoved[0].x !== st0[0].x || stMoved[0].y !== st0[0].y,
+            `${st0[0].x},${st0[0].y} -> ${stMoved[0].x},${stMoved[0].y}`);
+        check('sticker: a relative move keeps the grabbed point under the pointer',
+            Math.abs(stTo.cx - (stFrom.cx + 45)) < 3 && Math.abs(stTo.cy - (stFrom.cy - 35)) < 3,
+            `expected ${(stFrom.cx + 45).toFixed(1)},${(stFrom.cy - 35).toFixed(1)} ` +
+            `— got ${stTo.cx.toFixed(1)},${stTo.cy.toFixed(1)}`);
+
+        // Double-click the BODY (not a glyph) and type a second line.
+        const stCentre2 = await page.$eval('#editing .chart svg rect.mark', (r) => {
+            const b = r.getBoundingClientRect();
+            return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+        });
+        await page.mouse.dblclick(stCentre2.x, stCentre2.y);
+        await page.waitForTimeout(250);
+        check('sticker: double-clicking the body opens the editor',
+            !!(await page.$('#editing .chart svg foreignObject.text-editor')));
+        const editorTag = await page.$eval('#editing .chart svg foreignObject.text-editor *',
+            (n) => n.tagName.toLowerCase()).catch(() => 'none');
+        check('sticker: multiline gives a textarea', editorTag === 'textarea', editorTag);
+        const editorW = await page.$eval('#editing .chart svg foreignObject.text-editor',
+            (n) => +n.getAttribute('width')).catch(() => -1);
+        check('sticker: the editor is sized to the box, not the 140px default',
+            editorW > 0 && editorW !== 140, `width=${editorW}`);
+
+        // The seed. A sticker's typable surface is its BOX, and a rect paints no
+        // text — its string is drawn by a sibling mark — so an editor seeded only
+        // from `node.text` opened EMPTY and every double-click silently became
+        // "retype the note from scratch". The page looks identical either way.
+        const editorSeed = await page.$eval(
+            '#editing .chart svg foreignObject.text-editor textarea',
+            (n) => /** @type {HTMLTextAreaElement} */ (n).value).catch(() => null);
+        check('sticker: the editor opens with the note already in it',
+            editorSeed === stMoved[0].note,
+            `${JSON.stringify(editorSeed)} vs ${JSON.stringify(stMoved[0].note)}`);
+        const editorCaret = await page.$eval(
+            '#editing .chart svg foreignObject.text-editor textarea',
+            (n) => /** @type {HTMLTextAreaElement} */ (n).selectionStart).catch(() => -1);
+        check('sticker: a multiline editor puts the caret at the end, not over everything',
+            editorCaret === (editorSeed || '').length, `caret=${editorCaret}`);
+
+        await page.keyboard.press('ControlOrMeta+a');
+        await page.keyboard.type('one');
+        await page.keyboard.press('Enter');
+        check('sticker: Enter inserts a newline instead of committing',
+            !!(await page.$('#editing .chart svg foreignObject.text-editor')));
+        await page.keyboard.type('two');
+        await page.keyboard.press('ControlOrMeta+Enter');
+        await page.waitForTimeout(300);
+        const stTyped = await stData();
+        check('sticker: Cmd/Ctrl+Enter commits the typed text',
+            stTyped[0].note === 'one\ntwo', JSON.stringify(stTyped[0].note));
+        const boxesTyped = await stickerBoxes();
+        check('sticker: the box re-sizes to what was typed',
+            boxesTyped[0].h !== boxes0[0].h || boxesTyped[0].w !== boxes0[0].w,
+            `${boxes0[0].w}x${boxes0[0].h} -> ${boxesTyped[0].w}x${boxesTyped[0].h}`);
+
+        // Clicking the note cycles its colour. `tone` is a `scale: null` column (the
+        // datum holds the literal colour), so it resolves NO scale — a cycle that
+        // steps only `ch.scale.domain()` finds nothing, returns undefined, and the
+        // click does nothing at all with no warning. The domain is the SCHEMA's.
+        const stFillOf = () => page.$eval('#editing .chart svg rect.mark',
+            (r) => r.getAttribute('fill'));
+        const stCentre3 = await page.$eval('#editing .chart svg rect.mark', (r) => {
+            const b = r.getBoundingClientRect();
+            return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+        });
+        const stFill0 = await stFillOf();
+        const stTone0 = (await stData())[0].tone;
+        await page.mouse.click(stCentre3.x, stCentre3.y);
+        await page.waitForTimeout(250);
+        const stCycled = await stData();
+        check('sticker: clicking a note cycles its colour through the schema domain',
+            stCycled[0].tone !== stTone0, `${stTone0} -> ${stCycled[0].tone}`);
+        check('sticker: the painted fill follows the cycled column',
+            (await stFillOf()) !== stFill0, `${stFill0} -> ${await stFillOf()}`);
+
+        // ---- Sticker: resizing a note re-wraps it -------------------------
+        // A pinned `width` is the wrap width too. Wrapping at `maxWidth` while the
+        // box is drawn at `width` renders fine and is wrong both ways — the text
+        // spills out of a narrowed note, and leaves dead paper in a widened one —
+        // so the assertion is on the LINE COUNT, not just the box.
+        await page.locator('#resizing .chart svg').scrollIntoViewIfNeeded();
+        await page.waitForTimeout(250);
+        const stRzEl = '#resizing .chart > div';
+        const stRzBox = () => page.$eval('#resizing .chart svg rect.mark', (r) => {
+            const b = r.getBoundingClientRect();
+            return { cx: b.x + b.width / 2, cy: b.y + b.height / 2, w: b.width, h: b.height };
+        });
+        const stRzLines = () => page.$$eval('#resizing .chart svg text.mark tspan', (t) => t.length);
+        const stRz0 = await stRzBox();
+        const stRzLines0 = await stRzLines();
+        // Shift-drag the right edge inward. `extent` is half the domain span, so the
+        // edge tracks the pointer even though the box grows about its centre.
+        const stRzEdge = { x: stRz0.cx + stRz0.w / 2 - 4, y: stRz0.cy };
+        await page.keyboard.down('Shift');
+        await page.mouse.move(stRzEdge.x, stRzEdge.y);
+        await page.mouse.down();
+        await page.mouse.move(stRzEdge.x - 40, stRzEdge.y, { steps: 10 });
+        await page.mouse.up();
+        await page.keyboard.up('Shift');
+        await page.waitForTimeout(250);
+        const stRz1 = await stRzBox();
+        const stRzData = await page.$eval(stRzEl, (el) => el.getData());
+        // The box grows about its centre, so the WIDTH moves twice as fast as the
+        // pointer — which is exactly why the example halves `extent`. Assert the
+        // edge, since that is the thing the reader has hold of.
+        check('sticker: the dragged edge tracks the pointer',
+            Math.abs((stRz1.cx + stRz1.w / 2) - (stRzEdge.x - 40)) < 5,
+            `edge ${(stRz1.cx + stRz1.w / 2).toFixed(1)}, pointer ${(stRzEdge.x - 40).toFixed(1)} ` +
+            `(w ${stRz0.w} -> ${stRz1.w})`);
+        check('sticker: the width lands in the column, not a pixel of chrome',
+            Math.abs(stRzData[0].w - stRz1.w) < 1.5, `w=${stRzData[0].w}, box=${stRz1.w}`);
+        check('sticker: the box keeps its centre while it resizes',
+            Math.abs(stRz1.cx - stRz0.cx) < 2, `${stRz0.cx.toFixed(1)} -> ${stRz1.cx.toFixed(1)}`);
+        check('sticker: a narrowed note re-wraps onto more lines and grows taller',
+            (await stRzLines()) > stRzLines0 && stRz1.h > stRz0.h,
+            `lines ${stRzLines0} -> ${await stRzLines()}, h ${stRz0.h} -> ${stRz1.h}`);
+
+        // ---- Sticker: a band scale re-files a card -------------------------
+        await page.locator('#lanes .chart svg').scrollIntoViewIfNeeded();
+        await page.waitForTimeout(250);
+        const lnEl = '#lanes .chart > div';
+        const ln0 = await page.$eval(lnEl, (el) => el.getData());
+        const lnBox = await page.$eval('#lanes .chart svg rect.mark', (r) => {
+            const b = r.getBoundingClientRect();
+            return { cx: b.x + b.width / 2, cy: b.y + b.height / 2 };
+        });
+        await page.mouse.move(lnBox.cx, lnBox.cy);
+        await page.mouse.down();
+        await page.mouse.move(lnBox.cx + 150, lnBox.cy, { steps: 12 });
+        await page.mouse.up();
+        await page.waitForTimeout(250);
+        const ln1 = await page.$eval(lnEl, (el) => el.getData());
+        check('sticker: dragging a card across writes the new category',
+            ln1[0].lane !== ln0[0].lane && ln1[0].lane === 'Next',
+            `${ln0[0].lane} -> ${ln1[0].lane}`);
+        check('sticker: the other cards stay where they were',
+            ln1.slice(1).every((/** @type {any} */ d, /** @type {number} */ i) => d.lane === ln0[i + 1].lane),
+            JSON.stringify(ln1.map((/** @type {any} */ d) => d.lane)));
+
+        // ---- Diagram board: directed, curved, reversible -------------------
+        console.log('\nDiagram board (/marks/sticker#diagram)');
+        await open('/marks/sticker', '#diagram .chart svg rect.mark');
+        await page.locator('#diagram .chart svg').scrollIntoViewIfNeeded();
+        await page.waitForTimeout(200);
+        const dgEl = '#diagram .chart > div';
+        const dgData = () => page.$eval(dgEl, (el) => el.getData());
+        // A link emits a transparent HIT path plus its visible body; the arrowheads
+        // are closed sub-paths with no stroke.
+        const dgPaths = () => page.$$eval('#diagram .chart svg path',
+            (ps) => ps.map((p) => ({ d: p.getAttribute('d'), stroke: p.getAttribute('stroke') })));
+
+        const paths0 = await dgPaths();
+        const hitPaths = paths0.filter((p) => p.stroke === 'transparent');
+        check('diagram: every link gets a hit path, so its BODY is clickable',
+            hitPaths.length === 3, `${hitPaths.length} hit paths`);
+        const heads = paths0.filter((p) => p.stroke === 'none' && (p.d || '').endsWith('Z'));
+        check('diagram: directed: true draws arrowheads with no `arrow` option set',
+            heads.length === 3, `${heads.length} heads`);
+        const bodies = paths0.filter((p) => p.stroke && p.stroke !== 'transparent' && p.stroke !== 'none');
+        check('diagram: reciprocal links draw two distinct paths, not one on top of another',
+            new Set(bodies.map((p) => p.d)).size === bodies.length,
+            `${bodies.length} bodies, ${new Set(bodies.map((p) => p.d)).size} distinct`);
+
+        // Alt-click a link BODY to reverse it — the point of the hit path.
+        const dg0 = await dgData();
+        const linkPt = await page.$$eval('#diagram .chart svg path', (ps) => {
+            const p = ps.filter((n) => n.getAttribute('stroke') === 'transparent')[2];
+            if (!p) return null;
+            const at = p.getPointAtLength(p.getTotalLength() / 2);
+            const sp = p.ownerSVGElement.createSVGPoint();
+            sp.x = at.x; sp.y = at.y;
+            const s = sp.matrixTransform(p.getScreenCTM());
+            return { x: s.x, y: s.y };
+        });
+        await page.keyboard.down('Alt');
+        await page.mouse.click(linkPt.x, linkPt.y);
+        await page.keyboard.up('Alt');
+        await page.waitForTimeout(300);
+        const dgRev = await dgData();
+        check('diagram: alt-clicking a link body reverses it',
+            dgRev.flows[2].source === dg0.flows[2].target
+            && dgRev.flows[2].target === dg0.flows[2].source,
+            `${dg0.flows[2].source}->${dg0.flows[2].target} became ${dgRev.flows[2].source}->${dgRev.flows[2].target}`);
+
+        // Click the same body without Alt: the other click edit on the mark steps
+        // `kind`, which is what makes a connector switch between elbow and curve.
+        const dgCycled = await (async () => {
+            const pt = await page.$$eval('#diagram .chart svg path', (ps) => {
+                const p = ps.filter((n) => n.getAttribute('stroke') === 'transparent')[2];
+                if (!p) return null;
+                const at = p.getPointAtLength(p.getTotalLength() / 2);
+                const s = new DOMPoint(at.x, at.y).matrixTransform(p.getScreenCTM());
+                return { x: s.x, y: s.y };
+            });
+            await page.mouse.click(pt.x, pt.y);
+            await page.waitForTimeout(300);
+            return dgData();
+        })();
+        check('diagram: clicking a link body cycles its curve column',
+            dgCycled.flows[2].kind !== dgRev.flows[2].kind,
+            `${dgRev.flows[2].kind} -> ${dgCycled.flows[2].kind}`);
+
+        // Shift-drag one box onto another: connect. This is the check that was
+        // missing when a relative `move` and `connect` first shared a mark — the
+        // move driver's dragend cleared the feature's whole session, taking the
+        // connect driver's `fromIndex` with it, so the band was drawn all the way
+        // across and the release created NOTHING. Both drivers still ran, both
+        // charts still rendered, and every other assertion here passed.
+        const dgBoxes = () => page.$$eval('#diagram .chart svg rect.mark', (rs) => rs.map((r) => {
+            const b = r.getBoundingClientRect();
+            return { cx: b.x + b.width / 2, cy: b.y + b.height / 2 };
+        }));
+        const bx = await dgBoxes();
+        const dgBefore = await dgData();
+        await page.keyboard.down('Shift');
+        await page.mouse.move(bx[0].cx, bx[0].cy);
+        await page.mouse.down();
+        await page.mouse.move((bx[0].cx + bx[2].cx) / 2, (bx[0].cy + bx[2].cy) / 2, { steps: 8 });
+        await page.mouse.move(bx[2].cx, bx[2].cy, { steps: 8 });
+        await page.mouse.up();
+        await page.keyboard.up('Shift');
+        await page.waitForTimeout(350);
+        const dgLinked = await dgData();
+        check('diagram: shift-dragging box to box appends exactly one connector',
+            dgLinked.flows.length === dgBefore.flows.length + 1,
+            `${dgBefore.flows.length} -> ${dgLinked.flows.length}`);
+        check('diagram: the new connector joins the two boxes it was dragged between',
+            !!dgLinked.flows[dgLinked.flows.length - 1]
+            && dgLinked.flows[dgLinked.flows.length - 1].source === dgBefore.steps[0].id
+            && dgLinked.flows[dgLinked.flows.length - 1].target === dgBefore.steps[2].id,
+            JSON.stringify(dgLinked.flows[dgLinked.flows.length - 1]));
+        check('diagram: connect defaults fill the new row\'s own columns',
+            (dgLinked.flows[dgLinked.flows.length - 1] || {}).kind === 'orthogonal',
+            JSON.stringify(dgLinked.flows[dgLinked.flows.length - 1]));
+        check('diagram: no ghost survives the drag that made the connector',
+            (await page.$$eval('#diagram .chart svg path',
+                (ps) => ps.filter((p) => getComputedStyle(p).pointerEvents === 'none').length)) === 0,
+            'a parked proposal was left on screen');
+
+        // ---- Orthogonal routing: docked to the BOX, not to the chord ---------
+        // The whole point of the kind. A `step` turns on the straight line between
+        // two node POSITIONS, so it meets a sticker wherever that line crosses it —
+        // usually along an edge and often inside the paper. These assert the three
+        // things that stop being true the moment the router regresses to the chord.
+        //
+        // `#diagram`'s links dock to boxes measured by `noteBox`, so this also proves
+        // the sizing helper survives being called from a spec rather than from
+        // `sticker` itself — a `nodeWidth` that resolved to NaN still draws a link,
+        // just one anchored at the node's centre again.
+        const orthoEnds = () => page.evaluate(() => {
+            const svg = document.querySelector('#diagram .chart svg');
+            const boxes = [...svg.querySelectorAll('rect.mark')].map((r) => {
+                const b = r.getBBox();
+                return { x: b.x, y: b.y, w: b.width, h: b.height };
+            });
+            // The visible connector bodies: stroked, not the transparent hit path.
+            const bodies = [...svg.querySelectorAll('path')].filter((p) => {
+                const s = p.getAttribute('stroke');
+                return s && s !== 'none' && s !== 'transparent';
+            });
+            return bodies.map((p) => {
+                const len = p.getTotalLength();
+                const a = p.getPointAtLength(0);
+                const b = p.getPointAtLength(1);
+                const z = p.getPointAtLength(len);
+                // Distance from each endpoint to the nearest box's EDGE, and to the
+                // nearest box's centre. On the chord the first is large; docked, small.
+                const edge = Math.min(...boxes.map((r) => {
+                    const dx = Math.max(r.x - a.x, 0, a.x - (r.x + r.w));
+                    const dy = Math.max(r.y - a.y, 0, a.y - (r.y + r.h));
+                    return Math.hypot(dx, dy);
+                }));
+                const centre = Math.min(...boxes.map(
+                    (r) => Math.hypot(a.x - (r.x + r.w / 2), a.y - (r.y + r.h / 2))));
+                // Is the first millimetre of travel axis-aligned? A perpendicular
+                // exit leaves along x or y, never on a diagonal.
+                const square = Math.abs(b.x - a.x) < 0.5 || Math.abs(b.y - a.y) < 0.5;
+                return { edge, centre, square, start: { x: a.x, y: a.y }, end: { x: z.x, y: z.y } };
+            });
+        });
+        const ends0 = await orthoEnds();
+        check('orthogonal: a connector starts ON a box edge, not at the node centre',
+            ends0.length > 0 && ends0.every((e) => e.edge < 12 && e.centre > 12),
+            JSON.stringify(ends0.map((e) => ({ edge: +e.edge.toFixed(1), centre: +e.centre.toFixed(1) }))));
+        check('orthogonal: it leaves that edge square-on, not along the chord',
+            ends0.every((e) => e.square),
+            JSON.stringify(ends0.map((e) => e.square)));
+
+        // Relative position chooses the sides, so moving a box far enough to change
+        // which axis separates the two must re-route the connector onto new edges.
+        const dgBoxes2 = await dgBoxes();
+        const routeBefore = await orthoEnds();
+        await page.mouse.move(dgBoxes2[0].cx, dgBoxes2[0].cy);
+        await page.mouse.down();
+        await page.mouse.move(dgBoxes2[1].cx, dgBoxes2[1].cy - 150, { steps: 12 });
+        await page.mouse.up();
+        await page.waitForTimeout(300);
+        const routeAfter = await orthoEnds();
+        check('orthogonal: moving a node re-routes onto the edges now facing',
+            JSON.stringify(routeBefore.map((e) => e.start))
+            !== JSON.stringify(routeAfter.map((e) => e.start)),
+            'the anchors did not move with the node');
+        check('orthogonal: the re-routed ends are still on an edge, still square-on',
+            routeAfter.every((e) => e.edge < 12 && e.square),
+            JSON.stringify(routeAfter.map((e) => ({ edge: +e.edge.toFixed(1), square: e.square }))));
+
+        // ---- Network: the sections that were prose-only ---------------------
+        console.log('\nNetwork examples (/marks/network)');
+        await open('/marks/network', '#schema .chart svg');
+        const nwData = (id) => page.$eval(`#${id} .chart > div`, (el) => el.getData());
+        // Midpoint of every link body that is drawn and grabbable.
+        const nwBodies = (id) => page.evaluate((sec) => {
+            const ps = [...document.querySelectorAll(`#${sec} .chart svg path`)].filter((p) => {
+                const s = p.getAttribute('stroke');
+                return s && s !== 'none' && s !== 'transparent'
+                    && getComputedStyle(p).pointerEvents !== 'none';
+            });
+            return ps.map((p) => {
+                const at = p.getPointAtLength(p.getTotalLength() / 2);
+                const q = new DOMPoint(at.x, at.y).matrixTransform(p.getScreenCTM());
+                return { x: q.x, y: q.y };
+            });
+        }, id);
+
+        // A links table seeded `[]` — the "build it entirely by gesture" claim.
+        await page.locator('#schema .chart svg').scrollIntoViewIfNeeded();
+        await page.waitForTimeout(250);
+        const emptyDots = await page.$$eval('#schema .chart svg circle.mark', (cs) => cs.map((c) => {
+            const b = c.getBoundingClientRect();
+            return { cx: b.x + b.width / 2, cy: b.y + b.height / 2 };
+        }));
+        check('network: an empty links table starts with no connectors',
+            (await nwData('schema')).links.length === 0);
+        await page.keyboard.down('Shift');
+        await page.mouse.move(emptyDots[0].cx, emptyDots[0].cy);
+        await page.mouse.down();
+        await page.mouse.move((emptyDots[0].cx + emptyDots[1].cx) / 2, (emptyDots[0].cy + emptyDots[1].cy) / 2, { steps: 8 });
+        await page.mouse.move(emptyDots[1].cx, emptyDots[1].cy, { steps: 8 });
+        await page.mouse.up();
+        await page.keyboard.up('Shift');
+        await page.waitForTimeout(350);
+        const emptyAfter = await nwData('schema');
+        check('network: shift-drag builds the first link on a chart seeded with none',
+            emptyAfter.links.length === 1, JSON.stringify(emptyAfter.links));
+        check('network: the drawn connector appears with it',
+            (await page.$$eval('#schema .chart svg path', (ps) => ps.length)) >= 2,
+            'no path drawn for the new link');
+
+        // directed: true — arrowheads, and reverse on the links table.
+        await page.locator('#directed .chart svg').scrollIntoViewIfNeeded();
+        await page.waitForTimeout(250);
+        const dirHeads = await page.$$eval('#directed .chart svg path',
+            (ps) => ps.filter((p) => (p.getAttribute('d') || '').endsWith('Z')
+                && p.getAttribute('stroke') === 'none').length);
+        check('network: directed: true draws an arrowhead per link',
+            dirHeads === 3, `${dirHeads} heads`);
+        const dirBefore = await nwData('directed');
+        const dirPts = await nwBodies('directed');
+        await page.keyboard.down('Alt');
+        await page.mouse.click(dirPts[0].x, dirPts[0].y);
+        await page.keyboard.up('Alt');
+        await page.waitForTimeout(300);
+        const dirAfter = await nwData('directed');
+        check('network: alt-click reverses a directed link',
+            dirAfter.links.some((/** @type {any} */ l, /** @type {number} */ i) =>
+                l.source === dirBefore.links[i].target && l.target === dirBefore.links[i].source),
+            JSON.stringify(dirAfter.links));
+
+        // A `kind` column driving `curve`, cycled by a click.
+        await page.locator('#curves .chart svg').scrollIntoViewIfNeeded();
+        await page.waitForTimeout(250);
+        const curveLabels = await page.$$eval('#curves .chart svg text.mark', (ts) => ts.map((t) => t.textContent));
+        check('network: each connector is labelled with its own curve kind',
+            curveLabels.join(',') === 'step,stepBefore,stepAfter,arc,bezier', curveLabels.join(','));
+        // The GEOMETRY, not the labels. A shape gallery whose rows all render as the
+        // same straight line labels itself perfectly and reads as broken — which is
+        // what a level chord (every step is degenerate on one) plus `curvature: "auto"`
+        // (a lone arc has no bow) produced. Measure each body's departure from its own
+        // chord, and that no two bodies trace the same path.
+        const curveGeom = await page.evaluate(() => {
+            const ps = [...document.querySelectorAll('#curves .chart svg path')].filter((p) => {
+                const s = p.getAttribute('stroke');
+                return s && s !== 'none' && s !== 'transparent';
+            });
+            return ps.map((p) => {
+                const L = p.getTotalLength();
+                const a = p.getPointAtLength(0);
+                const b = p.getPointAtLength(L);
+                const vx = b.x - a.x, vy = b.y - a.y;
+                const len = Math.hypot(vx, vy) || 1;
+                let bow = 0;
+                for (let i = 1; i < 20; i++) {
+                    const q = p.getPointAtLength((L * i) / 20);
+                    const dist = Math.abs((q.x - a.x) * vy - (q.y - a.y) * vx) / len;
+                    if (dist > bow) bow = dist;
+                }
+                return { d: p.getAttribute('d'), bow };
+            });
+        });
+        check('network: the gallery draws five connectors',
+            curveGeom.length === 5, `${curveGeom.length} bodies`);
+        check('network: no two connector kinds trace the same path',
+            new Set(curveGeom.map((g) => g.d)).size === curveGeom.length,
+            `${new Set(curveGeom.map((g) => g.d)).size} distinct of ${curveGeom.length}`);
+        check('network: every kind departs from its own chord, so none reads as a straight line',
+            curveGeom.every((g) => g.bow > 2),
+            JSON.stringify(curveGeom.map((g) => +g.bow.toFixed(1))));
+        const curvePts = await nwBodies('curves');
+        const curves0 = await nwData('curves');
+        await page.mouse.click(curvePts[0].x, curvePts[0].y);
+        await page.waitForTimeout(300);
+        const curves1 = await nwData('curves');
+        check('network: clicking a connector steps it to the next curve kind',
+            curves1.links[0].kind !== curves0.links[0].kind,
+            `${curves0.links[0].kind} -> ${curves1.links[0].kind}`);
+
+        // Pinned sides. `sourceSide`/`targetSide` are PRESENTATION: read per row like
+        // `curve`, held across a move, and — the half worth guarding — never written
+        // back. A side that became a column would quietly add a drawing preference to
+        // an elicited dataset, and the picture would look identical either way.
+        await page.locator('#sides .chart svg').scrollIntoViewIfNeeded();
+        await page.waitForTimeout(250);
+        const sideEnds = () => page.evaluate(() => {
+            const svg = document.querySelector('#sides .chart svg');
+            const boxes = [...svg.querySelectorAll('rect.mark')].map((r) => {
+                const b = r.getBBox();
+                return { x: b.x, y: b.y, w: b.width, h: b.height };
+            });
+            const bodies = [...svg.querySelectorAll('path')].filter((p) => {
+                const s = p.getAttribute('stroke');
+                return s && s !== 'none' && s !== 'transparent';
+            });
+            // Which edge of the nearest box each endpoint sits on.
+            const sideOf = (pt) => {
+                let best = null;
+                let bestD = Infinity;
+                for (const r of boxes) {
+                    for (const [name, d] of [
+                        ['left', Math.abs(pt.x - r.x)], ['right', Math.abs(pt.x - (r.x + r.w))],
+                        ['top', Math.abs(pt.y - r.y)], ['bottom', Math.abs(pt.y - (r.y + r.h))],
+                    ]) {
+                        const inSpan = name === 'left' || name === 'right'
+                            ? pt.y > r.y - 4 && pt.y < r.y + r.h + 4
+                            : pt.x > r.x - 4 && pt.x < r.x + r.w + 4;
+                        if (inSpan && d < bestD) { bestD = d; best = name; }
+                    }
+                }
+                return best;
+            };
+            return bodies.map((p) => ({
+                from: sideOf(p.getPointAtLength(0)),
+                to: sideOf(p.getPointAtLength(p.getTotalLength())),
+            }));
+        });
+        const sidesData = () => page.evaluate(() => {
+            return document.querySelector('#sides .chart > div').getData();
+        });
+        const sides0 = await sideEnds();
+        const sidesRows0 = await sidesData();
+        check('network: a pinned sourceSide leaves the edge it names',
+            sides0.length > 0 && sides0.every((s) => s.from === 'right' && s.to === 'left'),
+            JSON.stringify(sides0));
+        // Drag a stage well past its neighbour. `auto` would swap the sides; pinned
+        // must not.
+        const sideBoxes = await page.evaluate(() => {
+            const svg = document.querySelector('#sides .chart svg');
+            return [...svg.querySelectorAll('rect.mark')].map((r) => {
+                const b = r.getBoundingClientRect();
+                return { cx: b.x + b.width / 2, cy: b.y + b.height / 2 };
+            });
+        });
+        await page.mouse.move(sideBoxes[0].cx, sideBoxes[0].cy);
+        await page.mouse.down();
+        await page.mouse.move(sideBoxes[1].cx + 120, sideBoxes[1].cy, { steps: 12 });
+        await page.mouse.up();
+        await page.waitForTimeout(300);
+        const sides1 = await sideEnds();
+        const sidesRows1 = await sidesData();
+        check('network: a pinned side holds when the nodes swap places',
+            sides1.every((s) => s.from === 'right' && s.to === 'left'), JSON.stringify(sides1));
+        check('network: pinning a side writes nothing to the dataset',
+            JSON.stringify(sidesRows1.flows) === JSON.stringify(sidesRows0.flows),
+            `${JSON.stringify(sidesRows0.flows)} -> ${JSON.stringify(sidesRows1.flows)}`);
+
+        // A link's own columns: width, colour, and a label you can retype.
+        await page.locator('#attributes .chart svg').scrollIntoViewIfNeeded();
+        await page.waitForTimeout(250);
+        const tieWidths = await page.$$eval('#attributes .chart svg path',
+            (ps) => ps.filter((p) => {
+                const s = p.getAttribute('stroke');
+                return s && s !== 'none' && s !== 'transparent';
+            }).map((p) => +p.getAttribute('stroke-width')));
+        check('network: a link column drives stroke width',
+            new Set(tieWidths).size > 1, JSON.stringify(tieWidths));
+        // The label is not the line. resolveStyle sweeps the style channels onto
+        // EVERY node a mark emits, so a connector's `stroke`/`strokeWidth` used to
+        // outline each glyph of its own label — legible enough to pass a text check,
+        // and visibly wrong. Only `fill` reaches the label now.
+        const tieLabels = await page.$$eval('#attributes .chart svg text.mark',
+            (ts) => ts.map((t) => ({
+                text: t.textContent,
+                stroke: t.getAttribute('stroke') || getComputedStyle(t).stroke,
+                strokeWidth: t.getAttribute('stroke-width'),
+            })));
+        const noteLabels = tieLabels.filter((t) => /worked together|met once|knew at school/.test(t.text || ''));
+        check('network: a link label is filled, not stroked',
+            noteLabels.length > 0
+            && noteLabels.every((t) => !t.strokeWidth && (!t.stroke || t.stroke === 'none' || t.stroke === 'rgb(0, 0, 0)')),
+            JSON.stringify(noteLabels));
+        // And the plate under it, which is what stops the connector running through
+        // the text. It has to be BEHIND the label, so it is emitted first.
+        const plates = await page.$$eval('#attributes .chart svg rect.mark',
+            (rs) => rs.map((r) => ({
+                w: +r.getAttribute('width'), h: +r.getAttribute('height'),
+                op: r.getAttribute('fill-opacity'),
+            })));
+        check('network: labelBackground draws one plate per labelled connector',
+            plates.length === 2 && plates.every((p) => p.w > 0 && p.h > 0),
+            JSON.stringify(plates));
+        check('network: the plate is translucent, so the connector reads through it',
+            plates.every((p) => +p.op > 0 && +p.op < 1), JSON.stringify(plates.map((p) => p.op)));
+        const plateBehind = await page.$eval('#attributes .chart svg',
+            (svg) => {
+                const kids = [...svg.querySelectorAll('rect.mark, text.mark')];
+                const rect = kids.findIndex((n) => n.tagName.toLowerCase() === 'rect');
+                const text = kids.findIndex((n) => n.tagName.toLowerCase() === 'text');
+                return rect < text;
+            });
+        check('network: the plate paints beneath its label', plateBehind);
+
+        const tiePts = await nwBodies('attributes');
+        await page.mouse.dblclick(tiePts[0].x, tiePts[0].y);
+        await page.waitForTimeout(300);
+        check('network: double-clicking a connector opens its label editor',
+            !!(await page.$('#attributes .chart svg foreignObject.text-editor')));
+        // WHERE it opened. A path node carries no x/y, so the renderer's label-shaped
+        // fallback produced x="NaN" and the editor was unplaceable — the page still
+        // rendered and the typing still committed, so only reading the attribute sees
+        // it. `link` states an `editBox` at the label's midpoint instead.
+        const tieEditor = await page.$eval('#attributes .chart svg foreignObject.text-editor',
+            (n) => ({ x: +n.getAttribute('x'), y: +n.getAttribute('y'), w: +n.getAttribute('width') }))
+            .catch(() => null);
+        check('network: the editor is placed on the connector, not at NaN',
+            !!tieEditor && Number.isFinite(tieEditor.x) && Number.isFinite(tieEditor.y) && tieEditor.w > 0,
+            JSON.stringify(tieEditor));
+        await page.keyboard.press('ControlOrMeta+a');
+        await page.keyboard.type('knew at school');
+        await page.keyboard.press('Enter');
+        await page.waitForTimeout(300);
+        const tiesTyped = await nwData('attributes');
+        check('network: the typed label lands in the link row',
+            tiesTyped.ties[0].note === 'knew at school', JSON.stringify(tiesTyped.ties[0]));
 
         check('no page/console errors', errors.length === 0, errors.slice(0, 3).join(' | '));
     } finally {
