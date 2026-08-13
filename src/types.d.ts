@@ -482,8 +482,9 @@ export interface TrendEditOptions extends EditOptions {
   // The pivot: the x whose value is held while the line rotates, and where an
   // intercept drag places the line. Defaults to 0 when 0 is in the x domain.
   anchor?: number;
-  // The x a HANDLE drag measures at. Ignored when the gesture carries no node (a
-  // plane/probe pick), where the pointer's own x is used so the line follows the
+  // The x a PINNED handle drag measures at (a handle drawn under `grip: 'probe'`).
+  // Ignored by an end-mounted grip and when the gesture carries no node at all (a
+  // plane/probe pick) — both use the pointer's own x, so the line follows the
   // cursor. Defaults to the x domain's other end.
   probe?: number;
 }
@@ -882,7 +883,14 @@ export interface TrendAnchorOptions extends MarkOptions {
   // The pivot: where the intercept handle sits, and the point a slope drag holds
   // fixed. Defaults to 0 when 0 lies in the x domain, else the domain's first end.
   anchor?: number;
-  // Where the slope handle sits. Defaults to the x domain's other end.
+  // Where the slope grip sits. 'end' (default) mounts a PAIR on the ends of the
+  // drawn line (the band's upper edge, on trendBand) and a drag passes the line
+  // through the pointer, so it swings through the full circle; 'probe' pins ONE at
+  // x = `probe`, sliding vertically at that column — the pre-grip behaviour, whose
+  // reachable slope is capped at `ySpan / (probe - anchor)`.
+  grip?: 'end' | 'probe';
+  // The column a pinned slope grip sits at, under `grip: 'probe'` only. Defaults to
+  // the x domain's other end. Setting it under the default grip dev-warns.
   probe?: number;
   // true | false | 'hit' — the shared handle contract (plot/mark.js).
   handles?: boolean | 'hit';
@@ -891,10 +899,10 @@ export interface TrendAnchorOptions extends MarkOptions {
 }
 
 // Options for a TREND mark: the line y = intercept + slope*x, clipped to the plot,
-// with a handle at `anchor` (translate) and one at `probe` (rotate about the
-// anchor). Its positional channels name the plot's AXES; the belief lives in the
-// parameter channels. Stage via the edits (`edit.trend.slope({ stage: 1 })`),
-// not mark options. See plot/trend.js.
+// with a handle at `anchor` (translate) and a pair on the line's own ends (rotate
+// about the anchor — see `grip`). Its positional channels name the plot's AXES; the
+// belief lives in the parameter channels. Stage via the edits
+// (`edit.trend.slope({ stage: 1 })`), not mark options. See plot/trend.js.
 export interface TrendOptions extends TrendAnchorOptions {}
 
 // Options for a TREND BAND mark: the uncertainty around a parametric line, drawn

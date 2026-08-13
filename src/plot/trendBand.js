@@ -30,9 +30,14 @@
 // layer, because the band is a view of parameters the reader edits elsewhere —
 // on the `trend` line's handles, or straight off the plane. `handles` defaults
 // FALSE (unlike `trend`) so a band+line pair doesn't double the grab targets;
-// turn it on for standalone spread edits. Affordance when handles are on:
-//   circle at `anchor` → channel:'interceptSpread' (or intercept1/2)
-//   circle at `probe`  → channel:'slopeSpread' (or slope1/2)
+// turn it on for standalone spread edits. The spread grips follow `trend`'s `grip`
+// contract exactly — a PAIR mounted on the ends of the band's own upper edge by
+// default, so opening the cone is not capped by how far the pinned column reaches,
+// and one pinned at x = `probe` under `grip: 'probe'`. Affordance when handles are
+// on:
+//   circle at `anchor`     → channel:'interceptSpread' (or intercept1/2)
+//   circle at each EDGE END→ channel:'slopeSpread' (grip: 'end', the default)
+//   circle at `probe`      → channel:'slopeSpread' (grip: 'probe')
 //   handles: true|false|'hit' — shared contract
 //
 // It declares NO edits of its own. A band and a line over the same rows are two
@@ -43,8 +48,9 @@
 import { resolveStyle, normalizeMarkOptions, markDefaults, themeOf, encodeValue, positionalKeys, resolveHandles, markCommon} from './mark.js';
 import {
     paramChannels, readParams, anchorsOf, valueAt,
-    lineSegment, envelopePolygon, nestedEnvelopes, sampleLines
+    lineSegment, segmentEnds, envelopePolygon, nestedEnvelopes, sampleLines
 } from './trendGeometry.js';
+import { warn } from '../core/dev.js';
 
 /**
  * @param {import('../types').TrendBandOptions} [options]
@@ -54,7 +60,7 @@ export function trendBand(options = {}) {
     const opts = normalizeMarkOptions(options, {
         mark: 'trendBand',
         allow: ['render', 'levels', 'samples', 'seed', 'sigma', 'distribution',
-            'anchor', 'probe', 'handles', 'handleSize', 'handleColor']
+            'anchor', 'probe', 'grip', 'handles', 'handleSize', 'handleColor']
     });
     const {
         edits,
@@ -69,10 +75,19 @@ export function trendBand(options = {}) {
         distribution = 'normal',
         anchor: anchorOpt,
         probe: probeOpt,
+        grip = 'end',
         handles = false,
         handleSize,
         handleColor
     } = opts;
+
+    // Same contract as trend(): `probe` places a grip only under `grip: 'probe'`.
+    if (probeOpt != null && grip !== 'probe') {
+        warn('trendBand:probe-ignored',
+            "trendBand(): `probe` places the slopeSpread handle only under "
+            + "`grip: 'probe'`. The default grip mounts the handles on the band's own "
+            + "edge ends; add `grip: 'probe'` to pin one at that column instead.");
+    }
 
     const channels = paramChannels(opts.channels || {}, {
         intercept: { field: 'intercept' },
@@ -125,6 +140,27 @@ export function trendBand(options = {}) {
             // default count, and silently ignored a `strokeOpacity` the author set.
             const bandDefaults = markDefaults(scales, 'trendBand',
                 { fill: bandInk, stroke: bandInk, fillOpacity: 0.18, strokeOpacity: 0.15 });
+
+            /**
+             * The end of a straight edge's clipped segment on the given side of the x
+             * axis: `1` for the largest data-x, `-1` for the smallest. Read back through
+             * the scale rather than compared in pixels, so a reversed x range picks the
+             * same END rather than the same SIDE OF THE SCREEN.
+             * @param {{ a: number, b: number }} line
+             * @param {number} side
+             * @returns {{ x: number, y: number } | null}
+             */
+            const edgeEnd = (line, side) => {
+                const ends = segmentEnds(
+                    lineSegment(line, scales, channels, width, height), handleStyle.size + 1);
+                if (!ends) return null;
+                const xs = /** @type {any} */ (scales.x);
+                const at = xs && xs.invertible
+                    ? (/** @type {{x: number}} */ p) => Number(xs.invertValue(p.x))
+                    : (/** @type {{x: number}} */ p) => p.x;
+                const [p, q] = ends;
+                return (side > 0) === (at(p) >= at(q)) ? p : q;
+            };
 
             currentData.forEach((/** @type {any} */ d, /** @type {number} */ i) => {
                 const params = readParams(d, channels, scales, i, currentData);
@@ -187,23 +223,44 @@ export function trendBand(options = {}) {
                 }
 
                 if (!handleStyle.grabbable) return;
-                // One grab per spread, on the band's upper edge at the x where that
-                // spread has all the leverage: the slope's at `probe`, the
-                // intercept's at `anchor` (where the slope range contributes nothing).
+                // One grab per spread, on the band's upper edge. The intercept's sits
+                // at `anchor`, where the slope range contributes nothing — its place is
+                // fixed by the pivot, so it needs no grip contract. The slope's is
+                // where that spread has the leverage: the edge's own ends, or `probe`.
                 const edge = (/** @type {number} */ x) =>
                     params.aHi + Math.max(params.bLo * x, params.bHi * x);
-                for (const [channel, at] of /** @type {[string, number][]} */ ([['interceptSpread', anchor], ['slopeSpread', probe]])) {
-                    if (!channels[channel]) continue;
+                const handle = (/** @type {string} */ channel, /** @type {number} */ cx, /** @type {number} */ cy) => {
                     nodes.push({
                         type: 'circle',
-                        cx: encodeValue(scales, channels, 'x', at, 0),
-                        cy: encodeValue(scales, channels, 'y', flat ? valueAt(params, at) : edge(at), 0),
+                        cx, cy,
                         r: handleStyle.size,
                         fill: handleStyle.visible ? (handleColor || paint) : 'transparent',
-                        // The mark's anchor/probe ride along, so the spread edits pivot
-                        // where the handle sits — see plot/trend.js.
-                        data: d, index: i, channel, anchor, probe
+                        // The mark's anchor/probe and grip ride along, so the spread
+                        // edits pivot where the handle sits and read the gesture the way
+                        // that handle affords — see plot/trend.js.
+                        data: d, index: i, channel, anchor, probe, grip
                     });
+                };
+
+                if (channels.interceptSpread) {
+                    handle('interceptSpread',
+                        encodeValue(scales, channels, 'x', anchor, 0),
+                        encodeValue(scales, channels, 'y', flat ? valueAt(params, anchor) : edge(anchor), 0));
+                }
+                if (!channels.slopeSpread) return;
+                if (grip === 'probe') {
+                    handle('slopeSpread',
+                        encodeValue(scales, channels, 'x', probe, 0),
+                        encodeValue(scales, channels, 'y', flat ? valueAt(params, probe) : edge(probe), 0));
+                    return;
+                }
+                // The upper edge is PIECEWISE — `bHi` governs it where x > 0 and `bLo`
+                // where x < 0 — so each end comes off its own straight piece, clipped
+                // like the line it is. A domain that doesn't cross zero puts both ends
+                // on the same piece, which is simply both ends of one segment.
+                for (const [side, b] of /** @type {[number, number][]} */ ([[1, params.bHi], [-1, params.bLo]])) {
+                    const end = edgeEnd({ a: params.aHi, b }, side);
+                    if (end) handle('slopeSpread', end.x, end.y);
                 }
             });
 

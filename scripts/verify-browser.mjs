@@ -1582,8 +1582,11 @@ async function main() {
         const inertRows = () => inertChart.locator(':scope > div').first().evaluate((e) => e.getData());
         const inertBefore = await inertRows();
         const inertHandles = await inertChart.locator('svg circle').count();
-        check('trend (no edit): the handles are still drawn', inertHandles >= 2, `${inertHandles} circles`);
-        for (const nth of [0, 1]) {
+        // Three, not two: the intercept handle at the anchor plus a slope grip at
+        // EACH end of the line. One end-mounted grip would teleport across the plot
+        // as the line passes vertical, so the pair is the affordance, not a bonus.
+        check('trend (no edit): the handles are still drawn', inertHandles === 3, `${inertHandles} circles`);
+        for (const nth of [0, 1, 2]) {
             const h = inertChart.locator('svg circle').nth(nth);
             await h.scrollIntoViewIfNeeded();
             const hb = await h.boundingBox();
@@ -1648,6 +1651,50 @@ async function main() {
         check('trend: it HELD the anchor point',
             Math.abs(anchorValue(afterSlope[0]) - anchorValue(freeBefore[0])) < 1e-9,
             `value at anchor ${anchorValue(freeBefore[0])} -> ${anchorValue(afterSlope[0])}`);
+
+        // A slope grip mounted on the line's END reads the pointer's whole position,
+        // so the line rotates instead of sliding one column. Both halves are
+        // invisible to typecheck and to check:warnings — the old pinned handle drew
+        // and dragged perfectly well, it just couldn't reach past
+        // `ySpan / (probe - anchor)`, which on this chart is a slope of 1.
+        console.log('\nTrend: the end grips swing the line right round (/marks/trend)');
+        await open('/marks/trend', '#grip .chart svg circle');
+        const gripChart = page.locator('#grip .chart').first();
+        const gripRows = () => gripChart.locator(':scope > div').first().evaluate((e) => e.getData());
+        const gripHandles = await gripChart.locator('svg circle').count();
+        check('trend: the default grip draws the intercept handle plus TWO end grips',
+            gripHandles === 3, `${gripHandles} circles`);
+
+        // The intercept handle sits AT the anchor, so it reports the pivot's column
+        // without this test having to re-derive the plot rect from the margins.
+        const pivotHandle = gripChart.locator('svg circle').first();
+        await pivotHandle.scrollIntoViewIfNeeded();
+        const pivotBox = await pivotHandle.boundingBox();
+        const pivotX = pivotBox.x + pivotBox.width / 2;
+        const gripSvg = await gripChart.locator('svg').boundingBox();
+        const highY = gripSvg.y + gripSvg.height * 0.12;
+
+        const endGrip = gripChart.locator('svg circle').nth(1);
+        const egb = await endGrip.boundingBox();
+        await page.mouse.move(egb.x + egb.width / 2, egb.y + egb.height / 2);
+        await page.mouse.down();
+        // Up and just to the RIGHT of the pivot: steeply positive.
+        await page.mouse.move(pivotX + 12, highY, { steps: 10 });
+        await page.waitForTimeout(80);
+        const steep = (await gripRows())[0].slope;
+        // Straight across the pivot's column: the line passes vertical and comes
+        // down the far side, which is the whole point — the slope flips sign.
+        await page.mouse.move(pivotX - 12, highY, { steps: 10 });
+        await page.mouse.up();
+        await page.waitForTimeout(150);
+        const flipped = (await gripRows())[0].slope;
+        check('trend: dragging an end grip reaches a slope the pinned handle could not',
+            steep > 2, `slope ${steep}`);
+        check('trend: dragging across the pivot flips the slope through vertical',
+            flipped < -2, `slope ${steep} -> ${flipped}`);
+        // The clamp in the example is what keeps that unbounded growth honest.
+        check('trend: the slope clamp still holds at the extreme',
+            Math.abs(flipped) <= 20 + 1e-9, `slope ${flipped}`);
 
         // The three renders are three readings of ONE family, so each has to emit
         // its own shape count — a render name silently falling through to the

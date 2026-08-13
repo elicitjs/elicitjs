@@ -273,6 +273,30 @@ export function lineSegment(params, scales, channels, width, height) {
 }
 
 /**
+ * The two ends of a clipped segment, pulled in along it by `inset` pixels.
+ *
+ * A handle drawn exactly on the plot boundary is half-cut by it, so a grip mounted
+ * at the end of a line has to sit slightly inside. The inset is skipped on a segment
+ * too short to survive it — a line that only clips a corner — where pulling both ends
+ * in would cross them over each other and put the handles in the wrong order.
+ * @param {{ x1: number, y1: number, x2: number, y2: number } | null} seg
+ * @param {number} [inset]
+ * @returns {{ x: number, y: number }[] | null} the two ends, in the segment's own order
+ */
+export function segmentEnds(seg, inset = 0) {
+    if (!seg) return null;
+    const dx = seg.x2 - seg.x1;
+    const dy = seg.y2 - seg.y1;
+    const len = Math.hypot(dx, dy);
+    if (!Number.isFinite(len)) return null;
+    const t = (inset > 0 && len > 4 * inset) ? inset / len : 0;
+    return [
+        { x: seg.x1 + t * dx, y: seg.y1 + t * dy },
+        { x: seg.x2 - t * dx, y: seg.y2 - t * dy }
+    ];
+}
+
+/**
  * The exact envelope polygon of a line family, in plot pixels, clipped to the plot.
  * Evaluated at the x-domain ends plus x = 0 (the kink) when that lies between them.
  * @param {{ aLo: number, aHi: number, bLo: number, bHi: number }} params

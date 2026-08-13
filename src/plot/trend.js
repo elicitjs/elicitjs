@@ -6,8 +6,9 @@
 //     else the domain's first end): dragging it translates the line vertically
 //     (holds slope), setting the value there — the classic y-intercept when anchor
 //     is 0.
-//   - a SLOPE handle at x = probe (default the x domain's other end): dragging it
-//     rotates the line about the anchor point (holds the anchor's value).
+//   - a pair of SLOPE handles, one at each END of the drawn line: dragging either
+//     rotates the line about the anchor point (holds the anchor's value), and the
+//     line follows the pointer, so it swings through the full circle.
 // Stage the two edits to elicit intercept first, then slope:
 //
 //   Elicit({ schema: { x: { type: 'quantitative', domain: [-10, 10] },
@@ -35,10 +36,30 @@
 // By default (when the chart leaves `axes` unspecified), autoAxes detects a trend
 // and crosses the axes at the origin — the natural frame for intercept + slope.
 //
+// ── Where the slope handle sits, and why it is a PAIR ───────────────────────
+// `grip: 'end'` (the default) mounts the slope handles on the line's own ENDS —
+// where the drawn, clipped segment meets the plot edge — and a drag on one passes
+// the line through the pointer. That is what makes a full rotation possible: the
+// old handle was pinned to x = `probe` and only its y followed, so the reachable
+// slope was capped at `ySpan / (probe - anchor)`, vertical was unreachable, and a
+// steep line walked its own grab target off the top of the plot (the line is
+// clipped; the handle was not).
+//
+// TWO handles, not one, because a line's "far end" genuinely swaps sides as it
+// passes vertical: a single end-mounted grip would teleport across the plot
+// mid-drag. Drawn at both ends the circles simply slide around the plot border and
+// trade roles — continuous motion, and `build()` needs to know nothing about the
+// pointer to get it. Both carry `channel: 'slope'`, so either drives the one edit.
+//
+// `grip: 'probe'` is the old behaviour: ONE handle at x = `probe`, sliding
+// vertically at that column. `probe` means nothing under the default grip, and the
+// mark says so rather than ignoring it in silence.
+//
 // Affordance map (attach edit.trend.intercept / .slope yourself — mark is inert):
 //   line chrome          → pointer-transparent (not a grab target)
 //   circle at `anchor`   → channel:'intercept' (default x=0-in-domain or domain start)
-//   circle at `probe`    → channel:'slope' (default the other domain end)
+//   circle at each END   → channel:'slope' (grip: 'end', the default)
+//   circle at `probe`    → channel:'slope' (grip: 'probe'; the other domain end)
 //   handles: true|false|'hit' — shared contract; false emits no handles
 //
 // The line is a non-interactive visual and each handle is a draggable circle tagged
@@ -64,7 +85,8 @@
 // goes on the edit (`edit.trend.slope({ stage: 1 })`), like every other edit's stage.
 
 import { resolveStyle, normalizeMarkOptions, markDefaults, encodeValue, positionalKeys, resolveHandles, markCommon} from './mark.js';
-import { paramChannels, readParams, anchorsOf, lineSegment, valueAt } from './trendGeometry.js';
+import { paramChannels, readParams, anchorsOf, lineSegment, segmentEnds, valueAt } from './trendGeometry.js';
+import { warn } from '../core/dev.js';
 
 /**
  * @param {import('../types').TrendOptions} [options]
@@ -73,16 +95,27 @@ import { paramChannels, readParams, anchorsOf, lineSegment, valueAt } from './tr
 export function trend(options = {}) {
     const opts = normalizeMarkOptions(options, {
         mark: 'trend',
-        allow: ['anchor', 'probe', 'handles', 'handleSize', 'handleColor']
+        allow: ['anchor', 'probe', 'grip', 'handles', 'handleSize', 'handleColor']
     });
     const {
         edits,
         anchor: anchorOpt,
         probe: probeOpt,
+        grip = 'end',
         handles = true,
         handleSize,
         handleColor,
     } = opts;
+
+    // `probe` is the pinned grip's column, and nothing else reads it. Silently
+    // accepting it under the default grip would leave an author moving a handle
+    // that isn't there.
+    if (probeOpt != null && grip !== 'probe') {
+        warn('trend:probe-ignored',
+            "trend(): `probe` places the slope handle only under `grip: 'probe'`. "
+            + "The default grip mounts the handles on the line's own ends; add "
+            + "`grip: 'probe'` to pin one at that column instead.");
+    }
 
     const channels = paramChannels(opts.channels || {}, {
         intercept: { field: 'intercept' },
@@ -145,22 +178,40 @@ export function trend(options = {}) {
                 }
 
                 if (!handleStyle.grabbable) return;
-                // The two draggable handles, tagged by channel for edit scoping. Each
-                // also carries the MARK's anchor/probe, so an edit pivots exactly where
-                // the handle it grabbed sits — the author sets `anchor` once, on the
-                // mark that draws the handle, and never has to repeat it on the edit
-                // to keep the two in sync. (The same node-as-transport pattern arc uses
+                // Every handle carries the MARK's anchor/probe and its grip, so an edit
+                // pivots exactly where the handle it grabbed sits and reads the gesture
+                // the way that handle affords — the author sets `anchor` once, on the
+                // mark that draws the handle, and never has to repeat it on the edit to
+                // keep the two in sync. (The same node-as-transport pattern arc uses
                 // for `pivotX/pivotY` and waffle for `grid`.)
-                for (const [channel, at] of /** @type {[string, number][]} */ ([['intercept', anchor], ['slope', probe]])) {
+                const handle = (/** @type {string} */ channel, /** @type {number} */ cx, /** @type {number} */ cy) => {
                     nodes.push({
                         type: 'circle',
-                        cx: encodeValue(scales, channels, 'x', at, 0),
-                        cy: encodeValue(scales, channels, 'y', valueAt(params, at), 0),
+                        cx, cy,
                         r: handleStyle.size,
                         fill: handleStyle.visible ? (style.fill || handleStyle.fill) : 'transparent',
                         data: d, index: i, channel,
-                        anchor, probe
+                        anchor, probe, grip
                     });
+                };
+
+                // The intercept handle FIRST, at the pivot: it is the one handle whose
+                // place is fixed by the anchor rather than by the line's angle.
+                handle('intercept',
+                    encodeValue(scales, channels, 'x', anchor, 0),
+                    encodeValue(scales, channels, 'y', valueAt(params, anchor), 0));
+
+                if (grip === 'probe') {
+                    handle('slope',
+                        encodeValue(scales, channels, 'x', probe, 0),
+                        encodeValue(scales, channels, 'y', valueAt(params, probe), 0));
+                    return;
+                }
+                // One grip at each end of the DRAWN line, inset so the circle isn't
+                // half-cut by the plot edge it sits on. No clipped segment means the
+                // line misses the plot entirely — there is nothing to grab.
+                for (const end of segmentEnds(clipped, handleStyle.size + 1) || []) {
+                    handle('slope', end.x, end.y);
                 }
             });
             return nodes;
