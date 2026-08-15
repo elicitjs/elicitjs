@@ -770,9 +770,10 @@ export function rank(options = {}) {
  * select (never deselect); `exclusive: false` adds to the selection instead of
  * replacing it (forward-looking — selection is a Set) .
  *
- * Pairs with a selection-aware target: `plot.legend({ edit: edit.legend() })`
- * defaults its target row to the selection, so "click a bar, then click a legend
- * swatch" edits the bar you picked — no `selected` field in the data.
+ * Pairs with a selection-aware target: `elements.legend({ edit:
+ * edit.legend.category() })` defaults its target row to the selection, so "click a
+ * bar, then click a legend swatch" edits the bar you picked — no `selected` field
+ * in the data.
  * @param {import('../types').SelectEditOptions} [options]
  * @returns {import('../types').Edit}
  */
@@ -787,79 +788,6 @@ export function select(options = {}) {
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
             if (ctx.index == null) return undefined;
             return { __select: { index: ctx.index, exclusive, toggle } };
-        }
-    });
-}
-
-/**
- * The field a legend edit writes into: the channel's own field when the edit
- * names one, else the field the scale is built from (`scale.fields[0]`, stamped
- * by resolveScales). A legend mark carries no channel map, so the scale is the
- * only place the field is known.
- * @param {import('../types').ResolvedChannel} ch
- * @returns {string | undefined}
- */
-function legendField(ch) {
-    if (!ch) return undefined;
-    if (ch.field) return ch.field;
-    const fields = ch.scale && /** @type {any} */ (ch.scale).fields;
-    return fields && fields[0];
-}
-
-/**
- * legend — a discrete CATEGORY PICKER: click a swatch in a `plot.legend()` to set
- * the channel's field to that category. A direct-pick click on the swatch node,
- * which carries the value it stands for (`node.category`) — so the box you click
- * IS the swatch you see, with no separate hit-test geometry to keep in sync. The
- * legend mark injects the channel; the value is written into the target datum
- * (the swatch's `node.index`, the legend's `row`).
- * @param {import('../types').LegendEditOptions} [options]
- * @returns {import('../types').Edit}
- */
-export function legend(options = {}) {
-    return makeEdit({
-        type: 'legend',
-        gesture: 'click',
-        pick: 'direct',
-        ...options,
-        apply: (/** @type {import('../types').EditContext} */ ctx) => {
-            const field = legendField(ctx.channels[0]);
-            if (!field || !ctx.node || ctx.datum == null) return undefined;
-            const value = ctx.node.category;
-            if (value === undefined) return undefined;
-            return { ...ctx.datum, [field]: value };
-        }
-    });
-}
-
-/**
- * legendValue — a continuous VALUE PICKER: drag the handle on a `plot.legend()`
- * colour ramp to set the channel's field to a numeric value. A direct-pick drag
- * on the handle node, which carries the ramp's band geometry (`rampStart`/
- * `rampEnd`/`loValue`/`hiValue`/`along`). We map the pointer along the band back
- * to a value BY HAND — a colour scale isn't invertible, so `invertChannel` can't,
- * which is exactly why this edit exists. The value is clamped into [lo, hi] and
- * written into the target datum (the handle's `node.index`, the legend's `row`).
- * @param {import('../types').EditOptions} [options]
- * @returns {import('../types').Edit}
- */
-export function legendValue(options = {}) {
-    return makeEdit({
-        type: 'legendValue',
-        gesture: 'drag',
-        pick: 'direct',
-        ...options,
-        apply: (/** @type {import('../types').EditContext} */ ctx) => {
-            const node = ctx.node;
-            if (!node || node.rampStart == null || node.rampEnd == null) return undefined;
-            const field = legendField(ctx.channels[0]);
-            if (!field || ctx.datum == null) return undefined;
-            const span = node.rampEnd - node.rampStart;
-            if (!span) return undefined;
-            const pos = node.along === 'y' ? ctx.pointer.y : ctx.pointer.x;
-            const t = Math.max(0, Math.min(1, (pos - node.rampStart) / span));
-            const value = node.loValue + t * (node.hiValue - node.loValue);
-            return { ...ctx.datum, [field]: value };
         }
     });
 }

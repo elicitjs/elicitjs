@@ -123,14 +123,17 @@ export function warnMisplacedEdits(feature, label) {
  * @param {string[] | null} names
  * @param {any} markChannels
  * @param {import('../types').ScaleMap} scales
- * @param {boolean} [isGuide] the feature views a scale, not data (Mark.views)
+ * @param {boolean} [viewsScale] the feature views a SCALE, not data — i.e. it is a
+ *   chart ELEMENT (`views: 'scale'`). Named for what it is: this used to be called
+ *   `isGuide`, from before the three feature kinds had separate names, and a guide
+ *   (`views: 'state'`) is now a different thing entirely.
  * @returns {import('../types').ResolvedChannel[]}
  */
-export function resolveChannels(names, markChannels, scales, isGuide = false) {
-    // Fall back to the old shape-sniff when the caller doesn't say. Guides are the
-    // only features with no channel map, so this stays correct for a caller that
-    // has the channels but not the feature.
-    const mapless = isGuide || !markChannels || Object.keys(markChannels).length === 0;
+export function resolveChannels(names, markChannels, scales, viewsScale = false) {
+    // Fall back to the shape-sniff when the caller doesn't say: a feature with no
+    // channel map has no field of its own either, so the scale is the only place
+    // the field is known.
+    const mapless = viewsScale || !markChannels || Object.keys(markChannels).length === 0;
     /** @type {import('../types').ResolvedChannel[]} */
     const out = [];
     for (const name of names || []) {

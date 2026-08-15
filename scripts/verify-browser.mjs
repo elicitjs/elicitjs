@@ -891,6 +891,43 @@ async function main() {
             Math.abs(shareAfter.weight - shareBefore.weight) < 0.5,
             `weight ${shareBefore.weight} -> ${shareAfter.weight}`);
 
+        // ---- guides.remaining (/guides) --------------------------------------
+        // A GUIDE views chart STATE: it is derived from the rows, re-derives every
+        // render, and writes nothing. This is the one check that proves all three —
+        // the count has to MOVE when a bar does (derived, live), while the dataset
+        // shows the drag landed on the bar and nowhere else (read-only).
+        //
+        // It also pins the "read the target from the constraint" behaviour: the
+        // example passes no `total`, so a wrong reading would render no guide at all.
+        console.log('\nguides.remaining (/guides)');
+        await open('/guides', '#remaining .chart svg rect.mark');
+        const remText = () => page.$$eval('#remaining .chart svg text',
+            (ts) => ts.map((t) => t.textContent || '').find((t) => /left$/.test(t)) || '');
+        const remData = () => page.$eval('#remaining .chart > div', (el) => el.getData());
+
+        const remBefore = await remText();
+        check('remaining: the guide draws, so the target came off the maintainSum constraint',
+            /^\d+(\.\d+)? points? left$/.test(remBefore), `text ${JSON.stringify(remBefore)}`);
+
+        const remSumBefore = (await remData()).reduce((t, d) => t + d.y, 0);
+        const remBar0 = await centreOf(page.locator('#remaining .chart svg rect.mark').first());
+        // Drag the first bar DOWN — its value falls, so more of the budget is free.
+        await mouseDrag(remBar0.x, remBar0.y, remBar0.x, remBar0.y + 50);
+        const remAfter = await remText();
+        const remRowsAfter = await remData();
+        const remSumAfter = remRowsAfter.reduce((t, d) => t + d.y, 0);
+
+        const remNumOf = (/** @type {string} */ t) => parseFloat(t);
+        check('remaining: dragging a bar down raises the count left',
+            remNumOf(remAfter) > remNumOf(remBefore) + 0.5,
+            `${JSON.stringify(remBefore)} -> ${JSON.stringify(remAfter)}`);
+        check('remaining: the count equals the budget minus what is placed',
+            Math.abs(remNumOf(remAfter) - (100 - remSumAfter)) < 0.51,
+            `left ${remNumOf(remAfter)}, placed ${remSumAfter.toFixed(2)}`);
+        check('remaining: the guide wrote nothing — only the dragged bar changed',
+            remSumAfter < remSumBefore - 0.5 && remRowsAfter.every((d) => !('remaining' in d)),
+            `sum ${remSumBefore.toFixed(2)} -> ${remSumAfter.toFixed(2)}`);
+
         // ---- the `legends` spec key (/marks/legend) --------------------------
         // The counterpart to `axes`: an IMPLICIT layer that desugars into legend
         // marks. It has to both draw AND reserve space, and reserving space is the

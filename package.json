@@ -13,6 +13,11 @@
       "import": "./src/index.js",
       "default": "./src/index.js"
     },
+    "./authoring": {
+      "types": "./src/authoring/index.d.ts",
+      "import": "./src/authoring/index.js",
+      "default": "./src/authoring/index.js"
+    },
     "./dist": {
       "types": "./src/index.d.ts",
       "import": "./dist/elicit.js",
@@ -36,7 +41,9 @@
     "build:lib": "vite build --config vite.lib.config.js",
     "typecheck": "tsc --noEmit",
     "verify:browser": "node scripts/verify-browser.mjs",
-    "check:warnings": "node scripts/check-warnings.mjs"
+    "check:warnings": "node scripts/check-warnings.mjs",
+    "check:exports": "node scripts/check-exports.mjs",
+    "gen:types": "node scripts/gen-authoring-types.mjs"
   },
   "keywords": [
     "visualization",
@@ -66,17 +73,5 @@
     "playwright": "^1.61.1",
     "typescript": "^6.0.3",
     "vite": "^8.1.3"
-  },
-  "peerDependencies": {
-    "react": ">=18",
-    "react-dom": ">=18"
-  },
-  "peerDependenciesMeta": {
-    "react": {
-      "optional": true
-    },
-    "react-dom": {
-      "optional": true
-    }
   }
 }

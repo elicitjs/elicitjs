@@ -17,15 +17,12 @@ export { lineCone } from './lineCone.js';
 export { ranking } from './ranking.js';
 export { allocation } from './allocation.js';
 export { probabilityTokens } from './probabilityTokens.js';
-export { interval, ci } from './interval.js';
+export { interval } from './interval.js';
 export { histogram } from './histogram.js';
 export { region } from './region.js';
 export { thermometer } from './thermometer.js';
 export { labeledValue } from './labeledValue.js';
 
-// The instrument palette + the guide-built affordances (option rings, cell grid,
-// slider track, crosshair frame), exported so a custom instrument can reuse them.
-export { THEME, optionRings, cellGrid, sliderTrack, prompt, crosshair } from './theme.js';
-// The shared widget contract: `widgetTheme(opts.theme)` resolves a widget's theme
-// the same way the engine resolves spec.theme, so a custom instrument stays in step.
-export { widgetTheme } from './shared.js';
+// The instrument palette and the affordances a custom instrument reuses (option
+// rings, cell grid, slider track, crosshair, `widgetTheme`) are `authoring.*`:
+// they are what you build a widget FROM, not widgets you can put in a spec.

@@ -140,7 +140,7 @@ export function newSeries(options = {}) {
  *         order 'domain'   (lineY/lineX)          -> YOU-DRAW-IT FROM SCRATCH: the
  *             pointer crossing each `samples` column upserts that point at the
  *             pointer value, so one sweep draws the curve (re-cross to repaint).
- *         order 'sequence' (connectedScatter/path) -> FREEHAND: sample the pointer by
+ *         order 'sequence' (the `path` mark) -> FREEHAND: sample the pointer by
  *             pixel distance (`minDist`) and append points in creation order (a 2D
  *             path, e.g. a route over a map).
  * So one gesture both draws new lines and reshapes drawn ones — near edits, far draws.

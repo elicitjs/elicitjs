@@ -1,12 +1,27 @@
 // @ts-check
+//
+// The public surface, in two halves.
+//
+// THE GRAMMAR — what can appear in a spec. Each namespace holds exactly one kind
+// of thing, so its members are the grammar's keywords:
+//   plot.*         marks      — view DATA (one node per row)
+//   elements.*     elements   — view a SCALE (axis / grid / legend)
+//   guides.*       guides     — view STATE (read-only; write nothing)
+//   edit.*         edits      — a gesture -> data, through the encoding's own scale
+//   constraints.*  invariants — pure rules over the elicited dataset
+//   widgets.*      instruments — whole specs, one call each
+//
+// THE AUTHORING KIT — what you build new vocabulary FROM (`authoring.*`, also
+// importable as `elicitjs/authoring`). Kept out of the grammar so autocomplete
+// shows the language rather than the implementation.
 import { Elicit } from "./core/elicit.js";
 import * as plot from "./plot/index.js";
 import * as elements from "./elements/index.js";
 import * as edit from "./edit/index.js";
-import { when } from "./edit/index.js";
 import * as constraints from "./constraints/index.js";
 import * as guides from "./guides/index.js";
 import * as widgets from "./widgets/index.js";
+import * as authoring from "./authoring/index.js";
 import * as format from "./format.js";
 import { D3Renderer } from "./renderers/d3-renderer/index.js";
 import { CanvasRenderer } from "./renderers/canvas/index.js";
@@ -18,14 +33,19 @@ import { noteBox } from "./core/measure.js";
 export {
   Elicit,
   plot,
-  // Chart elements (axis / grid / legend / axisRadial) — scale chrome. Also
-  // aliased on `plot.*` so existing specs keep working; prefer `elements.*`.
+  // Chart elements (axis / grid / legend / axisRadial) — scale chrome. These view
+  // a SCALE rather than rows, which is why they are their own namespace and not
+  // marks.
   elements,
   edit,
-  when,
   constraints,
+  // Guides view chart STATE and write nothing — the rule and the state, rather
+  // than the data. See ARCHITECTURE.md's feature table.
   guides,
   widgets,
+  // The kit for writing new marks / edits / constraints / widgets. Also available
+  // as `import { … } from 'elicitjs/authoring'`.
+  authoring,
   format,
   D3Renderer,
   CanvasRenderer,

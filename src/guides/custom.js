@@ -21,16 +21,12 @@
 
 /**
  * @param {(ctx: any) => import('../types').FeatureNode[]} build
- * @returns {any}
+ * @returns {import('../types').Guide}
  */
 export function custom(build) {
     return {
-        isGuide: true,
-        /**
-         * @param {any} ctx
-         * @returns {import('../types').FeatureNode[]}
-         */
-        build: (ctx) => (build(ctx) || []).map((node) => ({
+        views: 'state',
+        build: (_rows, _scales, _w, _h, ctx) => (build(ctx) || []).map((node) => ({
             pointerEvents: 'none',
             ...node,
             guide: true

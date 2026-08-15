@@ -18,7 +18,7 @@ import {
     normalizeSchema, denormalizeSchema, normalizeData, isBareForm, enforceRefs,
 } from './schema.js';
 import { axisOf, pointerForChannel } from './encoding.js';
-import { warn } from './dev.js';
+import { warn, warningsEnabled } from './dev.js';
 
 // The capability guards below report through `warn(key, msg)` from core/dev.js —
 // on by default, deduped once per key, silenced with `setWarnings(false)`. They
@@ -28,8 +28,9 @@ import { warn } from './dev.js';
 /**
  * How a mark is named in a dev message. `id` is an OPTIONAL author field, so most
  * specs leave it unset and every guard that interpolated it read `mark "undefined"`.
- * Prefer the author's id, fall back to the factory name `defineMark` stamps
- * (`markName`), and only then to the anonymous form.
+ * Prefer the author's id, fall back to the factory name the mark stamps on itself
+ * (`markName` — see the mark contract in plot/mark.js), and only then to the
+ * anonymous form.
  * @param {any} feature
  * @returns {string}
  */
@@ -55,9 +56,10 @@ const SCOPE_CAPABILITY = {
     arc: { flag: 'supportsArc', expects: 'an arc mark (arc/pie/donut)' },
     stack: { flag: 'supportsStack', expects: 'a stacked mark (bar with `stack`, or arc/pie/donut)' },
     waffle: { flag: 'supportsWaffle', expects: 'a waffle mark' },
-    axis: { flag: 'isAxis', expects: 'an axis mark (axisX/axisY/axisRadial)' },
+    axis: { flag: 'isAxis', expects: 'an axis element (axisX/axisY/axisRadial)' },
     trend: { flag: 'supportsTrend', expects: 'a trend mark (trend/trendBand)' },
     network: { flag: 'supportsNetwork', expects: 'a link mark' },
+    legend: { flag: 'isLegend', expects: 'a legend element' },
 };
 
 // What a scale `kind` satisfies. A mark declares the CAPABILITY it needs, never a
@@ -418,10 +420,83 @@ function applyGhostStyle(node, ghost) {
 }
 
 /**
+ * Every key `Elicit` reads. A spec key is either here or it does nothing, so this
+ * doubles as the closed key set the JSON grammar is generated from.
+ * @type {string[]}
+ */
+const SPEC_KEYS = [
+    // Frame
+    'width', 'height', 'margins', 'responsive', 'overflow', 'focusOutline',
+    // The three kinds of feature: marks view DATA, elements view a SCALE, guides
+    // view STATE. Plus the implicit layers that desugar into elements.
+    'marks', 'elements', 'guides', 'axes', 'legends',
+    // The elicited dataset and its contract
+    'schema', 'data', 'constraints', 'lock',
+    // Scales (per channel). No `domain` here — a domain describes the DATA.
+    'scales', 'projection',
+    // Presentation
+    'theme', 'effects',
+    // Multi-stage elicitation
+    'stage', 'stageLabels',
+    // View options — runtime, not part of a serializable spec
+    'onChange', 'renderer',
+];
+
+/**
+ * Spec keys that are WRONG in a specific, diagnosable way. Same idea as
+ * `MISTAKEN_OPTIONS` for marks (plot/mark.js), one layer up.
+ *
+ * This guard exists because the spec was the ONE layer with no validation at all.
+ * A mark warns about `color:`; a chart element warns about `tickss:`; but
+ * `Elicit({ mark: [...] })` drew an empty chart in silence — at the layer every
+ * single user starts from, and where a typo costs the most.
+ * @type {Record<string, string>}
+ */
+const MISTAKEN_SPEC_KEYS = {
+    mark: 'did you mean `marks`? (an array of marks — plot.*)',
+    element: 'did you mean `elements`? (an array of chart elements — elements.*)',
+    guide: 'did you mean `guides`? (an array of guides — guides.*)',
+    constraint: 'did you mean `constraints`? (an array of dataset invariants)',
+    scale: 'did you mean `scales`? (per-channel scale config, keyed by channel name)',
+    edit: 'an edit goes on a mark — either on a channel (`y: { field, edit: move() }`) or in the mark\'s `edits: [...]`. There is no chart-level `edit`.',
+    edits: 'edits go on a MARK, not on the spec: `barY({ edits: [move()] })`.',
+    onchange: 'did you mean `onChange`? (capital C)',
+    domain: "a domain describes the DATA, so it lives on the schema: schema: { field: { domain: [...] } }.",
+    x: 'there is no chart-level `x`. Scale config is `scales: { x: {...} }`; a field\'s domain is the schema\'s.',
+    y: 'there is no chart-level `y`. Scale config is `scales: { y: {...} }`; a field\'s domain is the schema\'s.',
+    type: 'a chart has no `type` — what it draws is its `marks`. A FIELD\'s type belongs on the schema; the DATASET\'s shape is the schema\'s `structure`.',
+    title: 'there is no chart-level `title`. Draw one with a `text` mark, or a widget\'s `question`.',
+    container: 'Elicit returns the chart element — append it yourself: `container.appendChild(Elicit(spec))`.',
+    el: 'Elicit returns the chart element; it does not take one.',
+};
+
+/**
+ * Warn about spec keys that will be silently ignored.
+ * @param {any} spec
+ * @returns {void}
+ */
+function warnUnknownSpecKeys(spec) {
+    if (!spec || !warningsEnabled()) return;
+    const known = new Set(SPEC_KEYS);
+    for (const key of Object.keys(spec)) {
+        if (known.has(key)) continue;
+        const fix = MISTAKEN_SPEC_KEYS[key];
+        warn(
+            `spec:${key}`,
+            fix
+                ? `Elicit({ ${key}: … }): ${fix}`
+                : `Elicit({ ${key}: … }) is not a key the chart reads, so it is ignored. ` +
+                  `Spec keys are: ${SPEC_KEYS.slice().sort().join(', ')}.`,
+        );
+    }
+}
+
+/**
  * @param {import('../types').ElicitSpec} spec
  * @returns {import('../types').ElicitElement}
  */
 export function Elicit(spec) {
+    warnUnknownSpecKeys(spec);
     const {
         width = 600,
         height = 400,
@@ -1228,8 +1303,15 @@ export function Elicit(spec) {
             // its edit is inactive (one guide path, gated by the same rule as edits).
             stage: currentStage
         };
+        // One build signature for all three kinds of feature. A mark and an element
+        // are `build(rows, scales, width, height, ctx)`; a guide is the same five,
+        // so "what a feature is" differs only in what it VIEWS (`views`), never in
+        // how the engine calls it. The rows are the primary table's — what a
+        // chart-level guide means by "the data".
         allGuides.forEach(guide => {
-            const nodes = guide.build(guideCtx) || [];
+            const nodes = guide.build(
+                guideCtx.data, scales, innerWidth, innerHeight, guideCtx,
+            ) || [];
             nodes.forEach((/** @type {any} */ node) => {
                 node.guide = true;
                 scene.add(node);

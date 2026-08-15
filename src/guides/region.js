@@ -8,20 +8,24 @@
 //   elicit.guides.region({ x: ["Agree", "Strongly agree"] })
 //   elicit.guides.region({ y: ({ data }) => [min(data), max(data)] })
 
-import { resolveGuideOptions } from './shared.js';
+import { resolveGuideOptions, warnUnknownGuideOptions } from './shared.js';
+
+/**
+ * `region`'s option vocabulary. Exported so one list drives the diagnostics,
+ * the docs table, and (later) the JSON grammar.
+ * @type {string[]}
+ */
+export const REGION_OPTIONS = ['x', 'y', 'fill', 'opacity', 'stroke', 'label'];
 
 /**
  * @param {{ x?: any, y?: any, fill?: any, opacity?: any }} [options]
- * @returns {any}
+ * @returns {import('../types').Guide}
  */
 export function region(options = {}) {
+    warnUnknownGuideOptions('region', options, REGION_OPTIONS);
     return {
-        isGuide: true,
-        /**
-         * @param {any} ctx
-         * @returns {import('../types').FeatureNode[]}
-         */
-        build: (ctx) => {
+        views: 'state',
+        build: (_rows, _scales, _w, _h, ctx) => {
             const { scales, width, height } = ctx;
             // Fill/opacity default to the theme's region tokens; an option still wins.
             const rt = (ctx.theme && ctx.theme.guide && ctx.theme.guide.region) || {};

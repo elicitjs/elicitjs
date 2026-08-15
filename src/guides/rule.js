@@ -16,20 +16,24 @@
 // pixel, band centre) with no special-casing — a reference line on a Likert band
 // axis is the same call as one on a continuous axis.
 
-import { resolveGuideOptions } from './shared.js';
+import { resolveGuideOptions, warnUnknownGuideOptions } from './shared.js';
+
+/**
+ * `rule`'s option vocabulary. Exported so one list drives the diagnostics,
+ * the docs table, and (later) the JSON grammar.
+ * @type {string[]}
+ */
+export const RULE_OPTIONS = ['x', 'y', 'stroke', 'strokeDasharray', 'strokeWidth', 'opacity', 'label'];
 
 /**
  * @param {{ x?: any, y?: any, stroke?: any, strokeDasharray?: any, label?: any }} [options]
- * @returns {any}
+ * @returns {import('../types').Guide}
  */
 export function rule(options = {}) {
+    warnUnknownGuideOptions('rule', options, RULE_OPTIONS);
     return {
-        isGuide: true,
-        /**
-         * @param {any} ctx
-         * @returns {import('../types').FeatureNode[]}
-         */
-        build: (ctx) => {
+        views: 'state',
+        build: (_rows, _scales, _w, _h, ctx) => {
             const { scales, width, height } = ctx;
             // Colour/dash default to the theme's rule tokens (a theme can restyle
             // every reference line); an explicit option still wins.

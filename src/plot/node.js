@@ -4,7 +4,7 @@
 //   plot.node({ channels: { x: {field:'x'}, y: {field:'y'}, text: {field:'label'} } })
 //
 // A PRESET over `composite`, in the same sense `pie`/`donut` are presets over `arc`
-// and `connectedScatter`/`path` are presets over `line`: it desugars into ordinary
+// and `path` is a preset over `line`: it desugars into ordinary
 // marks and the engine learns nothing. What it removes is the repetition of writing
 // the same `x`/`y` on two marks:
 //

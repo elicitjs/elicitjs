@@ -6,7 +6,7 @@ The core idea: **an edit is the inverse of encoding.** A channel encodes data �
 
 ```javascript
 schema: { n: { type: "quantitative", domain: [0, 100] } }   // what n IS
-y: { field: "n", edit: drag() }
+y: { field: "n", edit: move() }
 //   ── encode: n → pixel ──┘  └─ edit: drag pixel → n
 ```
 
@@ -63,7 +63,7 @@ A budget allocation: four draggable bars that must always sum to 100.
 ```javascript
 import * as elicit from "elicitjs";
 const { barY, ruleY } = elicit.plot;
-const { drag } = elicit.edit;
+const { move } = elicit.edit;
 const { clamp, maintainSum } = elicit.constraints;
 
 const beliefChart = elicit.Elicit({
@@ -92,8 +92,8 @@ const beliefChart = elicit.Elicit({
       fill: "purple",
       channels: {
         x: { field: "x" },                              // categorical + bar -> band
-        // The value channel carries the edit; drag writes y back through the scale.
-        y: { field: "y", edit: drag({ guide: true }) }, // quantitative -> linear
+        // The value channel carries the edit; a drag writes y back through the scale.
+        y: { field: "y", edit: move({ guide: true }) }, // quantitative -> linear
       },
     }),
   ],

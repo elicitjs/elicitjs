@@ -15,21 +15,26 @@
 // — which needs no feature id. This standalone version stays for a guide declared
 // against a feature whose edit doesn't own it.
 import { DEFAULT_CATCHMENT } from '../core/effects.js';
+import { warnUnknownGuideOptions } from './shared.js';
+
+/**
+ * `proximity`'s option vocabulary. Exported so one list drives the diagnostics,
+ * the docs table, and (later) the JSON grammar.
+ * @type {string[]}
+ */
+export const PROXIMITY_OPTIONS = ['target', 'color', 'dash', 'width', 'opacity'];
 
 /**
  * @param {{ target: string, color?: string, dash?: string, width?: number, opacity?: number }} options
- * @returns {any}
+ * @returns {import('../types').Guide}
  */
 export function proximity(options) {
+    warnUnknownGuideOptions('proximity', options, PROXIMITY_OPTIONS);
     const { target, ...style } = options;
 
     return {
-        isGuide: true,
-        /**
-         * @param {any} ctx
-         * @returns {import('../types').FeatureNode[]}
-         */
-        build: (ctx) => {
+        views: 'state',
+        build: (_rows, _scales, _w, _h, ctx) => {
             const info = ctx.ui && ctx.ui.session && ctx.ui.session[target];
             if (!info || info.px == null || info.py == null || info.threshold == null) return [];
             const spec = { ...DEFAULT_CATCHMENT, ...style };

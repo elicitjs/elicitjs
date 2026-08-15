@@ -5,8 +5,8 @@
 // render every other part rebuilds from the changed rows, so the glyph stays
 // internally consistent with no per-part wiring.
 //
-// (`group` is an alias of this factory — it used to be a separate mark for the
-// second mode below, back when the two had separate implementations.)
+// (Box mode below used to be a separate mark called `group`; there is one
+// implementation and one name now.)
 //
 // ── Two modes, one rule apart ───────────────────────────────────────────────
 // PLAIN — every part stands on the chart's own axes. Right for a glyph whose
@@ -568,10 +568,3 @@ export function composite(options = {}) {
 
     return [box, ...wrapped];
 }
-
-/**
- * A composite with a local frame. Kept as an alias because the box mode above
- * used to be a separate mark; there is one implementation now.
- * @type {typeof composite}
- */
-export const group = composite;

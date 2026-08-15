@@ -1,5 +1,8 @@
 // @ts-check
-export { defineConstraint, defineConstraint as define, defineConstraint as custom } from './define.js';
+// The extension point: a constraint is a pure data invariant. One name — this had
+// three (`defineConstraint`, `define`, `custom`), which in a JSON grammar would be
+// three keywords for one thing.
+export { defineConstraint } from './define.js';
 export { clamp } from './clamp.js';
 export { maintainSum, normalize } from './maintainSum.js';
 export { count } from './count.js';

@@ -17,11 +17,73 @@ Every mark reads a **channel** surface: a channel is a constant (`fill: "red"`) 
 
 ```javascript
 schema: { n: { type: "quantitative", domain: [0, 100] } }   // what n IS
-y: { field: "n", edit: drag() }
+y: { field: "n", edit: move() }
 //   ── encode: n → pixel ──┘  └─ edit: drag pixel → n
 ```
 
+This is also why the channel map is called `channels` rather than Vega-Lite's
+`encoding`. A channel here is **bidirectional**: it encodes data → visual *and* it
+carries the edit that maps a gesture → data back through the same scale.
+`encoding` would name only half of what the map does. The inner forms are
+Vega-Lite's exactly — `{field}`, `{value}`, `{datum}` — so the object is familiar
+even though the key differs.
+
 Note what the channel does *not* carry. A field's **data type** and its **domain** describe the data, not one mark's view of it, so they are declared once on the spec's `schema`. The **scale** is then derived: a categorical field on a bar's x is a band (a bar needs the interval), on a dot's x it is a point (a dot wants the tick). Name a scale explicitly only when you want something else — `scale: "log"`, `scale: { type: "symlog" }` (log-like, but it spans zero and negatives, which `log` cannot), `scale: { type: "sqrt", range: [4, 20] }`, or a live `d3.scaleBand().padding(0.3)`, which is adopted as you built it. For a colour channel, set the palette with `scale: { scheme: "tableau10" }` (categorical) or `scale: { scheme: "RdBu" }` (a ColorBrewer diverging / sequential set — discrete for ordinal domains, a two-stop ramp for continuous; add `reverse: true` to flip direction), or a raw `scale: { range: [...] }`. For a value read against a reference — a difference, an error, a surprise — `scale: { type: "diverging", pivot: 0 }` gives each side of the pivot its own half of the ramp, so the pivot keeps the neutral colour even on a lopsided domain like `[-2, 10]` (one ramp stretched across both halves would put "neutral" at 4). The **`symbol`** channel is the same idea for glyphs: a category → an emoji / unicode shape through an ordinal scale, so any shape mark (`point`, `dotStack`, `waffle`) can draw a glyph in place of its circle/rect. Give it glyphs with `scale: { range: ["😢","😐","😊"] }` or a named `scale: { scheme: "faces" }`; edit the underlying category with `cycle()` / `legend()`.
+
+---
+
+## The three kinds of feature
+
+Everything the engine builds is a **feature**, and every feature declares what it
+*views*. That one word (`views`) is the whole taxonomy:
+
+| `views` | Public name | Spec key | One node per | Its channels name | Writes |
+|---|---|---|---|---|---|
+| `'data'` | **mark** — `plot.*` | `marks` | a row | columns of a table | rows |
+| `'scale'` | **element** — `elements.*` | `elements` | a tick / swatch | *(a singular `channel`)* | the schema's domain |
+| `'state'` | **guide** — `guides.*` | `guides` | a derived statement | expressions over chart state | **nothing** |
+
+> A **mark** draws the data. An **element** draws a scale. A **guide** draws the
+> rule and the state — what the interaction is doing, what it is allowed to do,
+> and what is left to do.
+
+All three share one `build(rows, scales, width, height, ctx)` signature, so they
+differ in what they *mean*, never in how the engine calls them.
+
+**Why a guide is not just a derived mark.** Being derived is not the
+discriminator — a mark channel can already be derived (`{ fn }`). The
+discriminators are **arity** and **writability**:
+
+- a `{ fn }` channel is per-**row**, and its mark may still carry an `edit`;
+- a guide's expressions are per-**chart**, and it can never carry one.
+
+So a guide has no `table`, no channel map, no `edits` and no row — by
+construction, not by convention. That is what makes read-only a property of the
+kind rather than a discipline the author has to keep.
+
+The category earns its own namespace because the things a reader needs while
+forming a belief are all of this shape: how many tokens are left
+(`guides.remaining`), where a running sum would land against its target, how far a
+drag may still go (`edit.guide`), what range is acceptable (`guides.region`).
+Guides reach the scene from three places, all producing the same shape:
+`spec.guides` (the author declares one), `Constraint.guide` (a rule draws its own
+bound), and `Edit.guide` (an edit draws its own catchment or track).
+
+---
+
+## The public surface: grammar vs authoring kit
+
+Each namespace holds exactly one kind of thing, so its members *are* the grammar's
+keywords — `plot.*` is marks, `edit.*` is edits, and so on. Anything you would only
+reach for while **writing** new vocabulary lives in `authoring.*` (also importable
+as `elicitjs/authoring`): `encodeChannel`, `makeEdit`, `resolveHandles`,
+`registerDriver`, and the rest.
+
+That split is not cosmetic. A planned JSON spec layer compiles a keyword to a
+factory, so a namespace's members become spec keywords — `plot.arcPath` would read
+as a mark that draws nothing. Keeping the split honest keeps the JS API and the
+grammar the same list. The same reasoning drives one name per thing: an alias is a
+second keyword for one concept, which is free to remove now and permanent later.
 
 ---
 

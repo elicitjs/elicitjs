@@ -210,7 +210,7 @@ export function createScale(spec, range) {
  * Build the scale for ONE frame channel of ONE datum — a group's local
  * coordinate box, expressed as a real scale.
  *
- * A group (plot/group.js) places its parts in a box centred on the group's
+ * A composite in BOX mode (plot/composite.js) places its parts in a box centred on its
  * encoded position and sized by its encoded `size`. Both are per-DATUM (a face
  * per row sits somewhere different and may be a different size), so the box
  * cannot be a global scale. It is instead one ordinary linear scale per datum,

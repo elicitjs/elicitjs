@@ -610,6 +610,18 @@ export interface ChannelSpec {
   // line-family mark a paint fn (fill/stroke) runs once per SERIES, against the
   // series' first row. i/data are supplied by per-datum marks, undefined elsewhere.
   fn?: ChannelFn;
+  /**
+   * RESERVED for the planned JSON spec layer — the declarative twin of `fn`.
+   *
+   * `fn` is the one deliberately non-serializable channel form, which means a JSON
+   * spec can express `{field}`, `{value}` and `{datum}` but not a derived channel.
+   * `expr` is where that gap will be closed (`{ expr: "datum.x > 50" }`), and the
+   * key is claimed NOW because discovering later that it collides with a shipped
+   * meaning is expensive, while reserving it costs nothing.
+   *
+   * Not implemented in 0.1: setting it warns and the channel falls back.
+   */
+  expr?: string;
   // The field's DATA type. Overrides the schema's declaration for this channel;
   // useful for a field the schema doesn't cover. Below an explicit `scale`.
   type?: MeasureType;
@@ -983,9 +995,68 @@ export interface CompositeOptions {
   [key: string]: any;
 }
 
-// `group` was a separate mark for box mode before the two were merged; it is an
-// alias of `composite` now, and this is an alias of its options.
-export type GroupOptions = CompositeOptions;
+/**
+ * A GUIDE — a feature that views chart STATE (`views: 'state'`).
+ *
+ * ── The three things a feature can view ─────────────────────────────────────
+ *   views      public name   one node per          channels name        writes
+ *   'data'     mark          a row                 columns of a table   rows
+ *   'scale'    element       a tick / swatch       (singular `channel`) the domain
+ *   'state'    guide         a derived statement   expressions          nothing
+ *
+ * A mark draws the DATA. An element draws a SCALE. A guide draws the RULE and the
+ * STATE — what the interaction is doing, what it is allowed to do, and what is
+ * left to do: a target line, a proximity catchment, the budget still unallocated,
+ * where a running sum would reach.
+ *
+ * ── Why this isn't just "a derived mark" ────────────────────────────────────
+ * Being derived is NOT the discriminator — a mark channel can already be derived
+ * (`{ fn }`). The discriminators are ARITY and WRITABILITY:
+ *
+ *   · a `{ fn }` channel is per-ROW, and its mark may still carry an `edit`;
+ *   · a guide's expressions are per-CHART, and it can never carry one.
+ *
+ * So a guide has no `table`, no `channels` map, no `edits` and no row — by
+ * construction, not by convention. That is what makes "read-only" a property of
+ * the KIND rather than a discipline the author has to maintain.
+ *
+ * Guides reach the scene from three places, all of which produce this shape:
+ * `spec.guides` (the author declares one), `Constraint.guide` (a rule draws its
+ * own bound), and `Edit.guide` (an edit draws its own catchment / track).
+ */
+export interface Guide {
+  /** Always 'state' — that is what makes it a guide rather than a mark. */
+  views: 'state';
+  /**
+   * Emit the nodes. Same five arguments every feature's `build` takes, so the
+   * three kinds are one contract: the primary table's rows, the resolved scales,
+   * the inner dimensions, and the live chart context (`ui`, `effects`, `stage`,
+   * `theme`, `constraints`, `features`, `featureNodes`).
+   *
+   * Every node it returns is tagged `guide: true` and made pointer-transparent on
+   * the way out, so a guide can never capture a gesture.
+   */
+  build(
+    currentData: Datum[],
+    scales: ScaleMap,
+    width: number,
+    height: number,
+    context?: any
+  ): FeatureNode[];
+  id?: string;
+  markName?: string;
+}
+
+/**
+ * A guide option may be a literal or a FUNCTION of the chart context, which is
+ * what lets a reference line be derived from the elicited rows:
+ *
+ *   guides.rule({ y: 25 })                                  // literal
+ *   guides.rule({ y: ({ data }) => d3.mean(data, d => d.y) }) // derived
+ *
+ * `expr` is the reserved declarative twin of the function form — see `ChannelSpec`.
+ */
+export type GuideOption<T> = T | ((ctx: any) => T);
 
 /**
  * What a mark factory returns — the feature object the engine consumes.
@@ -1024,6 +1095,61 @@ export type GroupOptions = CompositeOptions;
  * `views === 'scale'` rather than on this interface. Both `axes` and `legends` on
  * the spec desugar into these; authors may also pass them via `ElicitSpec.elements`.
  */
+
+/**
+ * What you PASS to a chart-element factory — the counterpart of `MarkOptions` for
+ * a `views: 'scale'` feature.
+ *
+ * The runtime vocabularies are `AXIS_OPTIONS` / `GRID_OPTIONS` / `LEGEND_OPTIONS`
+ * / `AXIS_RADIAL_OPTIONS`, checked by `warnUnknownElementOptions`; this is their
+ * union as a type, so a typo is caught at compile time as well as at run time.
+ * Note there is no `channels` map and no style SHORTHAND desugaring: an element's
+ * `stroke`/`fill`/`fontSize` paint chrome, because it has no datum to resolve
+ * them against.
+ */
+export interface ChartElementOptions {
+  /** The single scale this element draws, by channel name (`'x'`, `'fill'`, …). */
+  channel?: string;
+  /** Which side of the plot it sits on. */
+  anchor?: string;
+  /** Domain-targeting edit(s) — `edit.axis.*`, `edit.legend.*`. */
+  edit?: Edit | Edit[] | Edit[][];
+  edits?: Edit[];
+  constraints?: Constraint[];
+  id?: string;
+  /** The single field an edit pins, when the element names one. */
+  field?: string;
+  /** Ticks: how many, which, how to format, how long. */
+  ticks?: number | any[];
+  tickValues?: any[];
+  tickFormat?: string | ((v: any) => string);
+  tickSize?: number;
+  title?: string;
+  /** Chrome paint — a spine, its labels, a grid line. */
+  stroke?: string;
+  strokeWidth?: number;
+  fill?: string;
+  fontSize?: number;
+  /** Handles, through the one shared handle contract. */
+  handleSize?: number;
+  handleColor?: string;
+  /** axis only: draw grid lines with it; `transform` offsets the whole element. */
+  grid?: boolean | Record<string, any>;
+  transform?: string;
+  /** legend only: swatch/ramp geometry, and which row its edit writes to. */
+  orient?: 'horizontal' | 'vertical';
+  swatchSize?: number;
+  gap?: number;
+  labelWidth?: number;
+  rampLength?: number;
+  rampThickness?: number;
+  row?: number;
+  /** axisRadial only: ring geometry, plus optional per-row placement channels. */
+  radius?: number;
+  innerRadius?: number;
+  channels?: Channels;
+}
+
 export interface ChartElement {
   build(
     currentData: Datum[],
@@ -1735,7 +1861,11 @@ export interface ElicitSpec {
   // Optional labels for stages (index -> name). Surfaced via getStageLabel() and
   // the second argument of on('stage', (index, label) => …).
   stageLabels?: (string | null)[];
-  [key: string]: any;
+  // NO index signature. The spec's key set is CLOSED: an unknown key is a typo
+  // that would otherwise draw a wrong chart in silence, and `warnUnknownSpecKeys`
+  // (core/elicit.js) reports it at run time. Closing it here is the compile-time
+  // half — and it is what lets the planned JSON grammar be generated from a key
+  // set that is actually known.
 }
 
 // The shared option surface every survey widget (src/widgets/*) accepts, so the

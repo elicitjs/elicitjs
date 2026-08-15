@@ -159,6 +159,18 @@ export function callChannelFn(spec, channel, datum, index, data, fallback) {
 export function encodeChannel(scales, channels, channel, datum, fallback, index, data) {
     const spec = channels[channel];
     if (!spec) return fallback;
+    // `expr` is RESERVED for the JSON spec layer — the declarative twin of `fn`.
+    // Reporting it is the point: a reserved-but-unimplemented key that silently did
+    // nothing would be the exact failure mode this library's diagnostics exist to
+    // prevent, and an author who wrote one meant something by it.
+    if (spec.expr !== undefined) {
+        warn(
+            `expr:${channel}`,
+            `channel "${channel}" uses { expr: … }, which is RESERVED for the planned JSON ` +
+            `spec layer and is not implemented in 0.1. In JavaScript, write the derived ` +
+            `form instead: { fn: (d, i, data) => … }.`,
+        );
+    }
     if (spec.field === undefined) {
         // Derived channel — fn(d, i, data) computed in visual space, used as-is.
         // Wins over value/datum so `{ fn }` is unambiguous.
@@ -553,7 +565,35 @@ const MISTAKEN_OPTIONS = {
     handleRadius: "a sub-element's radius is `handleSize`.",
     value: 'a constant belongs on a channel: channels.<name> = { value: … } for visual space, { datum: … } for data space.',
     field: 'a field belongs on a channel: channels.<name> = { field: "…" }.',
+    ...positionalCorrections(),
 };
+
+/**
+ * The POSITIONAL names, each with the same correction.
+ *
+ * `ruleY({ y: 50 })` is the single most natural thing to write and the single most
+ * silent thing to get wrong: `y` is not a shorthand (only STYLE names desugar), so
+ * it fell into the generic "not an option this mark reads" message, which doesn't
+ * say what to write instead. It had been drawing reference lines at a fallback
+ * position in this repo's own docs for a long time.
+ *
+ * The correction has to name BOTH forms, because the two readings are genuinely
+ * different features: a mark's positional channel takes a data-space constant,
+ * while a reference line about the chart's state is a GUIDE.
+ * @returns {Record<string, string>}
+ */
+function positionalCorrections() {
+    /** @type {Record<string, string>} */
+    const out = {};
+    for (const ch of ['x', 'y', 'x1', 'x2', 'y1', 'y2', 'lon', 'lat']) {
+        out[ch] = `positional channels are not top-level shorthands (only style names like ` +
+            `fill/stroke/size are). For a constant in the field's own units, write ` +
+            `channels: { ${ch}: { datum: … } } — it goes THROUGH the scale, so it lands where ` +
+            `that value is. For a column, channels: { ${ch}: { field: "…" } }. And for a plain ` +
+            `reference line, a guide is the mark-free way to say it: guides.rule({ ${ch}: … }).`;
+    }
+    return out;
+}
 
 /**
  * Warn about options a mark will silently ignore.
@@ -622,7 +662,8 @@ export function warnUnknownOptions(mark, options, allow) {
  * Pass `mark` (the factory name) to get unknown-option diagnostics, and `allow`
  * to declare the mark's own option vocabulary on top of the universal ones. This
  * is the one place every mark already funnels through, so validating here reaches
- * all of them; `defineMark` makes it unskippable rather than voluntary.
+ * all of them. A `mark` with no `allow` is a diagnostics HOLE and warns (see
+ * warnUnknownOptions), which is what keeps the declaration from being optional.
  * @param {any} [options]
  * @param {{ except?: string[], mark?: string, allow?: string[] }} [opts]
  * @returns {any}

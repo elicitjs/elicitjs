@@ -126,7 +126,7 @@ export function resolveGuide(edit, ctx) {
  * register when `guide` is omitted (auto-catchment — see resolveGuide); `guide:
  * false` stays fully off. Deduped per (feature, edit).
  * @param {any[]} features
- * @returns {any[]} guide objects ({ isGuide, build })
+ * @returns {import('../types').Guide[]} guides (`views: 'state'`, read-only)
  */
 export function autoEditGuides(features) {
     /** @type {any[]} */
@@ -143,11 +143,12 @@ export function autoEditGuides(features) {
             const key = `${feature.id}:edit-${edit.type}-${i}`;
             if (seen.has(key)) return;
             seen.add(key);
-            out.push({
-                isGuide: true,
-                /** @param {any} ctx */
-                build: (ctx) => buildEditGuide(feature, edit, ctx)
-            });
+            /** @type {import('../types').Guide} */
+            const g = {
+                views: 'state',
+                build: (_rows, _scales, _w, _h, ctx) => buildEditGuide(feature, edit, ctx),
+            };
+            out.push(g);
         });
     }
     return out;

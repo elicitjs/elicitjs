@@ -8,7 +8,29 @@ A declarative viz library for interactive belief elicitation. `Elicit(spec)` ren
 
 Entry points: `src/index.js` (public API), `src/core/elicit.js` (engine), `src/plot/mark.js` (shared mark foundation), `src/plot/composite.js` (glyphs, and glyph-local boxes), `src/edit/index.js` (edit barrel), `src/elements/index.js` (chart elements: axis / grid / legend / axisRadial). Read `ARCHITECTURE.md` and `MARK_CONTRACTS.md` before making structural changes (`README.md` is the short front door: what it is, install, one example, how to run it).
 
-**Public namespace matches kind.** Data marks live under `elicit.plot.*`. Scale chrome lives under `elicit.elements.*` (also `ElicitSpec.elements`, concatenated with `marks`). The same factories stay aliased on `plot.*` during migration.
+**Public namespace matches kind, and each namespace is the GRAMMAR's vocabulary.**
+Everything the engine builds is a FEATURE, and every feature declares what it
+VIEWS — one word, three values:
+
+| `views` | Namespace | Spec key | One node per | Channels name | Writes |
+|---|---|---|---|---|---|
+| `'data'` | **mark** — `plot.*` | `marks` | a row | columns of a table | rows |
+| `'scale'` | **element** — `elements.*` | `elements` | a tick / swatch | *(singular `channel`)* | the schema's domain |
+| `'state'` | **guide** — `guides.*` | `guides` | a derived statement | expressions over chart state | **nothing** |
+
+A mark draws the DATA, an element draws a SCALE, a guide draws the RULE and the
+STATE. All three share ONE `build(rows, scales, width, height, ctx)` signature, so
+they differ in meaning, never in how the engine calls them.
+
+A namespace contains ONLY what can appear in a spec. The primitives you build new
+vocabulary FROM are `authoring.*` (`src/authoring/index.js`, also the
+`elicitjs/authoring` subpath): `encodeChannel`, `makeEdit`, `resolveHandles`,
+`registerDriver`, … Before this split `plot.*` exported 94 names for ~35 marks, so
+autocomplete showed the implementation rather than the language. **This rule is
+load-bearing for the planned JSON layer**: a compiler resolves a keyword to a
+factory, so a namespace's members BECOME spec keywords, and `plot.arcPath` would
+read as a mark that draws nothing. For the same reason there is exactly ONE name
+per thing — an alias is a second keyword for one concept.
 
 ## Non-negotiable invariants
 
@@ -284,7 +306,26 @@ Note the namespace and the `scope` are separate decisions. `edit.network.*` is a
 
 **Diagnostics go through `core/dev.js`, are ON by default, and are never gated on a bundler flag.** `warn(key, message)` is the only way the library talks to a spec author; it adds the `[elicit]` prefix and dedups once per `key`. `setWarnings(false)` (exported from the package root) is the off switch, and a consumer's production build goes quiet on its own because `detect()` reads `process.env.NODE_ENV` — which must stay written in that literal form, since bundlers string-replace exactly that expression. **This rule exists because it was violated.** Every guard used to be gated on `const DEV = !!(import.meta.env && import.meta.env.DEV)`, duplicated in three modules. Only Vite injects `import.meta.env`, so all 14 diagnostics were dead on webpack/Next (including this repo's own docs site) and, because the constant folded to a literal `false`, Rollup stripped them from `dist` entirely. A diagnostic that only fires in the author's own bundler is not a diagnostic. Don't reintroduce a per-module dedup `Set` either — `warn`'s key does that.
 
-**A guide is not a data mark.** `axis`, `axisRadial`, `grid` and `legend` set `views: 'scale'`: they draw a SCALE, not columns, so they carry no channel map and no fields of their own. Data marks are `views: 'data'` (the default). This is why `edit/route.js`'s `resolveChannels` drops a channel with no field for a data mark but falls back to `scale.fields[0]` for a guide — a legend legitimately has no field of its own. Read `views`, not the `isAxis || isGrid || isLegend` disjunction, when you mean "is this a chart element"; the specific flags stay for the cases that genuinely need to tell axes from legends. The contract is the `ChartElement` interface in `src/types.d.ts`. Because an element has no channel map there is nothing for `normalizeMarkOptions` to desugar, but there IS something to validate: call `warnUnknownElementOptions(name, options, ALLOW)` — the diagnostics half on its own. Routing an element through `normalizeMarkOptions` instead would be wrong in the other direction, since that accepts every style SHORTHAND (`dy`, `symbol`, `size`) on an axis. Both halves have an implicit spec layer: `axes` (`core/axes.js`) for the positional scales, `legends` (`core/legends.js`'s `autoLegends`) for the rest. `legends` defaults OFF where `axes` defaults on, because a legend reserves layout space.
+**A GUIDE views STATE, and is read-only by construction.** `views: 'state'` (it
+used to be spelled `isGuide: true`). It draws what the interaction is doing, what
+it is allowed to do, and what is left to do — a target line, a proximity
+catchment, the unallocated remainder of a budget. It has no `table`, no channel
+map, no `edits` and no row; instead every option may be a literal or a FUNCTION of
+the chart context, so a reference line can be derived from the elicited rows.
+
+Being derived is NOT what distinguishes it from a mark — a mark channel can
+already be derived (`{ fn }`). The discriminators are ARITY and WRITABILITY: a
+`{ fn }` channel is per-ROW and its mark may still carry an `edit`; a guide's
+expressions are per-CHART and it carries none. That is what makes read-only a
+property of the KIND rather than a discipline. Guides reach the scene from three
+places, all producing the same shape — `spec.guides`, `Constraint.guide`, and
+`Edit.guide` — and all three go through the one drawer in `edit/guide.js`. Validate
+a guide's options with `warnUnknownGuideOptions(name, options, ALLOW)`; that was
+the one feature kind with no option checking at all. Don't confuse this with
+`resolveChannels`'s `viewsScale` parameter, which means a chart ELEMENT — it was
+called `isGuide` before the three kinds had separate names.
+
+**A chart ELEMENT is not a data mark.** `axis`, `axisRadial`, `grid` and `legend` set `views: 'scale'`: they draw a SCALE, not columns, so they carry no channel map and no fields of their own. Data marks are `views: 'data'` (the default). This is why `edit/route.js`'s `resolveChannels` drops a channel with no field for a data mark but falls back to `scale.fields[0]` for a guide — a legend legitimately has no field of its own. Read `views`, not the `isAxis || isGrid || isLegend` disjunction, when you mean "is this a chart element"; the specific flags stay for the cases that genuinely need to tell axes from legends. The contract is the `ChartElement` interface in `src/types.d.ts`. Because an element has no channel map there is nothing for `normalizeMarkOptions` to desugar, but there IS something to validate: call `warnUnknownElementOptions(name, options, ALLOW)` — the diagnostics half on its own. Routing an element through `normalizeMarkOptions` instead would be wrong in the other direction, since that accepts every style SHORTHAND (`dy`, `symbol`, `size`) on an axis. Both halves have an implicit spec layer: `axes` (`core/axes.js`) for the positional scales, `legends` (`core/legends.js`'s `autoLegends`) for the rest. `legends` defaults OFF where `axes` defaults on, because a legend reserves layout space.
 
 **An edit writes to a COLUMN.** `resolveChannels` drops any channel the mark doesn't encode as a field, because every `apply()` ends in some form of `datum[ch.field] = value`. Without that, an edit on a constant (`{ value }`) channel writes to the key `undefined` — usually inert, but if another mark puts a field on the same axis the scale exists and inverts, and dragging appends a column literally named `"undefined"` to the elicited dataset. For a belief-elicitation library, silently corrupting the elicited data is the worst failure available; don't add a write site that skips this.
 
@@ -353,7 +394,7 @@ The contract is the `Mark` interface in `src/types.d.ts` (prose version at the t
 - Return `edits`, `constraints`, `xKey`, `yKey` from the factory — VERBATIM. `rule` silently dropped all four for a long time, which made a draggable whisker impossible; `trend` and `face` went the other way and injected their own. If a mark accepts an option, it must pass it on unchanged.
 - Don't set `pointerEvents` on your nodes to make them inert — leave it, and the engine silences any mark with no direct-pick edit (see the pointer-transparency invariant). Setting it yourself also disables the mark when it *does* carry an edit.
 - If the mark groups points into series (a line-family mark), set `seriesKey`, `order`, and `supportsSeries: true` so line-scoped edits and the dev guard work.
-- Export both a bare form (auto-detects orientation/axis) and, where the mark has a natural direction, `...X`/`...Y` variants — every directional mark in this codebase (`bar`, `tick`, `line`, `axis`, `grid`, `rule`) follows that pairing. Don't ship an asymmetric `ruleY`-with-no-`ruleX` again.
+- The BARE form is the mark: it infers its value axis from the scales the schema resolved. Where the mark has a natural direction, also export `...X`/`...Y` variants that FORCE one orientation — every directional mark here (`bar`, `tick`, `rect`, `line`, `area`, `curve`, `text`, `dotStack`, `waffle`, `rule`) follows that pairing, and all of them already auto-detect. Don't ship an asymmetric `ruleY`-with-no-`ruleX` again. Note the variants are JS SUGAR: only the bare name is a grammar keyword, because a JSON spec says `{ "mark": "bar" }` and infers orientation from the channels, exactly as Vega-Lite does.
 
 **Glyphs: prefer a group of marks over one clever mark.** If a glyph's handles map to distinct *fields* of a row, build it as a `composite` — a group that desugars into ordinary marks (`Elicit` flattens nested arrays in `marks`). Each handle is then its own feature, so direct-pick dispatch keeps a drag on one handle from touching another, and each handle edits a plain `y`/`x` channel. Only when several handles must live on **one** feature over **one** datum (their positions are *derived*, not fields — see `trend`'s intercept/slope, `area`'s span edges) do you need the `channel` node tag to arbitrate. Use `claimEdge(edit, name)` from `src/edit/shared.js` for that guard, never a hand-written `when: ctx => ctx.node.channel === '…'`: `claimEdge` rejects only a *differently* tagged node, so an untagged node (a mark-level edit spanning both handles) and an **absent** one still pass. That second case is load-bearing — a `plane`/`probe`-pick edit carries no node at all, so a guard that demands one silently kills every gesture on it. Reach for the whole pattern last; it was `composite`'s old shape and the parts-as-features form replaced it.
 
@@ -437,14 +478,29 @@ aimed at the row before it.
 ## Before committing a structural change
 
 1. `npm run typecheck` (`tsc --noEmit` against `src/types.d.ts`) must stay clean.
+1b. `npm run check:exports` must stay green — the runtime's public surface and `src/index.d.ts` must agree in BOTH directions. The hand-written declarations drifted silently once (the whole `edit.stack` namespace, `setWarnings` and every `format.*` were exported and undeclared), and a shipped export nobody can call from TypeScript is a broken API. `src/authoring/index.d.ts` is GENERATED from the JSDoc — regenerate with `npm run gen:types`, don't hand-edit it.
 2. `npm run verify:browser` must stay green. It boots the sibling `../elicitjs-docs` site, drives real Chromium, and asserts actual gesture outcomes. If you touched dispatch, marks, or edits, add a check there — the driver/session state machines only prove out under real pointer events, and every interaction bug this repo has shipped was invisible to typecheck. To drive a gesture by hand: `npm run dev` (or `cd ../elicitjs-docs && npm run dev`), then load the route.
-3. `npm run check:warnings` must stay green. The second gate (there is still no unit-test suite): it visits every documented route under **Next.js/webpack** and fails on any `[elicit]` warning. Every docs example is a spec that should be correct, so a warning is either a broken example or a false positive in a guard. It found two examples passing `ruleY({ y: 50 })` — a form `rule` doesn't read — which had been drawing reference lines at a fallback position for a long time; `verify:browser` cannot catch that, because the page renders fine. Note what it does *not* prove: silence could also mean the diagnostics got disabled again, so after touching `core/dev.js` also confirm the warning strings survive `npm run build:lib` (grep `dist/elicit.js`).
+3. `npm run check:warnings` must stay green. The second gate (there is still no unit-test suite): it visits every documented route under **Next.js/webpack** and fails on any `[elicit]` warning. Every docs example is a spec that should be correct, so a warning is either a broken example or a false positive in a guard. It found two examples passing `ruleY({ y: 50 })` — a form `rule` doesn't read — which had been drawing reference lines at a fallback position for a long time; `verify:browser` cannot catch that, because the page renders fine. Note what it does *not* prove: silence could also mean the diagnostics got disabled again, so after touching `core/dev.js` also confirm the warning strings survive `npm run build:lib`. **Check that with node, not grep** — `dist/elicit.js` is a single 329 KB line and grep finds nothing in it while reporting success: `node -e "const s=require('fs').readFileSync('dist/elicit.js','utf8'); console.log(s.split('[elicit]').length-1)"` (expect ~18, never 0).
 4. **`../elicitjs-docs` is the documentation** (sibling repo). Update it if the public surface changed — the docs are the regression surface, and a feature with no page effectively doesn't exist. The old `docs/` tree was retired on 2026-07-16; don't recreate an HTML-and-harness docs site inside this library repo.
 5. `src/types.d.ts` is the source of truth for shapes (`Mark`, `Edit`, `Constraint`, `FeatureNode`, `Session`, …) — update it alongside any descriptor change.
 6. If you touched packaging, `npm pack --dry-run` must stay small (~0.6 MB). `files` once included the docs app, whose `.next` build output is 1.4 GB — the tarball was over 1 GB and the publish would simply have failed. Docs now live in `../elicitjs-docs` and must stay out of this package's `files`.
 
 ## Don't reintroduce
 
+- **A second name for one thing.** This pass deleted every alias the never-released
+  API had accumulated: `plot.axis`/`grid`/`legend`/`axisRadial` (dupes of
+  `elements.*`), `plot.group` (= `composite`), `connectedScatter` (= `path`),
+  `edit.arc.edge` (= `edit.stack.edge`), `constraints.define`/`custom` (= a third
+  and second spelling of `defineConstraint`), `widgets.ci` (= `interval`), and the
+  top-level `elicit.when` (= `edit.when`). Each was one keyword too many in a
+  grammar that a JSON layer will compile.
+- **An authoring primitive in a grammar namespace.** `plot.*`/`edit.*`/
+  `constraints.*`/`guides.*`/`elements.*`/`widgets.*` contain only what can appear
+  in a spec; `encodeChannel`, `makeEdit`, `registerDriver` and the rest are
+  `authoring.*`. `npm run check:exports` fails if the two drift from `index.d.ts`.
+- **An index signature on a grammar namespace or on `ElicitSpec`.** The key sets are
+  CLOSED, so an unknown name is a compile error rather than `any` — which is also
+  what lets the JSON Schema be generated from a key set that is actually known.
 - A second interaction/dispatch system alongside `edit`.
 - A `data` or `onChange` option on a mark, or a per-feature data store keyed by feature id.
 - Constraints scoped to the feature that declared them rather than to the dataset.

@@ -24,8 +24,8 @@ import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, theme
 //
 //   x: domain, y: value  -> lineY (time series)      x: value, y: domain -> lineX
 //
-// `line` auto-detects the value axis; `lineY`/`lineX` force one. `connectedScatter`
-// /`path` default to `order: 'sequence'` for order-as-drawn 2D paths.
+// `line` auto-detects the value axis; `lineY`/`lineX` force one. `path` is the
+// same mark with `order: 'sequence'`, for an order-as-drawn 2D path.
 
 const SINGLE = '__single__'; // group key when no series field is set
 
@@ -229,13 +229,16 @@ export function lineX(options = {}) {
 }
 
 /**
- * Connected scatter / free 2D path: points connected in creation order, both axes
- * free. Same mark as `line`, with `order: 'sequence'` as the default.
+ * A free 2-D path: points connected in CREATION order, both axes free. Same mark
+ * as `line`, with `order: 'sequence'` as the default instead of domain order.
+ *
+ * That is what a lasso, a drawn trace and a connected scatter all are — an ordered
+ * sequence of points in the plane, rather than a value read against a domain axis.
+ * The name describes the geometry, not the chart genre: this used to also be
+ * exported as `connectedScatter`, which named one thing you can draw with it.
  * @param {any} [options]
  * @returns {import('../types').Mark}
  */
-export function connectedScatter(options = {}) {
+export function path(options = {}) {
     return buildLine(options, null, 'sequence');
 }
-
-export { connectedScatter as path };
