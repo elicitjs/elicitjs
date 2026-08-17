@@ -768,7 +768,12 @@ export function rank(options = {}) {
  * Single-exclusive by default: selecting a row clears the rest, and clicking the
  * already-selected row toggles it back off. `toggle: false` makes a click always
  * select (never deselect); `exclusive: false` adds to the selection instead of
- * replacing it (forward-looking — selection is a Set) .
+ * replacing it, every time.
+ *
+ * `multi: true` is the usual way to want that — the standard modifier idiom rather
+ * than a mode. A plain click replaces the selection; a shift- (or meta-) click adds
+ * to it. That keeps "click something else" meaning what it always did, so turning
+ * multi-select on never changes what an existing gesture does.
  *
  * Pairs with a selection-aware target: `elements.legend({ edit:
  * edit.legend.category() })` defaults its target row to the selection, so "click a
@@ -778,7 +783,7 @@ export function rank(options = {}) {
  * @returns {import('../types').Edit}
  */
 export function select(options = {}) {
-    const { exclusive = true, toggle = true, ...rest } = options;
+    const { exclusive = true, toggle = true, multi = false, ...rest } = options;
     return makeEdit({
         type: 'select',
         gesture: 'click',
@@ -787,7 +792,11 @@ export function select(options = {}) {
         ...rest,
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
             if (ctx.index == null) return undefined;
-            return { __select: { index: ctx.index, exclusive, toggle } };
+            // Under `multi`, the modifier decides per CLICK; `exclusive` stays the
+            // flat override for a chart that is always additive.
+            const e = /** @type {any} */ (ctx.event) || {};
+            const additive = multi && !!(e.shiftKey || e.metaKey);
+            return { __select: { index: ctx.index, exclusive: additive ? false : exclusive, toggle } };
         }
     });
 }

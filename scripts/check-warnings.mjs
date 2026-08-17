@@ -48,7 +48,7 @@ const routes = [
     '/marks/dotstack', '/marks/waffle', '/marks/needle',
     '/marks/axis-radial', '/marks/arc', '/marks/geo', '/marks/network', '/marks/trend', '/marks/axes',
     '/marks/legend', '/marks/sticker',
-    '/editing', '/editing/gestures', '/editing/sweep', '/editing/lock',
+    '/editing', '/editing/gestures', '/editing/sweep', '/editing/selection', '/editing/lock',
     '/editing/existence', '/editing/probe', '/editing/stages', '/editing/axis',
     '/editing/external-controls',
     '/editing/history', '/widgets', '/scales', '/schema', '/constraints',

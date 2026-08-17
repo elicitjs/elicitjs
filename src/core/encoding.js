@@ -365,6 +365,71 @@ export function unionDomains(measure, domains) {
     return [...new Set(domains.flat())];
 }
 
+// The scheme families the AUTOMATIC colour path rotates through, one per encoding
+// on a channel. Rotation is what keeps two encodings apart now that each gets its
+// own scale: independent scales would both restart at palette index 0, so
+// `mood: [glad, sad]` and `weather: [sun, rain]` would come out the SAME two
+// colours — two meanings, one hue, which is worse than the union it replaced.
+// Index 0 defers to the theme, so a single-encoding chart is exactly as it was.
+const CATEGORICAL_ROTATION = ['tableau10', 'dark2', 'set2', 'accent', 'paired', 'set3'];
+const SEQUENTIAL_ROTATION = ['blues', 'oranges', 'greens', 'purples', 'greys'];
+
+/** Sample a 2+ stop ramp array to `n` evenly spaced swatches. */
+function rampToDiscrete(/** @type {any[]} */ stops, /** @type {number} */ n) {
+    if (n <= 1) return [stops[stops.length - 1]];
+    const interp = d3.piecewise(d3.interpolateRgb, stops);
+    return d3.quantize(interp, n);
+}
+
+/**
+ * The default colour range for a colour channel, chosen by what the data IS.
+ *
+ * The measure, not just the scale type, decides:
+ *   categorical  unordered values -> DISTINCT HUES
+ *   ordinal      ORDERED values   -> an ordered ramp, sampled to one swatch per
+ *                category. This is the ColorBrewer rule, and it is the case this
+ *                library cares most about: every Likert scale here is `ordinal`
+ *                and used to get the same unordered hues as an unordered set, so
+ *                "agree" and "disagree" read as unrelated categories.
+ *   quantitative a continuous ramp (unchanged in kind)
+ *
+ * `index` is which encoding this is among those sharing the channel — see the
+ * rotation tables above. Index 0 reads the theme so existing charts and custom
+ * themes are untouched; later encodings take a different scheme FAMILY.
+ * @param {import('../types').ScaleType} type
+ * @param {any} theme
+ * @param {{ measure?: import('../types').MeasureType, index?: number, count?: number }} [opts]
+ * @returns {any[]}
+ */
+function colorRange(type, theme, opts = {}) {
+    const { measure, index = 0, count = 2 } = opts;
+    const nth = (/** @type {string[]} */ list) => list[index % list.length];
+
+    if (type === 'diverging') {
+        return index === 0
+            ? ((theme && theme.diverging) || DEFAULT_DIVERGING)
+            : (schemeRange(nth(['rdbu', 'brbg', 'piyg', 'rdylgn']), 'diverging', count) || DEFAULT_DIVERGING);
+    }
+    if (type === 'sequential') {
+        return index === 0
+            ? ((theme && theme.ramp) || DEFAULT_RAMP)
+            : (schemeRange(nth(SEQUENTIAL_ROTATION), 'sequential', count) || DEFAULT_RAMP);
+    }
+    // Discrete from here (an `ordinal` SCALE — a value -> colour map). Whether its
+    // swatches should be ordered is a question about the DATA, which is why the
+    // measure is consulted and not the scale type.
+    if (measure === 'ordinal') {
+        // Index 0 samples the theme's own ramp, so an ordered set honours a custom
+        // theme the way a categorical one honours its palette.
+        if (index === 0) return rampToDiscrete((theme && theme.ramp) || DEFAULT_RAMP, Math.max(2, count));
+        return schemeRange(nth(SEQUENTIAL_ROTATION), 'ordinal', count)
+            || rampToDiscrete(DEFAULT_RAMP, Math.max(2, count));
+    }
+    return index === 0
+        ? ((theme && theme.palette) || DEFAULT_PALETTE)
+        : (schemeRange(nth(CATEGORICAL_ROTATION), 'ordinal', count) || DEFAULT_PALETTE);
+}
+
 /**
  * The default visual output range for a channel: pixels for x/y, a radius
  * interval for size, a palette/ramp for colour, [0,1] for opacity.
@@ -372,9 +437,13 @@ export function unionDomains(measure, domains) {
  * @param {import('../types').ScaleType} type
  * @param {{ width: number, height: number }} dims
  * @param {any} [theme] the resolved theme (supplies default palette/ramp/diverging)
+ * @param {{ measure?: import('../types').MeasureType, index?: number, count?: number }} [opts]
+ *   what the data IS, which encoding this is among those sharing the channel, and
+ *   how many categories it has. Colour reads all three; every other channel's
+ *   range is fixed.
  * @returns {any[]}
  */
-export function channelRange(channelName, type, dims, theme) {
+export function channelRange(channelName, type, dims, theme, opts = {}) {
     switch (channelName) {
         case 'x': return [0, dims.width];
         case 'y': return [dims.height, 0];   // pixel y is inverted
@@ -393,15 +462,14 @@ export function channelRange(channelName, type, dims, theme) {
     // as its base channel, so fillOpacity/strokeOpacity and fill/stroke behave
     // like opacity when driven by a field.
     if (OPACITY_CHANNELS.has(channelName)) return [0.15, 1];
-    if (COLOR_CHANNELS.has(channelName)) {
-        // The theme supplies the default palette/ramp/diverging when a channel names
-        // no explicit range or scheme; falls back to the module defaults.
-        if (type === 'diverging') return (theme && theme.diverging) || DEFAULT_DIVERGING;
-        if (type === 'sequential') return (theme && theme.ramp) || DEFAULT_RAMP;
-        return (theme && theme.palette) || DEFAULT_PALETTE;
-    }
+    if (COLOR_CHANNELS.has(channelName)) return colorRange(type, theme, opts);
     // Symbol channel: a glyph palette (author overrides with scale.range/scheme).
     if (SYMBOL_CHANNELS.has(channelName)) return [...DEFAULT_SYMBOLS];
+    // Stroke width in PIXELS. Without a case of its own it fell through to the
+    // [0, 1] guard below, so binding a field to `strokeWidth` mapped the whole
+    // domain onto sub-pixel strokes — the channel resolved, encoded, and drew
+    // hairlines that all looked identical.
+    if (channelName === 'strokeWidth') return [1, 8];
     return [0, 1];
 }
 

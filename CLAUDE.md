@@ -34,7 +34,7 @@ per thing — an alias is a second keyword for one concept.
 
 ## Non-negotiable invariants
 
-**The schema owns the data type and the DOMAIN; a mark owns neither.** A field's measurement type (`quantitative`/`categorical`/`ordinal`/`temporal`) and its domain describe the *data*, so they live once on `spec.schema`. A channel's `type` is the **data** type (an override for a field the schema doesn't cover), never a scale type. A channel's `scale` is the scale — a name, a `ScaleSpec`, a live d3 scale, or `null`. There is no `domain` or `range` on a channel. `resolveScales` picks a scale via `scaleTypeFor(channel, measure, discretePref)` and takes the axis domain as the **union of the schema domains of every field bucketed onto it** (`unionDomains`) — that union is why an error bar's `mean`/`lo`/`hi` share one y axis. Don't re-add a per-channel domain "just for this chart"; declare the field.
+**The schema owns the data type and the DOMAIN; a mark owns neither.** A field's measurement type (`quantitative`/`categorical`/`ordinal`/`temporal`) and its domain describe the *data*, so they live once on `spec.schema`. A channel's `type` is the **data** type (an override for a field the schema doesn't cover), never a scale type. A channel's `scale` is the scale — a name, a `ScaleSpec`, a live d3 scale, or `null`. There is no `domain` or `range` on a channel. `resolveScales` picks a scale via `scaleTypeFor(channel, measure, discretePref)` and takes the axis domain as the **union of the schema domains of every field bucketed onto it** (`unionDomains`) — that union is why an error bar's `mean`/`lo`/`hi` share one y axis. It applies to POSITIONAL channels only; see the scale-identity invariant below. Don't re-add a per-channel domain "just for this chart"; declare the field.
 
 `src/core/schema.js` is the schema's OWNER — declaration, inference, creation defaults (`schemaDefaults`) and, since the consistency audit, VALIDATION. `validateDataset(schema, data)` runs once per `Elicit()` and per `setData()` and reports five things the library previously accepted in silence: `data` with no schema, a data column the schema doesn't declare, a `FieldSchema` with a domain but no `type`, a value contradicting its declared type, and a value outside its declared domain. Add a check there, not in a mark. Note what it deliberately does NOT check: a discrete field's runtime type, because any value can be a category key (a geo mark legitimately declares a GeoJSON geometry as `categorical`) — the domain is the real constraint for those.
 
@@ -325,7 +325,107 @@ the one feature kind with no option checking at all. Don't confuse this with
 `resolveChannels`'s `viewsScale` parameter, which means a chart ELEMENT — it was
 called `isGuide` before the three kinds had separate names.
 
-**A chart ELEMENT is not a data mark.** `axis`, `axisRadial`, `grid` and `legend` set `views: 'scale'`: they draw a SCALE, not columns, so they carry no channel map and no fields of their own. Data marks are `views: 'data'` (the default). This is why `edit/route.js`'s `resolveChannels` drops a channel with no field for a data mark but falls back to `scale.fields[0]` for a guide — a legend legitimately has no field of its own. Read `views`, not the `isAxis || isGrid || isLegend` disjunction, when you mean "is this a chart element"; the specific flags stay for the cases that genuinely need to tell axes from legends. The contract is the `ChartElement` interface in `src/types.d.ts`. Because an element has no channel map there is nothing for `normalizeMarkOptions` to desugar, but there IS something to validate: call `warnUnknownElementOptions(name, options, ALLOW)` — the diagnostics half on its own. Routing an element through `normalizeMarkOptions` instead would be wrong in the other direction, since that accepts every style SHORTHAND (`dy`, `symbol`, `size`) on an axis. Both halves have an implicit spec layer: `axes` (`core/axes.js`) for the positional scales, `legends` (`core/legends.js`'s `autoLegends`) for the rest. `legends` defaults OFF where `axes` defaults on, because a legend reserves layout space.
+**A chart ELEMENT is not a data mark.** `axis`, `axisRadial`, `grid` and `legend` set `views: 'scale'`: they draw a SCALE, not columns, so they carry no channel map and no fields of their own. Data marks are `views: 'data'` (the default). This is why `edit/route.js`'s `resolveChannels` drops a channel with no field for a data mark but falls back for an element — a legend legitimately has no field of its own. That fallback reads `owner.field` FIRST — for a legend that is its ENCODING's field, for an axis a pin over the positional union — and `scale.fields[0]` only after. `elementEdits` (`plot/mark.js`) is the one place an element's `edit`/`edits` are read — both spellings, since `edits` used to validate clean and then be dropped by `axis` and `legend` alike. Read `views`, not the `isAxis || isGrid || isLegend` disjunction, when you mean "is this a chart element"; the specific flags stay for the cases that genuinely need to tell axes from legends. The contract is the `ChartElement` interface in `src/types.d.ts`. Because an element has no channel map there is nothing for `normalizeMarkOptions` to desugar, but there IS something to validate: call `warnUnknownElementOptions(name, options, ALLOW)` — the diagnostics half on its own. Routing an element through `normalizeMarkOptions` instead would be wrong in the other direction, since that accepts every style SHORTHAND (`dy`, `symbol`, `size`) on an axis. Both halves have an implicit spec layer: `axes` (`core/axes.js`) for the positional scales, `legends` (`core/legends.js`'s `legendsFromChannels`) for the rest. `legends` defaults OFF where `axes` defaults on, because a legend reserves layout space.
+
+**A SCALE is one ENCODING, keyed by `(channel, field)` — for NON-POSITIONAL
+channels.** `bucketOf` (`core/resolve.js`) is `axisOf(ch) || scaleKey(ch, field)`, and
+`scaleKey` (`core/scales.js`) is the one place that key is spelled. Positional channels
+keep unioning by axis — an error bar's `mean`/`lo`/`hi` must span one y axis, and there
+the union IS the intent. Everywhere else it was the accident: one `fill` scale over the
+union of every field on it, a legend that listed two vocabularies at once, and
+`scale.fields[0]` — declaration order — as the disambiguator for every edit. Two marks
+stating the SAME encoding still share one scale, which is what makes a shared colour
+mean a shared value.
+
+The lookup is `scales[scaleKey(ch, field)] || scales[ch]` and lives in three places:
+`encodeChannel` (every mark's fill/stroke/size/symbol funnels through it — `resolveStyle`
+and `resolveSymbol` delegate, `categoryOf` takes no scale map), `resolveChannels`
+(`edit/route.js`, where the field must now resolve BEFORE the scale), and
+`domainOfField` (`constraints/define.js`). The bare-channel ALIAS is deliberate and
+first-wins: `ScaleMap` is a bare index signature whose reserved keys are `any` casts, so
+`tsc` cannot find a missed site — the alias makes a miss behave like the old code
+instead of crashing. Don't make it last-wins, and don't remove it; a `{ datum }` channel
+has no field and rides it by design. `frameScales` (`plot/composite.js`) must publish
+under BOTH keys or a glyph part silently stops shadowing the chart's scale.
+
+**COLOUR is chosen by the MEASURE, and rotated per encoding.** `colorRange`
+(`core/encoding.js`) reads what the data IS, not just the scale type: `categorical` gets
+distinct hues, `ordinal` gets an ordered ramp sampled to one swatch per category (the
+ColorBrewer rule, and the case this library cares most about — every Likert scale here
+is `ordinal` and used to read as unrelated colours), `quantitative` a continuous ramp.
+Two encodings on one channel take different scheme FAMILIES, because independent scales
+would each restart at palette index 0 and hand two meanings the same two colours — worse
+than the union they replaced. Index 0 defers to `theme.palette`/`theme.ramp`, so a chart
+with one encoding per channel is untouched and theming still works. `scaleTypeFor` does
+NOT change: an ordinal colour field still resolves an `ordinal` scale TYPE (a discrete
+value→colour map); only its RANGE becomes ordered. Note `ordinal` now means ORDERED —
+a series key declared `ordinal` is a mis-declaration and will read as shades.
+
+**A LEGEND is a key for one encoding, and is declared where the encoding is.**
+`ChannelSpec.legend` (`fill: { field, legend: true | {…} | false }`) is the primary
+spelling: the channel already names the field and the mark the table, so nothing is
+restated and nothing can disagree. `legendsFromChannels` (`core/legends.js`) is the ONE
+pass that builds them — it replaced `autoLegends` and `relocateLegendEdits`, which were
+the same act done twice by channel. Three ways to ask, most specific first: a composed
+element, the channel, then `legends: true`. Dedup is by `(channel, field)`, so two marks
+on one encoding get ONE legend (Vega-Lite's combining rule). An element that names no
+`field` binds to the channel's sole encoding, and with two the engine KNOWS and warns
+with both candidates — the ambiguity is detectable now, where `fields[0]` silently
+picked. A legend-scoped edit on a channel is itself a request for a legend, and is
+STRIPPED from the channel so the mark's own nodes stay inert. Skip and warn on a channel
+that resolves no global scale (a constant, a `frame` channel — `autoLegends` used to
+mint phantom legends for composite parts — `scale: null`, a raw channel).
+
+**A legend's SHAPE follows what the channel encodes to.** `legendForm` returns
+`swatches` (any discrete domain), `ramp` (continuous colour), `graduated` (continuous
+size — nested circles), `fan` (angle — spokes at their bearings) or `weights`
+(strokeWidth — segments at their thicknesses). Every one reads `scale.encode`, so the
+key reports whichever scale the channel resolved rather than re-deriving one. Reading
+the scale KIND alone sent every continuous channel to the ramp, which paints nothing but
+colour — `legendSize()` drew a flat grey bar. `size` stays LINEAR by default (a linear
+radius keeps a drag predictable); `scale: 'sqrt'` is the per-channel opt-in and the
+legend follows. Don't clamp a size chip to `swatchSize` — that made the key unable to
+show the top of its own scale. A fan is laid out by MEASURING its spokes and labels
+(`fanLayout`, shared by `measure` and `build`), not by assuming a square box.
+
+**A domain edit is NATIVE to an element; a row edit only borrows it as a surface.**
+`edit.scale.categories()` writes the domain of the scale the element draws, so it is
+`scope: 'scale'` (the `SCOPE_CAPABILITY` entry carries a `test` predicate, since
+"draws a scale" is `views`, not a boolean flag) and works on an axis or a legend
+alike. `edit.legend.category()` writes a ROW and is armed only by having one. Keep the
+two arming conditions separate in `plot/legend.js` — reading one flag for both left a
+rename-only legend inert on a chart with nothing selected.
+
+**Rename/remove write every column on the scale, in every TABLE it spans.** A category
+is one vocabulary however many columns share it, so writing one and not the others
+splits it in two and the chart still draws. A field NAME cannot say whose schema to
+write, so `resolveScales` stamps `scale.fieldRefs` (table-qualified) beside
+`scale.fields`, and `DomainEditResult.tables` carries the other tables' domains and
+rows. `commitDomainEdit` normalizes both halves into ONE write list — don't bolt a
+special case beside the flat form. Coupled rows for a secondary table run THAT table's
+invariants (`runInvariants(rows, table)`), and one rejection rejects the whole edit:
+half a rename is worse than none.
+
+**A legend is a KEY first and a picker second.** Its unarmed state may not cost
+legibility: a swatch's fill IS the encoding, so dimming it makes the key report a
+colour the marks do not have — the same mistake as an effect painted over a mark's own
+paint — and the whole legend then reads as absent rather than as pending. The
+current-value ring carries the state instead (present = there is a row to write,
+and it marks what a click would REPLACE). The engine, which can see every feature,
+warns only when nothing can EVER arm the picker (`warnUnreachableLegendRow`, and it
+counts only edits with no `target` — a domain or selection edit needs no row).
+
+**A legend's shape follows what the channel ENCODES TO, not the scale kind alone.**
+`legendForm` returns `swatches` (any discrete domain), `ramp` (continuous colour) or
+`graduated` (continuous size — nested circles at tick values). Reading the kind alone
+sent every continuous channel to the ramp, and the ramp can paint nothing but colour,
+so `legendSize()` over a quantitative field drew a flat grey bar: a size legend showing
+no sizes. Radii come from `scale.encode`, so the key reports whichever scale the
+channel resolved — `size` stays LINEAR by default (a linear radius keeps a drag
+predictable: the same pointer movement is the same change in value anywhere), and
+`scale: 'sqrt'` is the per-channel opt-in for linear area. Don't hard-code a radius
+rule in the legend, and don't clamp a size chip to `swatchSize` — that made the key
+unable to show the top of its own scale.
 
 **An edit writes to a COLUMN.** `resolveChannels` drops any channel the mark doesn't encode as a field, because every `apply()` ends in some form of `datum[ch.field] = value`. Without that, an edit on a constant (`{ value }`) channel writes to the key `undefined` — usually inert, but if another mark puts a field on the same axis the scale exists and inverts, and dragging appends a column literally named `"undefined"` to the elicited dataset. For a belief-elicitation library, silently corrupting the elicited data is the worst failure available; don't add a write site that skips this.
 
@@ -356,7 +456,7 @@ dataset — every band of a stacked bar holds its own copy of the vocabulary) an
 once they run out, and `validateDataset` reports a seed value outside it. `open: true`
 makes it a starting set: the cut appends, and the out-of-domain check is skipped because an
 unseen value is the declared behaviour. Naming is a SEPARATE act from creating —
-`edit.axis.categories().rename` and `edit.cycle()` already cover it, so a cut mints a
+`edit.scale.categories().rename` and `edit.cycle()` already cover it, so a cut mints a
 placeholder and never blocks. Don't reintroduce a null-category path; a row whose identity
 is null is one the user can only fix by typing.
 
@@ -483,7 +583,7 @@ aimed at the row before it.
 3. `npm run check:warnings` must stay green. The second gate (there is still no unit-test suite): it visits every documented route under **Next.js/webpack** and fails on any `[elicit]` warning. Every docs example is a spec that should be correct, so a warning is either a broken example or a false positive in a guard. It found two examples passing `ruleY({ y: 50 })` — a form `rule` doesn't read — which had been drawing reference lines at a fallback position for a long time; `verify:browser` cannot catch that, because the page renders fine. Note what it does *not* prove: silence could also mean the diagnostics got disabled again, so after touching `core/dev.js` also confirm the warning strings survive `npm run build:lib`. **Check that with node, not grep** — `dist/elicit.js` is a single 329 KB line and grep finds nothing in it while reporting success: `node -e "const s=require('fs').readFileSync('dist/elicit.js','utf8'); console.log(s.split('[elicit]').length-1)"` (expect ~18, never 0).
 4. **`../elicitjs-docs` is the documentation** (sibling repo). Update it if the public surface changed — the docs are the regression surface, and a feature with no page effectively doesn't exist. The old `docs/` tree was retired on 2026-07-16; don't recreate an HTML-and-harness docs site inside this library repo.
 5. `src/types.d.ts` is the source of truth for shapes (`Mark`, `Edit`, `Constraint`, `FeatureNode`, `Session`, …) — update it alongside any descriptor change.
-6. If you touched packaging, `npm pack --dry-run` must stay small (~0.6 MB). `files` once included the docs app, whose `.next` build output is 1.4 GB — the tarball was over 1 GB and the publish would simply have failed. Docs now live in `../elicitjs-docs` and must stay out of this package's `files`.
+6. If you touched packaging, `npm pack --dry-run` must stay ~1.0 MB (dominated by `dist/elicit.js.map`; the source itself is ~350 KB). `files` once included the docs app, whose `.next` build output is 1.4 GB — the tarball was over 1 GB and the publish would simply have failed. Docs now live in `../elicitjs-docs` and must stay out of this package's `files`.
 
 ## Don't reintroduce
 
@@ -516,6 +616,28 @@ aimed at the row before it.
 - A multi-event lifecycle that forces its edit onto the plane when all it needs is a dragstart snapshot. Claim it by capability and read `ctx.index`.
 - A per-mark scoped edit namespace for a glyph whose parameters are plain fields on ordinary parts. (`edit.face.*` existed for exactly that and is gone.)
 - A `domain` or `range` on a channel, or a `spec.x` / `spec.y` scale block. Domains live on the schema; scale config lives on `scale` (per channel) or `spec.scales` (per chart).
+- A NON-POSITIONAL scale keyed by channel alone, or `scale.fields[0]` used as a
+  disambiguator. One scale per encoding; `scaleKey` is the one speller.
+- A scale lookup that skips the bare-channel alias, or makes it last-wins. It is the
+  safety net for a key change `tsc` cannot check.
+- The POSITIONAL union removed. An error bar's mean/lo/hi share one y axis on purpose.
+- Independent non-positional scales that each restart at palette index 0. Two meanings,
+  one colour — rotate scheme FAMILIES instead.
+- `ordinal` on a colour channel treated as unordered, or a group identifier declared
+  `ordinal`. Ordered means ordered.
+- A legend built per CHANNEL rather than per encoding, or a second pass beside
+  `legendsFromChannels`. `autoLegends` and `relocateLegendEdits` were that duplication.
+- A second marker option for "this edit happens on a legend". `scope: 'legend'` is it.
+- A legend form that ignores `scale.encode` and re-derives its own geometry, or a
+  continuous non-colour channel sent to the colour ramp.
+- An element factory that reads `edit` and not `edits` (or vice versa). `elementEdits`.
+- A legend that dims its own swatches to report a picker's state. The fill is the
+  encoding; use the current-value ring.
+- A rename that writes one column's rows and leaves a sibling column — or a sibling
+  TABLE — on the old value. Resolve through `scale.fieldRefs`.
+- A `size` legend that draws a colour ramp, or a size chip clamped to `swatchSize`.
+- `size` switched to `sqrt` by default. Linear radius is the interaction default;
+  `sqrt` is a per-channel option, and the legend follows whichever is in use.
 - A second reading of the author's schema spelling. `normalizeSchema` is the only one; everything downstream takes the canonical `SchemaSpec`.
 - A hard-coded `'nodes'` / `'links'` / `'data'` table lookup. Resolve through `byRole`, or a table's name is not really renameable.
 - A `domain` declared on a `ref` field, or a second list of node ids beside the key column. A ref's domain is derived.

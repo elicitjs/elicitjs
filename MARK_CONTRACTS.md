@@ -16,7 +16,7 @@ Live docs: sibling repo `elicitjs-docs` → `/concepts/contracts`.
 <tr><td><b>data</b></td><td>Views dataset rows; channels name columns</td></tr>
 <tr><td><b>parametric</b></td><td>One-row (or few-row) belief; channels are parameters, not free create targets</td></tr>
 <tr><td><b>map chrome</b></td><td>Basemap / tiles; not create targets</td></tr>
-<tr><td><b>element</b></td><td>Views a SCALE (<code>views: 'scale'</code>); domain edits, not row creates</td></tr>
+<tr><td><b>element</b></td><td>Views a SCALE (<code>views: 'scale'</code>) — an axis for a positional one, a legend for one non-positional ENCODING; domain edits, not row creates</td></tr>
 </tbody>
 </table>
 
@@ -134,7 +134,7 @@ N/A = use a different edit family (documented).
 <td>data</td>
 <td>band + value; unit grid</td>
 <td>N/A → <code>edit.waffle.fill</code></td>
-<td>cells (<code>node.grid</code>)</td>
+<td>cells (<code>node.grid</code>, <code>node.effectShape</code>)</td>
 <td>discrete on x or y; <code>supportsWaffle</code></td>
 </tr>
 <tr>
@@ -339,7 +339,7 @@ N/A = use a different edit family (documented).
 <td>singular <code>channel</code>; chrome options</td>
 <td>N/A</td>
 <td>domain end grips / category labels</td>
-<td><code>edit.axis.scale</code> / <code>categories</code></td>
+<td><code>edit.axis.scale</code> / <code>edit.scale.categories</code></td>
 </tr>
 <tr>
 <td><code>grid</code> / <code>gridX</code> / <code>gridY</code></td>
@@ -350,12 +350,12 @@ N/A = use a different edit family (documented).
 <td>none</td>
 </tr>
 <tr>
-<td><code>legend</code> / <code>legendColor</code> / <code>legendSize</code> / <code>legendSymbol</code></td>
+<td><code>legend</code> / <code>legendColor</code> / <code>legendSize</code> / <code>legendSymbol</code><br/><small>usually built from a channel's <code>legend:</code> or <code>legends: true</code></small></td>
 <td>element</td>
 <td>may reserve layout space</td>
 <td>N/A</td>
 <td>ramp grip / swatches</td>
-<td><code>edit.legend</code> / <code>legendValue</code></td>
+<td><code>edit.legend.category</code> / <code>edit.legend.value</code> / <code>edit.scale.categories</code></td>
 </tr>
 <tr>
 <td><code>axisRadial</code></td>
@@ -379,3 +379,6 @@ N/A = use a different edit family (documented).
 5. Encoding path: `encodeChannel` / `categoryOf` / `encodeValue` — not raw `scale.encode` in mark `build`.
 6. A mark that partitions a total among a group of rows stamps `node.stack` (`plot/stack.js`) and
    sets `supportsStack`, so `edit.stack.*` inverts through the layout that drew it.
+7. A mark that draws ONE row as MANY nodes states the row's whole shape as
+   `node.effectShape` (a plain geometry node), or a hover/selection outline rings whichever
+   node the effects pass finds first — a waffle's cell 0 rather than its block.

@@ -134,7 +134,7 @@
 // aimed at the row before it.
 
 import { normalizeMarkOptions, encodeChannel, positionalKeys, themeOf } from './mark.js';
-import { createFrameScale, bandwidthOf, isBand } from '../core/scales.js';
+import { createFrameScale, bandwidthOf, isBand, scaleKey } from '../core/scales.js';
 import {
     frameSpecOf, normalizeFrameKey, frameFamilyOf, frameLocalRange, channelRange
 } from '../core/encoding.js';
@@ -292,7 +292,15 @@ function frameScales(channels, names, box, schema, dims, theme) {
             halfSize: box.r,
             family,
         });
-        if (scale) out[name] = scale;
+        // Published under BOTH keys. The frame map is spread over the global scales
+        // to shadow them for this datum, and a reader finds a non-positional scale
+        // by (channel, field) — so a bare-name-only entry would stop shadowing the
+        // moment the global map became encoding-keyed, and the part would silently
+        // encode through the CHART's scale instead of its own box.
+        if (scale) {
+            out[name] = scale;
+            if (spec && spec.field != null) out[scaleKey(name, spec.field)] = scale;
+        }
     }
     return out;
 }

@@ -169,7 +169,7 @@ export function buildEditGuide(feature, edit, ctx) {
     const data = ctx.tableOf ? ctx.tableOf(feature) : ctx.data;
     const constraints = ctx.constraintsIn ? ctx.constraintsIn(feature.table) : ctx.constraints;
     const markChannels = feature.channels || {};
-    const resolved = resolveChannels(edit.channels, markChannels, scales);
+    const resolved = resolveChannels(edit.channels, markChannels, scales, feature);
     const primary = resolved[0];
     const parts = resolveGuide(edit, ctx);
     /** @type {import('../types').FeatureNode[]} */

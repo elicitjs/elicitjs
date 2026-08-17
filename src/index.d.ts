@@ -198,10 +198,18 @@ export const edit: {
     sweep(options?: DrawOptions): Edit;
     removeSeries(options?: EditOptions): Edit;
   };
-  /** Reshapes a field's DOMAIN (the schema), not the dataset. */
+  /**
+   * Reshapes the DOMAIN of the scale a chart element draws (the schema), not the
+   * dataset. Works on any element that draws one — an axis or a legend.
+   */
+  scale: {
+    /** Returns THREE edits — one authoring act, three descriptors. Spread it. */
+    categories(options?: EditOptions): Edit[];
+  };
+  /** Axis-only: drags a positional RANGE, which only an axis has. */
   axis: {
     scale(options?: EditOptions): Edit;
-    /** Returns THREE edits — one authoring act, three descriptors. Spread it. */
+    /** @deprecated Use `edit.scale.categories()` — the same edit, on any element. */
     categories(options?: EditOptions): Edit[];
   };
   /** Turns a legend into an input; reads geometry only a legend stamps. */

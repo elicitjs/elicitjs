@@ -20,18 +20,45 @@
 import { makeEdit } from './shared.js';
 
 /**
- * The field a legend edit writes into: the channel's own field when the edit
- * names one, else the field the scale is built from (`scale.fields[0]`, stamped
- * by resolveScales). A legend carries no channel map — it views a SCALE, not
- * columns — so the scale is the only place the field is known.
+ * The column a legend edit writes into: the one its ENCODING uses.
+ *
+ * There is nothing to choose any more. A legend is a key for one (channel, field)
+ * pair, so `resolveChannels` resolves that field from the legend itself and the
+ * edit simply writes it. This used to be a three-step fallback ending in
+ * `scale.fields[0]` — the union of every field on the channel, in declaration
+ * order — because a legend drew a channel rather than an encoding.
  * @param {import('../types').ResolvedChannel} ch
  * @returns {string | undefined}
  */
 function legendField(ch) {
-    if (!ch) return undefined;
-    if (ch.field) return ch.field;
-    const fields = ch.scale && /** @type {any} */ (ch.scale).fields;
-    return fields && fields[0];
+    return ch ? ch.field : undefined;
+}
+
+/**
+ * Write `value` into `field` on every row the legend is targeting.
+ *
+ * A swatch names a VALUE, not a row, so the rows come from the legend's `row` —
+ * which defaults to the chart's SELECTION and can therefore hold several. The
+ * swatch carries them as `node.indices`; `node.index` is only the first, because
+ * direct-pick dispatch keys on a single index.
+ *
+ * Returns one datum when a single row is targeted (the engine splices it at
+ * ctx.index) and the whole array when several are, which is the shape a
+ * whole-dataset edit returns. Falling back to `ctx.datum` keeps a legend built
+ * before `indices` existed working unchanged.
+ * @param {import('../types').EditContext} ctx
+ * @param {string} field
+ * @param {any} value
+ * @returns {any}
+ */
+function writeCategory(ctx, field, value) {
+    const rows = (ctx.node && /** @type {any} */ (ctx.node).indices) || [];
+    if (rows.length > 1) {
+        const set = new Set(rows);
+        return ctx.data.map((/** @type {any} */ d, /** @type {number} */ i) =>
+            (set.has(i) ? { ...d, [field]: value } : d));
+    }
+    return { ...ctx.datum, [field]: value };
 }
 
 /**
@@ -56,7 +83,7 @@ export function category(options = {}) {
             if (!field || !ctx.node || ctx.datum == null) return undefined;
             const value = ctx.node.category;
             if (value === undefined) return undefined;
-            return { ...ctx.datum, [field]: value };
+            return writeCategory(ctx, field, value);
         }
     });
 }
@@ -88,7 +115,7 @@ export function value(options = {}) {
             const pos = node.along === 'y' ? ctx.pointer.y : ctx.pointer.x;
             const t = Math.max(0, Math.min(1, (pos - node.rampStart) / span));
             const v = node.loValue + t * (node.hiValue - node.loValue);
-            return { ...ctx.datum, [field]: v };
+            return writeCategory(ctx, field, v);
         }
     });
 }

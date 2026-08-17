@@ -196,16 +196,34 @@ function buildWaffle(options, forcedOrientation) {
                     unit, dlo, dhi, totalCells
                 };
 
+                // Signed step away from the baseline along the value axis (up for a
+                // vertical waffle, right for a horizontal one).
+                const valueDir = vertical ? -1 : 1;
+
+                // The BLOCK: the datum's whole grid as one rect, in the extent the
+                // cells are actually drawn in (so it hugs the outer cells rather than
+                // the gap around them). One datum is many nodes here, so an effect
+                // outline derived from a node would ring a single cell — cell 0, the
+                // one at the baseline. Stamped on every cell, because the engine
+                // outlines whichever of a datum's nodes it finds first.
+                const blockAcross = bandStart + bandInset + gap / 2;
+                const blockAlong = Math.min(baseline, baseline + valueDir * rows * cellSize) + gap / 2;
+                const acrossLen = Math.max(0, multiple * cellSize - gap);
+                const alongLen = Math.max(0, rows * cellSize - gap);
+                const effectShape = {
+                    type: 'rect',
+                    x: vertical ? blockAcross : blockAlong,
+                    y: vertical ? blockAlong : blockAcross,
+                    width: vertical ? acrossLen : alongLen,
+                    height: vertical ? alongLen : acrossLen,
+                };
+
                 // Fill LEVEL through encodeChannel (the one field->pixel path),
                 // quantized into whole cells so the count is exact and the top of
                 // the filled cells lines up with `value` on the axis.
                 const level = encodeChannel(scales, channels, valueChannel, d, baseline, i, currentData);
                 const fillFraction = Math.abs(baseline - level) / blockLen;
                 const filled = Math.max(0, Math.min(totalCells, Math.round(fillFraction * totalCells)));
-
-                // Signed step away from the baseline along the value axis (up for a
-                // vertical waffle, right for a horizontal one).
-                const valueDir = vertical ? -1 : 1;
 
                 for (let idx = 0; idx < totalCells; idx++) {
                     const row = Math.floor(idx / multiple); // 0 at the baseline
@@ -233,7 +251,7 @@ function buildWaffle(options, forcedOrientation) {
                         const bandCenter = bandPos + cellSize / 2;
                         const valCenter = (valueNear + valueFar) / 2;
                         /** @type {Record<string, any>} */
-                        const extra = { ...style, data: d, index: i, grid };
+                        const extra = { ...style, data: d, index: i, grid, effectShape };
                         if (!isFilled) extra.opacity = showEmpty ? 0.2 : 0;
                         nodes.push(symbolNode(
                             glyph,
@@ -257,7 +275,8 @@ function buildWaffle(options, forcedOrientation) {
                             ...cellStyle,
                             data: d,
                             index: i,
-                            grid
+                            grid,
+                            effectShape
                         });
                         continue;
                     }
@@ -271,7 +290,8 @@ function buildWaffle(options, forcedOrientation) {
                         ...cellStyle,
                         data: d,
                         index: i,
-                        grid
+                        grid,
+                        effectShape
                     });
                 }
             });

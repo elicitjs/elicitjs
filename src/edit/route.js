@@ -14,6 +14,7 @@
 // now structural).
 
 import { warn } from '../core/dev.js';
+import { scaleKey } from '../core/scales.js';
 
 /**
  * Looks like an Edit descriptor (gesture + apply) rather than a ChannelSpec.
@@ -113,23 +114,37 @@ export function warnMisplacedEdits(feature, label) {
  * This is also the behaviour callers already assume: `create()` passes ['x','y']
  * and documents that a 1D chart "just omits the missing y".
  *
- * THE ONE EXCEPTION is a GUIDE (`views: 'scale'` — axis, grid, `plot.legend()`).
- * A guide draws a SCALE rather than columns of its own, so the scale is the only
- * place the field is known and it falls back to `scale.fields[0]`. That fallback
- * is deliberately NOT applied to a data mark: on a shared axis `scale.fields`
- * holds every field unioned onto it (an error bar's mean/lo/hi), so picking `[0]`
- * for a channel the author left constant would write to a NEIGHBOURING mark's
- * column instead of failing.
+ * THE ONE EXCEPTION is a CHART ELEMENT (`views: 'scale'` — axis, grid, legend).
+ * An element draws a SCALE rather than columns of its own, so it has no channel
+ * map to name a field in. Its field comes from one of two places, in order:
+ *
+ *   1. `owner.field` — the element PINNED one (`legendColor({ field: 'weather' })`).
+ *   2. `scale.fields[0]` — the fallback.
+ *
+ * The pin matters because the fallback is EMERGENT, not declared: `scale.fields` is
+ * the union of every field bucketed onto that channel, in first-seen FEATURE order
+ * (core/resolve.js), so `[0]` means "whichever mark happened to be listed first".
+ * With two marks binding `fill` to different columns, an edit on the legend wrote
+ * one of them by declaration order and the spec said nothing about which. `field`
+ * was accepted and stamped by both `axis` and `legend` long before anything read it
+ * — this is the read.
+ *
+ * The whole path is deliberately NOT applied to a data mark: on a shared axis
+ * `scale.fields` holds every field unioned onto it (an error bar's mean/lo/hi), so
+ * picking `[0]` for a channel the author left constant would write to a
+ * NEIGHBOURING mark's column instead of failing.
  * @param {string[] | null} names
  * @param {any} markChannels
  * @param {import('../types').ScaleMap} scales
- * @param {boolean} [viewsScale] the feature views a SCALE, not data — i.e. it is a
- *   chart ELEMENT (`views: 'scale'`). Named for what it is: this used to be called
- *   `isGuide`, from before the three feature kinds had separate names, and a guide
- *   (`views: 'state'`) is now a different thing entirely.
+ * @param {any} [owner] the FEATURE these channels belong to. Read for two things:
+ *   `views === 'scale'` (it is a chart ELEMENT, so the fallback above applies) and
+ *   `field` (the column it pinned). Used to be a bare `viewsScale` boolean, which
+ *   left an element no way to say WHICH column its edit writes.
  * @returns {import('../types').ResolvedChannel[]}
  */
-export function resolveChannels(names, markChannels, scales, viewsScale = false) {
+export function resolveChannels(names, markChannels, scales, owner = undefined) {
+    const viewsScale = !!(owner && owner.views === 'scale');
+    const pinned = owner && owner.field != null ? owner.field : undefined;
     // Fall back to the shape-sniff when the caller doesn't say: a feature with no
     // channel map has no field of its own either, so the scale is the only place
     // the field is known.
@@ -137,14 +152,22 @@ export function resolveChannels(names, markChannels, scales, viewsScale = false)
     /** @type {import('../types').ResolvedChannel[]} */
     const out = [];
     for (const name of names || []) {
-        const scale = scales[name] || undefined;
+        // The FIELD is resolved before the scale, not after: a scale is one
+        // ENCODING, keyed by (channel, field), so the field is what finds it. The
+        // bare-name lookup stays as the fallback — it is the positional path (x1/x2
+        // alias onto x) and the safety net for an element that names no field.
         const spec = markChannels && markChannels[name];
         let field = spec && spec.field;
         if (field == null && mapless) {
-            const fields = /** @type {any} */ (scale) && /** @type {any} */ (scale).fields;
-            field = fields && fields[0];
+            if (pinned != null) field = pinned;
+            else {
+                const alias = /** @type {any} */ (scales[name]);
+                const fields = alias && alias.fields;
+                field = fields && fields[0];
+            }
         }
         if (field == null) continue;
+        const scale = scales[scaleKey(name, field)] || scales[name] || undefined;
         out.push({ name, field, scale });
     }
     return out;

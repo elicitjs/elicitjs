@@ -232,12 +232,26 @@ export function effectStyleFor(states) {
  * `ellipse` (a face's eye, a 2-D uncertainty blob) or a `text` label produced nothing
  * at all — the mark simply didn't respond, which reads as a broken interaction rather
  * than an unimplemented one.
+ *
+ * A datum drawn as MANY nodes (a waffle's grid of cells) states the shape of the
+ * WHOLE datum as `node.effectShape`, and the outline traces that instead of the one
+ * node it happened to be handed — see the FeatureNode field for why the mark, not
+ * this file, is the one that knows it.
  * @param {any} mark the scene node to outline
  * @param {any} state a resolved state config
  * @returns {import('../types').FeatureNode[]}
  */
 export function outlineNodes(mark, state) {
     if (!mark || !state || state.enabled === false || !state.outline) return [];
+    // The declared shape is an ordinary geometry node, so it goes through the very
+    // same cases below (and carries the mark's rotation with it). It never declares
+    // one of its own, so this recurses exactly once.
+    if (mark.effectShape) {
+        return outlineNodes(
+            { ...mark.effectShape, ...(mark.angle ? { angle: mark.angle } : {}) },
+            state,
+        );
+    }
     const { color, width, pad, dash, opacity } = state.outline;
     // `effect: true` pins these into the topmost paint layer (above marks and
     // guides); `guide: true` keeps them on the engine's non-interactive path.

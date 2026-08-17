@@ -33,6 +33,8 @@
 // its `field`, and `domain` is that field's declared data range (for bound
 // defaults). No scales, no pointer — just data.
 
+import { scaleKey } from '../core/scales.js';
+
 /**
  * Resolve the declared data range of a field, for constraints that default a
  * bound to it (e.g. clamp with an omitted max). Purely a convenience lookup — the
@@ -46,11 +48,13 @@ function domainOfField(field, scales, markChannels) {
   if (!field || !scales || !markChannels) return undefined;
   for (const key of Object.keys(markChannels)) {
     const spec = markChannels[key];
-    if (spec && spec.field === field && scales[key]) {
-      const s = scales[key];
-      if (s.domainConfig) return s.domainConfig;
-      if (typeof s.domain === "function") return s.domain();
-    }
+    if (!spec || spec.field !== field) continue;
+    // A scale is one ENCODING, so it is found by (channel, field); the bare name
+    // is the positional path and the fallback. The field is already in hand here.
+    const s = scales[scaleKey(key, field)] || scales[key];
+    if (!s) continue;
+    if (s.domainConfig) return s.domainConfig;
+    if (typeof s.domain === "function") return s.domain();
   }
   return undefined;
 }

@@ -78,11 +78,18 @@ import { anchor, newSeries, draw, sweep, removeSeries } from './line.js';
 export const line = { anchor, newSeries, draw, sweep, removeSeries };
 
 import { scale as axisScale, categories as axisCategories } from './axis.js';
+import { categories as scaleCategories } from './scale.js';
 
-// Axis-scoped: these reshape the field's DOMAIN (the schema), not the dataset.
-// `scale` = numeric/temporal drag; `categories` = discrete add/rename/remove.
+// Scale-scoped: reshape the DOMAIN of the scale a chart element draws (the schema),
+// not the dataset. Works on any element that draws one — an axis or a legend — so
+// `scope: 'scale'`, the capability both share (`views: 'scale'`).
 // NOTE `categories()` returns an ARRAY of three edits — one authoring act that
 // needs three descriptors. It is the one factory that does; spread it.
+export const scale = { categories: scaleCategories };
+
+// Axis-scoped: `scale` drags a positional RANGE, which only an axis has.
+// `categories` is the deprecated spelling of `edit.scale.categories` — same edit,
+// kept working and warning once.
 export const axis = { scale: axisScale, categories: axisCategories };
 
 import { category as legendCategory, value as legendValue } from './legend.js';

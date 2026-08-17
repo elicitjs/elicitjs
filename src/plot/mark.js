@@ -115,6 +115,10 @@ import { themeOf } from '../core/theme.js';
 // forever — `warn` dedups once per key. See core/dev.js.
 import { warn, warningsEnabled } from '../core/dev.js';
 
+// A scale is one ENCODING — (channel, field) — not one channel. `scaleKey` is the
+// single source of that key; see core/scales.js for why.
+import { scaleKey } from '../core/scales.js';
+
 /**
  * Evaluate a derived channel's `fn(d, i, data)` in VISUAL space. The result is
  * used as-is (never scaled). A null/undefined datum resolves to the fallback
@@ -199,7 +203,13 @@ export function encodeChannel(scales, channels, channel, datum, fallback, index,
     if (raw === undefined || raw === null) return fallback;
     // Unscaled field: the datum already holds a literal (a CSS colour, a pixel).
     if (spec.scale === null) return raw;
-    const scale = scales[channel];
+    // A scale is one ENCODING, so it is keyed by (channel, field) — see
+    // core/scales.js's scaleKey. Positional channels union by axis and are
+    // published under the bare name, and every non-positional channel is aliased
+    // there too, so the `|| scales[channel]` is both the positional path and the
+    // safety net. This is THE lookup for every mark's fill/stroke/size/symbol:
+    // resolveStyle and resolveSymbol delegate here, and categoryOf takes no scales.
+    const scale = scales[scaleKey(channel, spec.field)] || scales[channel];
     if (!scale) return fallback;
     return scale.encode(raw, fallback);
 }
@@ -698,9 +708,16 @@ export const AXIS_CHROME = ['stroke', 'strokeWidth', 'fill', 'fontSize'];
  * Options every CHART ELEMENT accepts. A chart element (`views: 'scale'` — axis,
  * grid, legend, axisRadial) draws a SCALE rather than columns of the dataset, so it
  * has no `channels` map: the universal set is the mark's minus that.
+ *
+ * `field` and `table` are the pair that says WHAT an edit on the element writes.
+ * An element has no channel map, so without them both coordinates are inferred —
+ * the field from `scale.fields[0]` (declaration order) and the table from the
+ * structure's primary. Neither is a statement the spec made. `table` is a NAME, the
+ * same as a mark's; the engine resolves it in the one place features are bound
+ * (core/elicit.js), so an element needs no `tableRole` to honour it.
  * @type {string[]}
  */
-const UNIVERSAL_ELEMENT_OPTIONS = ['id', 'edit', 'edits', 'constraints', 'field'];
+const UNIVERSAL_ELEMENT_OPTIONS = ['id', 'edit', 'edits', 'constraints', 'field', 'table'];
 
 /**
  * Validate a CHART ELEMENT's options. The counterpart to normalizeMarkOptions for
@@ -735,4 +752,31 @@ export function warnUnknownElementOptions(element, options, allow) {
             `ignored. ${element} options are: ${[...known].sort().join(', ')}.`
         );
     }
+}
+
+/**
+ * A CHART ELEMENT's edit list: both spellings flattened into one array, with the
+ * element's own `channel` injected into any edit that didn't name one. The
+ * element-side counterpart to `markCommon` — one helper so the universal options
+ * cannot drift the way they did in 29 mark factories.
+ *
+ * Both spellings, because `edits` was in the universal element vocabulary (so it
+ * validated clean) while `axis` and `legend` destructured only `edit` and then
+ * overwrote the key with their own local — `legendColor({ edits: [...] })` passed
+ * every check and silently did nothing. Accepting one and validating the other is
+ * the worst of both.
+ *
+ * Injecting the channel is what lets `resolveChannels` find the edit's scale at all:
+ * an element has no channel map, so without this the edit's `channels` is null and
+ * it resolves nothing.
+ * @param {any} options the element's raw options (read `edit` and `edits`)
+ * @param {string} channel the scale the element draws
+ * @returns {import('../types').Edit[]}
+ */
+export function elementEdits(options, channel) {
+    const raw = [options && options.edit, options && options.edits];
+    return raw
+        .flat(Infinity)
+        .filter((e) => e && typeof (/** @type {any} */ (e).apply) === 'function')
+        .map((e) => (/** @type {any} */ (e).channels ? e : { .../** @type {any} */ (e), channels: [channel] }));
 }

@@ -30,6 +30,14 @@ const docsRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 const PORT = 3111;
 const BASE = `http://localhost:${PORT}`;
 
+// The head of the default categorical palette (encoding.js's DEFAULT_PALETTE, and
+// theme.palette). Used only to tell one KIND of circle from another — a node dot
+// takes the first palette colour, a link's endpoint handle is themed differently —
+// so it is a proxy for "this circle is a node", not an assertion about colour.
+// Named once so a palette change is one edit here rather than a scavenger hunt;
+// assertions that are genuinely ABOUT colour compare swatches to marks instead.
+const PALETTE_HEAD = '#4e79a7';
+
 let passed = 0;
 const failures = [];
 function check(name, cond, detail = '') {
@@ -119,7 +127,7 @@ async function main() {
             '/marks/dotstack', '/marks/waffle', '/marks/needle',
             '/marks/axis-radial', '/marks/arc', '/marks/geo', '/marks/network', '/marks/trend', '/marks/axes',
             '/marks/legend', '/marks/sticker',
-            '/editing', '/editing/gestures', '/editing/sweep', '/editing/lock',
+            '/editing', '/editing/gestures', '/editing/sweep', '/editing/selection', '/editing/lock',
             '/editing/existence', '/editing/probe', '/editing/stages', '/editing/axis',
             '/editing/external-controls',
             '/editing/history', '/widgets', '/scales', '/schema', '/constraints',
@@ -302,6 +310,21 @@ async function main() {
             check(`click cell #${k}: value === (k+1)*unit`, value === (k + 1) * 5, `value ${value}, expected ${(k + 1) * 5}`);
             check(`click cell #${k}: filled === value/unit`, filled === value / 5, `filled ${filled}, value/unit ${value / 5}`);
         }
+
+        // A waffle draws one row as a GRID, so the hover outline must ring the whole
+        // BLOCK — the effects layer outlines the first node it finds for the datum,
+        // which is cell 0, unless the mark states the block (`node.effectShape`).
+        await cells.nth(6).hover();
+        await page.waitForTimeout(120);
+        const hoverOutline = await page.$$eval(`${sec} svg rect.effect`, (rs) => rs.map((r) => ({
+            w: +r.getAttribute('width'), h: +r.getAttribute('height'),
+        })));
+        const cellBox = await page.$eval(`${sec} svg circle`, (c) => +c.getAttribute('r') * 2);
+        check('waffle hover: exactly one outline for the hovered block',
+            hoverOutline.length === 1, `got ${hoverOutline.length}`);
+        check('waffle hover: the outline is the BLOCK, not one cell',
+            !!hoverOutline[0] && hoverOutline[0].w > cellBox * 1.5 && hoverOutline[0].h > cellBox * 1.5,
+            `outline ${hoverOutline[0] && `${hoverOutline[0].w}×${hoverOutline[0].h}`}, cell ${cellBox}`);
 
         // ---- Rect heatmap + fixed-size boxes (/marks/rect) ----------------
         // A category on both axes must tile the plane (band cells), and padding 0
@@ -775,6 +798,63 @@ async function main() {
         const repainted = drawn.filter((d) => d.year >= 1991 && d.year <= 2010);
         check('lock: the free years in that same stroke were repainted',
             repainted.length > 0 && repainted.every((d) => Math.abs(d.deaths - 55000) < 3000));
+
+        // ---- A gesture ends where it ends (/editing/lock, reusing both charts) ---
+        // The stuck-gesture class of bug: a stroke that is never retired stays live,
+        // and the next pointermove over the chart resumes editing with no button
+        // held. Two ways in, one per pick mode — both invisible to typecheck and to
+        // check:warnings, because the page renders perfectly either way.
+        console.log('\nA gesture ends where it ends (/editing/lock)');
+
+        // PLANE (sweep): release outside the chart. The plane's pointer capture was
+        // dropped by the first commit's re-render — `plane.raise()` is an
+        // appendChild, and moving a node releases its capture — so the off-chart
+        // `pointerup` never reached it. Now the whole drag is tracked on the window.
+        const ydiBox = await page.locator('#you-draw-it .chart svg').boundingBox();
+        await page.mouse.move(ny(2000, 30000).x, ny(2000, 30000).y);
+        await page.mouse.down();
+        await page.mouse.move(ny(2010, 30000).x, ny(2010, 30000).y);
+        await page.mouse.move(ydiBox.x + ydiBox.width / 2, ydiBox.y + ydiBox.height + 120);
+        await page.mouse.up();
+        await page.waitForTimeout(80);
+        const offChartRelease = await rowsOf('you-draw-it');
+        await page.mouse.move(ny(1995, 10000).x, ny(1995, 10000).y);
+        await page.mouse.move(ny(2015, 50000).x, ny(2015, 50000).y);
+        await page.waitForTimeout(80);
+        check('gesture: released off-chart, a re-entering pointer paints nothing',
+            JSON.stringify(await rowsOf('you-draw-it')) === JSON.stringify(offChartRelease));
+
+        // DIRECT (d3.drag): no release at all — the pointer left the browser window
+        // and was let go there, so `mouseup` never arrives. d3 keeps its window
+        // listeners, so the next mousemove over the page resumes the drag. A move
+        // reporting `buttons === 0` is the tell; dispatch one by hand, since
+        // Playwright's mouse cannot leave the viewport.
+        /** @param {{x: number, y: number}} pt */
+        const phantomMove = (pt) => page.evaluate(([x, y]) => window.dispatchEvent(
+            new MouseEvent('mousemove', { clientX: x, clientY: y, buttons: 0, bubbles: true, view: window })
+        ), [pt.x, pt.y]);
+        // Back to the scatter above — frameOf captures the box as it scrolls, so the
+        // mapper has to be re-derived rather than reusing `at`.
+        const at2 = await frameOf('seed', {
+            m: { top: 16, right: 16, bottom: 32, left: 40 }, w: 400, h: 300, xd: [0, 10], yd: [0, 10]
+        });
+        const free = (await rowsOf('seed'))[5];                   // the free row created above
+        await page.mouse.move(at2(free.x, free.y).x, at2(free.x, free.y).y);
+        await page.mouse.down();
+        await page.mouse.move(at2(5, 5).x, at2(5, 5).y);
+        await phantomMove(at2(2, 2));                             // the missed release
+        const strandedRows = await rowsOf('seed');
+        await phantomMove(at2(9, 2));
+        await phantomMove(at2(2, 9));
+        await page.waitForTimeout(80);
+        check('gesture: a move with no button held retires the stranded drag',
+            JSON.stringify(await rowsOf('seed')) === JSON.stringify(strandedRows));
+        await page.mouse.up();
+        // …and the next real drag still works, so retiring it did not wedge d3.
+        await dragPath(at2(strandedRows[5].x, strandedRows[5].y), at2(7, 3));
+        const resumed = (await rowsOf('seed'))[5];
+        check('gesture: the next drag after a stranded one still edits',
+            Math.abs(resumed.x - 7) < 0.5 && Math.abs(resumed.y - 3) < 0.5, JSON.stringify(resumed));
 
         // ---- Line authoring: anchor + newSeries (/marks/line) ----------------
         // The series-aware creators, driven by real gestures (mount-only checks
@@ -2124,6 +2204,127 @@ async function main() {
             && colours.swatches.every((c, i) => c === colours.bars[i]),
             `swatches=${JSON.stringify(colours.swatches)} bars=${JSON.stringify(colours.bars)}`);
 
+        // ---- colour follows the MEASURE, and one scale per encoding -------
+        // A scale is one ENCODING — (channel, field) — not one channel. Two marks
+        // colouring by different fields get two scales with their own domains, so
+        // the key stops being a union. Colour then follows what the data IS: an
+        // `ordinal` field is ORDERED and gets a ramp sampled per category, a
+        // `categorical` one gets distinct hues. Asserted as PROPERTIES (monotonic
+        // lightness, hue spread, disjointness) rather than hex literals, so colour
+        // stays free to improve without rewriting the suite each time.
+        console.log('\nColour by measure (/scales)');
+        await open('/scales', '#ordered-colour .chart svg');
+        await page.locator('#ordered-colour .chart svg').scrollIntoViewIfNeeded();
+        await page.waitForTimeout(250);
+        const swatchSets = await page.$eval('#ordered-colour .chart svg', (svg) => {
+            const lum = (c) => {
+                const m = c.match(/\d+/g);
+                if (!m) return null;
+                const [r, g, b] = m.map(Number);
+                return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            };
+            const toRgb = (el) => getComputedStyle(el).fill;
+            // The plot dots: 4 for the ordinal encoding, 4 for the categorical one,
+            // in mark order (ordinal mark declared first).
+            const dots = [...svg.querySelectorAll('circle.mark')].map(toRgb);
+            return { ordinal: dots.slice(0, 4).map(lum), categorical: dots.slice(4, 8).map(lum) };
+        });
+        const ord = swatchSets.ordinal;
+        const cat = swatchSets.categorical;
+        // Ordered data must read as ordered: lightness moves one way across the
+        // domain. (Q1..Q4 carry disagree..strongly agree, so the dots are in
+        // domain order.)
+        const monotonic = ord.every((v, i) => i === 0 || v <= ord[i - 1] + 1)
+            || ord.every((v, i) => i === 0 || v >= ord[i - 1] - 1);
+        check('colour: an ordinal field ramps monotonically in lightness',
+            ord.length === 4 && monotonic, JSON.stringify(ord.map(Math.round)));
+        // Unordered data must NOT: distinct hues have no lightness order, and the
+        // spread of a categorical palette is not a ramp.
+        check('colour: a categorical field does not ramp',
+            cat.length === 4 && !(cat.every((v, i) => i === 0 || v <= cat[i - 1] + 1)
+                || cat.every((v, i) => i === 0 || v >= cat[i - 1] - 1)),
+            JSON.stringify(cat.map(Math.round)));
+        // Two encodings on one channel are two scales, so their colour sets are
+        // disjoint — the separation the union used to give by accident.
+        const disjoint = await page.$eval('#ordered-colour .chart svg', (svg) => {
+            const f = [...svg.querySelectorAll('circle.mark')].map((c) => getComputedStyle(c).fill);
+            const a = new Set(f.slice(0, 4)), b = new Set(f.slice(4, 8));
+            return [...b].every((c) => !a.has(c));
+        });
+        check('colour: two encodings on one channel use disjoint colours', disjoint);
+        // …and two scales means two keys, not one union key.
+        const keyCount = await page.$eval('#ordered-colour .chart svg', (svg) =>
+            [...svg.querySelectorAll('rect.bg-rect')]
+                .filter((r) => r.getAttribute('fill') && r.getAttribute('fill') !== 'none').length);
+        check('colour: legends: true draws one key per encoding, not one union key',
+            keyCount === 7, `swatches=${keyCount}`);
+
+        // ---- graduated size legend (#size) --------------------------------
+        // A quantitative `size` scale is continuous, so the old ramp branch caught it
+        // and painted a flat grey bar with numbers beside it — a size legend showing
+        // no sizes. It draws nested circles at tick values instead, and their radii
+        // come from `scale.encode`, so the key reports whichever scale the channel
+        // resolved rather than assuming one.
+        await open('/marks/legend', '#size .chart svg');
+        await page.locator('#size .chart svg').scrollIntoViewIfNeeded();
+        await page.waitForTimeout(200);
+        const sizeLegend = await page.$eval('#size .chart svg', (svg) => {
+            const circles = [...svg.querySelectorAll('circle')].map((c) => Number(c.getAttribute('r')));
+            const slices = [...svg.querySelectorAll('rect')].filter(
+                (r) => r.getAttribute('fill') === '#94a3b8'
+            ).length;
+            return { circles, slices };
+        });
+        // The dots in the plot plus the legend's own stack; the legend's must ASCEND
+        // and span a real range, not all collapse to one clamped radius.
+        const legendCircles = sizeLegend.circles.slice().sort((a, b) => a - b);
+        check('legend: a quantitative size legend draws no grey ramp slices',
+            sizeLegend.slices === 0, `slices=${sizeLegend.slices}`);
+        check('legend: it draws graduated circles spanning the size range',
+            legendCircles.length >= 6
+            && legendCircles[legendCircles.length - 1] > legendCircles[0] + 6,
+            JSON.stringify(legendCircles));
+
+        // ---- angle + strokeWidth forms (#angle-width) ---------------------
+        // Both resolve real scales but had no legend SHAPE, so they rendered the
+        // colour ramp's grey bar — a key that reports the domain and nothing about
+        // the channel. `angle` draws spokes at their encoded bearings, `strokeWidth`
+        // segments at their encoded thicknesses, both read off `scale.encode`.
+        await open('/marks/legend', '#angle-width .chart svg');
+        await page.locator('#angle-width .chart svg').scrollIntoViewIfNeeded();
+        await page.waitForTimeout(200);
+        const forms = await page.$eval('#angle-width .chart svg', (svg) => {
+            const lines = [...svg.querySelectorAll('line')].map((l) => ({
+                dx: Number(l.getAttribute('x2')) - Number(l.getAttribute('x1')),
+                dy: Number(l.getAttribute('y2')) - Number(l.getAttribute('y1')),
+                w: Number(l.getAttribute('stroke-width')),
+            }));
+            // Weights: horizontal segments, so dy ~ 0 and the widths differ.
+            const flat = lines.filter((l) => Math.abs(l.dy) < 0.5 && Math.abs(l.dx) > 20);
+            // Spokes: same length from one hub, at different bearings.
+            const angled = lines.filter((l) => Math.abs(l.dy) > 0.5 || (Math.abs(l.dx) > 0 && Math.abs(l.dx) < 25));
+            return {
+                weights: [...new Set(flat.map((l) => l.w))].sort((a, b) => a - b),
+                bearings: [...new Set(angled.map((l) => Math.round(Math.atan2(-l.dy, l.dx) * 180 / Math.PI)))]
+                    .sort((a, b) => a - b),
+            };
+        });
+        check('legend: a strokeWidth key draws segments of differing weight',
+            forms.weights.length >= 4 && forms.weights[forms.weights.length - 1] > forms.weights[0],
+            JSON.stringify(forms.weights));
+        check('legend: an angle key draws spokes at differing bearings',
+            forms.bearings.length >= 3
+            && forms.bearings[forms.bearings.length - 1] - forms.bearings[0] > 60,
+            JSON.stringify(forms.bearings));
+
+        // Title falls back to the column the scale was built from, so a legend is
+        // never an unlabelled row of colours.
+        const discTexts = await page.$eval('#discrete .chart svg', (svg) =>
+            [...svg.querySelectorAll('text')].map((t) => t.textContent));
+        check('legend: the title defaults to the field name',
+            discTexts.includes('group'), JSON.stringify(discTexts));
+
+        await open('/marks/legend', '#picker .chart svg');
         // Category picker: clicking a swatch sets the field to that category. Swatch
         // DOM order === domain order [A,B,C,D]; nth(2) is "C".
         const groupOf = () => page.$eval('#picker .data-body', (el) => {
@@ -2140,6 +2341,243 @@ async function main() {
         const groupAfter = await groupOf();
         check('legend: clicking a swatch sets the category',
             groupBefore === 'A' && groupAfter === 'C', `${groupBefore} -> ${groupAfter}`);
+
+        // ---- two encodings on one channel (#two-encodings) ----------------
+        // Two marks bind `fill` to different columns. That is TWO encodings, so it is
+        // two scales, two keys, and two pickers that each write their own column —
+        // where it used to be one union scale whose picker took `scale.fields[0]`,
+        // i.e. whichever mark was declared first. Only a real click proves the write
+        // lands in the right column; the page renders either way.
+        const pinned = () => page.$eval('#two-encodings .data-body', (el) => {
+            const t = el.textContent;
+            const now = t.match(/now:\s*"([^"]+)"/);
+            const goal = t.match(/goal:\s*"([^"]+)"/);
+            return { now: now ? now[1] : null, goal: goal ? goal[1] : null };
+        });
+        await page.locator('#two-encodings .chart svg').scrollIntoViewIfNeeded();
+        await page.waitForTimeout(150);
+        const pinBefore = await pinned();
+        check('legend: two pinned legends start at their seeded values',
+            pinBefore.now === 'low' && pinBefore.goal === 'mid', JSON.stringify(pinBefore));
+
+        // Swatches are the interactive (mark-layer) rects: 3 per legend, in domain
+        // order [low, mid, high], first legend ("now") then second ("goal").
+        const pinSwatches = page.locator('#two-encodings .chart svg rect.mark');
+        check('legend: each pinned legend draws its own swatch column',
+            (await pinSwatches.count()) === 6, `swatches=${await pinSwatches.count()}`);
+
+        // Click "high" in the FIRST legend -> only `now` moves.
+        await pinSwatches.nth(2).click();
+        await page.waitForTimeout(120);
+        const afterNow = await pinned();
+        check('legend: a pinned swatch writes its own column',
+            afterNow.now === 'high' && afterNow.goal === 'mid', JSON.stringify(afterNow));
+
+        // Click "low" in the SECOND legend -> only `goal` moves. This is the
+        // discriminating half: `fields[0]` is `now`, so before the pin was read this
+        // wrote `now` and left `goal` untouched — both halves of the assertion flip.
+        await pinSwatches.nth(3).click();
+        await page.waitForTimeout(120);
+        const afterGoal = await pinned();
+        check('legend: the second legend writes the OTHER column, not fields[0]',
+            afterGoal.goal === 'low' && afterGoal.now === 'high', JSON.stringify(afterGoal));
+
+        // ---- the edit declared on the MARK (#declare-on-the-mark) ---------
+        // The spec composes no legendColor() at all: the picker sits on the bar's
+        // `fill` channel and the legend is minted from it, carrying the mark's field
+        // and table. Two things have to hold, and only a real gesture shows either —
+        // the legend must EXIST and work, and the edit must have been STRIPPED off
+        // the bar, or a click on a bar would dispatch it with no node.category and
+        // silently eat the selection gesture.
+        await open('/marks/legend', '#declare-on-the-mark .chart svg');
+        await page.locator('#declare-on-the-mark .chart svg').scrollIntoViewIfNeeded();
+        await page.waitForTimeout(200);
+        const dmData = () => page.$eval('#declare-on-the-mark .chart > div', (el) => el.getData());
+        const dmSel = () => page.$eval('#declare-on-the-mark .chart > div', (el) => el.getSelection());
+
+        // The legend is minted even though the spec composes none. With nothing
+        // selected yet its swatches are inert chrome (`bg-rect`), so count them
+        // there — they only become mark-layer rects once a row is the target.
+        const dmRects = page.locator('#declare-on-the-mark .chart svg rect.mark');
+        const dmSwatchesInert = await page.locator(
+            '#declare-on-the-mark .chart svg rect.bg-rect[fill]:not([fill="none"])'
+        ).count();
+        check('legend: a mark-declared edit mints a legend',
+            dmSwatchesInert === 4 && (await dmRects.count()) === 4,
+            `swatches=${dmSwatchesInert} bars=${await dmRects.count()}`);
+
+        // Clicking a BAR must still only select — the legend edit is no longer on it.
+        await dmRects.nth(1).click();
+        await page.waitForTimeout(120);
+        check('legend: the minted swatches arm once a row is selected',
+            (await dmRects.count()) === 8, `rects=${await dmRects.count()}`);
+        const dmAfterBar = await dmData();
+        check('legend: clicking a bar selects it', (await dmSel()) === 1, `selection=${await dmSel()}`);
+        check('legend: the relocated edit no longer fires on the mark',
+            dmAfterBar[1].group === 'South', `row1=${JSON.stringify(dmAfterBar[1])}`);
+
+        // Clicking a minted swatch edits the selected row. Swatches are rects 4..7 in
+        // domain order [North, South, East, West]; nth(6) is "East".
+        await dmRects.nth(6).click();
+        await page.waitForTimeout(120);
+        const dmAfterSwatch = await dmData();
+        check('legend: a minted swatch writes the mark\'s column on the selected row',
+            dmAfterSwatch[1].group === 'East' && dmAfterSwatch[0].group === 'North',
+            JSON.stringify(dmAfterSwatch.map((d) => d.group)));
+
+        // ---- unarmed state + current-value ring (#multi-select) -----------
+        // The ring marks the value(s) the target rows hold, so the legend says what
+        // a click would REPLACE and not merely what it can set — and by its absence,
+        // that there is nothing to write to. A legend is a KEY first, so it must
+        // stay fully legible while unarmed: its swatch fills are the encoding, and
+        // fading them would report colours the marks do not have. Drawn by the
+        // legend, not the engine's effects pass (which is row-indexed and skips
+        // scale-viewing features), so only a render proves any of it.
+        await open('/marks/legend', '#multi-select .chart svg');
+        await page.locator('#multi-select .chart svg').scrollIntoViewIfNeeded();
+        await page.waitForTimeout(200);
+        const msEl = '#multi-select .chart > div';
+        const msData = () => page.$eval(msEl, (el) => el.getData());
+        const msSelAll = () => page.$eval(msEl, (el) => el.getSelectionAll());
+        const ringCount = () => page.locator(
+            '#multi-select .chart svg rect[stroke-width="2"][fill="none"]'
+        ).count();
+
+        // The swatch fills must equal the bar fills, armed or not — same assertion
+        // the inert #discrete legend makes, here in the state where it was tempting
+        // to fade them.
+        const msKey = await page.$eval('#multi-select .chart svg', (svg) => ({
+            swatches: [...svg.querySelectorAll('rect.bg-rect')]
+                .filter((r) => r.getAttribute('fill') && r.getAttribute('fill') !== 'none')
+                .map((r) => ({ fill: r.getAttribute('fill'), opacity: r.getAttribute('opacity') })),
+            bars: [...svg.querySelectorAll('rect.mark')].map((r) => r.getAttribute('fill')),
+        }));
+        check('legend: an unarmed picker stays a legible key (no dimming)',
+            msKey.swatches.length === 4
+            && msKey.swatches.every((s) => s.opacity == null || Number(s.opacity) === 1)
+            && msKey.swatches.every((s, i) => s.fill === msKey.bars[i]),
+            JSON.stringify(msKey));
+        check('legend: an unarmed picker draws no current-value ring',
+            (await ringCount()) === 0, `rings=${await ringCount()}`);
+
+        // Select bar A, then shift-click bar C -> both selected.
+        const msBars = page.locator('#multi-select .chart svg rect.mark');
+        await msBars.nth(0).click();
+        await page.waitForTimeout(100);
+        await msBars.nth(2).click({ modifiers: ['Shift'] });
+        await page.waitForTimeout(150);
+        check('legend: shift-click builds a multi-row selection',
+            JSON.stringify(await msSelAll()) === '[0,2]', JSON.stringify(await msSelAll()));
+
+        // A and C hold North and East -> two swatches ringed.
+        check('legend: a swatch is ringed per value the selection holds',
+            (await ringCount()) === 2, `rings=${await ringCount()}`);
+
+        // One swatch click writes EVERY selected row. Swatches are the 4 mark rects
+        // after the bars; nth(7) is "West" (domain [North, South, East, West]).
+        await page.locator('#multi-select .chart svg rect.mark').nth(7).click();
+        await page.waitForTimeout(150);
+        const msAfter = await msData();
+        check('legend: one swatch click writes every selected row',
+            msAfter[0].group === 'West' && msAfter[2].group === 'West'
+            && msAfter[1].group === 'South' && msAfter[3].group === 'West',
+            JSON.stringify(msAfter.map((d) => d.group)));
+
+        // Both selected rows now hold the same value -> one ring, not two.
+        check('legend: the ring collapses when the selection agrees',
+            (await ringCount()) === 1, `rings=${await ringCount()}`);
+
+        // Shift-clicking a selected row REMOVES it. `has && size === 1` is false for
+        // a member of a multi-row selection, so this used to re-add it instead.
+        await page.locator('#multi-select .chart svg rect.mark').nth(2).click({ modifiers: ['Shift'] });
+        await page.waitForTimeout(150);
+        check('legend: shift-click removes a row from the selection',
+            JSON.stringify(await msSelAll()) === '[0]', JSON.stringify(await msSelAll()));
+
+        // ---- domain edits from a legend (#categories) ---------------------
+        // edit.scale.categories writes the DOMAIN, which is a property of the scale
+        // the element draws — so it needs no target row, and the swatches must be
+        // live on a chart with nothing selected. That is a different arming rule
+        // from the picker's, and reading one flag for both left it inert.
+        // Two charts live in this section; the single-table one is first.
+        await open('/marks/legend', '#categories .chart svg');
+        const catSvg = page.locator('#categories .chart svg').first();
+        const catRoot = page.locator('#categories .chart > div').first();
+        await catSvg.scrollIntoViewIfNeeded();
+        await page.waitForTimeout(200);
+        const catGroups = async () =>
+            (await catRoot.evaluate((el) => el.getData())).map((d) => d.group);
+        const catTexts = () => catSvg.evaluate((svg) =>
+            [...svg.querySelectorAll('text')].map((t) => t.textContent));
+
+        const texts0 = await catTexts();
+        check('legend: a domain-editable legend draws × per category and a ＋',
+            texts0.filter((t) => t === '×').length === 2 && texts0.includes('＋'),
+            JSON.stringify(texts0));
+
+        // The swatches are live with NOTHING selected — a domain edit needs no row.
+        const catSwatches = catSvg.locator('rect.mark');
+        check('legend: domain-edit swatches are live with no selection',
+            (await catSwatches.count()) === 4 + 2, `rects=${await catSwatches.count()}`);
+
+        // Rename: double-click the "North" swatch -> the editor opens SEEDED with the
+        // category (the chip paints no text, so this only works via editValue), type,
+        // Enter. Domain and rows must move together.
+        await catSwatches.nth(4).dblclick();
+        await page.waitForTimeout(200);
+        const seeded = await page.$eval('#categories .chart input, #categories .chart textarea',
+            (i) => i.value).catch(() => null);
+        check('legend: the rename editor opens seeded with the category',
+            seeded === 'North', `seeded=${JSON.stringify(seeded)}`);
+        // A single-line editor opens SELECTED (double-click-to-rename), so typing
+        // replaces rather than appends — no select-all needed.
+        await page.keyboard.type('Up');
+        await page.keyboard.press('Enter');
+        await page.waitForTimeout(200);
+        check('legend: renaming a category relabels every row carrying it',
+            JSON.stringify(await catGroups()) === '["Up","South","Up","South"]',
+            JSON.stringify(await catGroups()));
+        check('legend: the renamed category shows in the legend',
+            (await catTexts()).includes('Up'), JSON.stringify(await catTexts()));
+
+        // Remove: click the × beside "South" -> its rows go too.
+        const xs = catSvg.locator('text', { hasText: '×' });
+        await xs.nth(1).click();
+        await page.waitForTimeout(200);
+        check('legend: removing a category deletes its rows',
+            JSON.stringify(await catGroups()) === '["Up","Up"]', JSON.stringify(await catGroups()));
+
+        // ---- one vocabulary across two TABLES (#categories) ---------------
+        // `team` is declared on both `people` and `ties`, and one `stroke` scale
+        // spans them. A field NAME alone cannot say whose schema to write, so the
+        // rename resolves through scale.fieldRefs (table-qualified) and commits
+        // BOTH tables' schemas and BOTH row sets. Renaming one and not the other
+        // splits one vocabulary in two, and the chart still draws.
+        // The cross-table example is the SECOND chart in the categories section.
+        const xtRoot = page.locator('#categories .chart > div').nth(1);
+        const xtSvg = page.locator('#categories .chart svg').nth(1);
+        await xtRoot.scrollIntoViewIfNeeded();
+        await page.waitForTimeout(250);
+        const xtBefore = await xtRoot.evaluate((el) => el.getData());
+        check('legend: the cross-table chart seeds both tables with `team`',
+            xtBefore.people.map((d) => d.team).join(',') === 'red,blue,red'
+            && xtBefore.ties.map((d) => d.team).join(',') === 'red,blue',
+            JSON.stringify(xtBefore));
+
+        // Rename "red" -> "crimson" from the legend.
+        const xtSwatches = xtSvg.locator('rect.mark');
+        await xtSwatches.first().dblclick();
+        await page.waitForTimeout(200);
+        await page.keyboard.type('crimson');
+        await page.keyboard.press('Enter');
+        await page.waitForTimeout(250);
+        const xtAfter = await xtRoot.evaluate((el) => el.getData());
+        check('legend: a cross-table rename writes the NODE table\'s rows',
+            xtAfter.people.map((d) => d.team).join(',') === 'crimson,blue,crimson',
+            JSON.stringify(xtAfter.people.map((d) => d.team)));
+        check('legend: a cross-table rename writes the LINK table\'s rows too',
+            xtAfter.ties.map((d) => d.team).join(',') === 'crimson,blue',
+            JSON.stringify(xtAfter.ties.map((d) => d.team)));
 
         // Continuous value picker: dragging the ramp handle DOWN (toward the low end
         // of a vertical ramp) lowers the value, clamped into [0,30]. The handle is
@@ -2293,12 +2731,12 @@ async function main() {
         const netData = () => page.$eval(netEl, (el) => el.getData());
         // Node circles carry the point mark's fill; a link's endpoint handle is a
         // circle too, so index alone would not tell them apart.
-        const nodeAt = (i) => page.$$eval('#draw .chart svg circle', (cs, k) => {
-            const c = cs.filter((n) => (n.getAttribute('fill') || '').toLowerCase() === '#4e79a7')[k];
+        const nodeAt = (i) => page.$$eval('#draw .chart svg circle', (cs, [k, head]) => {
+            const c = cs.filter((n) => (n.getAttribute('fill') || '').toLowerCase() === head)[k];
             if (!c) return null;
             const b = c.getBoundingClientRect();
             return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
-        }, i);
+        }, [i, PALETTE_HEAD]);
         const linkPaths = () => page.$$eval('#draw .chart svg path', (ps) => ps.map((p) => p.getAttribute('d')));
 
         const net0 = await netData();
@@ -2371,7 +2809,8 @@ async function main() {
         // node(): ONE mark, a dot and a label per row. The dot is the composite's
         // last part, which is what makes an x/y edit grab the dot and not the label.
         const dotCount = await page.$$eval('#draw .chart svg circle',
-            (cs) => cs.filter((c) => (c.getAttribute('fill') || '').toLowerCase() === '#4e79a7').length);
+            (cs, head) => cs.filter((c) => (c.getAttribute('fill') || '').toLowerCase() === head).length,
+            PALETTE_HEAD);
         const labelCount = await page.$$eval('#draw .chart svg text', (t) => t.length);
         check('node(): a dot per row', dotCount === added.claims.length, `dots=${dotCount}`);
         check('node(): a label per row', labelCount >= added.claims.length, `labels=${labelCount}`);

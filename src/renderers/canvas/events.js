@@ -55,6 +55,40 @@ export function bindCanvasEvents(canvas, getCtx) {
         ];
     };
 
+    /**
+     * Close the open gesture, wherever the pointer is. `released` is false for an
+     * ABANDONED stroke (pointercancel, or a move with no button held): there is no
+     * native click trailing it, and a still press that was cancelled rather than
+     * released is not a click.
+     * @param {PointerEvent} e @param {number} x @param {number} y @param {boolean} [released]
+     */
+    const endGesture = (e, x, y, released = true) => {
+        const ctx = getCtx();
+        if (gesture) {
+            if (gesture.mode === 'direct') {
+                ctx.onEvent({ type: 'dragend', x, y, node: gesture.node, rawEvent: e });
+                // A still press is a mark click (routed to the node's click edits). d3
+                // gets this from the native click on the element; we synthesize it and
+                // suppress the plane click the canvas would otherwise fire.
+                if (released && !gesture.moved) ctx.onEvent({ type: 'click', x, y, node: gesture.node, rawEvent: e });
+                if (released) suppressClick = true;
+            } else if (gesture.dragging) {
+                ctx.onEvent({ type: 'dragend', x, y, rawEvent: e });
+                if (released) suppressClick = true;
+            }
+            // A plane tap that never dragged falls through to the native plane click.
+        }
+        gesture = null;
+        // Released off the canvas: `pointerleave` never fires while the pointer is
+        // captured, so nothing else retires the driver's hover session.
+        const r = canvas.getBoundingClientRect();
+        const outside = e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+        if (outside) {
+            if (ctx.planeOnTop) ctx.onEvent({ type: 'hoverout', rawEvent: e });
+            else if (hoverKey !== null) { hoverKey = null; ctx.onEvent({ type: 'pointerout', rawEvent: e }); }
+        }
+    };
+
     canvas.addEventListener('pointerdown', (e) => {
         const ctx = getCtx();
         const [x, y] = toInner(e);
@@ -85,6 +119,12 @@ export function bindCanvasEvents(canvas, getCtx) {
     canvas.addEventListener('pointermove', (e) => {
         const ctx = getCtx();
         const [x, y] = toInner(e);
+
+        // No button held while a gesture is open: the release was never delivered
+        // (let go outside the browser window, or the window lost focus). Without
+        // this the gesture stays live and the next move over the canvas — button
+        // up — resumes editing. The D3 renderer guards its plane drag the same way.
+        if (gesture && e.pointerType === 'mouse' && e.buttons === 0) { endGesture(e, x, y); return; }
 
         if (!gesture) {
             if (ctx.planeOnTop) {
@@ -125,23 +165,16 @@ export function bindCanvasEvents(canvas, getCtx) {
     });
 
     canvas.addEventListener('pointerup', (e) => {
-        const ctx = getCtx();
         const [x, y] = toInner(e);
-        if (gesture) {
-            if (gesture.mode === 'direct') {
-                ctx.onEvent({ type: 'dragend', x, y, node: gesture.node, rawEvent: e });
-                // A still press is a mark click (routed to the node's click edits). d3
-                // gets this from the native click on the element; we synthesize it and
-                // suppress the plane click the canvas would otherwise fire.
-                if (!gesture.moved) ctx.onEvent({ type: 'click', x, y, node: gesture.node, rawEvent: e });
-                suppressClick = true;
-            } else if (gesture.dragging) {
-                ctx.onEvent({ type: 'dragend', x, y, rawEvent: e });
-                suppressClick = true;
-            }
-            // A plane tap that never dragged falls through to the native plane click.
-        }
-        gesture = null;
+        endGesture(e, x, y);
+    });
+
+    // A cancelled pointer (the browser took it over for a scroll/zoom, or the
+    // element lost capture) never delivers pointerup. Retire the stroke rather
+    // than leaving it live for the next move to resume.
+    canvas.addEventListener('pointercancel', (e) => {
+        const [x, y] = toInner(e);
+        endGesture(e, x, y, false);
     });
 
     canvas.addEventListener('pointerleave', (e) => {

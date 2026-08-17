@@ -12,7 +12,7 @@ import { D3Renderer } from '../renderers/d3-renderer/index.js';
 import { resolveEffects, stateEffectNodes, effectStyleFor, elementEffectOf } from './effects.js';
 import { resolveTheme } from './theme.js';
 import { autoAxes } from './axes.js';
-import { reserveLegends, autoLegends } from './legends.js';
+import { reserveLegends, legendsFromChannels } from './legends.js';
 import {
     validateTables, inferMeasureOfDomain,
     normalizeSchema, denormalizeSchema, normalizeData, isBareForm, enforceRefs,
@@ -50,6 +50,7 @@ function markLabel(feature) {
 // warn once per feature+edit. One table, not one function per family — a new
 // mark family adds a row here, not a new guard.
 /** @type {Record<string, { flag: string, expects: string }>} */
+/** @type {Record<string, { flag?: string, test?: (f: any) => boolean, expects: string }>} */
 const SCOPE_CAPABILITY = {
     line: { flag: 'supportsSeries', expects: 'a line mark (line/area)' },
     geo: { flag: 'supportsGeo', expects: 'a geo* mark (geoPoint, geoLine, …)' },
@@ -60,6 +61,11 @@ const SCOPE_CAPABILITY = {
     trend: { flag: 'supportsTrend', expects: 'a trend mark (trend/trendBand)' },
     network: { flag: 'supportsNetwork', expects: 'a link mark' },
     legend: { flag: 'isLegend', expects: 'a legend element' },
+    // The one capability that is not a boolean flag: "draws a scale" is what
+    // `views` says, and axis / grid / legend all say it. A domain edit belongs on
+    // any of them — the domain is a property of the scale the element draws, not of
+    // the particular chrome it draws it as — so the entry carries a predicate.
+    scale: { test: (/** @type {any} */ f) => f.views === 'scale', expects: 'an axis or legend element' },
 };
 
 // What a scale `kind` satisfies. A mark declares the CAPABILITY it needs, never a
@@ -126,7 +132,8 @@ function warnScopeMismatch(feature, edits) {
     for (const e of edits) {
         if (!e.scope) continue;
         const cap = SCOPE_CAPABILITY[e.scope];
-        if (!cap || feature[cap.flag]) continue;
+        if (!cap) continue;
+        if (cap.test ? cap.test(feature) : !!feature[/** @type {string} */ (cap.flag)]) continue;
         warn(
             `${markLabel(feature)}:${e.scope}.${e.type}`,
             `edit.${e.scope}.${e.type}() is attached to a mark without ${e.scope} support ` +
@@ -194,6 +201,46 @@ function warnDuplicatePlaneEdits(features, editsOf, tableOfEdit) {
             `(marks ${owners.map(markLabel).join(', ')}). A plane gesture fans to all ` +
             `of them, so a whole-dataset edit (create/remove/rotate/toggle) will apply once per ` +
             `mark. Declare it on exactly one.`
+        );
+    }
+}
+
+// A legend picker writes a ROW, but a swatch names a VALUE — so the row comes from
+// the legend's `row`, which defaults to the chart's SELECTION. On a table with more
+// than one row and nothing selected, the picker has no target and a click writes
+// nothing. That is usually a legitimate WAITING state ("click a bar, then a
+// swatch"), which is why the legend just renders dimmed rather than complaining.
+//
+// It is a BUG only when nothing can ever arm it: no `row` pinned, several rows, and
+// no mark over that table carrying a selection edit. Then the picker is decoration.
+// Whether some OTHER feature can select is not a question a legend can answer from
+// inside its own build(), which is why the guard lives here.
+/**
+ * @param {any[]} features
+ * @param {(f: any) => import('../types').Edit[]} editsOf
+ * @param {(f: any) => any[]} rowsOf
+ */
+function warnUnreachableLegendRow(features, editsOf, rowsOf) {
+    // Only an edit that writes a ROW needs one. A DOMAIN edit
+    // (edit.scale.categories) reshapes the scale the legend draws and a SELECTION
+    // edit writes pipeline state, so both are armed by the scale alone — counting
+    // them as pickers reported every rename-only legend as broken.
+    const picks = (/** @type {any} */ f) => editsOf(f).filter((e) => !e.target);
+    const legends = features.filter((f) => f && f.isLegend && picks(f).length && f.row == null);
+    if (!legends.length) return;
+    const canSelect = new Set(
+        features
+            .filter((f) => f && f.views !== 'scale' && editsOf(f).some((e) => e.target === 'selection'))
+            .map((f) => f.table)
+    );
+    for (const lg of legends) {
+        if (canSelect.has(lg.table) || rowsOf(lg).length <= 1) continue;
+        warn(
+            `legend:norow:${lg.channel}:${lg.id}`,
+            `${markLabel(lg)} is a picker with no way to choose a row. Its target row defaults ` +
+            `to the chart's SELECTION, "${lg.table}" has more than one row, and no mark over ` +
+            `that table carries edit.select(). Add one, pin a row (legend({ row: 0 })), or ` +
+            `drive el.select(i) — otherwise clicking a swatch writes nothing.`
         );
     }
 }
@@ -564,10 +611,14 @@ export function Elicit(spec) {
     // `legends` did not, so an axis was one spec key and a legend was a mark you had
     // to compose by hand. Appended (not prepended) because a legend draws its own
     // reserved band beside the plot rather than behind the marks.
+    // A legend-scoped edit declared on a MARK's channel moves to that channel's
+    // legend, taking the mark's field and table with it (core/legends.js). Runs
+    // before autoLegends so a minted legend counts as "explicit" for its channel
+    // and the implicit layer doesn't add a second one beside it.
     const features = [
         ...autoAxes(userFeatures, axesOpt),
         ...userFeatures,
-        ...autoLegends(userFeatures, legends),
+        ...legendsFromChannels(userFeatures, legends),
     ].flat(Infinity);
     // Whether any feature is a space-reserving legend (core/legends.js). Static —
     // the feature set doesn't change — so the reservation step is skipped entirely
@@ -836,15 +887,25 @@ export function Elicit(spec) {
         return out;
     };
 
-    // The primary selected datum index (the sole member under single-exclusive
-    // selection), or null. Stale indices — a selected row later removed — read as
-    // null rather than pointing at a shifted row. Reads the PRIMARY table, which is
-    // what a single-table chart's "the selection" has always meant.
+    // The primary selected datum index (the FIRST member — under multi-select there
+    // may be several), or null. Stale indices — a selected row later removed — read
+    // as null rather than pointing at a shifted row. Reads the PRIMARY table, which
+    // is what a single-table chart's "the selection" has always meant.
     const selectionPrimary = () => {
         for (const i of selectionIn(schemaSpec.primary)) {
             if (i >= 0 && i < primaryRows().length) return i;
         }
         return null;
+    };
+
+    // EVERY live selected index in one table, ascending. The counterpart to
+    // selectionPrimary for anything that has to reflect a multi-row selection rather
+    // than narrow it to one — a legend marking which categories the selection holds,
+    // or a caller reading getSelectionAll(). Same staleness rule.
+    /** @param {string} [table] @returns {number[]} */
+    const selectionList = (table = schemaSpec.primary) => {
+        const n = (tables[table] || []).length;
+        return [...selectionIn(table)].filter((i) => i >= 0 && i < n).sort((a, b) => a - b);
     };
 
     // Caller-facing observers. `change` fires on every committed edit; `stage` fires
@@ -958,17 +1019,31 @@ export function Elicit(spec) {
         return true;
     };
 
-    // Mutate ui.selection from a selection descriptor. Single-exclusive semantics:
-    // an `exclusive` write clears the set first; `toggle` deselects a row that is
-    // already the sole selection (click-to-toggle-off); `clear` empties it.
+    // Mutate ui.selection from a selection descriptor. `clear` empties it; an
+    // `exclusive` write replaces the set; otherwise the write is ADDITIVE.
+    //
+    // `toggle` means "clicking what is already selected deselects it", and that
+    // reads differently in the two modes — which is the whole point of having them:
+    //   exclusive — deselect only when the row is the SOLE selection. Clicking one
+    //     of several replaces the set with it, which is what a plain click means.
+    //   additive  — deselect the row from the set, sole or not. Shift-clicking a
+    //     member is the only way to take it back out.
+    // Getting that second case wrong is invisible: `has && size === 1` is false for
+    // a member of a multi-row selection, so the row was re-added and shift-click
+    // could add but never remove.
     /** @param {{ index?: number | null, exclusive?: boolean, toggle?: boolean, clear?: boolean }} sel */
     const applySelection = (sel, table = schemaSpec.primary) => {
         if (sel.clear || sel.index == null) { ui.selection.clear(); return; }
         const key = selKey(table, sel.index);
         const has = ui.selection.has(key);
-        const sole = has && ui.selection.size === 1;
-        if (sel.exclusive !== false) ui.selection.clear();
-        if (sel.toggle && sole) return; // toggled the sole selection off — leave empty
+        if (sel.exclusive !== false) {
+            const sole = has && ui.selection.size === 1;
+            ui.selection.clear();
+            if (sel.toggle && sole) return; // toggled the sole selection off — leave empty
+        } else if (sel.toggle && has) {
+            ui.selection.delete(key);
+            return;
+        }
         ui.selection.add(key);
     };
 
@@ -1084,10 +1159,17 @@ export function Elicit(spec) {
         // key, so every mark's build() and the guide/edit ctx read default colours,
         // fonts and affordance tokens from one object (see core/theme.js: themeOf).
         /** @type {any} */ (scales).theme = theme;
-        // The primary selected datum index rides on the scale map as one more
-        // reserved non-Scale key, so a legend/mark reads "the selected row" from the
-        // same object it already gets, without a widened build() signature.
+        // The selection rides on the scale map as reserved non-Scale keys, so a
+        // legend/mark reads "the selected row" from the same object it already gets,
+        // without a widened build() signature. Two views of the one Set:
+        //   selection    the FIRST selected primary row, or null — the scalar every
+        //                mark and `legend`'s `row` has always read. Kept scalar so
+        //                multi-select is a widening, not a break.
+        //   selectionAll every selected row, per table, for anything that reflects a
+        //                multi-row selection rather than narrowing it (a legend
+        //                marking which categories the selection currently holds).
         /** @type {any} */ (scales).selection = selectionPrimary();
+        /** @type {any} */ (scales).selectionAll = selectionList;
         // The dataset schema rides along as one more reserved non-Scale key. A
         // composite's frame scales are built inside build() (one per datum), and the
         // DOMAIN of a frame channel is the field's — which only the schema knows.
@@ -1111,6 +1193,7 @@ export function Elicit(spec) {
         }
 
         warnDuplicatePlaneEdits(features, activeEdits, targetTableOf);
+        warnUnreachableLegendRow(features, activeEdits, tableOf);
 
         // Built nodes per feature, in feature order, so paint order can be decided
         // once the whole scene is known. It is the FEATURE order for everything
@@ -1172,7 +1255,7 @@ export function Elicit(spec) {
             // from the edit's own channel (the one place a field is named) and stamp
             // the current value where the renderer can find it.
             const inlineField = inlineEdit
-                ? (resolveChannels(inlineEdit.channels, feature.channels || {}, scales, feature.views === 'scale')[0] || {}).field
+                ? (resolveChannels(inlineEdit.channels, feature.channels || {}, scales, feature)[0] || {}).field
                 : null;
 
             // Tag every node with its feature so gesture events can find the
@@ -1461,7 +1544,7 @@ export function Elicit(spec) {
         // dispatch branch. A plane-pick gesture carries no node, so fall back to the
         // framed node for this datum.
         const editScales = frameScalesFor(feature, event.node, index) || scales;
-        const resolved = resolveChannels(edit.channels, markChannels, editScales, feature.views === 'scale');
+        const resolved = resolveChannels(edit.channels, markChannels, editScales, feature);
         const ctx = {
             // The rows the proposal is ABOUT (apply returns rows for this table)...
             data: currentData,
@@ -1548,22 +1631,33 @@ export function Elicit(spec) {
         //
         // The lock (spec.lock) runs LAST so it has the final word: a repair by any
         // other invariant still can't write a read-only row.
-        /** @param {any[]} rows @returns {any[] | null} the repaired rows, or null if rejected */
-        const runInvariants = (rows) => {
-            const lockRows = lockRowsIn(targetTable);
+        /**
+         * @param {any[]} rows
+         * @param {string} [forTable] the table these rows ARE. Defaults to the one
+         *   the edit writes; a cross-table domain edit passes each other table it
+         *   touches, so those rows meet their OWN table's invariants and lock.
+         *   `edit.constrain` is edit-scoped sugar about the edit's own proposal, so
+         *   it runs on the edit's table only — applying a rule written for node rows
+         *   to the link rows a rename swept along would be a different rule.
+         * @returns {any[] | null} the repaired rows, or null if rejected
+         */
+        const runInvariants = (rows, forTable = targetTable) => {
+            const own = forTable === targetTable;
+            const lockRows = lockRowsIn(forTable);
             const invariants = [
-                ...constraintsIn(targetTable), ...edit.constrain, ...(lockRows ? [lockRows] : []),
+                ...constraintsIn(forTable), ...(own ? edit.constrain : []), ...(lockRows ? [lockRows] : []),
             ];
             const cctx = {
-                activeIndex: activeIndexOf(rows), scales, markChannels,
+                activeIndex: own ? activeIndexOf(rows) : null, scales, markChannels,
                 // The rest of the dataset and which table these rows are, for an
                 // invariant that spans tables. Pure data, like everything else a
                 // constraint sees — still no pixels.
-                tables, table: targetTable,
+                tables, table: forTable,
             };
             let out = rows;
+            const before = own ? currentData : (tables[forTable] || []);
             for (const constraint of invariants) {
-                const r = constraint(out, currentData, cctx);
+                const r = constraint(out, before, cctx);
                 if (r === false) return null;
                 if (r === true || r === undefined) continue;
                 // A constraint may GATE (false) or REPAIR (the corrected rows). Anything
@@ -1602,10 +1696,31 @@ export function Elicit(spec) {
         // can tell it apart from a dataset proposal.
         if (edit.target === 'domain') {
             if (!(result && typeof result === 'object' && result.domains)) return null;
-            if (!Array.isArray(result.data)) return /** @type {any} */ ({ __domain: result });
-            const checked = runInvariants(result.data);
-            if (!checked) return null;
-            return /** @type {any} */ ({ __domain: { ...result, data: checked } });
+            /** @type {any} */
+            const out = { ...result };
+            if (Array.isArray(result.data)) {
+                const checked = runInvariants(result.data);
+                if (!checked) return null;
+                out.data = checked;
+            }
+            // Rows the edit swept along in OTHER tables (a cross-table category
+            // rename) are datum proposals too, and each meets ITS table's
+            // invariants. One rejection rejects the whole edit: half a rename —
+            // the schema written, one table's rows left on the old value — is
+            // worse than none.
+            if (result.tables) {
+                /** @type {any} */
+                const others = {};
+                for (const [name, w] of Object.entries(/** @type {any} */ (result.tables))) {
+                    const t = /** @type {any} */ (w);
+                    if (!Array.isArray(t.data)) { others[name] = t; continue; }
+                    const checked = runInvariants(t.data, name);
+                    if (!checked) return null;
+                    others[name] = { ...t, data: checked };
+                }
+                out.tables = others;
+            }
+            return /** @type {any} */ ({ __domain: out });
         }
 
         // A SELECTION edit (edit.select) writes transient pipeline state, not the
@@ -1675,16 +1790,40 @@ export function Elicit(spec) {
      */
     const commitDomainEdit = (result, table = schemaSpec.primary) => {
         recordHistory();
-        const fields = (schemaSpec.tables[table] || schemaSpec.tables[schemaSpec.primary]).fields;
-        for (const [field, domain] of Object.entries(result.domains || {})) {
-            const prev = fields[field];
-            fields[field] = { ...(prev || { type: inferMeasureOfDomain(domain) }), domain };
+        // One scale can span several TABLES — `fill` over both `nodes.kind` and
+        // `links.kind` — and renaming that category has to write every schema and
+        // every row set, or the two halves of one vocabulary drift apart. The flat
+        // `domains`/`data` are the edit's own table; `tables` carries the rest.
+        // Normalized to one list so there is a single write path rather than a
+        // special case bolted beside it.
+        /** @type {Record<string, { domains?: any, data?: any }>} */
+        const writes = { [table]: { domains: result.domains, data: result.data } };
+        for (const [name, w] of Object.entries(result.tables || {})) {
+            if (!schemaSpec.tables[name]) {
+                warn(
+                    `domain:table:${name}`,
+                    `a domain edit names table "${name}", which the schema does not declare. ` +
+                    `Declared tables: ${Object.keys(schemaSpec.tables).map((n) => `"${n}"`).join(', ')}.`
+                );
+                continue;
+            }
+            const prior = writes[name];
+            writes[name] = prior
+                ? { domains: { ...prior.domains, ...w.domains }, data: w.data ?? prior.data }
+                : w;
         }
-        if (Array.isArray(result.data)) {
-            tables[table] = result.data;
-            // A category removal deletes rows, which can strand references to them.
-            enforceRefs(schemaSpec, tables);
+
+        let touchedRows = false;
+        for (const [name, w] of Object.entries(writes)) {
+            const fields = (schemaSpec.tables[name] || schemaSpec.tables[schemaSpec.primary]).fields;
+            for (const [field, domain] of Object.entries(w.domains || {})) {
+                const prev = fields[field];
+                fields[field] = { ...(prev || { type: inferMeasureOfDomain(domain) }), domain };
+            }
+            if (Array.isArray(w.data)) { tables[name] = w.data; touchedRows = true; }
         }
+        // A category removal deletes rows, which can strand references to them.
+        if (touchedRows) enforceRefs(schemaSpec, tables);
         if (result.resize) applyResize(result.resize);
         ui.preview = null;
         notifyChange();
@@ -2025,7 +2164,13 @@ export function Elicit(spec) {
 
     // The primary selected index (number) or null. The counterpart of getData for
     // selection; a caller reads it to drive its own UI (which row is highlighted).
+    // Stays scalar under multi-select — it reports the FIRST selected row, so a
+    // caller written against a single selection keeps working.
     el.getSelection = () => selectionPrimary();
+
+    // EVERY selected index, ascending. What to read when the chart can hold more
+    // than one (edit.select({ multi: true }), el.select([…]), el.selectAll()).
+    el.getSelectionAll = () => selectionList();
 
     // Drive the selection from outside, then render. Each wrapper renders itself (it
     // runs OUTSIDE the dispatch, which is what renders the gesture path), and returns
@@ -2040,22 +2185,56 @@ export function Elicit(spec) {
     // Select a SPECIFIC ITEM by dataset index (the external counterpart of clicking
     // a mark). `null` (or a negative / out-of-range index) clears the selection.
     // Exclusive: the named row becomes the sole selection, replacing whatever was
-    // selected.
-    el.select = (/** @type {number | null} */ index) => {
+    // selected. An ARRAY selects exactly those rows — the whole set is replaced, so
+    // the call is idempotent and there is no clear-then-add for a caller to get
+    // half-right. An empty array clears, like `null`.
+    el.select = (/** @type {number | number[] | null} */ index) => {
         const rows = primaryRows();
-        const i = index == null || index < 0 || index >= rows.length ? null : index;
+        const ok = (/** @type {any} */ i) => typeof i === 'number' && i >= 0 && i < rows.length;
+        if (Array.isArray(index)) {
+            const list = index.filter(ok);
+            if (!list.length) return driveSelection({ index: null, clear: true });
+            // One commit, so `select` fires once and the render happens once: clear
+            // through the same descriptor path, then add the rest additively.
+            const before = [...ui.selection].join(',');
+            applySelection({ index: list[0], exclusive: true, toggle: false });
+            for (const i of list.slice(1)) applySelection({ index: i, exclusive: false, toggle: false });
+            if ([...ui.selection].join(',') === before) return false;
+            notifySelect();
+            update();
+            return true;
+        }
+        const i = ok(index) ? /** @type {number} */ (index) : null;
         return driveSelection({ index: i, exclusive: true, toggle: false, clear: i == null });
     };
 
-    // Select by CATEGORY / predicate: pick the first row matching `{ field: value }`
-    // (or a predicate function) and select it. This is the "select a category"
-    // entry point — an external control names a value, the chart finds and selects
-    // the row carrying it. No match clears the selection.
-    el.selectWhere = (/** @type {any} */ where, /** @type {any} */ value) => {
+    // Add or remove ONE row, leaving the rest of the selection alone — the external
+    // counterpart of a shift-click (edit.select({ multi: true })).
+    el.toggleSelection = (/** @type {number} */ index) =>
+        driveSelection({ index, exclusive: false, toggle: true });
+
+    // Select every row of the primary table.
+    el.selectAll = () => el.select(primaryRows().map((_, i) => i));
+
+    // Select by CATEGORY / predicate: pick rows matching `{ field: value }` (or a
+    // predicate function) and select them. This is the "select a category" entry
+    // point — an external control names a value, the chart finds and selects the
+    // rows carrying it. No match clears the selection.
+    //
+    // `{ all: true }` selects EVERY match; the default is the first one only. A
+    // category is usually several rows, so `all` is what "select a category"
+    // normally means — but changing the default would silently widen every existing
+    // caller's selection, so it is opt-in.
+    el.selectWhere = (/** @type {any} */ where, /** @type {any} */ value, /** @type {any} */ options) => {
         const match = typeof where === 'function'
             ? /** @type {(d: any, i: number) => boolean} */ (where)
             : (/** @type {any} */ d) => d && d[where] === value;
-        const i = primaryRows().findIndex(match);
+        const rows = primaryRows();
+        if (options && options.all) {
+            const hits = rows.map((d, i) => (match(d, i) ? i : -1)).filter((i) => i >= 0);
+            return el.select(hits.length ? hits : null);
+        }
+        const i = rows.findIndex(match);
         return el.select(i < 0 ? null : i);
     };
 
@@ -2129,7 +2308,7 @@ export function Elicit(spec) {
             // the other axis.
             let x = datum ? encodeChannel(editScales, channels, 'x', datum, center ? center.cx : 0) : (center ? center.cx : 0);
             let y = datum ? encodeChannel(editScales, channels, 'y', datum, center ? center.cy : 0) : (center ? center.cy : 0);
-            const resolved = resolveChannels(edit.channels, channels, editScales, feature.views === 'scale');
+            const resolved = resolveChannels(edit.channels, channels, editScales, feature);
             // `value` is either a scalar (single-channel edit) or a { channelName: v }
             // / { field: v } map for a multi-channel edit (a 2-D drag).
             const valueFor = (/** @type {any} */ ch) => {
@@ -2219,7 +2398,7 @@ export function Elicit(spec) {
                 if (!found) return null;
                 const { feature, edit } = found;
                 const editScales = frameScalesFor(feature, null, index) || scales;
-                const ch = resolveChannels(edit.channels, feature.channels || {}, editScales, feature.views === 'scale')[0];
+                const ch = resolveChannels(edit.channels, feature.channels || {}, editScales, feature)[0];
                 const scale = /** @type {any} */ (ch && ch.scale);
                 const fieldSpec = (schema && ch && ch.field && schema[ch.field]) || null;
                 const measure = (fieldSpec && fieldSpec.type) || null;

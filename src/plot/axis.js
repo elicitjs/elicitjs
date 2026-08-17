@@ -18,7 +18,7 @@
 import * as d3 from 'd3';
 import { positionOnScale, isDiscrete } from '../core/scales.js';
 import { themeOf } from '../core/theme.js';
-import { warnUnknownElementOptions, resolveHandles } from './mark.js';
+import { warnUnknownElementOptions, resolveHandles, elementEdits } from './mark.js';
 
 /**
  * `axis`'s own option vocabulary, on top of the universal chart-element options
@@ -40,14 +40,6 @@ export const GRID_OPTIONS = ['channel', 'ticks', 'tickValues', 'stroke', 'stroke
 
 /** Numeric view of a domain value (a Date sorts by its timestamp). */
 const numOf = (/** @type {any} */ v) => (v instanceof Date ? v.getTime() : v);
-
-/** Normalize the axis `edit` option to a flat list, injecting the axis channel. */
-function flatEdits(/** @type {any} */ edit, /** @type {string} */ channel) {
-    const list = edit == null ? [] : Array.isArray(edit) ? edit.flat(Infinity) : [edit];
-    return list
-        .filter((e) => e && typeof e.apply === 'function')
-        .map((e) => (e.channels ? e : { ...e, channels: [channel] }));
-}
 
 /**
  * An interactive category label (editable DISCRETE axis): a foreground text node
@@ -167,9 +159,11 @@ export function axis(options = {}) {
         grid = false,
         // Opt-in interactivity: an edit (edit.axis.scale / edit.axis.categories) or
         // a list of them, and an optional single field the edit pins (defaults to
-        // every field on the axis). Axes are inert unless `edit` is given.
-        edit,
+        // every field on the axis). Axes are inert unless `edit`/`edits` is given.
         field,
+        // Which TABLE an edit on this axis writes. Resolved by NAME in the engine's
+        // one binding pass, like a mark's.
+        table,
         handleColor: handleColorOpt,
         handleSize: handleSizeOpt,
         id,
@@ -179,7 +173,7 @@ export function axis(options = {}) {
     } = options;
 
     const isX = channel === 'x';
-    const edits = flatEdits(edit, channel);
+    const edits = elementEdits(options, channel);
     const editable = edits.length > 0;
 
     return {
@@ -194,10 +188,12 @@ export function axis(options = {}) {
         channel,
         layer: 'background',
         // Interactive-axis wiring: the edits the engine collects (mark-level, so
-        // collectEdits picks them up) and the field they pin. Empty/undefined for a
-        // plain inert axis.
+        // collectEdits picks them up) and the field/table they pin. Empty/undefined
+        // for a plain inert axis. `field` is read by resolveChannels (edit/route.js)
+        // ahead of the emergent `scale.fields[0]`; `table` by the engine's binding pass.
         edits,
         field,
+        table,
         // A paired grid, when `grid: true` — the engine reads this to auto-add a
         // matching grid mark alongside the axis (see elicit.js). Harmless otherwise.
         grid,

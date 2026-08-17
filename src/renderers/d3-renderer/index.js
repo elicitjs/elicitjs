@@ -24,6 +24,18 @@ export class D3Renderer {
       svgAttr,
       base,
     ]);
+    // Plane gesture state. It lives on the renderer, not the DOM, so it survives
+    // the re-render the engine runs on every commit mid-drag.
+    /** @type {any} */
+    this._planeGesture = null;
+    /** @type {{ move: (e: any) => void, end: (e: any) => void } | null} */
+    this._planeTracking = null;
+    /** @type {((event: any) => [number, number]) | null} */
+    this._planePointer = null;
+    /** @type {any} */
+    this._planeNode = null;
+    // Is a direct-pick (d3.drag) stroke open? See _endMarkDrag.
+    this._markDragLive = false;
   }
 
   /** The theme's default text size (fallback for a text node with no fontSize). */
@@ -184,9 +196,24 @@ export class D3Renderer {
       // Silence the grab overlays too (.mark-hit): in proximity mode the plane owns
       // every gesture, and a leftover hit rect would swallow it just like a mark.
       g.selectAll(".mark, .mark-hit").style("pointer-events", "none");
-      plane.raise().style("cursor", planeCursor || "pointer");
-      // Keep effect overlays above the hit plane (they're pointer-transparent).
-      layers.effects.raise();
+      // The target order is [..., plane, effects] — the plane above every mark,
+      // and the (pointer-transparent) effect overlays above the plane. Skip the
+      // DOM move when it already holds, the same rule _orderMarkLayer follows:
+      // `raise()` is an unconditional appendChild, and re-inserting a node drops
+      // any pointer capture on it and blurs it. The engine re-renders on every
+      // drag commit, so this ran continuously mid-gesture.
+      const planeNode = plane.node();
+      const effectsNode = layers.effects.node();
+      const parent = planeNode && planeNode.parentNode;
+      const stacked =
+        parent &&
+        parent.lastElementChild === effectsNode &&
+        effectsNode.previousElementSibling === planeNode;
+      if (!stacked) {
+        plane.raise();
+        layers.effects.raise();
+      }
+      plane.style("cursor", planeCursor || "pointer");
     }
   }
 
@@ -413,7 +440,19 @@ export class D3Renderer {
         onEvent({ type: "dblclick", x: px, y: py, rawEvent: event });
       });
 
-    if (!planeOnTop) return;
+    if (!planeOnTop) {
+      // The mode can flip between renders (an edit is added, a stage advances).
+      // Leaving the press handlers bound would keep a dead plane drag alive, and
+      // an in-flight gesture has no listener left to end it — abandon it here.
+      this._abortPlaneGesture();
+      plane.on("pointerdown", null).on("pointermove", null).on("pointerleave", null);
+      return;
+    }
+
+    // Read live from `this` by the window-level handlers below, which outlive any
+    // one render (see _trackPlaneGesture).
+    this._planePointer = pointer;
+    this._planeNode = plane.node();
 
     plane
       .on("pointerdown", (/** @type {any} */ event) => {
@@ -423,53 +462,124 @@ export class D3Renderer {
           startY: py,
           down: true,
           dragging: false,
+          pointerId: event.pointerId,
         };
-        if (event.target.setPointerCapture) {
-          try {
-            event.target.setPointerCapture(event.pointerId);
-          } catch (e) {
-            /* ignore */
-          }
-        }
+        // NO setPointerCapture. It was here to keep move/up flowing once the
+        // pointer left the plane, and it did not work: the engine re-renders on
+        // every commit, `render()` calls `plane.raise()` in plane-on-top mode, and
+        // moving a node in the DOM implicitly releases its capture. The very first
+        // drag commit dropped it, so releasing the button anywhere off the plane
+        // never delivered `pointerup` here — the gesture stayed `down: true`
+        // forever and the next plain pointermove over the chart resumed painting
+        // data with no button held. The window listeners below are what d3.drag
+        // does, and they survive re-render, a DOM move and the pointer leaving.
+        this._trackPlaneGesture();
       })
       .on("pointermove", (/** @type {any} */ event) => {
+        // While a gesture is live the window handler owns movement (it sees the
+        // pointer off-plane too); this element-level one would double-report.
+        if (this._planeGesture) return;
         const [px, py] = pointer(event);
-        const gesture = this._planeGesture;
-        if (gesture && gesture.down) {
-          if (
-            !gesture.dragging &&
-            Math.hypot(px - gesture.startX, py - gesture.startY) > 3
-          ) {
-            gesture.dragging = true;
-            onEvent({
-              type: "dragstart",
-              x: gesture.startX,
-              y: gesture.startY,
-              rawEvent: event,
-            });
-          }
-          if (gesture.dragging) {
-            onEvent({ type: "drag", x: px, y: py, rawEvent: event });
-          }
-        } else {
-          onEvent({ type: "hover", x: px, y: py, rawEvent: event });
-        }
-      })
-      .on("pointerup", (/** @type {any} */ event) => {
-        const [px, py] = pointer(event);
-        const gesture = this._planeGesture;
-        if (gesture && gesture.dragging) {
-          onEvent({ type: "dragend", x: px, y: py, rawEvent: event });
-          // Suppress the native click the browser fires next (see 'click').
-          this._suppressClick = true;
-        }
-        this._planeGesture = null;
+        onEvent({ type: "hover", x: px, y: py, rawEvent: event });
       })
       .on("pointerleave", (/** @type {any} */ event) => {
-        if (!this._planeGesture || !this._planeGesture.down) {
-          onEvent({ type: "hoverout", rawEvent: event });
-        }
+        if (!this._planeGesture) onEvent({ type: "hoverout", rawEvent: event });
       });
+  }
+
+  /**
+   * Follow a live plane drag on the WINDOW until the pointer is released or
+   * cancelled. Bound once per gesture and torn down on release, so nothing
+   * accumulates across the many re-renders a drag causes.
+   */
+  _trackPlaneGesture() {
+    if (this._planeTracking || typeof window === "undefined") return;
+    const move = (/** @type {any} */ event) => this._planeMoved(event);
+    const end = (/** @type {any} */ event) => this._planeReleased(event);
+    this._planeTracking = { move, end };
+    // Capture phase: the plane's own listeners are guarded against a live
+    // gesture, but this also beats anything else on the page to the release.
+    window.addEventListener("pointermove", move, true);
+    window.addEventListener("pointerup", end, true);
+    window.addEventListener("pointercancel", end, true);
+  }
+
+  _releasePlaneTracking() {
+    const t = this._planeTracking;
+    if (!t || typeof window === "undefined") return;
+    window.removeEventListener("pointermove", t.move, true);
+    window.removeEventListener("pointerup", t.end, true);
+    window.removeEventListener("pointercancel", t.end, true);
+    this._planeTracking = null;
+  }
+
+  /** Drop an in-flight plane gesture without emitting a dragend (mode change / teardown). */
+  _abortPlaneGesture() {
+    this._releasePlaneTracking();
+    this._planeGesture = null;
+  }
+
+  /** @param {any} event */
+  _planeMoved(event) {
+    const gesture = this._planeGesture;
+    if (!gesture || !this._planePointer || !this._onEvent) return;
+    if (gesture.pointerId != null && event.pointerId !== gesture.pointerId) return;
+    // No button held: the release was never delivered (let go outside the browser
+    // window, or the window lost focus). Close the gesture where it stands rather
+    // than resuming a drag the reader is no longer making.
+    if (event.pointerType === "mouse" && event.buttons === 0) {
+      return this._planeReleased(event);
+    }
+    const [px, py] = this._planePointer(event);
+    if (
+      !gesture.dragging &&
+      Math.hypot(px - gesture.startX, py - gesture.startY) > 3
+    ) {
+      gesture.dragging = true;
+      this._onEvent({
+        type: "dragstart",
+        x: gesture.startX,
+        y: gesture.startY,
+        rawEvent: event,
+      });
+    }
+    if (gesture.dragging) {
+      this._onEvent({ type: "drag", x: px, y: py, rawEvent: event });
+    }
+  }
+
+  /** @param {any} event */
+  _planeReleased(event) {
+    const gesture = this._planeGesture;
+    if (!gesture) return this._releasePlaneTracking();
+    if (gesture.pointerId != null && event.pointerId !== gesture.pointerId) return;
+    this._releasePlaneTracking();
+    this._planeGesture = null;
+    if (!this._planePointer || !this._onEvent) return;
+    const [px, py] = this._planePointer(event);
+    if (gesture.dragging) {
+      this._onEvent({ type: "dragend", x: px, y: py, rawEvent: event });
+      // Suppress the native click the browser fires next (see 'click').
+      this._suppressClick = true;
+    }
+    // Released off the chart: the plane's own pointerleave was suppressed while
+    // the button was down, so nothing else will retire the hover session.
+    if (!this._pointerOverPlane(event)) {
+      this._onEvent({ type: "hoverout", rawEvent: event });
+    }
+  }
+
+  /** @param {any} event @returns {boolean} */
+  _pointerOverPlane(event) {
+    const node = this._planeNode;
+    if (!node || typeof node.getBoundingClientRect !== "function") return false;
+    const r = node.getBoundingClientRect();
+    return (
+      event.clientX >= r.left &&
+      event.clientX <= r.right &&
+      event.clientY >= r.top &&
+      event.clientY <= r.bottom
+    );
   }
 
   /**
@@ -603,7 +713,8 @@ export class D3Renderer {
       // drag means. Stating the subject makes dx/dy zero: `event.x/y` is the
       // pointer in scene coordinates, on every node type, in both renderers.
       .subject((/** @type {any} */ event) => ({ x: event.x, y: event.y }))
-      .on("start", function (event, d) {
+      .on("start", (/** @type {any} */ event, /** @type {any} */ d) => {
+        this._markDragLive = true;
         onEvent({
           type: "dragstart",
           x: event.x,
@@ -612,7 +723,19 @@ export class D3Renderer {
           rawEvent: event.sourceEvent,
         });
       })
-      .on("drag", function (event, d) {
+      .on("drag", (/** @type {any} */ event, /** @type {any} */ d) => {
+        // A move with NO button held means the release was never delivered — the
+        // pointer was let go outside the browser window, or the window lost focus
+        // mid-drag. d3.drag keeps its window listeners until a mouseup it will
+        // never see, so the next time the pointer crosses the page the gesture
+        // resumes and the mark tracks a cursor nobody is pressing. Retire it here,
+        // once; d3's own `end` is then a no-op (see _endMarkDrag).
+        const src = event.sourceEvent;
+        if (src && src.type === "mousemove" && src.buttons === 0) {
+          this._endMarkDrag(onEvent, event, d);
+          return;
+        }
+        if (!this._markDragLive) return;
         // event.x/event.y are relative to the SVG scene group.
         onEvent({
           type: "drag",
@@ -622,15 +745,28 @@ export class D3Renderer {
           rawEvent: event.sourceEvent,
         });
       })
-      .on("end", function (event, d) {
-        onEvent({
-          type: "dragend",
-          x: event.x,
-          y: event.y,
-          node: d,
-          rawEvent: event.sourceEvent,
-        });
+      .on("end", (/** @type {any} */ event, /** @type {any} */ d) => {
+        this._endMarkDrag(onEvent, event, d);
       });
+  }
+
+  /**
+   * Close a mark drag exactly once, whether it ended on a real release or was
+   * abandoned (see the `buttons === 0` guard in _makeDrag).
+   * @param {(e: any) => void} onEvent
+   * @param {any} event
+   * @param {any} d
+   */
+  _endMarkDrag(onEvent, event, d) {
+    if (!this._markDragLive) return;
+    this._markDragLive = false;
+    onEvent({
+      type: "dragend",
+      x: event.x,
+      y: event.y,
+      node: d,
+      rawEvent: event.sourceEvent,
+    });
   }
 
   // -- style + geometry primitives -----------------------------------------

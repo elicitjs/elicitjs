@@ -80,7 +80,16 @@ export const DEFAULT_THEME = {
     guide: {
         rule: { stroke: '#64748b', strokeDasharray: '5 4' },
         region: { fill: '#64748b', opacity: 0.1 },
-        legend: { stroke: '#374151', labelFill: '#374151', fontSize: 11 },
+        // `currentStroke`/`currentWidth` ring the swatch(es) the target row(s)
+        // currently hold, so a picker says what a click would REPLACE as well as
+        // what it can set — and, by its absence, that there is nothing to write to.
+        // That ring is the whole unarmed-state signal: a legend is a key first, so
+        // it may not dim its own swatches to report a picker's state (their fill is
+        // the encoding, and a faded key reports a colour the marks do not have).
+        legend: {
+            stroke: '#374151', labelFill: '#374151', fontSize: 11,
+            currentStroke: '#111827', currentWidth: 2,
+        },
         // Edit-guide parts (resolveGuide). Colour falls back to theme.constraint.
         bounds: { dash: '4 4', width: 1, opacity: 0.9 },
         catchment: { dash: '2 4', width: 1, opacity: 0.45 },

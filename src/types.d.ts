@@ -212,6 +212,10 @@ export interface CustomScaleProperties {
   // resolveScales). Metadata for an editable axis: a domain edit writes each of
   // these fields' schema domains. Not a domain/range on the channel.
   fields?: string[];
+  // The same list QUALIFIED BY TABLE. A field name is not unique across tables —
+  // one `fill` scale can span `nodes.kind` and `links.kind` — so a domain edit
+  // needs the pair to know whose schema and whose rows to write.
+  fieldRefs?: { table: string; field: string }[];
 }
 
 export type Scale = (
@@ -553,27 +557,42 @@ export interface DrawOptions extends NewSeriesOptions {
 }
 
 // edit.legend (a category picker) reads the clicked swatch's `node.category`; it
-// carries no layout of its own — the `plot.legend()` mark owns geometry. Kept as a
-// named type for the picker's few knobs (all inherited from EditOptions today).
+// carries no layout of its own — the `plot.legend()` mark owns geometry.
+// Neither picker names a column: a legend is a key for one ENCODING, so the column
+// is the one that encoding uses. Kept as a named type for the knobs it inherits.
 export interface LegendEditOptions extends EditOptions {}
 
 // edit.select (a selection edit). Selection is transient pipeline state, so these
 // knobs govern set semantics, not a data write.
 export interface SelectEditOptions extends EditOptions {
-  // Selecting a row clears the rest (default true). false adds to the selection —
-  // forward-looking, since ui.selection is a Set; single-exclusive today.
+  // Selecting a row clears the rest (default true). false makes every click
+  // additive. For the usual "hold a modifier to add" behaviour use `multi`.
   exclusive?: boolean;
-  // Clicking the already-selected row deselects it (default true). false makes a
-  // click always select, never toggle off.
+  // Clicking the already-selected row deselects it (default true). Under an
+  // additive click this removes that row from the set; under an exclusive one it
+  // only fires when the row is the sole selection. false never deselects.
   toggle?: boolean;
+  // Shift- or meta-click adds to the selection, a plain click replaces it
+  // (default false). The modifier idiom rather than a mode, so switching it on
+  // never changes what an existing gesture does.
+  multi?: boolean;
 }
 
 // The result an edit with `target: 'domain'` returns from apply(): the schema
 // domains to write, plus (for a coupled schema+data edit like category-remove) a
 // replacement dataset, and (for grow-the-chart numeric drag) a chart resize hint.
 export interface DomainEditResult {
+  // field -> new domain, in the table the edit writes (Edit.table, else its own
+  // mark's). The common single-table case, and the only shape most edits need.
   domains: Record<string, any[]>;
+  // Rows the domain change couples to, for that same table — renaming a category
+  // has to relabel the rows carrying it, removing one has to delete them.
   data?: Datum[];
+  // The same two, for OTHER tables. One scale can span several: a network chart
+  // can put `fill` over `nodes.kind` and `links.kind`, and renaming that category
+  // has to write both schemas and both row sets or they drift apart. Keyed by
+  // table NAME. Omitted by every single-table edit.
+  tables?: Record<string, { domains?: Record<string, any[]>; data?: Datum[] }>;
   resize?: { width?: number; height?: number };
 }
 
@@ -645,6 +664,52 @@ export interface ChannelSpec {
   // Makes the channel writable: a gesture inverts back to `field` through this
   // same scale. Collected by edit/route.js's collectEdits.
   edit?: Edit;
+  // Draw a KEY for this encoding. A legend is a key for one (channel, field) pair,
+  // so declaring it here is what makes it unambiguous — the field and table come
+  // from the channel and its mark, and nothing has to be restated or inferred.
+  //
+  //   fill: { field: 'group', legend: true }
+  //   fill: { field: 'group', legend: { anchor: 'bottom', edit: … } }
+  //   fill: { field: 'group', legend: false }   // suppress under `legends: true`
+  //
+  // Two marks stating the SAME encoding share one legend. Non-positional channels
+  // only — an axis is the key for x/y. See core/legends.js.
+  legend?: boolean | LegendOptions | null;
+}
+
+/**
+ * How a legend for one encoding looks. The presentation half of `ChannelSpec.legend`
+ * and of a composed `elements.legend*` — `channel`, `field` and `table` are absent
+ * because the encoding already supplies them.
+ */
+export interface LegendOptions {
+  /** Which side it reserves space on. */
+  anchor?: 'top' | 'right' | 'bottom' | 'left';
+  orient?: 'horizontal' | 'vertical';
+  /** Caption. Defaults to the encoded field's name; `false` removes it. */
+  title?: string | false | null;
+  /** Which row(s) a picker writes. Defaults to the chart's selection. */
+  row?: number | number[] | ((data: Datum[], ctx: { selection: number | null }) => number | number[] | null);
+  /** Interactivity: a picker (`edit.legend.*`) or a domain edit (`edit.scale.*`). */
+  edit?: Edit | Edit[] | Edit[][];
+  edits?: Edit[];
+  /** Discrete swatch geometry. */
+  swatchSize?: number;
+  gap?: number;
+  labelWidth?: number;
+  /** Continuous ramp geometry. */
+  rampLength?: number;
+  rampThickness?: number;
+  ticks?: number;
+  tickFormat?: string | ((v: any) => string);
+  /** Chrome, defaulting to the theme's legend tokens. */
+  stroke?: string;
+  fill?: string;
+  fontSize?: number;
+  handleSize?: number;
+  handleColor?: string;
+  id?: string;
+  constraints?: Constraint[];
 }
 
 // The standard style channels every mark understands. A field drives them
@@ -1112,13 +1177,29 @@ export interface ChartElementOptions {
   channel?: string;
   /** Which side of the plot it sits on. */
   anchor?: string;
-  /** Domain-targeting edit(s) — `edit.axis.*`, `edit.legend.*`. */
+  /**
+   * Edit(s) on this element — `edit.axis.*`, `edit.legend.*`. Both spellings are
+   * read (see `elementEdits` in plot/mark.js); `edits` used to validate clean and
+   * then be silently dropped.
+   */
   edit?: Edit | Edit[] | Edit[][];
   edits?: Edit[];
   constraints?: Constraint[];
   id?: string;
-  /** The single field an edit pins, when the element names one. */
+  /**
+   * The COLUMN an edit on this element writes. An element has no channel map, so
+   * unpinned the field falls back to `scale.fields[0]` — the union of every field
+   * bucketed onto the channel, in first-seen feature order. Pin it whenever more
+   * than one mark binds the channel, or the spec never said which column a gesture
+   * lands in. Read by `resolveChannels` (edit/route.js).
+   */
   field?: string;
+  /**
+   * The TABLE that column is in, by NAME. Unset, an element takes the structure's
+   * primary table — it declares no `tableRole`. Resolved in the engine's one
+   * feature-binding pass, exactly like a mark's `table`.
+   */
+  table?: string;
   /** Ticks: how many, which, how to format, how long. */
   ticks?: number | any[];
   tickValues?: any[];
@@ -1174,12 +1255,20 @@ export interface ChartElement {
 
   id?: string;
   markName?: string;
-  /** Domain-targeting edits (edit.axis.*), already flattened to a list. */
+  /** The element's edits (edit.axis.*, edit.legend.*), already flattened to a list. */
   edits?: Edit[];
   /** Dataset invariants; promoted to the chart-wide set like a mark's. */
   constraints?: Constraint[];
-  /** The single field an edit pins, when the element names one. */
+  /**
+   * The COLUMN an edit on this element writes, when the element pins one. Read by
+   * `resolveChannels` ahead of the emergent `scale.fields[0]`.
+   */
   field?: string;
+  /**
+   * The TABLE that column is in, by NAME. Unset, the engine's binding pass gives
+   * the element the structure's primary table (it declares no `tableRole`).
+   */
+  table?: string;
   /** Paint order ('background' puts it under the data marks). */
   layer?: string;
   /** Space-reserving elements only: measure, and the band the engine stamped. */
@@ -1428,6 +1517,15 @@ export interface FeatureNode {
   // state, which is what takes the effect off. Never a data channel: nothing in a
   // mark's build() writes this.
   effectStyle?: Record<string, any>;
+  // The shape an effect OUTLINES for this node's datum, when the node is not it. A
+  // waffle draws one row as a GRID of cells, so an outline derived from a node rings
+  // one cell (the engine takes the first node with the datum's index — cell 0, at the
+  // baseline) while the restyle half correctly lights the whole block. The mark is the
+  // one that knows the block's geometry, so it states it: a plain geometry node
+  // (`{ type: 'rect', x, y, width, height }` and the rest of outlineNodes' cases),
+  // stamped on every node of the datum, padded and traced like any other. Not a data
+  // channel and never a second paint — the effect vocabulary is unchanged.
+  effectShape?: Record<string, any>;
   // Opts the node into the renderer's inline content editor on double-click. Set
   // by the engine's tagging pass for any node whose feature carries an `inline`
   // edit — one place decides, so a mark never has to sniff its own edit list.
@@ -1651,7 +1749,14 @@ export interface Theme {
   guide: {
     rule: { stroke: string; strokeDasharray: string };
     region: { fill: string; opacity: number };
-    legend: { stroke: string; labelFill: string; fontSize: number };
+    legend: {
+      stroke: string;
+      labelFill: string;
+      fontSize: number;
+      /** Rings the swatch(es) the target row(s) currently hold — also the unarmed-state signal. */
+      currentStroke?: string;
+      currentWidth?: number;
+    };
     /** Edit-guide parts — merged under GUIDE_PARTS, under per-edit overrides. */
     bounds?: GuidePartStyle;
     catchment?: GuidePartStyle;
@@ -1926,16 +2031,29 @@ export interface ElicitElement extends HTMLDivElement {
   // replaces (see edit.select). All routes go through one applySelection, so an
   // external <select>, the keyboard, and a mark click leave selection in one shape.
   //
-  // The primary selected datum index, or null. A stale index (the row was removed)
-  // reads as null.
+  // The FIRST selected datum index, or null. A stale index (the row was removed)
+  // reads as null. Stays scalar when several rows are selected, so a caller written
+  // against a single selection keeps working — read getSelectionAll for the rest.
   getSelection(): number | null;
+  // Every selected datum index, ascending. Empty when nothing is selected.
+  getSelectionAll(): number[];
   // Select a SPECIFIC ITEM by dataset index (external counterpart of clicking a
-  // mark). null / out-of-range clears. Exclusive: the row becomes the sole
-  // selection. Returns whether the selection moved.
-  select(index: number | null): boolean;
-  // Select by CATEGORY / predicate: select the first row matching { field: value }
-  // (or a predicate function). The "select a category" entry point. No match clears.
-  selectWhere(field: string | ((d: Datum, i: number) => boolean), value?: any): boolean;
+  // mark). null / out-of-range / an empty array clears. Exclusive: the selection
+  // becomes exactly what is named. Returns whether the selection moved.
+  select(index: number | number[] | null): boolean;
+  // Add or remove ONE row, leaving the rest of the selection alone — the external
+  // counterpart of a shift-click under edit.select({ multi: true }).
+  toggleSelection(index: number): boolean;
+  // Select every row of the primary table.
+  selectAll(): boolean;
+  // Select by CATEGORY / predicate: select rows matching { field: value } (or a
+  // predicate function). The "select a category" entry point. No match clears.
+  // `{ all: true }` takes every match; the default is the first only.
+  selectWhere(
+    field: string | ((d: Datum, i: number) => boolean),
+    value?: any,
+    options?: { all?: boolean }
+  ): boolean;
   // Clear the selection entirely.
   clearSelection(): boolean;
   // Multi-stage controls (see ElicitSpec.stage). getStage reads the current index.
