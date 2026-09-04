@@ -65,7 +65,7 @@ function claimSpanEdges(group, channels, edits) {
  * @returns {import('../types').Mark}
  */
 function buildArea(options, forcedValueAxis) {
-    const opts = normalizeMarkOptions(options, { mark: 'area', allow: ['curve', 'handles', 'handleSize', 'handleColor', 'order', 'samples', 'series', 'z'] });
+    const opts = normalizeMarkOptions(options, { mark: 'area', allow: ['curve', 'handles', 'handleSize', 'handleColor', 'order', 'samples', 'series'] });
     const {
         channels: rawChannels = {},
         id,

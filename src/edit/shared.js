@@ -20,7 +20,7 @@ export const asList = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]);
  * must pass.
  *
  * Several edits are only meaningful on a particular kind of node — `edit.arc.edge`
- * on a boundary handle, `edit.axis.categories`' three on a tick label / remove
+ * on a boundary handle, `edit.scale.categories`' three on a tick label / remove
  * glyph, `edit.face.expression` on a handle carrying a drag track. That guard is
  * part of what the edit IS, not a default the caller is choosing.
  *
@@ -99,7 +99,6 @@ export function makeEdit(spec) {
         into: spec.into || null,
         constrain: asList(spec.constrain),
         guide: spec.guide || null,
-        guideColor: spec.guideColor || null,
         // Multi-stage gate: an edit with a numeric stage is active only when it
         // equals the engine's current stage; null (the default) is always active.
         // A uniform descriptor filter — not a mode branch (see elicit.js activeEdits).
@@ -182,7 +181,7 @@ export function nextSeriesKey(data, seriesField) {
  *     let the caller refuse: minting a category the author didn't declare would put
  *     a value on an axis that has no room for it.
  *   open — the domain is a starting set. Mint a placeholder that collides with
- *     nothing, for the author (or the user, via edit.axis.categories) to rename.
+ *     nothing, for the author (or the user, via edit.scale.categories) to rename.
  *     Creating and NAMING are separate acts; blocking the first on the second is
  *     what forces a gesture to become a text field.
  *

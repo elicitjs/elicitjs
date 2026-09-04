@@ -349,7 +349,7 @@ export interface Edit {
   // null = universal (any mark). Otherwise the mark FAMILY this edit needs, which
   // is also where it lives in the API (the scope shows in the name: edit.line.*,
   // edit.arc.*, edit.waffle.*, edit.geo.*, edit.axis.*). Each scope names a mark
-  // capability flag — supportsSeries / supportsArc / supportsWaffle / supportsGeo /
+  // capability flag — supportsSeries / supportsWaffle / supportsGeo /
   // isAxis — and the engine dev-warns when the mark it's attached to lacks it,
   // instead of leaving you a silently dead gesture. See SCOPE_CAPABILITY in
   // core/elicit.js.
@@ -374,8 +374,6 @@ export interface Edit {
   //   false / null                 → nothing
   //   { bounds, catchment, track, color } → per-part on/off + style
   guide: boolean | GuideSpec | null;
-  /** @deprecated Prefer `guide: { color }` — still wins under a part's own colour. */
-  guideColor: string | null;
   // Multi-stage gate: active only when it equals the engine's current stage;
   // null = always active. A uniform filter applied to every edit, like `gesture`
   // matching — not a mode branch. Set via a factory option: move({ stage: 1 }).
@@ -450,8 +448,6 @@ export interface EditOptions {
   // Edit-scoped constraint sugar (see Edit.constrain).
   constrain?: Constraint | Constraint[];
   guide?: boolean | GuideSpec;
-  /** @deprecated Prefer `guide: { color }`. */
-  guideColor?: string;
   stage?: number;
   advance?: boolean;
   cardinality?: 'append' | 'delete' | null;
@@ -1400,7 +1396,6 @@ export interface Mark {
   /** Capability flags the engine's scope guard reads (see SCOPE_CAPABILITY). */
   supportsGeo?: boolean;
   supportsWaffle?: boolean;
-  supportsArc?: boolean;
   // Does this mark partition a total among a group of rows — so a boundary between
   // two of them exists to cut, drag or merge? Set by arc/pie/donut always, and by
   // `bar` only when it is actually stacking (an unstacked bar is a set of
@@ -1694,7 +1689,7 @@ export interface AxisSpec {
   fontSize?: number;
   grid?: boolean;               // also emit a paired gridline mark
   // Make the axis INTERACTIVE (opt-in; axes are inert by default). A domain edit
-  // (edit.axis.scale() for a numeric/temporal axis, edit.axis.categories() for a
+  // (edit.axis.scale() for a numeric/temporal axis, edit.scale.categories() for a
   // discrete one) reshapes the field's schema domain — grids, guides and marks
   // reflow from it. Accepts one edit or a list.
   edit?: Edit | Edit[];
@@ -1762,7 +1757,7 @@ export interface Theme {
     catchment?: GuidePartStyle;
     track?: GuidePartStyle;
   };
-  // The constraint-guide colour (per-edit `guideColor` still wins).
+  // The constraint-guide colour (a per-edit `guide: { color }` still wins).
   constraint: { color: string };
   // Interaction-effects defaults, merged UNDER spec.effects.
   effects: EffectsSpec;
@@ -1836,10 +1831,6 @@ export interface EffectsSpec {
   selected?: false | string | EffectStyle;
   /** An active drag is holding this mark. */
   grabbed?: false | string | EffectStyle;
-  /** @deprecated Use `grabbed`. */
-  grab?: false | string | EffectStyle;
-  /** @deprecated Use `selected` (and `hovered` for proximity). */
-  select?: false | string | EffectStyle;
 }
 
 /**

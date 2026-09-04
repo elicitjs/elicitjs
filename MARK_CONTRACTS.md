@@ -98,7 +98,7 @@ N/A = use a different edit family (documented).
 <td>—</td>
 </tr>
 <tr>
-<td><code>line</code> / <code>lineX</code> / <code>lineY</code> / <code>path</code> / <code>connectedScatter</code></td>
+<td><code>line</code> / <code>lineX</code> / <code>lineY</code> / <code>path</code></td>
 <td>data</td>
 <td>x, y; series/order</td>
 <td>natural (<code>edit.line.*</code>)</td>

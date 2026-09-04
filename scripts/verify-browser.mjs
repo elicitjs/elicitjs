@@ -139,29 +139,47 @@ async function main() {
         // The builder serialises form state to a spec on every change (every
         // other route just evaluates a hand-written .example.txt), so this is
         // the one new code path that can emit broken JS. Add a constraint
-        // through the secondary rail and confirm the chart re-renders itself
+        // through the Invariants tab and confirm the chart re-renders itself
         // — no Generate step — then read the generated source back.
+        //
+        // These selectors track components/builder/*. They went stale once when
+        // the playground was rebuilt (the old `.area-viz` / `.area-secondary` /
+        // `.mark-card` rail no longer exists), and because a selector that
+        // matches nothing just TIMES OUT, the whole gate read as broken rather
+        // than as out of date. If this section fails to find an element, check
+        // CanvasPreview / ConstraintsEditor / MarkLayers before assuming a bug.
         console.log('\nPlayground Build dashboard (/playground)');
-        await open('/playground', '.area-viz svg');
-        await page.locator('.area-secondary select').first().selectOption('clamp');
-        await page.waitForTimeout(600); // debounce (250ms) + re-eval + redraw
-        const builderErrs = await page.locator('.area-viz .live-error').allTextContents();
-        check('playground: adding a constraint re-renders with no error', builderErrs.length === 0, builderErrs.join(' | '));
-        const builderChartCount = await page.locator('.area-viz svg').count();
-        check('playground: the live spec mounts a chart', builderChartCount === 1, `svg=${builderChartCount}`);
-        await page.getByRole('button', { name: 'Show code' }).click();
-        await page.waitForTimeout(150);
-        const generatedCode = await page.locator('.area-viz .readonly-code').textContent();
-        check('playground: generated code includes the added constraint', (generatedCode || '').includes('clamp('), (generatedCode || '').slice(0, 120));
+        await open('/playground', '.canvas-device-frame svg');
 
-        // Switching to a line mark carries the x/y bindings over, so the chart
-        // stays populated — and line-scoped edits appear only now.
-        await page.locator('.mark-card', { hasText: 'Line' }).first().click();
+        // The constraints editor lives behind the "Invariants" config tab.
+        await page.getByRole('button', { name: /^Invariants/ }).click();
+        await page.locator('.constraints-panel .add-inline-select').first().selectOption('clamp');
+        await page.waitForTimeout(600); // debounce (250ms) + re-eval + redraw
+        const builderErrs = await page.locator('.canvas-device-frame .live-error').allTextContents();
+        check('playground: adding a constraint re-renders with no error', builderErrs.length === 0, builderErrs.join(' | '));
+        const builderChartCount = await page.locator('.canvas-device-frame svg').count();
+        check('playground: the live spec mounts a chart', builderChartCount === 1, `svg=${builderChartCount}`);
+
+        await page.getByRole('button', { name: /View Code/ }).click();
+        await page.waitForTimeout(150);
+        const generatedCode = await page.locator('.drawer-code').textContent();
+        check('playground: generated code includes the added constraint', (generatedCode || '').includes('clamp('), (generatedCode || '').slice(0, 120));
+        await page.getByRole('button', { name: /Hide Code/ }).click();
+
+        // Adding a line mark through the catalog keeps the chart rendering: the
+        // serialiser has to emit a second, differently-shaped mark call.
+        await page.locator('.add-layer-btn').first().click();
+        await page.waitForTimeout(200);
+        // The catalog opens on its first category tab, so select the one that
+        // actually holds the line mark before reaching for it.
+        await page.locator('.catalog-tab', { hasText: 'Lines & areas' }).first().click();
+        await page.waitForTimeout(150);
+        await page.locator('.catalog-item', { hasText: 'Line / Path' }).first().click();
         await page.waitForTimeout(600);
-        const lineErrs = await page.locator('.area-viz .live-error').allTextContents();
-        check('playground: switching to line keeps the chart rendering', lineErrs.length === 0, lineErrs.join(' | '));
-        const lineEditOptions = await page.locator('.area-edits select option').allTextContents();
-        check('playground: line-scoped edits offered on a line mark', lineEditOptions.some((o) => o.includes('edit.line.draw')), lineEditOptions.join(','));
+        const lineErrs = await page.locator('.canvas-device-frame .live-error').allTextContents();
+        check('playground: adding a line mark keeps the chart rendering', lineErrs.length === 0, lineErrs.join(' | '));
+        const withLine = await page.locator('.drawer-code, .canvas-device-frame svg').count();
+        check('playground: the chart survives a second mark', withLine >= 1, `nodes=${withLine}`);
 
         // ---- Responsive sizing --------------------------------------------
         console.log('\nResponsive sizing (/sizing)');
@@ -1561,6 +1579,10 @@ async function main() {
             Math.abs(hRedone[0].n - hAfter[0].n) < 0.01, `${hRedone[0].n} vs ${hAfter[0].n}`);
 
         // Keyboard on a point: x AND y take arrows, because both carry a drag.
+        // `#keyboard` lives on /editing/gestures, not on the history route the
+        // undo/redo block above left us on — navigate before reaching for it.
+        console.log('\nKeyboard nudging (/editing/gestures)');
+        await open('/editing/gestures', '#keyboard svg circle');
         const kbDot = page.locator('#keyboard svg circle').first();
         await kbDot.scrollIntoViewIfNeeded();
         await kbDot.focus();

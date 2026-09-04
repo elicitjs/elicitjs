@@ -38,7 +38,7 @@ const SINGLE = '__single__'; // group key when no series field is set
 function buildLine(options, forcedValueAxis, defaultOrder = 'domain') {
     // Desugar top-level style shorthands (stroke: '…', strokeWidth: …) into the
     // channels so line reads style the same way every mark does.
-    const opts = normalizeMarkOptions(options, { mark: 'line', allow: ['curve', 'handles', 'handleSize', 'handleColor', 'order', 'samples', 'series', 'z'] });
+    const opts = normalizeMarkOptions(options, { mark: 'line', allow: ['curve', 'handles', 'handleSize', 'handleColor', 'order', 'samples', 'series'] });
     const {
         channels = {},
         id,

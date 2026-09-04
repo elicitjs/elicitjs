@@ -96,8 +96,8 @@ export const DEFAULT_THEME = {
         track: { dash: '3 3', width: 2, opacity: 0.35 },
     },
 
-    // The constraint-guide colour (edit/guide.js). Per-edit `guide: { color }` /
-    // legacy `guideColor` still wins.
+    // The constraint-guide colour (edit/guide.js). A per-edit
+    // `guide: { color }` still wins.
     constraint: { color: '#e4572e' },
 
     // Interaction-effects defaults. Merged UNDER spec.effects by resolveEffects, so

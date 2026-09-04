@@ -71,14 +71,3 @@ export function maintainSum(options) {
         { type: 'maintainSum', options: { targetSum, mode: 'cap' }, field }
     );
 }
-
-/**
- * normalize — sugar for maintainSum({ mode: 'normalize' }): after every edit,
- * scale the field so the dataset sums exactly to `targetSum` (default 1).
- * @param {{ field?: string, targetSum?: number }} [options]
- * @returns {import('../types').Constraint}
- */
-export function normalize(options = {}) {
-    const { field = 'y', targetSum = 1 } = options;
-    return maintainSum({ targetSum, field, mode: 'normalize' });
-}

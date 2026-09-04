@@ -49,13 +49,11 @@ function markLabel(feature) {
 // mismatch is a silent no-op at runtime (the edit's `when` gate never fires), so
 // warn once per feature+edit. One table, not one function per family — a new
 // mark family adds a row here, not a new guard.
-/** @type {Record<string, { flag: string, expects: string }>} */
 /** @type {Record<string, { flag?: string, test?: (f: any) => boolean, expects: string }>} */
 const SCOPE_CAPABILITY = {
     line: { flag: 'supportsSeries', expects: 'a line mark (line/area)' },
     geo: { flag: 'supportsGeo', expects: 'a geo* mark (geoPoint, geoLine, …)' },
-    arc: { flag: 'supportsArc', expects: 'an arc mark (arc/pie/donut)' },
-    stack: { flag: 'supportsStack', expects: 'a stacked mark (bar with `stack`, or arc/pie/donut)' },
+    stack: { flag: 'supportsStack', expects: 'a stacked mark (bar with `stack`, or arc/donut)' },
     waffle: { flag: 'supportsWaffle', expects: 'a waffle mark' },
     axis: { flag: 'isAxis', expects: 'an axis element (axisX/axisY/axisRadial)' },
     trend: { flag: 'supportsTrend', expects: 'a trend mark (trend/trendBand)' },

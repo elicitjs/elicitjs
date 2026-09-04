@@ -495,9 +495,10 @@ export function resolveStyle(scales, channels, datum, defaults = {}, index, data
  * it differently (line read stroke, area read fill-then-stroke), so a coloured
  * area and a coloured line grouped by different channels.
  *
- * Precedence: the explicit option (`series`, or Plot's `z` alias) wins; otherwise
- * the field behind a paint channel, fill before stroke — Observable Plot's `z`
- * default, so a coloured chart groups with no extra config.
+ * Precedence: the explicit `series` option wins; otherwise the field behind a
+ * paint channel, fill before stroke — Observable Plot's `z` default, so a
+ * coloured chart groups with no extra config. (Plot's `z` alias is not accepted:
+ * one name per concept.)
  *
  * `series` is the public option name; `seriesKey` is the internal feature field.
  * @param {any} opts normalized mark options
@@ -505,7 +506,7 @@ export function resolveStyle(scales, channels, datum, defaults = {}, index, data
  * @returns {string | null}
  */
 export function seriesFieldOf(opts, channels = {}) {
-    return opts.series || opts.z
+    return opts.series
         || (channels.fill && channels.fill.field)
         || (channels.stroke && channels.stroke.field)
         || null;

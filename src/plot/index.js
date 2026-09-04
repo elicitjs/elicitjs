@@ -34,9 +34,12 @@ export { area, areaY, areaX } from './area.js';
 export { curve, curveX, curveY } from './curve.js';
 
 // ── Angular ─────────────────────────────────────────────────────────────────
-// `pie` and `donut` are presets of `arc`, not aliases: they fix `arc: 'full'` and
-// differ in `innerRadius`.
-export { arc, pie, donut } from './arc.js';
+// `donut` is a PRESET of `arc` (it pins a default inner radius), not an alias.
+// There is no `pie`: it restated arc's own defaults (`arc: 'full'`,
+// `innerRadius: 0`), so `pie(o)` and `arc(o)` built structurally identical marks —
+// one keyword too many in a grammar a JSON layer will compile. A full pie IS
+// `arc()`.
+export { arc, donut } from './arc.js';
 export { needle } from './needle.js';
 
 // ── Text ────────────────────────────────────────────────────────────────────

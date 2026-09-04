@@ -43,7 +43,7 @@ const numOf = (/** @type {any} */ v) => (v instanceof Date ? v.getTime() : v);
 
 /**
  * An interactive category label (editable DISCRETE axis): a foreground text node
- * that carries its `category` so edit.axis.categories() can rename it (dblclick ->
+ * that carries its `category` so edit.scale.categories() can rename it (dblclick ->
  * inline input -> commit) and route the gesture. `index: 0` is a sentinel so the
  * engine's direct-pick dispatch (which keys on node.index) accepts it — a domain
  * edit ignores the index.
@@ -59,7 +59,7 @@ function categoryLabel({ x, y, textAnchor, v, format, fill, fontSize }) {
 
 /**
  * The "×" remove affordance next to a category label (editable DISCRETE axis). A
- * click routes to edit.axis.categories()'s remove edit, which drops the category
+ * click routes to edit.scale.categories()'s remove edit, which drops the category
  * and its rows.
  * @param {{ x: number, y: number, v: any, fontSize: number }} o
  * @returns {import('../types').FeatureNode}
@@ -157,7 +157,7 @@ export function axis(options = {}) {
         fill: fillOpt,          // tick labels + title (text nodes take a fill)
         fontSize: fontSizeOpt,
         grid = false,
-        // Opt-in interactivity: an edit (edit.axis.scale / edit.axis.categories) or
+        // Opt-in interactivity: an edit (edit.axis.scale / edit.scale.categories) or
         // a list of them, and an optional single field the edit pins (defaults to
         // every field on the axis). Axes are inert unless `edit`/`edits` is given.
         field,

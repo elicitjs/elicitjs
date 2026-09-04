@@ -298,7 +298,7 @@ change every bar and dot chart already written.
 
 **Scope goes in the name.** An edit that only works on marks with series grouping (a `line` family capability) belongs under `edit.line.*` and must set `scope: 'line'` in its descriptor (the engine dev-warns on a scope mismatch — see `warnScopeMismatch` and the `SCOPE_CAPABILITY` table in `elicit.js`). A genuinely universal edit (works on any mark) stays top-level in `edit.*`. Don't add a mark-specific edit to the top-level namespace "because it's simpler" — that's the flat-namespace problem the namespacing fixed.
 
-Note the namespace and the `scope` are separate decisions. `edit.network.*` is a namespace of two edits and only `rewire` sets `scope: 'network'` — it goes on a `link` mark, which declares `supportsNetwork`. `connect` goes on the NODE mark, which is an ordinary `point`/`rect`/`composite`, so there is no capability to check and setting a scope would only produce a false warning. Namespace by what the edit is ABOUT; scope only when a real mark capability is required.
+Note the namespace and the `scope` are separate decisions. `edit.network.*` is a namespace of three edits and only `rewire`/`reverse` set `scope: 'network'` — they go on a `link` mark, which declares `supportsNetwork`. `connect` goes on the NODE mark, which is an ordinary `point`/`rect`/`composite`, so there is no capability to check and setting a scope would only produce a false warning. Namespace by what the edit is ABOUT; scope only when a real mark capability is required.
 
 **One positional-resolution path.** Every mark resolves a datum → pixel through `encodeChannel` (`src/plot/mark.js`) for its value axis, and a datum → CATEGORY through `categoryOf` for its category axis, before handing that category to the band-geometry helpers (`bandwidthOf`/`bandStartOf`/`baselineOf`/`isBand`/`isDiscrete` in `core/scales.js`). `categoryOf` exists because the band axis used to read `datum[key]` raw in every band mark, so `{ fn }`/`{ datum }` worked on a bar's value axis and were silently ignored on its category axis. It also owns the last-resort "column named after the channel" fallback (and warns when it is used), which used to be spelled `(channels.x && channels.x.field) || 'x'` four different ways — see `positionalKeys`, the one source of `xKey`/`yKey` now. Pass `index`/`data` to every `encodeChannel`/`resolveStyle`/`resolveSymbol` call: a derived `{ fn }` channel takes `(d, i, data)`, and ten marks used to hand it `undefined` for the last two. Do not call `scale(d[key])` directly in a new mark — that reintroduces the "four different ways to place a point" inconsistency that existed across `bar`/`dot`/`rule` before the cleanup. `core/encoding.js` once carried a whole *second*, unused resolution path (`resolveChannel`/`resolveEncoding`/`adjustDatum`/`assignChannel`/`datumFromPointer`); it was deleted. Don't grow another.
 
@@ -572,7 +572,7 @@ aimed at the row before it.
 - `pick` values are target-selection strategies or driver keys (`direct`, `nearest`, `plane`, `sweep`, `draw`) — not arbitrary interaction descriptors.
 - `constrain` (edit-scoped, singular) vs `constraints` (plural, the dataset's invariants — canonical on `spec`, accepted on a mark as sugar and promoted) — keep the distinction; don't rename one to match the other.
 - `guide: true` on an `Edit` means "self-draw"; a `Constraint.guide` is a drawer *function*. Same word, deliberately different shapes, both documented in `types.d.ts` — don't try to unify them into one meaning.
-- Don't add a second alias for an existing edit (we removed `youDrawIt` as a redundant alias of `sweep`). One documented name per behavior. `edit.arc.edge` survives only as a deprecated wrapper that dev-warns — it IS `edit.stack.edge` under its old name.
+- Don't add a second alias for an existing edit (we removed `youDrawIt` as a redundant alias of `sweep`). One documented name per behavior. `edit.arc.edge` was that alias for `edit.stack.edge`; it is gone, and so is every other deprecated wrapper (see "Don't reintroduce").
 - `marks` is the public spec key (`ElicitSpec.marks`) and the word used in docs and dev-facing warnings/errors shown to a spec author. `feature`/`FeatureNode`/`featureId` is the internal engine term for one flattened dispatch unit after `composite` desugars a glyph into parts — a mark can expand into several features. Don't blur the two into a single rename: the public surface and dev-facing messages say "mark," internal dispatch code and comments say "feature."
 
 ## Before committing a structural change
@@ -587,13 +587,24 @@ aimed at the row before it.
 
 ## Don't reintroduce
 
-- **A second name for one thing.** This pass deleted every alias the never-released
-  API had accumulated: `plot.axis`/`grid`/`legend`/`axisRadial` (dupes of
-  `elements.*`), `plot.group` (= `composite`), `connectedScatter` (= `path`),
-  `edit.arc.edge` (= `edit.stack.edge`), `constraints.define`/`custom` (= a third
-  and second spelling of `defineConstraint`), `widgets.ci` (= `interval`), and the
-  top-level `elicit.when` (= `edit.when`). Each was one keyword too many in a
-  grammar that a JSON layer will compile.
+- **A second name for one thing.** The first consistency pass deleted every alias
+  the never-released API had accumulated: `plot.axis`/`grid`/`legend`/`axisRadial`
+  (dupes of `elements.*`), `plot.group` (= `composite`), `connectedScatter`
+  (= `path`), `edit.arc.edge` (= `edit.stack.edge`), `widgets.ci` (= `interval`),
+  and the top-level `elicit.when` (= `edit.when`).
+
+  The SECOND pass deleted the ones it missed, plus every deprecated wrapper — a
+  library that has never been published has nobody to deprecate FOR, so a warned
+  shim is just a second keyword that also prints:
+  `pie` (= `arc`; it restated arc's own defaults, so `pie(o)` and `arc(o)` built
+  structurally identical marks — `donut` survives because it really does pin a
+  different `innerRadius`), `z` (= `series`, and never declared in `types.d.ts`, so
+  `check:exports` could not see it), `constraints.normalize`
+  (= `maintainSum({ mode: 'normalize' })`), `edit.axis.categories`
+  (= `edit.scale.categories`), `Edit.guideColor` (= `guide: { color }`), and
+  `effects.grab`/`effects.select` (= `grabbed`/`selected`/`hovered`, with the whole
+  `migrateLegacy` translation layer). Each was one keyword too many in a grammar
+  that a JSON layer will compile.
 - **An authoring primitive in a grammar namespace.** `plot.*`/`edit.*`/
   `constraints.*`/`guides.*`/`elements.*`/`widgets.*` contain only what can appear
   in a spec; `encodeChannel`, `makeEdit`, `registerDriver` and the rest are

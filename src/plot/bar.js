@@ -97,7 +97,7 @@ function buildBar(options, forcedOrientation) {
     // every mark does. Explicit `channels.fill` still wins.
     const opts = normalizeMarkOptions(options, {
         mark: 'bar',
-        allow: ['orientation', 'stack', 'series', 'z', 'handles', 'handleSize', 'handleColor'],
+        allow: ['orientation', 'stack', 'series', 'handles', 'handleSize', 'handleColor'],
     });
     const {
         channels = {},

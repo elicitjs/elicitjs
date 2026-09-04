@@ -370,7 +370,7 @@ function orderRows(group, order) {
  * @returns {import('../types').Mark}
  */
 export function geoLine(options = {}) {
-    const opts = normalizeMarkOptions(options, { mark: 'geoLine', allow: ['curve', 'handles', 'handleSize', 'handleColor', 'order', 'showVertices', 'series', 'z'] });
+    const opts = normalizeMarkOptions(options, { mark: 'geoLine', allow: ['curve', 'handles', 'handleSize', 'handleColor', 'order', 'showVertices', 'series'] });
     const {
         channels = {},
         id,

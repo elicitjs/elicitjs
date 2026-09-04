@@ -111,7 +111,6 @@ export function arc(options = {}) {
         // Capability flags: what edit.arc.* and edit.stack.* need (SCOPE_CAPABILITY).
         // A pie IS a stack — it partitions one total among its rows — so the same cut
         // and boundary drag that work on a stacked bar work here, in polar form.
-        supportsArc: true,
         supportsStack: true,
         /**
          * @param {any[]} currentData
@@ -308,13 +307,4 @@ export function donut(/** @type {any} */ options = {}) {
         ? options.innerRadius
         : (options.outerRadius != null ? options.outerRadius * 0.55 : 0.55);
     return arc({ ...options, arc: options.arc || 'full', innerRadius: inner });
-}
-
-/**
- * Pie convenience: arc with innerRadius 0.
- * @param {any} [options]
- * @returns {import('../types').Mark}
- */
-export function pie(/** @type {any} */ options = {}) {
-    return arc({ ...options, arc: options.arc || 'full', innerRadius: 0 });
 }

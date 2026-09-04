@@ -25,7 +25,7 @@ const DEFAULT_CONSTRAINT_COLOR = '#e4572e';
  * A GUIDE shows a RULE — what you may do — as distinct from an EFFECT, which shows
  * interaction STATE (see core/effects.js). `guide: true` used to draw two unrelated
  * things (constraint bounds AND the proximity ring + selected-mark outline) with
- * every dash, width, opacity and offset hard-coded and only `guideColor` adjustable.
+ * every dash, width, opacity and offset hard-coded and only one colour adjustable.
  * Naming the parts is what makes each one addressable:
  *
  *   guide: true                        bounds + catchment, at these defaults
@@ -70,8 +70,8 @@ const GUIDE_TRUE_PARTS = ['bounds', 'catchment'];
  *                                  alone (proximity signifier); otherwise nothing
  *   { bounds, catchment, track, color } → per-part on/off + style
  *
- * Colour precedence: the part's own > the guide's > the edit's legacy
- * `guideColor` > the theme's constraint colour > the built-in default.
+ * Colour precedence: the part's own > the guide's > the theme's constraint
+ * colour > the built-in default.
  * Part defaults: GUIDE_PARTS < theme.guide[part] < part override.
  * @param {import('../types').Edit} edit
  * @param {any} ctx
@@ -93,7 +93,6 @@ export function resolveGuide(edit, ctx) {
     const themeGuide = ctx && ctx.theme && ctx.theme.guide;
     const themeColor = ctx && ctx.theme && ctx.theme.constraint && ctx.theme.constraint.color;
     const baseColor = (spec && typeof spec === 'object' && spec.color)
-        || (edit && edit.guideColor)
         || themeColor
         || DEFAULT_CONSTRAINT_COLOR;
 

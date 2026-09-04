@@ -71,7 +71,6 @@
 // five. The renderer is now a dumb applier of `node.effectStyle`, which is what makes
 // the two hover sources paint identically the way this file always claimed.
 
-import { warn } from './dev.js';
 
 /** The element-effect properties, applied as CSS style props by the renderer. */
 export const ELEMENT_EFFECT_PROPS = ['filter', 'opacity', 'fill', 'stroke', 'strokeWidth', 'cursor'];
@@ -107,7 +106,7 @@ export const DEFAULT_CATCHMENT = { color: '#ff9800', dash: '2 4', width: 1, opac
 
 /**
  * Normalize one state's appearance. `false` disables it; a bare string is a filter
- * (the `grab: 'brightness(1.1)'` shorthand); an object merges over the default,
+ * (the `grabbed: 'brightness(1.1)'` shorthand); an object merges over the default,
  * with `outline` merged one level deeper so `{ outline: { color } }` keeps the
  * default geometry.
  * @param {any} user
@@ -126,44 +125,6 @@ function resolveState(user, base) {
 }
 
 /**
- * Translate the pre-split `grab` / `select` spelling onto the state model, so an
- * existing chart keeps working while it is updated:
- *   grab            -> grabbed
- *   select.highlight-> hovered.outline + selected.outline (it drew both cases)
- *   select.ring     -> the catchment GUIDE, which is no longer an effect at all
- *   select: false   -> hovered: false, selected: false
- * @param {any} user
- * @returns {any} the user spec, restated in state terms
- */
-function migrateLegacy(user) {
-    if (!user || (user.grab === undefined && user.select === undefined)) return user;
-    warn(
-        'effects:legacy',
-        'effects.grab / effects.select are now interaction STATES: `grabbed`, `hovered` ' +
-        'and `selected` (see core/effects.js). The proximity ring moved to the edit\'s ' +
-        'guide (`guide: { catchment: … }`) because it describes the pick\'s reach, not a ' +
-        'mark\'s state. Reading the old keys for now.'
-    );
-    const out = { ...user };
-    if (user.grab !== undefined && out.grabbed === undefined) out.grabbed = user.grab;
-    if (user.select !== undefined) {
-        const sel = user.select;
-        if (sel === false) {
-            if (out.hovered === undefined) out.hovered = false;
-            if (out.selected === undefined) out.selected = false;
-        } else if (sel && typeof sel === 'object') {
-            const outline = { ...(sel.highlight || {}) };
-            if (sel.color != null) outline.color = sel.color;
-            if (out.hovered === undefined) out.hovered = { outline };
-            if (out.selected === undefined) out.selected = { outline };
-        }
-    }
-    delete out.grab;
-    delete out.select;
-    return out;
-}
-
-/**
  * Merge a user `effects` spec over the defaults, returning one resolved config per
  * interaction state.
  *
@@ -174,7 +135,7 @@ function migrateLegacy(user) {
  * @returns {any}
  */
 export function resolveEffects(user = {}, base = DEFAULT_EFFECTS) {
-    const spec = migrateLegacy(user) || {};
+    const spec = user || {};
     const d = base || DEFAULT_EFFECTS;
     /** @type {any} */
     const out = {};

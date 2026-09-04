@@ -9,15 +9,12 @@
 // interaction models (a driven drag vs. direct clicks + inline typing) and one axis
 // is only ever one kind:
 //   edit.axis.scale()       numeric/temporal — drag an end-handle to rescale the range
-//   edit.axis.categories()  categorical/ordinal — add / rename / remove categories
 //
 // Both are namespaced under `edit.axis.*` so the scope shows in the name, mirroring
 // `edit.line.*`. The axis mark wires them (plot/axis.js): it forwards the edit and,
 // per the scale's kind, emits the handle / label / add / remove affordance nodes.
 
 import { makeEdit, numOf } from './shared.js';
-import { warn } from '../core/dev.js';
-import { categories as scaleCategories } from './scale.js';
 
 /**
  * The schema fields whose domain a domain edit writes: an explicit `field` (when the
@@ -120,23 +117,4 @@ export function scale(options = {}) {
             return result;
         }
     });
-}
-
-
-/**
- * @deprecated Use `edit.scale.categories()`. Reshaping a category list is a
- * property of the SCALE, not of the chrome that draws it, so the same gesture now
- * works on a legend as well as an axis (`scope: 'scale'`). This wrapper keeps the
- * old spelling working and says so once, the way `edit.arc.edge` does.
- * @param {any} [options]
- * @returns {import('../types').Edit[]}
- */
-export function categories(options = {}) {
-    warn(
-        'edit:axis:categories',
-        'edit.axis.categories() is deprecated — use edit.scale.categories(). It is the ' +
-        'same edit: a category list belongs to the SCALE, so it now works on any element ' +
-        'that draws one (an axis or a legend), not just an axis.'
-    );
-    return scaleCategories(options);
 }

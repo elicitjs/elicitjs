@@ -91,9 +91,10 @@ export const plot: {
   curve(options?: MarkOptions): Mark;
   curveX(options?: MarkOptions): Mark;
   curveY(options?: MarkOptions): Mark;
-  // Angular. `pie` / `donut` are presets of `arc`, not aliases.
+  // Angular. `donut` is a preset of `arc` (a default inner radius), not an alias.
+  // There is no `pie`: it was `arc` with arc's own defaults restated, so it was a
+  // second keyword for one concept. A full pie IS `arc()`.
   arc(options?: MarkOptions): Mark;
-  pie(options?: MarkOptions): Mark;
   donut(options?: MarkOptions): Mark;
   needle(options?: MarkOptions): Mark;
   // Text
@@ -209,8 +210,6 @@ export const edit: {
   /** Axis-only: drags a positional RANGE, which only an axis has. */
   axis: {
     scale(options?: EditOptions): Edit;
-    /** @deprecated Use `edit.scale.categories()` — the same edit, on any element. */
-    categories(options?: EditOptions): Edit[];
   };
   /** Turns a legend into an input; reads geometry only a legend stamps. */
   legend: {
@@ -262,8 +261,6 @@ export const constraints: {
   defineConstraint(spec: Constraint | Record<string, unknown>): Constraint;
   clamp(options?: Record<string, unknown>): Constraint;
   maintainSum(options?: Record<string, unknown>): Constraint;
-  /** Sugar for `maintainSum({ mode: 'normalize' })`. */
-  normalize(options?: Record<string, unknown>): Constraint;
   count(options?: Record<string, unknown>): Constraint;
   unique(options?: Record<string, unknown>): Constraint;
   snap(options?: Record<string, unknown>): Constraint;
