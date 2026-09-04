@@ -11,8 +11,11 @@
 //     size: 7,                                  // token radius
 //     channels: { x: { field: 'bin' } },
 //     edits: [ create({ gesture: 'click', channels: ['x'] }), remove() ],
-//     constraints: [ count({ max: 20 }), unique({ field: 'bin', max: 10 }) ],
 //   })
+//
+// The cap on how many tokens there may be is a DATASET invariant, so it goes on
+// the spec beside `data`, not on this mark:
+//   constraints: [ count({ max: 20 }), unique({ field: 'bin', max: 10 }) ]
 //
 // The category axis is a band/point scale over the discrete slots (its
 // domainConfig is the slot list the ghosts iterate). The OTHER axis is a pure
@@ -56,7 +59,6 @@ function buildDotStack(options, forcedAxis) {
         channels = {},
         id,
         edits,
-        constraints,
         gap = 2,
         ghost = true,
         label = false

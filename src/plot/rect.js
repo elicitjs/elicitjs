@@ -100,7 +100,7 @@ function buildRect(options, forcedValueAxis) {
     const opts = normalizeMarkOptions(options, {
         mark: 'rect', allow: ['width', 'height', 'rx'],
     });
-    const { channels = {}, id, edits, constraints, width: widthOpt, height: heightOpt, rx: rxOpt } = opts;
+    const { channels = {}, id, edits, width: widthOpt, height: heightOpt, rx: rxOpt } = opts;
     // `width` / `height` / `rx` are CHANNELS (resolved through encodeChannel below),
     // and this is their constant SHORTHAND — the same relationship `fill: 'red'` has
     // to `fill: { value: 'red' }`. They are listed in `allow` rather than in the

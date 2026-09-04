@@ -771,18 +771,23 @@ export function Elicit(spec) {
     // colour-scale range fallback can read theme.palette/ramp/diverging.
     const liveSpec = { ...spec, schema, schemaSpec, theme };
 
-    // The dataset's invariants, gathered once. A mark may declare `constraints` as
-    // sugar; they are promoted here, so an invariant holds for EVERY edit over the
-    // rows, whichever mark fired it — that is what makes a constraint declared on
-    // one part of a glyph gate a drag on another. Deduped by identity so the same
-    // constraint object listed on several marks runs once.
+    // The dataset's invariants, gathered once, from `spec.constraints` — the ONE
+    // place they are declared. An invariant holds for EVERY edit over the rows,
+    // whichever mark fired it, which is what makes a rule gate a drag on any part of
+    // a glyph. Deduped by identity so the same constraint object listed twice runs
+    // once.
     //
-    // Promotion is scoped to a TABLE, because a constraint is an invariant over ROWS
+    // A mark used to accept `constraints` as sugar and the engine promoted it here.
+    // That was a lie the spec could not see through: it READ as scoped to the mark
+    // that declared it and never was, so a `count({ max })` written on one of two
+    // marks silently capped the whole dataset. The mark option is gone; the
+    // correction is in MISTAKEN_OPTIONS (plot/mark.js).
+    //
+    // Bucketing is scoped to a TABLE, because a constraint is an invariant over ROWS
     // and two tables' rows are different things — a rule written about nodes must not
-    // run on a link edit and see columns it has never heard of. A mark's constraint
-    // takes that mark's table; one declared on `spec.constraints` takes the primary
-    // table unless it names another (`constraint.table`, a role or a name). On a
-    // single-table chart every constraint lands in the one bucket, exactly as before.
+    // run on a link edit and see columns it has never heard of. A constraint takes
+    // the primary table unless it names another (`constraint.table`, a role or a
+    // name). On a single-table chart every constraint lands in the one bucket.
     /** @type {Record<string, import('../types').Constraint[]>} */
     const constraintsByTable = {};
     /** @param {import('../types').Constraint} c @param {string} table */
@@ -795,9 +800,7 @@ export function Elicit(spec) {
         promoteConstraint(c, (named && (schemaSpec.byRole[named] || (schemaSpec.tables[named] && named)))
             || schemaSpec.primary);
     }
-    for (const f of features) {
-        for (const c of f.constraints || []) promoteConstraint(c, f.table);
-    }
+
     /** @param {string} table @returns {import('../types').Constraint[]} */
     const constraintsIn = (table) => constraintsByTable[table] || [];
     // The primary table's invariants, for the guide layer (a guide draws a rule about

@@ -560,19 +560,24 @@ export function rawChannel(channels, name, datum, fallback, index, data) {
 
 /**
  * Options every mark accepts, whatever it draws.
+ *
+ * `constraints` is deliberately NOT here. A constraint is a DATASET invariant: it
+ * is promoted to the whole dataset and gates every edit from every mark, so a
+ * constraint written inside one mark reads as scoped to that mark and is not.
+ * It belongs on the spec. See MISTAKEN_OPTIONS.
  * @type {string[]}
  */
-const UNIVERSAL_OPTIONS = ['channels', 'id', 'edits', 'constraints', 'table'];
+const UNIVERSAL_OPTIONS = ['channels', 'id', 'edits', 'table'];
 
 /**
  * The options every mark must pass through VERBATIM, gathered in one place.
  *
  * Spread this first in a factory's returned object; any key the mark states
  * itself afterwards wins (`bar` renames its own to `edits: markEdits`). One
- * helper because "a mark factory that accepts `edits`/`constraints` and drops
- * them" is a bug this codebase has already shipped once — `rule` silently
- * dropped all four for a long time, which made a draggable whisker impossible.
- * Four names in one place cannot drift the way four names in 29 places did.
+ * helper because "a mark factory that accepts `edits` and drops them" is a bug this
+ * codebase has already shipped once — `rule` silently dropped every one of these
+ * for a long time, which made a draggable whisker impossible. Three names in one
+ * place cannot drift the way three names in 29 places did.
  *
  * ── WHICH TABLE A MARK DRAWS ───────────────────────────────────────────────
  * A mark is a view over exactly ONE table of the dataset. `table:` names it.
@@ -586,7 +591,7 @@ const UNIVERSAL_OPTIONS = ['channels', 'id', 'edits', 'constraints', 'table'];
  * indirection is what lets a schema call its tables `claims`/`supports` and
  * need no `table:` written anywhere.
  * @param {any} opts the result of normalizeMarkOptions
- * @returns {{ id: any, edits: any, constraints: any, table: any }}
+ * @returns {{ id: any, edits: any, table: any }}
  */
 export function markCommon(opts) {
     return {
@@ -594,9 +599,6 @@ export function markCommon(opts) {
         // Mark-level edits (joint / arbitrary); channel-level edits live in
         // channels[ch].edit. Both are gathered by the engine via collectEdits.
         edits: opts.edits,
-        // Data invariants, promoted by the engine into the dataset's constraint
-        // set and run on every edit commit, from any mark (see elicit.js).
-        constraints: opts.constraints,
         table: opts.table,
     };
 }
@@ -620,6 +622,9 @@ const MISTAKEN_OPTIONS = {
     edit: 'attach an edit to a channel — y: { field: "…", edit: move() } — or pass several with `edits: [...]`.',
     r: 'the radius channel is `size` (px), on every mark.',
     handleRadius: "a sub-element's radius is `handleSize`.",
+    constraints: 'a constraint is a DATASET invariant — it gates every edit from every '
+        + 'mark, whichever one declared it — so writing it inside a mark says something '
+        + 'the engine does not mean. Put it on the Elicit spec: constraints: [...].',
     value: 'a constant belongs on a channel: channels.<name> = { value: … } for visual space, { datum: … } for data space.',
     field: 'a field belongs on a channel: channels.<name> = { field: "…" }.',
     ...positionalCorrections(),
@@ -764,7 +769,9 @@ export const AXIS_CHROME = ['stroke', 'strokeWidth', 'fill', 'fontSize'];
  * (core/elicit.js), so an element needs no `tableRole` to honour it.
  * @type {string[]}
  */
-const UNIVERSAL_ELEMENT_OPTIONS = ['id', 'edit', 'edits', 'constraints', 'field', 'table'];
+// `constraints` is absent for the same reason it is absent from a MARK's
+// universal options, and doubly so here: an element draws a SCALE, not rows.
+const UNIVERSAL_ELEMENT_OPTIONS = ['id', 'edit', 'edits', 'field', 'table'];
 
 /**
  * Validate a CHART ELEMENT's options. The counterpart to normalizeMarkOptions for

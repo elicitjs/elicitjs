@@ -141,7 +141,7 @@ function buildText(options, forcedAxis) {
     const opts = normalizeMarkOptions(options, {
         mark: 'text', allow: ['format', 'wrap', 'lineHeight'],
     });
-    const { channels = {}, id, edits, constraints, format: formatOpt, wrap, lineHeight } = opts;
+    const { channels = {}, id, edits, format: formatOpt, wrap, lineHeight } = opts;
     const format = resolveFormat(formatOpt);
 
     return {

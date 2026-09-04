@@ -19,7 +19,7 @@ import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, theme
 // Unlike one-node-per-datum marks, `build` emits (per series) one non-interactive
 // `path` connector drawn UNDER the handles, plus one indexed circle HANDLE per
 // datum. Handles are ordinary marks, so drag / nearest-pick / sweep / create /
-// remove / constraints / style all reuse the shared machinery. Handles are always
+// remove / style all reuse the shared machinery. Handles are always
 // emitted (for hit-testing) and merely hidden when `handles: false`.
 //
 //   x: domain, y: value  -> lineY (time series)      x: value, y: domain -> lineX
@@ -43,7 +43,6 @@ function buildLine(options, forcedValueAxis, defaultOrder = 'domain') {
         channels = {},
         id,
         edits,
-        constraints,
         curve = 'linear',
         handles = true,
         handleSize,

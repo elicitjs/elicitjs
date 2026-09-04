@@ -467,7 +467,11 @@ edit couples to it (a rename relabels rows, a cut splices one in), so those rows
 the invariants like any other proposal. Skipping them let a `count({ max })` be ignored by
 exactly the edits that change how many categories exist.
 
-**Constraints are pure data invariants, scoped to the dataset.** A constraint (`defineConstraint` in `src/constraints/define.js`) receives `{ data, oldData, activeIndex, active, field, value, domain }` — never pixels, never a scale used as geometry. It may *gate* a proposal (`false`) or *repair* it (return the corrected rows). The canonical home is `spec.constraints`; a mark's `constraints` is sugar the engine **promotes** into one dataset-wide set (`datasetConstraints`, deduped by identity), so an invariant holds for every edit from every mark. Don't scope a constraint back to the feature that declared it — that would let a glyph's cap drag bypass a rule declared on its dot. If a constraint's *guide* only makes sense for certain mark shapes (e.g. `maintainSum`'s cap-tick needs a band axis), guard the guide function, not the constraint itself.
+**Constraints are pure data invariants, and `spec.constraints` is the ONLY place they are declared.** A constraint (`constraints.custom`, `defineConstraint` in `src/constraints/define.js`) receives `{ data, oldData, activeIndex, active, field, value, domain }` — never pixels, never a scale used as geometry. It may *gate* a proposal (`false`) or *repair* it (return the corrected rows). It holds for every edit from every mark over those rows.
+
+A mark used to accept `constraints` as sugar, which the engine promoted to the dataset. That option is GONE, and its removal is the point: the sugar was a lie the spec could not see through. Written inside a mark it *reads* as scoped to that mark and never was, so `dotStack({ constraints: [count({ max: 20 })] })` beside a second mark silently capped the whole dataset, and a rule on one part of a glyph gated a drag on every other part with nothing in the spec saying so. A rule about the DATA is not a property of any one view of it. The correction lives in `MISTAKEN_OPTIONS` (`plot/mark.js`), so writing one on a mark now says exactly that. Chart elements never accepted one either — an element draws a SCALE, not rows.
+
+Don't scope a constraint to a feature, and don't re-add the promotion path. If a constraint's *guide* only makes sense for certain mark shapes (e.g. `maintainSum`'s cap-tick needs a band axis), guard the guide function, not the constraint itself.
 
 **A scoped edit's `type` IS its dotted path, and drivers claim by type.**
 `edit.line.draw()` <-> `{ "type": "line.draw" }`. This was documented in
@@ -668,7 +672,8 @@ aimed at the row before it.
   what lets the JSON Schema be generated from a key set that is actually known.
 - A second interaction/dispatch system alongside `edit`.
 - A `data` or `onChange` option on a mark, or a per-feature data store keyed by feature id.
-- Constraints scoped to the feature that declared them rather than to the dataset.
+- Constraints scoped to the feature that declared them — or a `constraints` option
+  on a mark or element at all, promoted or not. `spec.constraints` is the one home.
 - Direct `scale(value)` calls in mark `build()` instead of `encodeChannel`.
 - A mark without style/encoding support "for the quick case" (this is how `dot` diverged from `point` before being folded back in).
 - Engine code that branches on a specific `pick`/edit `type` outside the driver registry.

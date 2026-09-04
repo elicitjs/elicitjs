@@ -14,7 +14,7 @@
 // categorical bands) draw ONE RING PER ROW — small-multiple chrome around each
 // needle. That is the one ChartElement that carries a channel map, and only for
 // placement / band colour — not for encoding elicited columns the way a data
-// mark does. Prefer `elicit.elements.axisRadial` (also aliased on `plot.*`).
+// mark does. It is `elicit.elements.axisRadial`, and only there.
 
 import { positionOnScale, isDiscrete } from '../core/scales.js';
 import { DEFAULT_PALETTE } from '../core/encoding.js';
@@ -61,7 +61,6 @@ export function axisRadial(options = {}) {
         channels = {},
         id,
         edits,
-        constraints,
         channel = 'angle',
         radius: radiusOpt,
         innerRadius = 0,
@@ -95,7 +94,6 @@ export function axisRadial(options = {}) {
         // Placement / band-colour only — see header. Not a data-mark channel map.
         channels,
         edits,
-        constraints,
         isAxis: true,
         views: 'scale',
         layer: 'background',

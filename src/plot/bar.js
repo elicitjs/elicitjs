@@ -103,7 +103,6 @@ function buildBar(options, forcedOrientation) {
         channels = {},
         id,
         edits,
-        constraints,
         orientation: orientationOption,
         stack,
         // Affordance: a dot on each interior boundary between two stacked segments

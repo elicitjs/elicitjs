@@ -70,7 +70,6 @@ function buildArea(options, forcedValueAxis) {
         channels: declaredChannels = {},
         id,
         edits: rawEdits,
-        constraints,
         curve = 'linear',
         handles = true,
         handleSize,

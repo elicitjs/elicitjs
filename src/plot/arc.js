@@ -67,7 +67,6 @@ export function arc(options = {}) {
         channels = {},
         id,
         edits,
-        constraints,
         outerRadius: outerOpt,
         innerRadius = 0,
         padAngle = 0,

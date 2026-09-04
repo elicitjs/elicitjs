@@ -44,7 +44,7 @@ import { scaleKey } from '../core/scales.js';
 
 /**
  * `legend`'s own option vocabulary, on top of the universal chart-element options
- * (id / edit / edits / constraints / field). Keep in sync with the destructure in
+ * (id / edit / edits / field). Keep in sync with the destructure in
  * `legend` below — a wrong entry is a false positive, which is worse than none.
  * @type {string[]}
  */
@@ -207,9 +207,6 @@ export function legend(options = {}) {
         field,
         table,
         id,
-        // Forwarded, not dropped — the engine promotes a feature's constraints into
-        // the one dataset-wide set.
-        constraints,
     } = options;
 
     const orient = orientOpt || (anchor === 'left' || anchor === 'right' ? 'vertical' : 'horizontal');
@@ -270,7 +267,6 @@ export function legend(options = {}) {
     return {
         id,
         markName: 'legend',
-        constraints,
         isLegend: true,
         views: 'scale',
         channel,

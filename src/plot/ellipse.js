@@ -42,7 +42,7 @@ import {
  */
 export function ellipse(options = {}) {
     const opts = normalizeMarkOptions(options, { mark: 'ellipse', allow: [] });
-    const { channels = {}, id, edits, constraints } = opts;
+    const { channels = {}, id, edits } = opts;
 
     return {
         ...markCommon(opts),

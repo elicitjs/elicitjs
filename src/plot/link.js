@@ -365,7 +365,7 @@ export function link(options = {}) {
         ],
     });
     const {
-        channels = {}, id, edits, constraints, table,
+        channels = {}, id, edits, table,
         key, curve = 'line', curvature = 'auto', spread = AUTO_SPREAD,
         arrow = 'auto', arrowSize = 6, loopRadius = LOOP_RADIUS,
         inset = 0, sourceInset, targetInset, format: formatOpt,

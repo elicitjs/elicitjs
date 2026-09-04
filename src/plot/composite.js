@@ -14,7 +14,6 @@
 //
 //   composite({
 //     id: 'errorbar',
-//     constraints: [centerWithinEnds],
 //     parts: [
 //       ruleX({ channels: { x: {field:'g'}, y1: {field:'lo'}, y2: {field:'hi'} } }),
 //       point({ channels: { x: {field:'g'}, y:  {field:'mean', edit: move()} } }),
@@ -362,7 +361,6 @@ export function composite(options = {}) {
     const {
         id,
         parts = [],
-        constraints,
         edits,
         // Which TABLE this glyph is a view over. A composite DESUGARS into separate
         // features that each resolve their own table, so it has to be stamped onto
@@ -491,13 +489,6 @@ export function composite(options = {}) {
             // the whole composite is one view over one table.
             table: part.table || table,
             discreteScale: part.discreteScale || discreteScale,
-            // Composite-level invariants ride on the first part in plain mode (in box
-            // mode the box feature carries them). Placement is immaterial — the engine
-            // promotes every feature's `constraints` into one dataset-wide set — but
-            // attaching them once keeps the set clean before it dedupes.
-            constraints: !boxed && i === 0
-                ? [...(constraints || []), ...(part.constraints || [])]
-                : part.constraints,
             // Composite-level edits land on the LAST part, the same rule an inherited
             // channel edit follows: one dataset, so a whole-dataset edit declared on
             // every part would fire once per part. In box mode they go to the box
@@ -541,7 +532,6 @@ export function composite(options = {}) {
         // every gesture aimed at the row before it.
         glyph,
         channels: boxChannels,
-        constraints,
         edits,
         table,
         discreteScale,

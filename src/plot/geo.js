@@ -67,7 +67,6 @@ export function geoBasemap(options = {}) {
         channels = {},
         id,
         edits,
-        constraints,
         geojson,
         features: geoFeatures,
         stroke = '#94a3b8',
@@ -158,7 +157,6 @@ export function geoTile(options = {}) {
         channels = {},
         id,
         edits,
-        constraints,
         url = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
         subdomains = [],
         tileSize = 256,
@@ -239,7 +237,7 @@ export function geoTile(options = {}) {
  */
 export function geoPoint(options = {}) {
     const opts = normalizeMarkOptions(options, { mark: 'geoPoint', allow: ['shape'] });
-    const { channels = {}, id, edits, constraints } = opts;
+    const { channels = {}, id, edits } = opts;
     const lonKey = fieldOf(channels, 'lon') || 'lon';
     const latKey = fieldOf(channels, 'lat') || 'lat';
 
@@ -292,7 +290,7 @@ export function geoPoint(options = {}) {
  */
 export function geoPolygon(options = {}) {
     const opts = normalizeMarkOptions(options, { mark: 'geoPolygon', allow: [] });
-    const { channels = {}, id, edits, constraints } = opts;
+    const { channels = {}, id, edits } = opts;
     const geomKey = fieldOf(channels, 'geometry') || 'geometry';
 
     return {
@@ -375,7 +373,6 @@ export function geoLine(options = {}) {
         channels = {},
         id,
         edits,
-        constraints,
         curve = 'linear',
         handles = true,
         handleSize,
@@ -572,7 +569,7 @@ export function geoLine(options = {}) {
  */
 export function geoText(options = {}) {
     const opts = normalizeMarkOptions(options, { mark: 'geoText', allow: ['format'] });
-    const { channels = {}, id, edits, constraints, format: formatOpt } = opts;
+    const { channels = {}, id, edits, format: formatOpt } = opts;
     const lonKey = fieldOf(channels, 'lon') || 'lon';
     const latKey = fieldOf(channels, 'lat') || 'lat';
     const format = resolveFormat(formatOpt);
@@ -612,7 +609,7 @@ export function geoText(options = {}) {
  */
 export function geoRect(options = {}) {
     const opts = normalizeMarkOptions(options, { mark: 'geoRect', allow: [] });
-    const { channels = {}, id, edits, constraints } = opts;
+    const { channels = {}, id, edits } = opts;
     const westKey = fieldOf(channels, 'west') || 'west';
     const southKey = fieldOf(channels, 'south') || 'south';
     const eastKey = fieldOf(channels, 'east') || 'east';

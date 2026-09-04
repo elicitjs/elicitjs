@@ -123,7 +123,7 @@ const G = {
  */
 export function face(options = {}) {
     const opts = normalizeMarkOptions(options, { mark: 'face', allow: ['ink'] });
-    const { id, edits, constraints, table, ink = G.ink } = opts;
+    const { id, edits, table, ink = G.ink } = opts;
 
     /** @type {Record<string, any>} */
     const channels = { ...opts.channels };
@@ -215,7 +215,6 @@ export function face(options = {}) {
 
     return composite({
         id: glyph,
-        constraints,
         edits,
         table,
         // The author's placement channels define the face's box — verbatim, edits

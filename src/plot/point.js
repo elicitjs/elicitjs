@@ -34,7 +34,7 @@ import { encodeChannel, encodeAngle, resolveStyle, resolveSymbol, symbolNode, no
  */
 export function point(options = {}) {
     const opts = normalizeMarkOptions(options, { mark: 'point', allow: ['shape'] });
-    const { channels = {}, id, edits, constraints, shape = 'circle' } = opts;
+    const { channels = {}, id, edits, shape = 'circle' } = opts;
 
     return {
         ...markCommon(opts),

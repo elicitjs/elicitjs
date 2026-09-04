@@ -705,7 +705,6 @@ export interface LegendOptions {
   handleSize?: number;
   handleColor?: string;
   id?: string;
-  constraints?: Constraint[];
 }
 
 // The standard style channels every mark understands. A field drives them
@@ -793,11 +792,9 @@ export interface MarkOptions {
   format?: string | ((v: any) => string);
   id?: string;
   edits?: any[];
-  // Sugar. Constraints are DATASET invariants; declaring them on a mark is a
-  // convenience, and the engine promotes them into the chart-wide set (so they
-  // gate every edit, from every mark, over the same rows). ElicitSpec.constraints
-  // is the canonical home.
-  constraints?: Constraint[];
+  // No `constraints` here on purpose: a constraint is a DATASET invariant and gates
+  // every edit from every mark, so one written inside a mark reads as scoped to that
+  // mark and is not. `ElicitSpec.constraints` is the only home.
   [key: string]: any;
 }
 
@@ -1048,8 +1045,6 @@ export interface CompositeOptions {
   // Stamped onto any part that doesn't declare its own (a glyph usually sits in a
   // band slot). See plot/composite.js.
   discreteScale?: 'band' | 'point';
-  // Composite-level data invariants; promoted to the dataset like any mark's.
-  constraints?: Constraint[];
   // Mark-level edits. Ride the last part in plain mode; in box mode they ride the
   // box, whose channel map holds the glyph's placement columns.
   edits?: Edit[];
@@ -1132,7 +1127,7 @@ export type GuideOption<T> = T | ((ctx: any) => T);
  */
 /**
  * A CHART ELEMENT — `axis`, `grid`, `legend`, `axisRadial`. Public as
- * `elicit.elements.*` (also aliased on `plot.*`). Structurally a feature like any
+ * `elicit.elements.*`, and only there. Structurally a feature like any
  * other (the engine builds and draws it the same way), but it answers a different
  * question, and the differences are the contract:
  *
@@ -1180,7 +1175,6 @@ export interface ChartElementOptions {
    */
   edit?: Edit | Edit[] | Edit[][];
   edits?: Edit[];
-  constraints?: Constraint[];
   id?: string;
   /**
    * The COLUMN an edit on this element writes. An element has no channel map, so
@@ -1253,8 +1247,6 @@ export interface ChartElement {
   markName?: string;
   /** The element's edits (edit.axis.*, edit.legend.*), already flattened to a list. */
   edits?: Edit[];
-  /** Dataset invariants; promoted to the chart-wide set like a mark's. */
-  constraints?: Constraint[];
   /**
    * The COLUMN an edit on this element writes, when the element pins one. Read by
    * `resolveChannels` ahead of the emergent `scale.fields[0]`.
@@ -1339,8 +1331,6 @@ export interface Mark {
   id?: string;
   /** Mark-level (joint / arbitrary) edits; channel-level ones live on the channel. */
   edits?: Edit[];
-  /** Data invariants; the engine PROMOTES these into the dataset-wide set. */
-  constraints?: Constraint[];
 
   /**
    * What this mark needs from a DISCRETE axis: 'band' (bar/tick — an interval) or
@@ -1864,7 +1854,7 @@ export interface ElicitSpec {
   marks?: any[];
   // Chart elements (`elicit.elements.*` — axis / grid / legend / axisRadial).
   // Concatenated with `marks` into the feature list; same factories also work
-  // inside `marks` (and stay aliased on `plot.*`). Prefer this key when the
+  // inside `marks`. Prefer this key when the
   // intent is scale chrome rather than a data view.
   elements?: ChartElement[];
   // THE dataset. A chart elicits exactly one — even a slider elicits a one-row
@@ -1897,8 +1887,8 @@ export interface ElicitSpec {
   lock?: LockSpec;
   // The dataset's invariants. They gate and REPAIR every edit, whichever mark fired
   // it: a rejected proposal is dropped; a returned array replaces it, and the marks
-  // re-derive from the repaired rows on the next render. A mark's own `constraints`
-  // are promoted into this set (see MarkOptions.constraints).
+  // re-derive from the repaired rows on the next render. Declared in exactly one
+  // place: `ElicitSpec.constraints`.
   constraints?: Constraint[];
   // Called with the committed dataset after each edit, shaped like `data` itself
   // (a bare array for a single-table chart). Hover previews never fire it.

@@ -3,7 +3,7 @@
 //
 // An axis is scale chrome, not a data mark: `views: 'scale'`, singular `channel`,
 // CHROME paint options (not desugared channels), domain-targeting edits
-// (`edit.axis.*`). Prefer `elicit.elements.axisX` (also aliased on `plot.*`).
+// (`edit.axis.*`). They are `elicit.elements.*`, and only there.
 //
 // Two ways to use them:
 //   1. EXPLICITLY:  elements: [ elements.axisX({ ticks: 5 }), elements.gridY() ]
@@ -22,7 +22,7 @@ import { warnUnknownElementOptions, resolveHandles, elementEdits } from './mark.
 
 /**
  * `axis`'s own option vocabulary, on top of the universal chart-element options
- * (id / edit / edits / constraints / field). Exported so core/axes.js can hand a
+ * (id / edit / edits / field). Exported so core/axes.js can hand a
  * grid only the options a grid reads, instead of forwarding the whole axis config.
  * Keep in sync with the destructure in `axis` below.
  * @type {string[]}
@@ -167,9 +167,6 @@ export function axis(options = {}) {
         handleColor: handleColorOpt,
         handleSize: handleSizeOpt,
         id,
-        // Forwarded, not dropped — the engine promotes a feature's constraints into
-        // the one dataset-wide set.
-        constraints
     } = options;
 
     const isX = channel === 'x';
@@ -179,7 +176,6 @@ export function axis(options = {}) {
     return {
         id,
         markName: 'axis',
-        constraints,
         isAxis: true,
         // A GUIDE: it views the SCALE, not columns of the dataset. See types.d.ts's
         // Mark.views — the engine and resolveChannels branch on this, not on which
@@ -358,10 +354,6 @@ export function grid(options = {}) {
         stroke: strokeOpt,
         strokeWidth: strokeWidthOpt,
         id,
-        // A grid draws a scale, not rows — but it accepts `constraints` like any
-        // other feature and the engine promotes them to the dataset's set, so
-        // forward rather than silently drop (axis/grid/legend all used to drop it).
-        constraints
     } = options;
 
     const isX = channel === 'x';
@@ -369,7 +361,6 @@ export function grid(options = {}) {
     return {
         id,
         markName: 'grid',
-        constraints,
         isGrid: true,
         views: 'scale',
         channel,

@@ -208,7 +208,6 @@ export function sticker(options = {}) {
         rect({
             id: `${name}/body`,
             ...(common.edits ? { edits: common.edits } : {}),
-            ...(common.constraints ? { constraints: common.constraints } : {}),
             ...(common.table ? { table: common.table } : {}),
             channels: bodyChannels,
         }),

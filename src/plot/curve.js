@@ -80,7 +80,7 @@ function rotatePoint(p, pivot, deg) {
  */
 function buildCurve(options, forcedSpanAxis) {
     const opts = normalizeMarkOptions(options, { mark: 'curve', allow: ['length'] });
-    const { channels = {}, id, edits, constraints, length } = opts;
+    const { channels = {}, id, edits, length } = opts;
     const { xKey, yKey } = positionalKeys(channels);
 
     return {

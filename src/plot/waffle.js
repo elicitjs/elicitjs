@@ -74,7 +74,6 @@ function buildWaffle(options, forcedOrientation) {
         channels = {},
         id,
         edits,
-        constraints,
         orientation: orientationOption,
         unit = 1,
         multiple: multipleOption,

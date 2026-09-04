@@ -36,7 +36,6 @@ export function needle(options = {}) {
         channels = {},
         id,
         edits,
-        constraints,
         length: lengthOpt,
         // The hub is this needle's handle (the pivot you grab), so it takes the
         // library-wide sub-element radius name — `handleSize`, as on line/area/
