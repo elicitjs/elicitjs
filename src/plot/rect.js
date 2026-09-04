@@ -101,6 +101,12 @@ function buildRect(options, forcedValueAxis) {
         mark: 'rect', allow: ['width', 'height', 'rx'],
     });
     const { channels = {}, id, edits, constraints, width: widthOpt, height: heightOpt, rx: rxOpt } = opts;
+    // `width` / `height` / `rx` are CHANNELS (resolved through encodeChannel below),
+    // and this is their constant SHORTHAND — the same relationship `fill: 'red'` has
+    // to `fill: { value: 'red' }`. They are listed in `allow` rather than in the
+    // shared SHORTHANDS table because a width means nothing on a point or a line, so
+    // desugaring them globally would let every mark accept them in silence.
+    //
     // A top-level constant is visual space, exactly like a `{ value }` channel —
     // and it must not become a `{ field }`, whose bucket scale would default to a
     // [0, 1] range and draw a one-pixel box.

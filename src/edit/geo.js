@@ -34,7 +34,7 @@ function lonLatFields(markChannels) {
 export function move(options = {}) {
     const { ...rest } = options;
     return makeEdit({
-        type: 'move',
+        type: 'geo.move',
         gesture: 'drag',
         channels: null,
         pick: 'direct',
@@ -58,7 +58,7 @@ export function move(options = {}) {
 export function create(options = {}) {
     const { defaults = {}, ...rest } = options;
     return makeEdit({
-        type: 'create',
+        type: 'geo.create',
         gesture: 'click',
         channels: null,
         pick: 'plane',
@@ -91,7 +91,7 @@ export function create(options = {}) {
 export function dragVertex(options = {}) {
     const { ...rest } = options;
     return makeEdit({
-        type: 'dragVertex',
+        type: 'geo.dragVertex',
         gesture: 'drag',
         channels: null,
         pick: 'direct',
@@ -133,7 +133,7 @@ export function dragVertex(options = {}) {
 export function removeVertex(options = {}) {
     const { min = 2, ...rest } = options;
     return makeEdit({
-        type: 'removeVertex',
+        type: 'geo.removeVertex',
         gesture: 'click',
         channels: null,
         pick: 'direct',
@@ -171,7 +171,7 @@ export function draw(options = {}) {
         ...rest
     } = options;
     return makeEdit({
-        type: 'draw',
+        type: 'geo.draw',
         gesture: 'drag',
         channels: null,
         pick: 'draw',
@@ -253,7 +253,7 @@ export function brush(options = {}) {
     // `move` is re-stated so its default lands even when the caller omits it.
     const { move = true, ...rest } = claimPick(options, 'geo.brush', 'geoBrush');
     return makeEdit({
-        type: 'brush',
+        type: 'geo.brush',
         gesture: 'drag',
         channels: null,
         scope: 'geo',
@@ -350,7 +350,7 @@ export function createRect(options = {}) {
         ...rest
     } = options;
     return makeEdit({
-        type: 'createRect',
+        type: 'geo.createRect',
         gesture: 'click',
         channels: null,
         pick: 'plane',

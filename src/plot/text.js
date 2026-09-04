@@ -33,7 +33,7 @@
 //   textX — value on x, y parked at the vertical centre (a 1-D label along x)
 //   textY — value on y, x parked at the horizontal centre (a 1-D label along y)
 
-import { encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions, callChannelFn, markDefaults, positionalKeys, markCommon, themeOf} from './mark.js';
+import { encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions, rawChannel, markDefaults, positionalKeys, markCommon, themeOf} from './mark.js';
 import { measureBlock } from '../core/measure.js';
 import { warn } from '../core/dev.js';
 import { resolveFormat } from '../format.js';
@@ -52,48 +52,6 @@ function dominantBaselineOf(anchor) {
     }
 }
 
-/**
- * Read a non-positional channel raw: a field's value, a `{ value }` constant, else
- * the fallback. No scale — these channels (text/fontSize/textAnchor/…) are literals.
- * A derived channel (`{ fn }`, e.g. `text: d => …`) is computed per datum.
- *
- * Exported because it is the general "this channel has no scale" reader, not a
- * text-mark detail: `link` resolves its per-row `curve` and `arrow` through it, so
- * a `kind` column can drive a connector's shape with no new scale machinery and no
- * second way to read a literal channel.
- * @param {Record<string, any>} channels
- * @param {string} name
- * @param {any} datum
- * @param {any} fallback
- * @param {number} [index] row index, passed to a derived channel's fn
- * @param {import('../types').Datum[]} [data] the dataset, passed to a derived fn
- * @returns {any}
- */
-export function rawChannel(channels, name, datum, fallback, index, data) {
-    const spec = channels[name];
-    if (!spec) return fallback;
-    if (spec.field != null) {
-        const v = datum[spec.field];
-        return v == null ? fallback : v;
-    }
-    // Derived channel — fn(d, i, data) computed in visual space (no scale here anyway).
-    if (typeof spec.fn === 'function') {
-        return callChannelFn(spec, name, datum, index, data, fallback);
-    }
-    if (spec.value !== undefined) return spec.value;
-    // `{ datum }` means "a constant in DATA space — put it through the scale". These
-    // channels have no scale (a label's string, its font size, its dx nudge are the
-    // output already), so `{ datum }` and `{ value }` would be two spellings of one
-    // thing. Say so rather than silently accepting either.
-    if (spec.datum !== undefined) {
-        warn(
-            `rawdatum:${name}`,
-            `channel "${name}" on a text mark has no scale — its value IS the output — so ` +
-            `{ datum: … } has nothing to go through. Use { value: … } for a constant.`
-        );
-    }
-    return fallback;
-}
 
 /**
  * A text FeatureNode at an ALREADY-RESOLVED pixel position. Everything about a
@@ -190,6 +148,11 @@ function buildText(options, forcedAxis) {
         ...markCommon(opts),
         markName: 'text',
         channels,
+        // Channels this mark resolves ITSELF, with no scale — everything it reads
+        // through `rawChannel`. It declared NONE of them, so binding a field to any
+        // of them (`text: { field: 'label' }`) made the resolver build a global scale
+        // that nothing reads. See `link`, which has the same list for the same reason.
+        rawChannels: ['text', 'fontSize', 'textAnchor', 'lineAnchor', 'dx', 'dy'],
         // A label sits AT a category (a tick, no interval) when an axis is discrete.
         discreteScale: 'point',
         ...positionalKeys(channels),

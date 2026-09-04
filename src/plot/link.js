@@ -55,8 +55,8 @@
 // `claimEdge` (the trend/area pattern), never by a hand-written `when`.
 
 import {
-    encodeChannel, resolveStyle, normalizeMarkOptions, themeOf, markDefaults, resolveHandles, markCommon,} from './mark.js';
-import { textNodeAt, rawChannel } from './text.js';
+    encodeChannel, resolveStyle, normalizeMarkOptions, themeOf, markDefaults, resolveHandles, markCommon, rawChannel,} from './mark.js';
+import { textNodeAt } from './text.js';
 import { measureBlock } from '../core/measure.js';
 import { LINK_SHAPES, LINK_CURVES, LINK_SIDES } from './linkGeometry.js';
 import { HIT_WIDTH } from './hitpath.js';
@@ -355,6 +355,13 @@ export function link(options = {}) {
             'inset', 'sourceInset', 'targetInset', 'loopRadius', 'table', 'format',
             'labelBackground', 'labelPadding', 'labelRadius', 'labelOpacity',
             'nodeWidth', 'nodeHeight', 'cornerRadius', 'sourceSide', 'targetSide',
+            // `link` draws endpoint handles through the shared contract
+            // (resolveHandles, below), so it takes the shared vocabulary. These
+            // were missing from this list for a long time: the keys still reached
+            // the mark through `...rest`, so they WORKED while `warnUnknownOptions`
+            // reported them as options the mark does not read — the one place the
+            // diagnostics contradicted the behaviour.
+            'handles', 'handleSize', 'handleColor',
         ],
     });
     const {
@@ -390,7 +397,13 @@ export function link(options = {}) {
         // it resolves a mark's channels against the mark's own table — and a side is
         // a literal edge name. Declaring them keeps a well-declared `nodeWidth` from
         // being reported as an undeclared field.
-        rawChannels: ['nodeWidth', 'nodeHeight', 'sourceSide', 'targetSide'],
+        // Every channel `link` reads through `rawChannel` belongs here — the list
+        // was four of seven, so `curve`, `arrow` and the label's `fontSize`
+        // resolved a global scale nothing ever reads.
+        rawChannels: [
+            'nodeWidth', 'nodeHeight', 'sourceSide', 'targetSide',
+            'curve', 'arrow', 'fontSize',
+        ],
         // A link spans between two positions; it has no opinion about the discrete
         // scale of an axis it crosses (same reasoning as rule).
         discreteScale: undefined,

@@ -1,6 +1,6 @@
 // @ts-check
 import { isBand } from '../core/scales.js';
-import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon} from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel} from './mark.js';
 
 // line: a connected-path mark over an ordered set of points. It is deliberately
 // GENERAL — a you-draw-it curve, a multi-series line chart, a connected scatter
@@ -60,6 +60,10 @@ function buildLine(options, forcedValueAxis, defaultOrder = 'domain') {
         ...markCommon(opts),
         markName: 'line',
         channels,
+        // `curve` is read raw (no scale), so it must be declared — same contract as
+        // `link`, which resolves its own per-row `curve` the same way. It was a plain
+        // option here and a raw channel there: one name, two tiers.
+        rawChannels: ['curve'],
         // A line's domain axis is continuous (a point per datum, no band width).
         discreteScale: 'point',
         xKey,
@@ -126,10 +130,15 @@ function buildLine(options, forcedValueAxis, defaultOrder = 'domain') {
                 if (group.length < 2) continue; // nothing to connect
                 const pts = orderPoints(group, order, domainAxis, seriesField);
                 const style = resolveStyle(scales, channels, group[0].d, lineDefaults, group[0].i, currentData);
+                // One path per SERIES, so a channel-bound curve resolves once per
+                // series against that series' first row — the same rule a line's
+                // paint channels already follow (see ChannelSpec.fn in types.d.ts).
+                const seriesCurve = String(
+                    rawChannel(channels, 'curve', group[0].d, curve, group[0].i, currentData));
                 nodes.push({
                     type: 'path',
                     points: pts.map(p => /** @type {[number, number]} */([p.cx, p.cy])),
-                    curve,
+                    curve: seriesCurve,
                     ...style,
                     // A stroked path reads as a line, never a filled blob.
                     fill: 'none',

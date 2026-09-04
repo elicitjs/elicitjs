@@ -55,7 +55,7 @@ export function scale(options = {}) {
     const { field, mode = 'rescale', ...rest } = options;
     const MIN_PX = 6; // guard: never divide by a near-zero anchor→pointer distance
     return makeEdit({
-        type: 'axisScale',
+        type: 'axis.scale',
         gesture: 'drag',
         pick: 'axisDrag',
         scope: 'axis',

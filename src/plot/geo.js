@@ -12,7 +12,7 @@
 //   geoLine     — coordinate lists / MultiLineString paths + vertex handles
 //   geoRect     — geographic AABB (west/south/east/north)
 
-import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, resolveHandles, markCommon} from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, resolveHandles, markCommon, rawChannel} from './mark.js';
 import { textNodeAt } from './text.js';
 import { resolveFormat } from '../format.js';
 import { warn } from '../core/dev.js';
@@ -399,6 +399,8 @@ export function geoLine(options = {}) {
             ...markCommon(opts),
             markName: 'geoLine',
             channels,
+            // Read raw (no scale), like `line`'s / `area`'s / `link`'s.
+            rawChannels: ['curve'],
             supportsGeo: true,
             lonKey,
             latKey,
@@ -441,10 +443,14 @@ export function geoLine(options = {}) {
                         stroke: '#1d4ed8',
                         strokeWidth: 2,
                     });
+                    // One trail per SERIES, so a channel-bound curve resolves once
+                    // per series against its first row — as `line` and `area` do.
+                    const seriesCurve = String(
+                        rawChannel(channels, 'curve', group[0].d, curve, group[0].i, currentData));
                     nodes.push({
                         type: 'path',
                         points: pts.map((p) => /** @type {[number, number]} */ ([p.x, p.y])),
-                        curve,
+                        curve: seriesCurve,
                         ...style,
                         // A stroked trail, never a filled blob. No pointerEvents set
                         // here: with no direct-pick edit the engine silences the mark,

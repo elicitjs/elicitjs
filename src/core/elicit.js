@@ -133,8 +133,8 @@ function warnScopeMismatch(feature, edits) {
         if (!cap) continue;
         if (cap.test ? cap.test(feature) : !!feature[/** @type {string} */ (cap.flag)]) continue;
         warn(
-            `${markLabel(feature)}:${e.scope}.${e.type}`,
-            `edit.${e.scope}.${e.type}() is attached to a mark without ${e.scope} support ` +
+            `${markLabel(feature)}:${e.type}`,
+            `edit.${e.type}() is attached to a mark without ${e.scope} support ` +
             `(mark ${markLabel(feature)}). ${e.scope}-scoped edits expect ${cap.expects}; it may not behave.`
         );
     }
@@ -256,10 +256,10 @@ function warnUnreachableLegendRow(features, editsOf, rowsOf) {
 // distinguishes the two.
 /** @param {any} feature @param {import('../types').Edit[]} edits */
 function warnConnectConflict(feature, edits) {
-    const connects = edits.filter(e => e.type === 'connect' && !e.when);
+    const connects = edits.filter(e => e.type === 'network.connect' && !e.when);
     if (!connects.length) return;
     const rivals = edits.filter(e =>
-        e.type !== 'connect' && e.pick === 'direct' && e.gesture === 'drag' && !e.when);
+        e.type !== 'network.connect' && e.pick === 'direct' && e.gesture === 'drag' && !e.when);
     if (!rivals.length) return;
     warn(
         `connectconflict:${markLabel(feature)}`,
@@ -275,7 +275,15 @@ function warnConnectConflict(feature, edits) {
 // field on an existing row or the domain. Used by the create guards to tell a
 // datum-minting edit from an ordinary channel edit without branching on type in
 // dispatch (this is a dev warning, not control flow).
-const CREATOR_TYPES = new Set(['create', 'toggle', 'anchor', 'newSeries', 'draw', 'createRect']);
+// Every scoped edit's `type` is its full dotted path (`edit.line.draw` <->
+// 'line.draw'), so the geo and line creators are listed separately here — before
+// that, `edit.create` and `edit.geo.create` shared the bare string 'create', and so
+// did `edit.line.draw` and `edit.geo.draw`.
+const CREATOR_TYPES = new Set([
+    'create', 'toggle',
+    'line.anchor', 'line.newSeries', 'line.draw',
+    'geo.create', 'geo.draw', 'geo.createRect',
+]);
 /** @param {import('../types').Edit} e @returns {boolean} */
 function isDatasetCreator(e) {
     return e.target !== 'domain' && (CREATOR_TYPES.has(e.type) || e.cardinality === 'append');
@@ -398,8 +406,15 @@ function describe(v) {
 // `cycle` steps scale.domain() (that is how a click cycles an ordinal fill —
 // elicitjs-docs marks/symbol does exactly this), `toggle` flips a flag, `set` takes an
 // external value, `custom` is arbitrary. A denylist would have flagged all of them.
+// Scoped edits appear here under their dotted type. Geo edits are absent on
+// purpose: `warnDeadEditChannels` skips a `supportsGeo` feature outright, since a
+// geo mark is placed by the projection rather than by a channel scale.
+//
+// ('sweep' used to be listed and matched NOTHING — `edit.line.sweep` reported
+// type 'move' and was covered by that entry instead. It has its own type now.)
 const INVERTING_TYPES = new Set([
-    'move', 'moveSpan', 'resize', 'slide', 'rotate', 'brushSpan', 'brushRect', 'draw', 'sweep',
+    'move', 'moveSpan', 'resize', 'slide', 'rotate', 'brushSpan', 'brushRect',
+    'line.draw', 'line.sweep',
 ]);
 
 /**

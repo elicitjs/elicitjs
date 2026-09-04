@@ -1,7 +1,7 @@
 // @ts-check
 import { isBand, baselineOf } from '../core/scales.js';
 import { claimEdge } from '../edit/shared.js';
-import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon} from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel} from './mark.js';
 
 // area: a filled path under a series (the distributional sibling of line). Same
 // grouping / ordering knobs as line; emits one filled `path` per series plus
@@ -67,7 +67,7 @@ function claimSpanEdges(group, channels, edits) {
 function buildArea(options, forcedValueAxis) {
     const opts = normalizeMarkOptions(options, { mark: 'area', allow: ['curve', 'handles', 'handleSize', 'handleColor', 'order', 'samples', 'series'] });
     const {
-        channels: rawChannels = {},
+        channels: declaredChannels = {},
         id,
         edits: rawEdits,
         constraints,
@@ -79,18 +79,20 @@ function buildArea(options, forcedValueAxis) {
         samples
     } = opts;
 
-    const { xKey, yKey } = positionalKeys(rawChannels);
-    const seriesField = seriesFieldOf(opts, rawChannels);
+    const { xKey, yKey } = positionalKeys(declaredChannels);
+    const seriesField = seriesFieldOf(opts, declaredChannels);
     // Span mode is decided once per mark (not per datum), exactly as bar/rect do it.
-    const hasXSpan = !!(rawChannels.x1 && rawChannels.x2);
-    const hasYSpan = !!(rawChannels.y1 && rawChannels.y2);
+    const hasXSpan = !!(declaredChannels.x1 && declaredChannels.x2);
+    const hasYSpan = !!(declaredChannels.y1 && declaredChannels.y2);
     const spanPair = hasYSpan ? ['y1', 'y2'] : hasXSpan ? ['x1', 'x2'] : null;
-    const { channels, edits } = claimSpanEdges(spanPair, rawChannels, rawEdits);
+    const { channels, edits } = claimSpanEdges(spanPair, declaredChannels, rawEdits);
 
     return {
         ...markCommon(opts),
         markName: 'area',
         channels,
+        // Read raw (no scale), like `line`'s and `link`'s.
+        rawChannels: ['curve'],
         discreteScale: 'point',
         xKey,
         yKey,
@@ -157,6 +159,11 @@ function buildArea(options, forcedValueAxis) {
                 const style = resolveStyle(scales, channels, sorted[0] ? sorted[0].d : {},
                     markDefaults(scales, 'area', { fill: areaInk, stroke: areaInk, fillOpacity: 0.35 }),
                     sorted[0] ? sorted[0].i : undefined, currentData);
+                // One band per SERIES, so a channel-bound curve resolves once per
+                // series against its first row — the same rule as the style above.
+                const seriesCurve = String(rawChannel(channels, 'curve',
+                    sorted[0] ? sorted[0].d : {}, curve,
+                    sorted[0] ? sorted[0].i : undefined, currentData));
 
                 // Span mode: the far edge is a second field, not the baseline. Both
                 // edges resolve through encodeChannel like any other channel, so the
@@ -193,7 +200,7 @@ function buildArea(options, forcedValueAxis) {
                     nodes.push({
                         type: 'path',
                         points,
-                        curve,
+                        curve: seriesCurve,
                         ...style,
                         strokeWidth: style.strokeWidth != null ? style.strokeWidth : 1,
                         series: series === SINGLE ? undefined : series,

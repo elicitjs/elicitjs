@@ -22,22 +22,36 @@ import { warnUnknownGuideOptions } from './shared.js';
  * the docs table, and (later) the JSON grammar.
  * @type {string[]}
  */
-export const PROXIMITY_OPTIONS = ['target', 'color', 'dash', 'width', 'opacity'];
+export const PROXIMITY_OPTIONS = ['target', 'stroke', 'strokeDasharray', 'strokeWidth', 'opacity'];
 
 /**
- * @param {{ target: string, color?: string, dash?: string, width?: number, opacity?: number }} options
+ * Paint options are named the way every OTHER `guides.*` factory names them —
+ * `stroke` / `strokeDasharray` / `strokeWidth` (cf. RULE_OPTIONS, REGION_OPTIONS),
+ * which is also the library's one paint vocabulary (`STANDARD_STYLE_CHANNELS`;
+ * there is no `color` channel anywhere). This guide used to take `color`/`dash`/
+ * `width` instead, borrowing the EDIT-guide sugar vocabulary (`edit.guide` /
+ * `DEFAULT_CATCHMENT`) — that sugar keeps its own spelling, documented on
+ * `GuideSpec`, because it is a different surface; a `guides.*` factory should read
+ * like its siblings. The mapping onto the catchment defaults stays internal.
+ * @param {{ target: string, stroke?: string, strokeDasharray?: string, strokeWidth?: number, opacity?: number }} options
  * @returns {import('../types').Guide}
  */
 export function proximity(options) {
     warnUnknownGuideOptions('proximity', options, PROXIMITY_OPTIONS);
-    const { target, ...style } = options;
+    const { target, stroke, strokeDasharray, strokeWidth, opacity } = options;
 
     return {
         views: 'state',
         build: (_rows, _scales, _w, _h, ctx) => {
             const info = ctx.ui && ctx.ui.session && ctx.ui.session[target];
             if (!info || info.px == null || info.py == null || info.threshold == null) return [];
-            const spec = { ...DEFAULT_CATCHMENT, ...style };
+            const spec = {
+                ...DEFAULT_CATCHMENT,
+                ...(stroke !== undefined ? { color: stroke } : {}),
+                ...(strokeDasharray !== undefined ? { dash: strokeDasharray } : {}),
+                ...(strokeWidth !== undefined ? { width: strokeWidth } : {}),
+                ...(opacity !== undefined ? { opacity } : {}),
+            };
             return [{
                 type: 'circle', cx: info.px, cy: info.py, r: info.threshold,
                 fill: 'none', stroke: spec.color, strokeDasharray: spec.dash,

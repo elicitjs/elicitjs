@@ -35,6 +35,12 @@ const GRAB_THRESHOLD = 40;
 /** @type {import('./index.js').Driver} */
 export const moveDriver = {
     name: 'move',
+    // Exactly `edit.move`, never `edit.geo.move`. Both used to report `type: 'move'`,
+    // and this test does not look at `scope`, so `edit.geo.move({ mode: 'relative' })`
+    // was silently claimed HERE and anchored its deltas through `axisOf` and the
+    // channel scales — while geo's own apply inverts through the projection
+    // (`invertPoint`). Every scoped edit's type is now its full dotted path, so the
+    // two names no longer collide.
     wants: (e) => e.type === 'move' && /** @type {any} */ (e).mode === 'relative',
     onEvent({ feature, event, edits, marks, data, index, session, runEdit }) {
         if (!edits.length) return false;

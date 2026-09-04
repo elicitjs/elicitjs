@@ -166,7 +166,7 @@ export function categories(options = {}) {
     const tablesOf = (ctx) => /** @type {any} */ (ctx).tables || { [/** @type {any} */ (ctx).table]: ctx.data };
 
     const add = makeEdit({
-        type: 'scaleAddCategory',
+        type: 'scale.addCategory',
         gesture: 'commit',
         pick: 'direct',
         scope: 'scale',
@@ -191,7 +191,7 @@ export function categories(options = {}) {
     });
 
     const rename = makeEdit({
-        type: 'scaleRenameCategory',
+        type: 'scale.renameCategory',
         gesture: 'commit',
         pick: 'direct',
         scope: 'scale',
@@ -220,7 +220,7 @@ export function categories(options = {}) {
     });
 
     const remove = makeEdit({
-        type: 'scaleRemoveCategory',
+        type: 'scale.removeCategory',
         gesture: 'click',
         pick: 'direct',
         scope: 'scale',

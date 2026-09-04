@@ -68,8 +68,15 @@ export {
 export { when } from './when.js';
 
 // ── Scoped families ─────────────────────────────────────────────────────────
-// Each namespace names what its edits are ABOUT. The JS path is also the JSON
-// keyword: `edit.line.draw()` <-> { "type": "line.draw" }.
+// Each namespace names what its edits are ABOUT. The JS path IS the JSON keyword,
+// and it is also the descriptor's `type`: `edit.line.draw()` <-> { "type":
+// "line.draw" }. That was documented long before it was true — only `edit.legend.*`
+// actually spelled its type that way, and everything else used a bare word
+// ('draw', 'cut') or a camelCase prefix ('axisScale', 'trendIntercept'). The bare
+// ones COLLIDED: `edit.move`/`edit.geo.move` and `edit.create`/`edit.geo.create`
+// were indistinguishable by type, and a driver that claims edits by type alone
+// (drivers/move.js) took the wrong one. Keep every new scoped edit's type equal to
+// its dotted path.
 
 import { anchor, newSeries, draw, sweep, removeSeries } from './line.js';
 

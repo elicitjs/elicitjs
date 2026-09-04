@@ -131,6 +131,35 @@ for (const ns of NAMESPACES) {
     }
 }
 
+// ── Every scoped edit's `type` IS its dotted path ───────────────────────────
+// `edit.line.draw()` <-> { "type": "line.draw" }. That has been the documented
+// convention (edit/index.js, index.d.ts) far longer than it was true: only
+// edit.legend.* actually spelled it that way, and the bare ones COLLIDED —
+// edit.move/edit.geo.move and edit.create/edit.geo.create were indistinguishable
+// by type, so a driver that claims edits by type alone (edit/drivers/move.js)
+// silently took the wrong one. Nothing else can catch that: both edits typecheck,
+// both render, and only the gesture misbehaves. So assert it here.
+// The scoped families are the object-valued members of `edit` (the universal
+// edits are functions; `when` is a bag of predicates, not edits).
+const EDIT_FAMILIES = Object.entries(runtime.edit || {})
+    .filter(([ns, v]) => ns !== 'when' && v && typeof v === 'object');
+
+for (const [ns, family] of EDIT_FAMILIES) {
+    for (const [member, factory] of Object.entries(family)) {
+        if (typeof factory !== 'function') continue;
+        let made;
+        try { made = factory({}); } catch { continue; } // needs options; skipped
+        for (const e of [made].flat(Infinity)) {
+            if (!e || typeof e !== 'object' || typeof e.type !== 'string') continue;
+            if (!e.type.startsWith(`${ns}.`)) {
+                fail(`edit.${ns}.${member}() reports type "${e.type}", which does not ` +
+                    `start with "${ns}." — a scoped edit's type must be its dotted path, ` +
+                    `or it can collide with a same-named edit in another namespace.`);
+            }
+        }
+    }
+}
+
 if (failures.length) {
     console.error(`\ncheck-exports: ${failures.length} drift${failures.length === 1 ? '' : 's'} between the runtime and src/index.d.ts\n`);
     for (const f of failures) console.error(`  · ${f}`);

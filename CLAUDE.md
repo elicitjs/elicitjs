@@ -469,6 +469,36 @@ exactly the edits that change how many categories exist.
 
 **Constraints are pure data invariants, scoped to the dataset.** A constraint (`defineConstraint` in `src/constraints/define.js`) receives `{ data, oldData, activeIndex, active, field, value, domain }` — never pixels, never a scale used as geometry. It may *gate* a proposal (`false`) or *repair* it (return the corrected rows). The canonical home is `spec.constraints`; a mark's `constraints` is sugar the engine **promotes** into one dataset-wide set (`datasetConstraints`, deduped by identity), so an invariant holds for every edit from every mark. Don't scope a constraint back to the feature that declared it — that would let a glyph's cap drag bypass a rule declared on its dot. If a constraint's *guide* only makes sense for certain mark shapes (e.g. `maintainSum`'s cap-tick needs a band axis), guard the guide function, not the constraint itself.
 
+**A scoped edit's `type` IS its dotted path, and drivers claim by type.**
+`edit.line.draw()` <-> `{ "type": "line.draw" }`. This was documented in
+`edit/index.js` and `index.d.ts` long before it was true: only `edit.legend.*`
+spelled it that way, and everything else used a bare word (`'draw'`, `'cut'`,
+`'connect'`) or a camelCase prefix (`'axisScale'`, `'trendIntercept'`). The bare
+ones COLLIDED — `edit.move`/`edit.geo.move` and `edit.create`/`edit.geo.create`
+were indistinguishable — and a driver that claims edits by type alone
+(`edit/drivers/move.js`, `wants: e => e.type === 'move' && e.mode === 'relative'`)
+took the wrong one: `edit.geo.move({ mode: 'relative' })` was claimed by the
+CARTESIAN move driver and anchored its deltas through `axisOf` and the channel
+scales, while geo's own `apply` inverts through the projection. Nothing could catch
+it — both edits typecheck, both render, only the gesture misbehaves — so
+`check:exports` now asserts the invariant over every scoped namespace. Note the
+knock-on: any allowlist keyed on `type` (`INVERTING_TYPES`, `CREATOR_TYPES` in
+`elicit.js`) must carry the dotted names, and `'sweep'` sat in one of them matching
+nothing at all for as long as `edit.line.sweep` reported `type: 'move'`.
+
+**A channel is SCALED, a raw channel is per-row and UNSCALED, an option is
+constant.** `encodeChannel` is the single datum -> scaled path and `rawChannel`
+(`plot/mark.js`, beside it) the single datum -> unscaled one. A mark that reads a
+channel through `rawChannel` MUST list it in `Mark.rawChannels`, or `resolveScales`
+builds a global scale for a channel nothing scales. Both readers had drifted:
+`text` declared NONE of its six (`text`/`fontSize`/`textAnchor`/`lineAnchor`/
+`dx`/`dy`) and `link` four of seven. The tier must also be the SAME for one name
+everywhere — `curve` was a plain option on `line`/`area`/`geoLine` and a raw channel
+on `link`, which is one name meaning two things. On a line-family mark it resolves
+once per SERIES against that series' first row, the same rule its paint channels
+already follow. The constant form stays as the fallback, so `curve: 'step'` still
+works. An option may never name a data column.
+
 ## Adding a new mark
 
 **First: is it a mark at all, or an option on one?** The discriminator is the DATA MODEL,

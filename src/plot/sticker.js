@@ -59,10 +59,10 @@
 // would paint above every note's paper, and the note underneath would show its
 // text through the one on top.
 
-import { normalizeMarkOptions, markCommon } from './mark.js';
+import { normalizeMarkOptions, markCommon, rawChannel } from './mark.js';
 import { composite } from './composite.js';
 import { rect } from './rect.js';
-import { text, rawChannel } from './text.js';
+import { text } from './text.js';
 import { noteBox } from '../core/measure.js';
 
 /**

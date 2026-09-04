@@ -106,7 +106,7 @@ function endpointFields(ctx, options) {
 export function connect(options = {}) {
     const { defaults = {}, source, target, threshold, selfLoops = false, ...rest } = options;
     return makeEdit({
-        type: 'connect',
+        type: 'network.connect',
         gesture: 'drag',
         pick: 'direct',
         // The proposal is a LINK row even though the gesture landed on a node.
@@ -177,7 +177,7 @@ export function connect(options = {}) {
 export function rewire(options = {}) {
     const { threshold, ...rest } = options;
     const edit = makeEdit({
-        type: 'rewire',
+        type: 'network.rewire',
         gesture: 'drag',
         pick: 'direct',
         scope: 'network',
@@ -224,7 +224,7 @@ export function rewire(options = {}) {
 export function reverse(options = {}) {
     const { source, target, ...rest } = options;
     return makeEdit({
-        type: 'reverse',
+        type: 'network.reverse',
         gesture: 'click',
         pick: 'direct',
         scope: 'network',

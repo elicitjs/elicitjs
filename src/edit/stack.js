@@ -174,7 +174,7 @@ function categoryOfStack(ctx, override) {
 export function cut(options = {}) {
     const { defaults = {}, label, categoryField, when: userWhen, ...rest } = options;
     return makeEdit({
-        type: 'cut',
+        type: 'stack.cut',
         gesture: 'click',
         pick: 'direct',
         scope: 'stack',
@@ -274,7 +274,7 @@ export function cut(options = {}) {
 export function edge(options = {}) {
     const { when: userWhen, ...rest } = options;
     return makeEdit({
-        type: 'edge',
+        type: 'stack.edge',
         gesture: 'drag',
         pick: 'direct',
         scope: 'stack',
@@ -325,7 +325,7 @@ export function edge(options = {}) {
 export function merge(options = {}) {
     const { when: userWhen, ...rest } = options;
     return makeEdit({
-        type: 'merge',
+        type: 'stack.merge',
         gesture: 'dblclick',
         pick: 'direct',
         scope: 'stack',

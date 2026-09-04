@@ -513,6 +513,52 @@ export function seriesFieldOf(opts, channels = {}) {
 }
 
 /**
+ * Read a non-positional channel raw: a field's value, a `{ value }` constant, else
+ * the fallback. No scale — these channels (text/fontSize/textAnchor/…) are literals.
+ * A derived channel (`{ fn }`, e.g. `text: d => …`) is computed per datum.
+ *
+ * The counterpart of `encodeChannel`: that one is the single datum -> SCALED path,
+ * this one is the single datum -> UNSCALED path. It lives here beside it for that
+ * reason — it used to sit in plot/text.js, its own comment already protesting that
+ * it is "not a text-mark detail", while `link` and `sticker` imported it from there.
+ *
+ * A mark that reads a channel through this MUST list it in `Mark.rawChannels`, or
+ * the resolver builds a global scale for a channel nothing scales.
+ * @param {Record<string, any>} channels
+ * @param {string} name
+ * @param {any} datum
+ * @param {any} fallback
+ * @param {number} [index] row index, passed to a derived channel's fn
+ * @param {import('../types').Datum[]} [data] the dataset, passed to a derived fn
+ * @returns {any}
+ */
+export function rawChannel(channels, name, datum, fallback, index, data) {
+    const spec = channels[name];
+    if (!spec) return fallback;
+    if (spec.field != null) {
+        const v = datum[spec.field];
+        return v == null ? fallback : v;
+    }
+    // Derived channel — fn(d, i, data) computed in visual space (no scale here anyway).
+    if (typeof spec.fn === 'function') {
+        return callChannelFn(spec, name, datum, index, data, fallback);
+    }
+    if (spec.value !== undefined) return spec.value;
+    // `{ datum }` means "a constant in DATA space — put it through the scale". These
+    // channels have no scale (a label's string, its font size, its dx nudge are the
+    // output already), so `{ datum }` and `{ value }` would be two spellings of one
+    // thing. Say so rather than silently accepting either.
+    if (spec.datum !== undefined) {
+        warn(
+            `rawdatum:${name}`,
+            `channel "${name}" on a text mark has no scale — its value IS the output — so ` +
+            `{ datum: … } has nothing to go through. Use { value: … } for a constant.`
+        );
+    }
+    return fallback;
+}
+
+/**
  * Options every mark accepts, whatever it draws.
  * @type {string[]}
  */

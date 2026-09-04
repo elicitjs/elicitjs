@@ -48,7 +48,7 @@ function countAt(pointer, grid) {
  */
 export function fill(options = {}) {
     return makeEdit({
-        type: 'fill',
+        type: 'waffle.fill',
         gesture: 'drag',
         scope: 'waffle',
         ...options,

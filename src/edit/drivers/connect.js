@@ -23,7 +23,7 @@
 /** @type {import('./index.js').Driver} */
 export const connectDriver = {
     name: 'connect',
-    wants: (e) => e.type === 'connect' || e.type === 'rewire',
+    wants: (e) => e.type === 'network.connect' || e.type === 'network.rewire',
     onEvent({ event, edits, index, session, runEdit, previewEdit, preview }) {
         if (!edits.length) return false;
         let changed = false;

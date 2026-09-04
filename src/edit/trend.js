@@ -209,7 +209,7 @@ function trendEdit(type, claims, solve, options) {
  * @returns {import('../types').Edit}
  */
 export function intercept(options = {}) {
-    return trendEdit('trendIntercept', 'intercept',
+    return trendEdit('trend.intercept', 'intercept',
         (f) => ({ intercept: f.yv - f.b * f.anchor }), options);
 }
 
@@ -222,7 +222,7 @@ export function intercept(options = {}) {
  * @returns {import('../types').Edit}
  */
 export function slope(options = {}) {
-    return trendEdit('trendSlope', 'slope', (f) => {
+    return trendEdit('trend.slope', 'slope', (f) => {
         if (f.probeX == null) return undefined;
         const b = (f.yv - f.yAnchor) / (f.probeX - f.anchor);
         return { slope: b, intercept: f.yAnchor - b * f.anchor };
@@ -237,7 +237,7 @@ export function slope(options = {}) {
  * @returns {import('../types').Edit}
  */
 export function interceptSpread(options = {}) {
-    return trendEdit('trendInterceptSpread', 'interceptSpread',
+    return trendEdit('trend.interceptSpread', 'interceptSpread',
         (f) => ({ interceptSpread: Math.abs(f.yv - f.yAnchor) }), options);
 }
 
@@ -250,7 +250,7 @@ export function interceptSpread(options = {}) {
  * @returns {import('../types').Edit}
  */
 export function slopeSpread(options = {}) {
-    return trendEdit('trendSlopeSpread', 'slopeSpread', (f) => {
+    return trendEdit('trend.slopeSpread', 'slopeSpread', (f) => {
         if (f.probeX == null) return undefined;
         const through = (f.yv - f.yAnchor) / (f.probeX - f.anchor);
         return { slopeSpread: Math.abs(through - f.b) };

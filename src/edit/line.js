@@ -33,7 +33,7 @@ export function anchor(options = {}) {
     const { into = 'nearest', series: seriesField, ...rest } = options;
     const threshold = resolveThreshold(options.threshold);
     return makeEdit({
-        type: 'anchor',
+        type: 'line.anchor',
         gesture: 'click',
         channels: ['x', 'y'],
         pick: 'plane',
@@ -85,7 +85,7 @@ export function anchor(options = {}) {
 export function newSeries(options = {}) {
     const { along = 'x', value = 'y', samples, series: seriesField, ...rest } = options;
     return makeEdit({
-        type: 'newSeries',
+        type: 'line.newSeries',
         gesture: 'dblclick',
         channels: [along, value],
         pick: 'plane',
@@ -162,7 +162,7 @@ export function draw(options = {}) {
         into = 'nearest', series: seriesField, ...rest
     } = options;
     return makeEdit({
-        type: 'draw',
+        type: 'line.draw',
         gesture: 'drag',
         channels: [along, value],
         pick: 'draw',
@@ -267,7 +267,13 @@ export function draw(options = {}) {
  * @returns {import('../types').Edit}
  */
 export function sweep(options = {}) {
-    return move({ pick: 'sweep', guide: true, scope: 'line', ...options });
+    // A sweep IS a move (same apply, same inversion) but it gets its OWN type, not
+    // move's: a scoped edit's type is its dotted path. Reporting `type: 'move'` left
+    // it sharing an identity with `edit.move`, so `sweep({ mode: 'relative' })` would
+    // have been claimed by the relative-move driver as well as the sweep one — the
+    // same collision that made `edit.geo.move` misbehave. Options still override,
+    // so an author can put it back deliberately.
+    return move({ pick: 'sweep', guide: true, scope: 'line', ...options, type: 'line.sweep' });
 }
 
 /**
@@ -285,7 +291,7 @@ export function sweep(options = {}) {
 export function removeSeries(options = {}) {
     const { series: seriesField, ...rest } = options;
     return makeEdit({
-        type: 'removeSeries',
+        type: 'line.removeSeries',
         gesture: 'click',
         scope: 'line',
         // The rows are gone; nothing is active for a constraint to resolve around.
