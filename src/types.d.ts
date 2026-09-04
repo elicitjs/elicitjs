@@ -1284,8 +1284,10 @@ export interface MarkRequirement {
   channels: string[];
   /** The capability needed. Matched against `scale.kind`, never `scale.type`. */
   kind: 'discrete' | 'band' | 'point' | 'continuous';
-  /** 'all' (default) — every channel must satisfy it; 'any' — at least one. */
-  mode?: 'all' | 'any';
+  /** 'all' (default) — every channel must satisfy it; 'any' — at least one.
+   *  Named `match`, not `mode`: `mode` already meant five other things across the
+   *  public surface, none of them compatible with this one. */
+  match?: 'all' | 'any';
   /** Why the mark needs it; appended to the dev warning. */
   why?: string;
 }
@@ -1375,8 +1377,8 @@ export interface Mark {
    * engine (`warnScaleRequirements`).
    *
    * A mark declares a CAPABILITY (`kind`), never a scale type — the same rule the
-   * rest of the engine follows. `mode: 'all'` (the default) requires every listed
-   * channel to satisfy it; `mode: 'any'` requires at least one, which is how a mark
+   * rest of the engine follows. `match: 'all'` (the default) requires every listed
+   * channel to satisfy it; `match: 'any'` requires at least one, which is how a mark
    * whose category axis is chosen at build time (waffle's orientation) states its
    * need. `why` is prose appended to the warning.
    *

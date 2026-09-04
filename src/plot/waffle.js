@@ -102,7 +102,7 @@ function buildWaffle(options, forcedOrientation) {
         requires: [{
             channels: ['x', 'y'],
             kind: 'discrete',
-            mode: 'any',
+            match: 'any',
             why: 'a waffle tiles ONE category\'s block into countable cells, so its '
                 + 'category axis has to be a band (an interval to tile).',
         }],

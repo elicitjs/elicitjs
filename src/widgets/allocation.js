@@ -1,6 +1,6 @@
 // @ts-check
 // allocation.js — budget / share-of-N bars with redistribute-to-sum.
-// Plain-chart twin: barY + drag + maintainSum({ mode: 'redistribute' }) + clamp.
+// Plain-chart twin: barY + drag + maintainSum({ strategy: 'redistribute' }) + clamp.
 
 import { barY } from '../plot/index.js';
 import { move } from '../edit/index.js';
@@ -45,7 +45,7 @@ export function allocation(opts = {}) {
         data,
         constraints: [
             clamp({ min: 0, max: targetSum, field: 'share' }),
-            maintainSum({ targetSum, field: 'share', mode: 'redistribute' })
+            maintainSum({ targetSum, field: 'share', strategy: 'redistribute' })
         ],
         onChange,
         guides: [prompt(question)],

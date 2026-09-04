@@ -19,7 +19,7 @@ import { defineConstraint } from './define.js';
 // It REPAIRS rather than rejects, and repairs by pushing the OTHER fields out of
 // the way — the field you are dragging is the one you meant, so it wins and its
 // neighbours give. Dragging `mean` past `hi` carries `hi` along; that reads as the
-// interval moving, where rejecting reads as the handle sticking. (`mode: 'block'`
+// interval moving, where rejecting reads as the handle sticking. (`strategy: 'block'`
 // rejects instead, for an elicitation where the bounds are given and only the
 // estimate inside them moves.)
 
@@ -56,14 +56,14 @@ function movedIndex(order, active, before) {
 
 /**
  * @param {{ fields?: string[], lower?: string, upper?: string,
- *   mode?: 'push' | 'block' }} [options]
+ *   strategy?: 'push' | 'block' }} [options]
  *   fields  the row's fields, in the order they must stay in (>= 2).
  *   lower / upper  sugar for the two-field case.
- *   mode    'push' (default) moves the neighbours aside; 'block' rejects the edit.
+ *   strategy  'push' (default) moves the neighbours aside; 'block' rejects the edit.
  * @returns {import('../types').Constraint}
  */
 export function ordering(options = {}) {
-    const { fields, lower, upper, mode = 'push' } = options;
+    const { fields, lower, upper, strategy = 'push' } = options;
     const order = fields || (lower && upper ? [lower, upper] : []);
 
     if (order.length < 2) {
@@ -79,7 +79,7 @@ export function ordering(options = {}) {
             const values = order.map((f) => Number(active[f]));
             if (values.some((v) => !Number.isFinite(v))) return undefined;
             if (ordered(values)) return undefined;          // the common case
-            if (mode === 'block') return false;
+            if (strategy === 'block') return false;
 
             const before = (oldData && activeIndex != null) ? oldData[activeIndex] : null;
             const pinned = movedIndex(order, active, before);
@@ -100,6 +100,6 @@ export function ordering(options = {}) {
         },
         // The guide draws on the value axis, so name the first ordered field; an
         // edit on any of them shares that axis (they're bucketed onto one scale).
-        { type: 'ordering', options: { fields: order, mode }, field: order[0] }
+        { type: 'ordering', options: { fields: order, strategy }, field: order[0] }
     );
 }

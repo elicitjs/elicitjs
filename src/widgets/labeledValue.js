@@ -9,14 +9,14 @@ import { prompt } from './theme.js';
 import { widgetTheme } from './shared.js';
 
 /**
- * @param {import('../types').WidgetOptions & { mode?: 'number' | 'text', value?: any,
+ * @param {import('../types').WidgetOptions & { input?: 'number' | 'text', value?: any,
  *   domain?: [number, number], label?: string }} [opts]
  * @returns {import('../types').ElicitSpec}
  */
 export function labeledValue(opts = {}) {
     const {
         question = 'Set the value',
-        mode = 'number',
+        input = 'number',
         value,
         domain = [0, 100],
         label = 'value',
@@ -28,7 +28,7 @@ export function labeledValue(opts = {}) {
     } = opts;
     const t = widgetTheme(theme);
 
-    if (mode === 'text') {
+    if (input === 'text') {
         return {
             width,
             height,

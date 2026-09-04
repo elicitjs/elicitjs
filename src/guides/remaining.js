@@ -35,9 +35,8 @@ export const REMAINING_OPTIONS = ['field', 'total', 'unit', 'format', 'anchor', 
 
 /**
  * The target sum this chart is already enforcing, read off its constraints, or
- * null when nothing does. `maintainSum` (and its `normalize` preset) stamp their
- * configuration on the constraint so a guide can read it without the author
- * declaring the number twice.
+ * null when nothing does. `maintainSum` stamps its configuration on the constraint
+ * so a guide can read it without the author declaring the number twice.
  * @param {any[]} constraints
  * @param {string} field
  * @returns {number | null}

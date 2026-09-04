@@ -2,7 +2,7 @@
 import { defineConstraint } from './define.js';
 
 // maintainSum: keeps the total of a field related to `targetSum` — a cross-datum
-// data invariant. Three modes:
+// data invariant. Three strategies:
 //   'cap' (default)     — bound the touched datum so total ≤ targetSum (drag freely
 //                         up to the remaining budget, then stop)
 //   'normalize'         — after the edit, scale ALL values so sum === targetSum
@@ -13,13 +13,13 @@ import { defineConstraint } from './define.js';
 // invariant, it holds no matter which edit moved a value.
 
 /**
- * @param {{ targetSum: number, field?: string, mode?: 'cap' | 'normalize' | 'redistribute' }} options
+ * @param {{ targetSum: number, field?: string, strategy?: 'cap' | 'normalize' | 'redistribute' }} options
  * @returns {import('../types').Constraint}
  */
 export function maintainSum(options) {
-    const { targetSum, field = 'y', mode = 'cap' } = options;
+    const { targetSum, field = 'y', strategy = 'cap' } = options;
 
-    if (mode === 'normalize') {
+    if (strategy === 'normalize') {
         return defineConstraint(
             ({ data, activeIndex, value }) => {
                 const next = data.map((d, i) =>
@@ -30,11 +30,11 @@ export function maintainSum(options) {
                 const scale = targetSum / sum;
                 return next.map((d) => ({ ...d, [field]: (Number(d[field]) || 0) * scale }));
             },
-            { type: 'maintainSum', options: { targetSum, mode }, field }
+            { type: 'maintainSum', options: { targetSum, strategy }, field }
         );
     }
 
-    if (mode === 'redistribute') {
+    if (strategy === 'redistribute') {
         return defineConstraint(
             ({ data, activeIndex, value }) => {
                 if (activeIndex == null || value === undefined) return value;
@@ -50,11 +50,11 @@ export function maintainSum(options) {
                     return { ...d, [field]: others > 0 ? v * scale : (data.length > 1 ? remain / (data.length - 1) : 0) };
                 });
             },
-            { type: 'maintainSum', options: { targetSum, mode }, field }
+            { type: 'maintainSum', options: { targetSum, strategy }, field }
         );
     }
 
-    // mode === 'cap' (default)
+    // strategy === 'cap' (default)
     return defineConstraint(
         ({ data, activeIndex, value }) => {
             if (activeIndex == null || value === undefined) return value;
@@ -68,6 +68,6 @@ export function maintainSum(options) {
             const headroom = Math.max(0, targetSum - sumOthers);
             return Math.min(value, headroom);
         },
-        { type: 'maintainSum', options: { targetSum, mode: 'cap' }, field }
+        { type: 'maintainSum', options: { targetSum, strategy: 'cap' }, field }
     );
 }

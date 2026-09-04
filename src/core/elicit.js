@@ -101,9 +101,9 @@ function warnScaleRequirements(feature, scales) {
             const scale = /** @type {any} */ (scales)[ch];
             return !!(scale && test(scale.kind));
         };
-        const satisfied = req.mode === 'any' ? channels.some(ok) : channels.every(ok);
+        const satisfied = req.match === 'any' ? channels.some(ok) : channels.every(ok);
         if (satisfied) continue;
-        const which = req.mode === 'any'
+        const which = req.match === 'any'
             ? `one of ${channels.map((/** @type {string} */ c) => `"${c}"`).join(' / ')}`
             : channels.map((/** @type {string} */ c) => `"${c}"`).join(' and ');
         const got = channels

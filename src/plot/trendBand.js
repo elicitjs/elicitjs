@@ -111,7 +111,7 @@ export function trendBand(options = {}) {
         requires: [{
             channels: ['x', 'y'],
             kind: 'continuous',
-            mode: 'all',
+            match: 'all',
             why: 'an intercept and a slope are only defined over two continuous axes.',
         }],
         /**

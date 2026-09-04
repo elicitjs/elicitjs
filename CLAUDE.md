@@ -601,6 +601,16 @@ aimed at the row before it.
 - `series` is the public option name; `seriesKey` is the internal feature field. Don't introduce a third synonym.
 - `pick` values are target-selection strategies or driver keys (`direct`, `nearest`, `plane`, `sweep`, `draw`) — not arbitrary interaction descriptors.
 - `constrain` (edit-scoped, singular) vs `constraints` (plural, the dataset's invariants — canonical on `spec`, accepted on a mark as sugar and promoted) — keep the distinction; don't rename one to match the other.
+- `mode` was SIX unrelated vocabularies across the public surface, with `strategy` a
+  seventh name for something two of them already meant. One word per idea now:
+  **`strategy`** is what a CONSTRAINT does when its rule is violated
+  (`count`/`unique` already used it; `maintainSum`'s `cap|normalize|redistribute`
+  and `ordering`'s `push|block` joined them); **`match`** is `Mark.requires`'
+  `all|any` arity; **`input`** is `widgets.labeledValue`'s `number|text`. `mode`
+  itself is now reserved for one thing on the author-facing surface — how an EDIT
+  reads the pointer (`absolute|relative` on `move`/`slide`) — plus `edit.axis.scale`'s
+  `rescale|grow`, which is also an edit. (`Session.mode` is internal driver state,
+  not spec vocabulary.)
 - `guide: true` on an `Edit` means "self-draw"; a `Constraint.guide` is a drawer *function*. Same word, deliberately different shapes, both documented in `types.d.ts` — don't try to unify them into one meaning.
 - Don't add a second alias for an existing edit (we removed `youDrawIt` as a redundant alias of `sweep`). One documented name per behavior. `edit.arc.edge` was that alias for `edit.stack.edge`; it is gone, and so is every other deprecated wrapper (see "Don't reintroduce").
 - `marks` is the public spec key (`ElicitSpec.marks`) and the word used in docs and dev-facing warnings/errors shown to a spec author. `feature`/`FeatureNode`/`featureId` is the internal engine term for one flattened dispatch unit after `composite` desugars a glyph into parts — a mark can expand into several features. Don't blur the two into a single rename: the public surface and dev-facing messages say "mark," internal dispatch code and comments say "feature."
