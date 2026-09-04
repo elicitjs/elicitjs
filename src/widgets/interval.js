@@ -6,7 +6,8 @@
 
 import { composite, point, ruleY, tick } from '../plot/index.js';
 import { move, custom } from '../edit/index.js';
-import { clamp, defineConstraint } from '../constraints/index.js';
+import { clamp } from '../constraints/index.js';
+import { defineConstraint } from '../constraints/define.js';
 import { prompt } from './theme.js';
 import { widgetTheme } from './shared.js';
 

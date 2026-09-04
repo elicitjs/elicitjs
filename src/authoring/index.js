@@ -27,9 +27,6 @@
 //
 //   import { encodeChannel } from 'elicitjs/authoring';
 //
-// `noteBox` is deliberately NOT here: it is a spec-time helper (it appears inside
-// an ordinary `{ fn }` channel — `nodeWidth: { fn: d => noteBox(d.label).width }`),
-// so it stays a top-level export.
 
 // ── Writing a MARK ──────────────────────────────────────────────────────────
 // The channel-resolution and style surface every mark builds on. See the mark
@@ -99,9 +96,24 @@ export { sampleQuadratic, sampleCubic } from '../plot/hitpath.js';
 export { groupByPosition, stackLayout, stackDescriptor } from '../plot/stack.js';
 
 // Text measurement — the ONE measuring context (lazy, guarded for SSR). A wrapped
-// label is one node carrying `lines`, never one node per line. (`noteBox` itself
-// is a top-level export: it belongs in a spec, not only in a mark.)
-export { measureText, wrapText } from '../core/measure.js';
+// label is one node carrying `lines`, never one node per line.
+//
+// `noteBox` is `sticker`'s own sizing rule, reachable so a `link` docking to an
+// auto-sized note can reach the same answer:
+//   nodeWidth: { fn: d => noteBox(d.label).width }
+// It sits here rather than at the package root because it can only ever appear
+// inside a `{ fn }` channel — the one deliberately non-serializable channel form —
+// so it can never become a JSON keyword, and because `measureText`/`wrapText`, its
+// siblings from this same module, were already here.
+export { measureText, wrapText, noteBox } from '../core/measure.js';
+
+// Chart-element option VOCABULARIES — the list each element validates its options
+// against (`warnUnknownElementOptions`). Exported so one list can drive the docs
+// and, later, the JSON grammar. They are names of options, not spec keywords, so
+// they belong here and not in `elements.*`.
+export { AXIS_OPTIONS, GRID_OPTIONS } from '../plot/axis.js';
+export { LEGEND_OPTIONS } from '../plot/legend.js';
+export { AXIS_RADIAL_OPTIONS } from '../plot/axisRadial.js';
 
 // ── Writing an EDIT ─────────────────────────────────────────────────────────
 // An edit is a descriptor, not a closure with hidden state. See the `Edit`
@@ -151,13 +163,18 @@ export {
 export { registerDriver } from '../edit/drivers/index.js';
 
 // ── Writing a CONSTRAINT ────────────────────────────────────────────────────
-// A constraint is a pure data invariant — no pixels, no scales-as-geometry.
+// A constraint is a pure data invariant — no pixels, no scales-as-geometry. The
+// SPEC keyword for the same act is `constraints.custom`, matching `edit.custom`
+// and `guides.custom`; this is the authoring alias of it, kept because a mark or
+// widget author reaches for it while building vocabulary rather than a spec.
 export { defineConstraint } from '../constraints/define.js';
 
 // ── Writing a WIDGET ────────────────────────────────────────────────────────
-// The instrument palette and the guide-built affordances, so a custom survey
-// instrument reuses the same look as the built-in ones.
-export { THEME, optionRings, cellGrid, sliderTrack, prompt, crosshair } from '../widgets/theme.js';
+// The instrument palette, so a custom survey instrument reuses the same look as
+// the built-in ones. The guide-built affordances that used to sit here
+// (`prompt`, `optionRings`, `cellGrid`, `sliderTrack`, `crosshair`) are GUIDES —
+// they appear directly in a spec's `guides: [...]` — so they moved to `guides.*`.
+export { THEME } from '../widgets/theme.js';
 // Resolve a widget's theme the way the engine resolves `spec.theme`.
 export { widgetTheme } from '../widgets/shared.js';
 

@@ -7,10 +7,11 @@
 // Public as `elicit.elements.*`, and ONLY there — these used to be aliased onto
 // `plot.*` as well, which made every one of them two spec keywords for one thing.
 //
-// `AXIS_OPTIONS` / `GRID_OPTIONS` are the option vocabularies these elements
-// validate against (see warnUnknownElementOptions); they are exported so the same
-// list can drive the docs and, later, the JSON grammar.
+// The option VOCABULARIES these elements validate against (`AXIS_OPTIONS`,
+// `GRID_OPTIONS`, `LEGEND_OPTIONS`, `AXIS_RADIAL_OPTIONS`) are not spec keywords —
+// they are lists of option names, which is authoring material — so they live in
+// `authoring.*`. A namespace contains only what can appear in a spec.
 
-export { axis, axisX, axisY, grid, gridX, gridY, AXIS_OPTIONS, GRID_OPTIONS } from '../plot/axis.js';
+export { axis, axisX, axisY, grid, gridX, gridY } from '../plot/axis.js';
 export { legend, legendColor, legendSize, legendSymbol } from '../plot/legend.js';
 export { axisRadial } from '../plot/axisRadial.js';

@@ -192,9 +192,10 @@ export function resolveStyle(scales: import("../types.js").ScaleMap, channels: R
  * it differently (line read stroke, area read fill-then-stroke), so a coloured
  * area and a coloured line grouped by different channels.
  *
- * Precedence: the explicit option (`series`, or Plot's `z` alias) wins; otherwise
- * the field behind a paint channel, fill before stroke — Observable Plot's `z`
- * default, so a coloured chart groups with no extra config.
+ * Precedence: the explicit `series` option wins; otherwise the field behind a
+ * paint channel, fill before stroke — Observable Plot's `z` default, so a
+ * coloured chart groups with no extra config. (Plot's `z` alias is not accepted:
+ * one name per concept.)
  *
  * `series` is the public option name; `seriesKey` is the internal feature field.
  * @param {any} opts normalized mark options
@@ -864,6 +865,71 @@ export function wrapText(text: string, opts?: {
     fontFamily?: string;
     fontWeight?: string | number;
 }): string[];
+/**
+ * The BOX a padded note of text occupies — `measureBlock` plus the padding and the
+ * floors that turn a measurement into a drawn rectangle.
+ *
+ * This is `sticker`'s own sizing rule, lifted here so it has a name. A sticker's box
+ * is measured rather than declared, which means nothing outside that mark could
+ * know how big a note is — and a connector that docks to a node's EDGE has to. The
+ * alternative, `link` asking the sticker what it drew, is a mark reading another
+ * feature's geometry, which nothing here may do. So the rule lives in the one
+ * measurement module and both callers go through it:
+ *
+ *   link({ channels: { nodeWidth: { fn: d => noteBox(d.label).width } } })
+ *
+ * The defaults deliberately match `sticker`'s, so a caller who states nothing gets
+ * the same box the sticker draws. State the same options on both if you change them
+ * there — that repetition is the honest cost of not coupling the two marks.
+ *
+ * @param {string} text
+ * @param {{ padding?: number, maxWidth?: number, minWidth?: number, minHeight?: number,
+ *   fontSize?: number, fontFamily?: string, lineHeight?: number }} [opts]
+ * @returns {{ block: { lines: string[], width: number, height: number, lineHeight: number }, width: number, height: number }}
+ */
+export function noteBox(text: string, opts?: {
+    padding?: number;
+    maxWidth?: number;
+    minWidth?: number;
+    minHeight?: number;
+    fontSize?: number;
+    fontFamily?: string;
+    lineHeight?: number;
+}): {
+    block: {
+        lines: string[];
+        width: number;
+        height: number;
+        lineHeight: number;
+    };
+    width: number;
+    height: number;
+};
+// ── from src/plot/axis.js ───────────────────────────────────────────────────
+/**
+ * `axis`'s own option vocabulary, on top of the universal chart-element options
+ * (id / edit / edits / constraints / field). Exported so core/axes.js can hand a
+ * grid only the options a grid reads, instead of forwarding the whole axis config.
+ * Keep in sync with the destructure in `axis` below.
+ * @type {string[]}
+ */
+export const AXIS_OPTIONS: string[];
+/**
+ * `grid`'s option vocabulary. Keep in sync with the destructure in `grid` below.
+ * @type {string[]}
+ */
+export const GRID_OPTIONS: string[];
+// ── from src/plot/legend.js ─────────────────────────────────────────────────
+/**
+ * `legend`'s own option vocabulary, on top of the universal chart-element options
+ * (id / edit / edits / constraints / field). Keep in sync with the destructure in
+ * `legend` below — a wrong entry is a false positive, which is worse than none.
+ * @type {string[]}
+ */
+export const LEGEND_OPTIONS: string[];
+// ── from src/plot/axisRadial.js ─────────────────────────────────────────────
+/** @type {string[]} */
+export const AXIS_RADIAL_OPTIONS: string[];
 // ── from src/edit/shared.js ─────────────────────────────────────────────────
 /**
  * Strip a `pick` an edit cannot honour, and say so.
@@ -930,7 +996,7 @@ export function nextSeriesKey(data: any[], seriesField: string | null): number;
  *     let the caller refuse: minting a category the author didn't declare would put
  *     a value on an axis that has no room for it.
  *   open — the domain is a starting set. Mint a placeholder that collides with
- *     nothing, for the author (or the user, via edit.axis.categories) to rename.
+ *     nothing, for the author (or the user, via edit.scale.categories) to rename.
  *     Creating and NAMING are separate acts; blocking the first on the second is
  *     what forces a gesture to become a text field.
  *
@@ -1295,54 +1361,6 @@ export function registerDriver(driver: Driver): void;
  */
 export function defineConstraint(reducer: (ctx: import("../types.js").ConstraintContext) => any, meta?: any): import("../types.js").Constraint;
 // ── from src/widgets/theme.js ───────────────────────────────────────────────
-/**
- * The row of option rings + their labels, with a connecting track behind them.
- * Rings sit on the plot's vertical centre — where a `point` with no y channel
- * parks itself — so the answer dot lands exactly inside its ring.
- * @param {{ labelOffset?: number, radius?: number }} [options]
- */
-export function optionRings(options?: {
-    labelOffset?: number;
-    radius?: number;
-}): import("../types.js").Guide;
-/**
- * The cell grid of a question matrix: a soft rect per (question, option) cell,
- * column headers above, and row labels in the left margin. Guide rects draw
- * behind the marks, so an answered cell shows its dot on top of its cell.
- * @param {{ pad?: number }} [options]
- */
-export function cellGrid(options?: {
-    pad?: number;
-}): import("../types.js").Guide;
-/**
- * A slider's track: a rule along the plot's centre line with end caps and value
- * labels at the domain ends.
- * @param {{ format?: (v: any) => string }} [options]
- */
-export function sliderTrack(options?: {
-    format?: (v: any) => string;
-}): import("../types.js").Guide;
-/**
- * The question prompt, drawn into the top margin so it travels with the chart.
- * `y` lifts it clear of whatever the instrument draws below it (column headers,
- * an axis label) — the caller owns the top margin, so it owns the offset.
- * @param {string} text
- * @param {{ y?: number }} [options]
- */
-export function prompt(text: string, options?: {
-    y?: number;
-}): import("../types.js").Guide;
-/**
- * The crosshair frame of a correlation plot: axes through the centre and a
- * high/low label on each of the four ends (the layout of the line+cone task).
- * The side labels stack onto two lines so a long variable name fits the margin
- * instead of running off the SVG.
- * @param {{ x?: string, y?: string }} [labels]
- */
-export function crosshair(labels?: {
-    x?: string;
-    y?: string;
-}): import("../types.js").Guide;
 export namespace THEME {
     let accent: string;
     let ring: string;

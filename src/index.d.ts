@@ -138,9 +138,6 @@ export const elements: {
   legendColor(options?: ChartElementOptions): Mark;
   legendSize(options?: ChartElementOptions): Mark;
   legendSymbol(options?: ChartElementOptions): Mark;
-  /** The option vocabularies these elements validate against. */
-  readonly AXIS_OPTIONS: readonly string[];
-  readonly GRID_OPTIONS: readonly string[];
 };
 
 /**
@@ -257,8 +254,10 @@ export const edit: {
  * REPAIR every edit, whichever mark fired it.
  */
 export const constraints: {
-  /** The extension point: author a rule against a data-only context. */
-  defineConstraint(spec: Constraint | Record<string, unknown>): Constraint;
+  /** The extension point: author a rule against a data-only context. One word for
+   *  "author your own X" in every grammar namespace — cf. `edit.custom`,
+   *  `guides.custom`. (`authoring.defineConstraint` is the same function.) */
+  custom(spec: Constraint | Record<string, unknown>): Constraint;
   clamp(options?: Record<string, unknown>): Constraint;
   maintainSum(options?: Record<string, unknown>): Constraint;
   count(options?: Record<string, unknown>): Constraint;
@@ -285,8 +284,19 @@ export const guides: {
   remaining(options?: Record<string, unknown>): Guide;
   /** The catchment of a proximity pick — how far it reaches to find a mark. */
   proximity(options?: Record<string, unknown>): Guide;
-  /** The escape hatch: arbitrary read-only nodes from the live context. */
+  /** The escape hatch: arbitrary read-only nodes from the live context. Named to
+   *  match `edit.custom` / `constraints.custom`. */
   custom(build: (ctx: any) => import('./types.js').FeatureNode[]): Guide;
+  /** A question prompt above an instrument. */
+  prompt(text: string, options?: Record<string, unknown>): Guide;
+  /** The option rings of a Likert-style scale. */
+  optionRings(options?: Record<string, unknown>): Guide;
+  /** A matrix instrument's cell grid. */
+  cellGrid(options?: Record<string, unknown>): Guide;
+  /** A slider's track. */
+  sliderTrack(options?: Record<string, unknown>): Guide;
+  /** The crosshair frame of a correlation plot. */
+  crosshair(labels?: Record<string, unknown>): Guide;
 };
 
 /**
@@ -353,31 +363,8 @@ export function resolveTheme(partial?: DeepPartial<Theme>): Theme;
 export const DEFAULT_THEME: Theme;
 
 /**
- * The box a padded note of text occupies — `sticker`'s own sizing rule. Pass it the
- * same options you gave the sticker, then hand the result to a connector that docks
- * to the node's edge:
- * `link({ channels: { nodeWidth: { fn: d => noteBox(d.label).width } } })`.
- */
-/**
  * Developer diagnostics are ON by default and print with an `[elicit]` prefix.
  * A consumer's production build goes quiet on its own (`NODE_ENV`); call this to
  * silence them explicitly.
  */
 export function setWarnings(enabled: boolean): void;
-
-export function noteBox(
-  text: string,
-  opts?: {
-    padding?: number;
-    maxWidth?: number;
-    minWidth?: number;
-    minHeight?: number;
-    fontSize?: number;
-    fontFamily?: string;
-    lineHeight?: number;
-  },
-): {
-  block: { lines: string[]; width: number; height: number; lineHeight: number };
-  width: number;
-  height: number;
-};

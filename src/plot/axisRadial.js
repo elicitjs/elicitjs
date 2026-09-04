@@ -43,7 +43,7 @@ function anchorFor(x, cx, eps = 1) {
 }
 
 /** @type {string[]} */
-const AXIS_RADIAL_OPTIONS = [
+export const AXIS_RADIAL_OPTIONS = [
     'channel', 'channels', 'radius', 'innerRadius', 'bandWidth', 'ticks', 'tickValues',
     'tickFormat', 'tickSize', 'labelOffset', 'bands', 'title', 'arc', 'orient',
     'start', 'end', 'labelFill', 'stroke', 'strokeWidth', 'fontSize',

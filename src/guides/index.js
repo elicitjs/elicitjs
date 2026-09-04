@@ -27,5 +27,16 @@ export { region } from './region.js';
 export { remaining } from './remaining.js';
 // The catchment of a proximity pick — how far a gesture reaches to find a mark.
 export { proximity } from './proximity.js';
-// The escape hatch: arbitrary read-only nodes from the live render context.
+// The escape hatch: arbitrary read-only nodes from the live render context. Named
+// `custom` to match `edit.custom` — one word for "author your own" in every
+// grammar namespace (and `constraints.custom`).
 export { custom } from './custom.js';
+
+// Instrument affordances — the guide-built chrome a survey widget draws itself
+// with: a question prompt, the option rings of a Likert scale, a matrix's cell
+// grid, a slider's track, a correlation plot's crosshair frame. These ARE guides
+// (they view chart state, write nothing, and appear directly in `guides: [...]`,
+// which is how every built-in widget uses them — see widgets/likert.js), so they
+// belong in this namespace. They used to sit in `authoring.*`, which put five
+// spec keywords in the kit you build vocabulary FROM.
+export { optionRings, cellGrid, sliderTrack, prompt, crosshair } from '../widgets/theme.js';

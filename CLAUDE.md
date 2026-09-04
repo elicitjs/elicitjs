@@ -605,10 +605,24 @@ aimed at the row before it.
   `effects.grab`/`effects.select` (= `grabbed`/`selected`/`hovered`, with the whole
   `migrateLegacy` translation layer). Each was one keyword too many in a grammar
   that a JSON layer will compile.
-- **An authoring primitive in a grammar namespace.** `plot.*`/`edit.*`/
-  `constraints.*`/`guides.*`/`elements.*`/`widgets.*` contain only what can appear
-  in a spec; `encodeChannel`, `makeEdit`, `registerDriver` and the rest are
-  `authoring.*`. `npm run check:exports` fails if the two drift from `index.d.ts`.
+- **An authoring primitive in a grammar namespace — or a spec keyword hidden in the
+  authoring kit.** `plot.*`/`edit.*`/`constraints.*`/`guides.*`/`elements.*`/
+  `widgets.*` contain only what can appear in a spec; `encodeChannel`, `makeEdit`,
+  `registerDriver` and the rest are `authoring.*`. `npm run check:exports` fails if
+  the two drift from `index.d.ts` — but it cannot see a member sitting in the WRONG
+  namespace, so both directions had leaked:
+  `elements.AXIS_OPTIONS`/`GRID_OPTIONS` were lists of option NAMES (authoring
+  material) inside a grammar namespace, and `prompt`/`optionRings`/`cellGrid`/
+  `sliderTrack`/`crosshair` were GUIDES — they appear directly in a spec's
+  `guides: [...]`, which is exactly how every built-in widget uses them — sitting in
+  `authoring.*`. They swapped places. `noteBox` moved to `authoring.*` for the same
+  reason its siblings `measureText`/`wrapText` were already there: it can only ever
+  appear inside a `{ fn }` channel, the one deliberately non-serializable form, so
+  it can never be a JSON keyword.
+- **A second word for "author your own X".** It is `custom` in every grammar
+  namespace: `edit.custom`, `guides.custom`, `constraints.custom`. The constraint
+  one was `defineConstraint`, which is now the `authoring.*` alias — the name a mark
+  or widget author reaches for while building vocabulary rather than a spec.
 - **An index signature on a grammar namespace or on `ElicitSpec`.** The key sets are
   CLOSED, so an unknown name is a compile error rather than `any` — which is also
   what lets the JSON Schema be generated from a key set that is actually known.
