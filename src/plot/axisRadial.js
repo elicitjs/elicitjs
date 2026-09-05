@@ -1,6 +1,7 @@
 // @ts-check
 // axisRadial.js — a circular / semicircular axis as a CHART ELEMENT (sibling of
-// axisX/axisY). It views the global `angle` SCALE (`views: 'scale'`), paints
+// axisX/axisY). It views the global `theta` SCALE — the POLAR ANGULAR POSITION,
+// not `angle`, which is a mark's rotation in place — (`views: 'scale'`), paints
 // chrome (arc spine, ticks, labels, optional colored categorical bands), and is
 // inert by default. Domain editing is out of scope — Cartesian edit.axis.* stays
 // on linear axes.
@@ -61,7 +62,7 @@ export function axisRadial(options = {}) {
         channels = {},
         id,
         edits,
-        channel = 'angle',
+        channel = 'theta',
         radius: radiusOpt,
         innerRadius = 0,
         bandWidth = 18,

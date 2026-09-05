@@ -59,7 +59,7 @@ export function point(options = {}) {
                 const cx = encodeChannel(scales, channels, 'x', d, width / 2, i, currentData);
                 const cy = encodeChannel(scales, channels, 'y', d, height / 2, i, currentData);
                 const size = encodeChannel(scales, channels, 'size', d, 5, i, currentData);
-                const angle = encodeAngle(scales, channels, d, 0, i, currentData);
+                const angle = encodeAngle(scales, channels, 'angle', d, 0, i, currentData);
                 // A `symbol` channel turns the dot into a glyph (emoji / unicode
                 // shape) — the same category->encoding path, rendered as text. `size`
                 // still sets its px extent so a glyph point and a circle point match.

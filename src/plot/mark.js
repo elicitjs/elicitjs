@@ -96,9 +96,14 @@ export const STANDARD_STYLE_CHANNELS = Object.keys(STYLE_DEFAULTS);
 const SHORTHANDS = [
     ...STANDARD_STYLE_CHANNELS,
     'size', 'symbol', 'text', 'fontSize', 'textAnchor', 'lineAnchor', 'dx', 'dy',
-    // Orientation in math degrees (0° = +x, CCW). Constant form is a visual-space
-    // shorthand; a scaled field goes through the angle channel's scale so rotate()
-    // is an exact inverse. Not a style channel — marks that care read it themselves.
+    // A mark's ROTATION IN PLACE, in math degrees (0° = +x, CCW). Constant form is
+    // a visual-space shorthand; a scaled field goes through the angle channel's
+    // scale so rotate() is an exact inverse. Not a style channel — marks that care
+    // read it themselves.
+    //
+    // `theta` — the polar POSITION a needle points along and an arc sweeps — is
+    // deliberately NOT here: it is positional, and positional channels (x, y) are
+    // not shorthands either. Write it as a channel.
     'angle',
 ];
 
@@ -390,28 +395,40 @@ export function encodeValue(scales, channels, channel, value, fallback) {
 }
 
 /**
- * Resolve the `angle` channel to math degrees (0° = +x, CCW, y-up — the same
- * convention as needle / pointerDegrees). Scaled when an angle scale exists so
- * `rotate()` is an exact inverse; otherwise raw (a `{ value }` constant or the
- * field's literal degrees). Marks stamp the result on `FeatureNode.angle`; the
- * renderer converts to SVG with `rotate(-deg cx cy)`.
+ * Resolve an ANGULAR channel to math degrees (0° = +x, CCW, y-up — the same
+ * convention as needle / pointerDegrees). Scaled when that channel resolved a
+ * scale so `rotate()` is an exact inverse; otherwise raw (a `{ value }` constant
+ * or the field's literal degrees).
+ *
+ * Two channels are angular, and they are different questions:
+ *   `theta`  a POLAR POSITION — a needle's bearing, an arc's sweep. Positional
+ *            (see AXIS_OF), so `axisRadial` is its axis and a legend draws a fan.
+ *   `angle`  a mark's ROTATION IN PLACE — a tilted label, a rotated symbol. Not a
+ *            position, so no axis and no key.
+ * They were ONE channel until this pass, which is why `axisRadial` drew a polar
+ * axis for a scale six marks were using as a rotation.
+ *
+ * Marks stamp the result on `FeatureNode.angle` either way — that field is the
+ * RENDERED rotation, which is what both questions end in; the renderer converts to
+ * SVG with `rotate(-deg cx cy)`.
  * @param {import('../types').ScaleMap} scales
  * @param {Record<string, any>} channels
+ * @param {string} channel 'angle' (rotation) or 'theta' (polar position)
  * @param {import('../types').Datum | null} datum
  * @param {number} [fallback=0]
  * @param {number} [index] row index, passed to a derived channel's fn
  * @param {import('../types').Datum[]} [data] the dataset, passed to a derived fn
  * @returns {number}
  */
-export function encodeAngle(scales, channels, datum, fallback = 0, index, data) {
-    if (!channels || !channels.angle) return fallback;
-    // scales is an index signature — angle is optional.
-    const angleScale = /** @type {any} */ (scales)['angle'];
-    if (angleScale) return encodeChannel(scales, channels, 'angle', datum, fallback, index, data);
-    const spec = channels.angle;
+export function encodeAngle(scales, channels, channel, datum, fallback = 0, index, data) {
+    if (!channels || !channels[channel]) return fallback;
+    // scales is an index signature — an angular scale is optional.
+    const scale = /** @type {any} */ (scales)[channel];
+    if (scale) return encodeChannel(scales, channels, channel, datum, fallback, index, data);
+    const spec = channels[channel];
     // Derived angle — fn returns degrees directly (visual space, no scale).
     if (typeof spec.fn === 'function') {
-        return +callChannelFn(spec, 'angle', datum, index, data, fallback);
+        return +callChannelFn(spec, channel, datum, index, data, fallback);
     }
     if (spec.field != null) {
         const v = datum ? datum[spec.field] : undefined;

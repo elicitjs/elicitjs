@@ -96,7 +96,7 @@ export function textNodeAt(scales, channels, d, i, px, py, opts = {}) {
     // Angle: math degrees via the shared encodeAngle path (scaled when a scale
     // exists so rotate() is an exact inverse; else raw). The renderer converts
     // to SVG with rotate(-deg) about the label's anchor.
-    const angle = encodeAngle(scales, channels, d, 0, i, data);
+    const angle = encodeAngle(scales, channels, 'angle', d, 0, i, data);
 
     const lineAnchor = rawChannel(channels, 'lineAnchor', d, 'middle', i, data);
     const fontSize = rawChannel(channels, 'fontSize', d, 12, i, data);

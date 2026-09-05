@@ -473,6 +473,33 @@ A mark used to accept `constraints` as sugar, which the engine promoted to the d
 
 Don't scope a constraint to a feature, and don't re-add the promotion path. If a constraint's *guide* only makes sense for certain mark shapes (e.g. `maintainSum`'s cap-tick needs a band axis), guard the guide function, not the constraint itself.
 
+**There are three coordinate FAMILIES, and `axisOf` is a static map.** Cartesian
+(`x`, `y` + the `x1/x2`, `y1/y2` span partners) and POLAR (`theta`, `theta2`,
+whose axis element is `axisRadial`). `axisOf` must stay a static channel→axis map:
+making it mark-aware to accommodate one mark's orientation is the special case the
+engine avoids everywhere else. `radius` is deliberately NOT minted — nothing needs
+a radial scale yet (`innerRadius`/`outerRadius` are px options), and a keyword with
+no consumer is one the grammar cannot justify.
+
+**`theta` is a POSITION; `angle` is a ROTATION. They were one channel.** `theta` is
+where a mark sits on the polar axis — a needle's bearing, an arc's sweep; `angle` is
+a mark turned in place — a tilted label, a rotated symbol. Six marks used `angle` for
+rotation while `needle` used it for direction, so `axisRadial` drew a polar axis for a
+scale that was mostly rotations and `legendForm` offered a fan key for them. This is
+Vega-Lite's own split. `angle` stays a style SHORTHAND and is not positional and not
+legendable; `theta` is positional, is not a shorthand (neither are `x`/`y`), and keys
+as a fan. Both invert identically through `visualForChannel`/`pointerForChannel`, and
+`rotate` needed no change because it inverts through `ctx.channels[0]`.
+
+Whether `theta` is SCALED is the MARK's statement, and the two marks differ
+honestly: `needle` reads it through the scale, because a bearing IS a position on
+one; `arc` declares it in `rawChannels`, because an arc normalizes its own
+magnitudes (`stackLayout`, in data units, then `arcSpan`) and never asks the scale
+for anything. That declaration is load-bearing in both directions — without it a
+pie builds a global theta scale it never reads, implies a radial axis it has no use
+for, and `legends: true` mints a fan of spokes for shares that are not bearings,
+whose reserved layout space moved the pie out from under its own boundary handles.
+
 **An OPTION may never name a data column — `channels` is the only place a mark
 names one.** This is the general form of "a second name for a field on a mark",
 and three options broke it. `series` (plus an undeclared `z` alias) was a bare

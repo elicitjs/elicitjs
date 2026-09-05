@@ -70,7 +70,7 @@ export function ellipse(options = {}) {
                 const size = encodeChannel(scales, channels, 'size', d, 5, i, currentData);
                 const rx = encodeChannel(scales, channels, 'rx', d, size, i, currentData);
                 const ry = encodeChannel(scales, channels, 'ry', d, size, i, currentData);
-                const angle = encodeAngle(scales, channels, d, 0, i, currentData);
+                const angle = encodeAngle(scales, channels, 'angle', d, 0, i, currentData);
                 return {
                     type: 'ellipse',
                     cx,

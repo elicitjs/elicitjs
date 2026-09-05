@@ -157,7 +157,7 @@ function buildCurve(options, forcedSpanAxis) {
                 let c = [mid.cx + nx * apex * 2, mid.cy + ny * apex * 2];
 
                 // Tilt is baked in — neither renderer rotates a path node.
-                const angle = encodeAngle(scales, channels, d, 0, i, currentData);
+                const angle = encodeAngle(scales, channels, 'angle', d, 0, i, currentData);
                 if (angle) {
                     p1 = rotatePoint(p1, mid, angle);
                     p2 = rotatePoint(p2, mid, angle);

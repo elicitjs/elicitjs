@@ -6,7 +6,7 @@
 //   arc({
 //     outerRadius: 100, innerRadius: 40,   // donut
 //     channels: {
-//       value: { field: 'share' },         // magnitude → slice width
+//       theta: { field: 'share' },         // magnitude → slice width
 //       fill:  { field: 'party' },
 //     },
 //   })
@@ -23,7 +23,7 @@
 //   donut({
 //     channels: {
 //       x:     { field: 'state' },         // band axis → one donut per state
-//       value: { field: 'share' },         // party's share within its state
+//       theta: { field: 'share' },         // party's share within its state
 //       fill:  { field: 'party' },
 //       size:  { field: 'voters' },        // (optional) donut size = turnout
 //     },
@@ -34,13 +34,12 @@
 // donut (its stamped `members`), holding that slot's total fixed — the per-slot
 // "maintainSum" a pie enforces by construction — and never disturbs another slot.
 //
-// The magnitude channel is `value`, NOT `angle`. Across this library `angle` means
-// a rotation/angular POSITION (needle's direction, text's rotation, axisRadial's
-// angular scale) — it is inverted back to data by rotate()/move() as an angle. A
-// slice's `share` is nothing of the sort: it's a quantity that the pie layout
-// normalizes into a sweep. Naming it `angle` made one channel mean two unrelated
-// things depending on the mark, so it's `value` here (see CLAUDE.md, "one
-// documented name per behavior").
+// The magnitude channel is `theta` — the POLAR positional family, Vega-Lite's own
+// name for it ("the arc length in radians if theta2 is not specified"). It is not
+// `angle`: `angle` is a mark's ROTATION IN PLACE (a tilted label, a rotated
+// symbol), which is not a position and has no axis. It was called `value` here,
+// which collided with `ChannelSpec.value` — the visual-space constant — so the one
+// word meant both "a pixel/degree literal" and "the quantity this mark divides".
 //
 // Layout normalizes by the sum of magnitudes over the mark's rows (stacked bar in
 // polar form). Slice boundaries are draggable via edit.arc.edge(); sibling controls
@@ -90,12 +89,25 @@ export function arc(options = {}) {
         start: start != null ? start : (arcOpt ? undefined : -180),
         end: end != null ? end : (arcOpt ? undefined : 180),
     });
-    const valueField = channels.value && channels.value.field;
+    const thetaField = channels.theta && channels.theta.field;
 
     return {
         ...markCommon(opts),
         markName: 'arc',
         channels,
+        // `theta` is read RAW here, and that is a statement about this mark, not
+        // about the channel: an arc NORMALIZES its magnitudes itself (stackLayout,
+        // in data units, then arcSpan) and never asks the theta scale for anything.
+        // A `needle` does the opposite — its theta IS a bearing read through the
+        // scale — which is why the same channel is scaled there and raw here.
+        //
+        // Declaring it keeps the engine honest about both halves: no global theta
+        // scale is built from a pie (so a pie does not imply a radial axis it has
+        // no use for), and `legends: true` mints no fan key for it. It did: a fan
+        // of spokes is a key for BEARINGS, and a pie's shares are not bearings, so
+        // the key misreported the encoding and its reserved layout space moved the
+        // pie out from under its own boundary handles.
+        rawChannels: ['theta'],
         edits: markEdits,
         // When `x`/`y` carry a categorical field, each category is a SLOT that holds
         // one donut, so a discrete position axis wants a band (an interval to fit the
@@ -106,7 +118,7 @@ export function arc(options = {}) {
         // The magnitude is the mark's value axis; there is no category axis to key
         // (a pie's rows are its own layout order), so xKey stays undefined rather
         // than aliasing the same field twice.
-        yKey: valueField,
+        yKey: thetaField,
         // Capability flags: what edit.arc.* and edit.stack.* need (SCOPE_CAPABILITY).
         // A pie IS a stack — it partitions one total among its rows — so the same cut
         // and boundary drag that work on a stacked bar work here, in polar form.
@@ -178,10 +190,10 @@ export function arc(options = {}) {
                 // The field case IS the shared stack walk (plot/stack.js), so a pie
                 // and a stacked bar agree on what a share is, including that a
                 // negative or non-finite magnitude occupies no interval.
-                const mags = valueField != null
-                    ? stackLayout(members, currentData, valueField).mags
+                const mags = thetaField != null
+                    ? stackLayout(members, currentData, thetaField).mags
                     : members.map((/** @type {number} */ gi) => {
-                        const enc = encodeChannel(scales, channels, 'value', currentData[gi], 0, gi, currentData);
+                        const enc = encodeChannel(scales, channels, 'theta', currentData[gi], 0, gi, currentData);
                         return Number.isFinite(enc) && enc > 0 ? Number(enc) : 0;
                     });
                 const total = mags.reduce((/** @type {number} */ a, /** @type {number} */ b) => a + b, 0);
@@ -237,7 +249,7 @@ export function arc(options = {}) {
                         // to split it, and the same stamp a stacked bar's segments
                         // carry. The mark that encoded the layout carries the means to
                         // invert it (the node.frame idea, applied to a stack).
-                        stack: stackDescriptor({ members, local, field: valueField, geometry }),
+                        stack: stackDescriptor({ members, local, field: thetaField, geometry }),
                         // Filled-region hit geometry. The pick layer measures distance
                         // to a path's polyline, which for a bare `d` string is nothing
                         // at all — so under the canvas renderer a slice BODY was not
@@ -283,7 +295,7 @@ export function arc(options = {}) {
                             members,
                             pivotX: cx, pivotY: cy,
                             spanStart, spanEnd, pad,
-                            stack: stackDescriptor({ members, local, field: valueField, geometry }),
+                            stack: stackDescriptor({ members, local, field: thetaField, geometry }),
                         });
                     }
                 }

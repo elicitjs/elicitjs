@@ -1152,12 +1152,12 @@ async function main() {
         // everywhere else), and the mark takes `edits: [...]` like every other mark.
         // Both are load-bearing renames: if either failed to land, the pie draws
         // with no slices or the handles never appear, so assert the geometry.
-        console.log('\nArc: value channel + edge drag (/marks/arc)');
+        console.log('\nArc: theta channel + edge drag (/marks/arc)');
         await open('/marks/arc', '#edit svg path');
 
         const arcSvg = page.locator('#edit svg').first();
         const sliceCount = await arcSvg.locator('path').count();
-        check('arc: value channel drives slices', sliceCount >= 3, `${sliceCount} slice paths`);
+        check('arc: theta channel drives slices', sliceCount >= 3, `${sliceCount} slice paths`);
         const handleCount = await arcSvg.locator('circle').count();
         check('arc: edits:[edit.stack.edge()] emits boundary handles', handleCount >= 2, `${handleCount} handles`);
 

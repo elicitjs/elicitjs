@@ -97,7 +97,7 @@ function isRampScale(scale) {
 function legendForm(channel, scale) {
     if (!isRampScale(scale)) return 'swatches';
     if (channel === 'size') return 'graduated';
-    if (channel === 'angle') return 'fan';
+    if (channel === 'theta') return 'fan';
     if (channel === 'strokeWidth') return 'weights';
     return 'ramp';
 }

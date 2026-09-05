@@ -748,14 +748,30 @@ export interface Channels extends StyleChannels {
   lineAnchor?: ChannelSpec;   // vertical: 'top' | 'middle' | 'bottom'
   dx?: ChannelSpec;           // horizontal pixel offset
   dy?: ChannelSpec;           // vertical pixel offset
-  // Orientation in math degrees (0° = +x, CCW, y-up). Scaled when a scale is
-  // declared so rotate() is an exact inverse; else raw. Marks that emit geometry
-  // (point/rect/tick/text/…) stamp it on FeatureNode.angle; the renderer applies
-  // SVG rotate(-deg) about the mark centre. Also the primary channel of needle /
-  // axisRadial / needle (default range [180, 0] = left→right through the top).
-  // Arc/pie slice magnitude is `value`, not `angle` — a slice's share is a quantity
-  // the layout turns into a sweep, not an orientation.
+  // A mark's ROTATION IN PLACE, in math degrees (0° = +x, CCW, y-up). Scaled when
+  // a scale is declared so rotate() is an exact inverse; else raw. Marks that emit
+  // geometry (point/rect/tick/text/curve/ellipse) stamp it on FeatureNode.angle;
+  // the renderer applies SVG rotate(-deg) about the mark centre.
+  //
+  // NOT a position: it has no axis and no legend. A rotation is a property of the
+  // glyph, not a place on a scale — cf. `theta`.
   angle?: ChannelSpec;
+  // The POLAR ANGULAR POSITION, in math degrees (default range [180, 0] =
+  // left→right through the top). Positional (see AXIS_OF): `axisRadial` is its
+  // axis and a legend draws it as a fan of spokes at their bearings. It carries a
+  // needle's direction and an arc's stacked magnitude — Vega-Lite's split, where
+  // `theta` is polar position and `angle` is mark rotation.
+  //
+  // `theta` and `angle` were ONE channel until the second consistency pass, so
+  // `axisRadial` drew a polar axis for a scale six marks were using as a rotation.
+  //
+  // Whether it is SCALED depends on the mark, and both marks say so: a needle reads
+  // it through the scale (a bearing), while an arc declares it in `rawChannels` and
+  // normalizes the magnitudes itself, so a pie neither implies a radial axis nor
+  // mints a fan key for shares that are not bearings.
+  theta?: ChannelSpec;
+  // Span partner for `theta`, on the same axis (as x2 is to x).
+  theta2?: ChannelSpec;
   [channel: string]: ChannelSpec | undefined;
 }
 
@@ -786,7 +802,9 @@ export interface MarkOptions {
   lineAnchor?: 'top' | 'middle' | 'bottom' | string | ChannelFn;
   dx?: number | ChannelFn;
   dy?: number | ChannelFn;
-  // Orientation shorthand (math degrees) — desugars to channels.angle.
+  // Rotation shorthand (math degrees) — desugars to channels.angle. There is no
+  // `theta` shorthand: theta is POSITIONAL, and positional channels (x, y) are not
+  // shorthands either.
   angle?: number | ChannelFn;
   // Text-mark display formatter: a d3-format string or `(value) => string`.
   // Display-only — the underlying field stays the raw value. See `elicit.format`.

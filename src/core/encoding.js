@@ -176,14 +176,29 @@ const SYMBOL_CHANNELS = new Set(['symbol']);
 // own axes (Observable Plot's model — a bar's x1/x2 are both "x" units). The one
 // place a channel name resolves to the axis it shares a scale with, so x1/x2/y1/y2
 // union into the same domain/range/scale as x/y instead of getting their own.
-/** @type {Record<string, 'x' | 'y'>} */
-const AXIS_OF = { x: 'x', x1: 'x', x2: 'x', y: 'y', y1: 'y', y2: 'y' };
+//
+// `theta` is the POLAR angular position — an arc's stacked magnitude, a needle's
+// direction — and it is a coordinate family of its own, with `axisRadial` as its
+// axis (Vega-Lite's split). It is NOT `angle`: `angle` is a mark's ROTATION IN
+// PLACE (a rotated label, a rotated symbol), which is not a position and has no
+// axis. One channel used to mean both, so `axisRadial` drew a polar axis for a
+// scale that six marks were using as a rotation.
+//
+// `radius` is deliberately absent: nothing needs a radial SCALE yet
+// (`innerRadius`/`outerRadius` are px options), and a keyword with no consumer is
+// one the grammar cannot justify.
+/** @type {Record<string, 'x' | 'y' | 'theta'>} */
+const AXIS_OF = {
+    x: 'x', x1: 'x', x2: 'x',
+    y: 'y', y1: 'y', y2: 'y',
+    theta: 'theta', theta2: 'theta',
+};
 
 /**
- * The positional axis a channel shares its scale with ('x' or 'y'), or
- * undefined for a non-positional channel (fill, size, opacity, ...).
+ * The positional axis a channel shares its scale with ('x', 'y' or 'theta'), or
+ * undefined for a non-positional channel (fill, size, opacity, angle, ...).
  * @param {string} channelName
- * @returns {'x' | 'y' | undefined}
+ * @returns {'x' | 'y' | 'theta' | undefined}
  */
 export function axisOf(channelName) {
     return AXIS_OF[channelName];
@@ -250,13 +265,17 @@ const FRAME_MAGNITUDE = new Set(['size', 'rx', 'ry', 'strokeWidth']);
  *   'y'     pixel = originY - u * halfSize   (local y is UP)
  *   'size'  pixel = u * halfSize             (a length, no origin)
  *   'plain' pixel = u                        (already in its own output units —
- *                                             `angle` in degrees, `curvature`)
+ *                                             `angle`/`theta` in degrees, `curvature`)
+ *
+ * Only the CARTESIAN axes read the box: a glyph's frame is a square in pixels, so
+ * `theta` — a polar position, in degrees — has no local box and stays 'plain',
+ * exactly like `angle`.
  * @param {string} channelName
  * @returns {'x' | 'y' | 'size' | 'plain'}
  */
 export function frameFamilyOf(channelName) {
     const axis = axisOf(channelName);
-    if (axis) return axis;
+    if (axis === 'x' || axis === 'y') return axis;
     if (FRAME_MAGNITUDE.has(channelName)) return 'size';
     return 'plain';
 }
@@ -456,6 +475,10 @@ export function channelRange(channelName, type, dims, theme, opts = {}) {
         case 'curvature': return [-1, 1];
         // Degrees in math convention (y-up). Default matches arcSpan semi/`orient:
         // 'top'` — left (180°) → right (0°) through the top (NYT / speedometer).
+        // `theta` is the polar POSITION (a needle's bearing, an arc's sweep);
+        // `angle` is a mark's rotation in place. Same units, different questions,
+        // so they get the same default and separate scales.
+        case 'theta': return [180, 0];
         case 'angle': return [180, 0];
     }
     // Family-based ranges: any opacity/colour channel gets the same output range
@@ -489,7 +512,7 @@ export function normalizeChannels(feature) {
 
 /**
  * Math-convention angle in degrees (y-up, 0° = +x, counterclockwise) of a
- * pointer about a centre. Shared by visualForChannel('angle') and rotate().
+ * pointer about a centre. Shared by visualForChannel('theta'/'angle') and rotate().
  * @param {{ x: number, y: number }} pointer
  * @param {{ cx: number, cy: number }} center
  * @returns {number}
@@ -541,7 +564,10 @@ export function visualForChannel(channelName, pointer, center) {
     if (channelName === 'size') { // radius = distance from centre -> a resize gesture
         return center ? Math.hypot(pointer.x - center.cx, pointer.y - center.cy) : undefined;
     }
-    if (channelName === 'angle') {
+    // Both angular channels invert the same way — a bearing about a centre.
+    // `theta` is a polar POSITION, `angle` a rotation in place; the gesture that
+    // sets either is the same swing of the pointer.
+    if (channelName === 'theta' || channelName === 'angle') {
         return center ? pointerDegrees(pointer, center) : undefined;
     }
     return undefined; // channel isn't spatially adjustable this way
@@ -570,7 +596,8 @@ export function pointerForChannel(channelName, visual, center = null) {
     if (channelName === 'size') { // radius along +x from the centre
         return { x: center.cx + visual, y: center.cy };
     }
-    if (channelName === 'angle') { // point on a unit-ish circle at `visual` degrees
+    // Both angular channels: a point on a unit-ish circle at `visual` degrees.
+    if (channelName === 'theta' || channelName === 'angle') {
         const rad = visual * Math.PI / 180;
         const R = 100; // any R > 0 works — pointerDegrees only reads atan2, not distance
         return { x: center.cx + R * Math.cos(rad), y: center.cy - R * Math.sin(rad) };

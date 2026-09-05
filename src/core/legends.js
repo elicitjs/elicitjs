@@ -24,7 +24,9 @@ import { scaleKey } from './scales.js';
  * for. x/y are excluded because an AXIS is the key for those.
  * @type {string[]}
  */
-export const LEGENDABLE = ['fill', 'stroke', 'size', 'symbol', 'opacity', 'angle', 'strokeWidth'];
+// `theta` is legendable (a fan of spokes at their bearings); `angle` is NOT — a
+// mark's rotation in place is not an encoding a reader looks up.
+export const LEGENDABLE = ['fill', 'stroke', 'size', 'symbol', 'opacity', 'theta', 'strokeWidth'];
 
 /**
  * Every ENCODING a legend could be a key for: one entry per (channel, field) pair

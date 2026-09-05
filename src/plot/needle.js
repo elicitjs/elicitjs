@@ -24,6 +24,7 @@
 //   handles: true|false|'hit' — false emits no hub and silences the path
 
 import { encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions, markDefaults, resolveHandles, markCommon} from './mark.js';
+import { warn } from '../core/dev.js';
 import { arcSpan, needleTriangle } from './polar.js';
 
 /**
@@ -32,6 +33,20 @@ import { arcSpan, needleTriangle } from './polar.js';
  */
 export function needle(options = {}) {
     const opts = normalizeMarkOptions(options, { mark: 'needle', allow: ['length', 'handles', 'handleSize', 'handleColor', 'baseWidth', 'arc', 'orient', 'start', 'end'] });
+    // A needle's direction is `theta` — a POLAR POSITION, which is what axisRadial
+    // draws and what a fan legend keys. `angle` is a mark's rotation in place, and
+    // it is a universal style shorthand, so it reaches every mark: left unchecked, a
+    // needle given `angle` would accept the channel, read nothing from it, and point
+    // at 0° in silence. That is the exact failure this library treats as worst.
+    if (opts.channels && opts.channels.angle && !opts.channels.theta) {
+        warn(
+            'needle:angle',
+            'needle({ channels: { angle: … } }) — a needle\'s direction is `theta`, the '
+            + 'polar angular POSITION (what axisRadial draws). `angle` is a mark\'s '
+            + 'rotation in place and this mark does not read it, so the needle would '
+            + 'point at 0°. Rename the channel to `theta`.'
+        );
+    }
     const {
         channels = {},
         id,
@@ -84,7 +99,7 @@ export function needle(options = {}) {
                 // angle field inverts exactly under rotate() and an unscaled one still
                 // reads as raw degrees. (needle used to call encodeChannel directly —
                 // the only mark that read this channel a different way.)
-                const deg = encodeAngle(scales, channels, d, 0, i, currentData);
+                const deg = encodeAngle(scales, channels, 'theta', d, 0, i, currentData);
                 const len = lengthOpt != null
                     ? lengthOpt
                     : encodeChannel(scales, channels, 'size', d, Math.min(width, height) * 0.4, i, currentData);

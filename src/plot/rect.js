@@ -149,7 +149,7 @@ function buildRect(options, forcedValueAxis) {
                 if (xExt.band && !yExt.band) bandAxis = 'x';
                 else if (yExt.band && !xExt.band) bandAxis = 'y';
 
-                const angle = encodeAngle(scales, channels, d, 0, i, currentData);
+                const angle = encodeAngle(scales, channels, 'angle', d, 0, i, currentData);
                 // Corner radius, in px like every other geometry channel here.
                 const rx = channels.rx
                     ? encodeChannel(scales, channels, 'rx', d, 0, i, currentData)
