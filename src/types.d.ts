@@ -287,9 +287,10 @@ export interface EditContext {
   // proximity-aware edits (anchor / newSeries) and when.near|far.
   seriesKey?: string | null;
   marks?: FeatureNode[];
-  // The line's ordering knob, so a create-as-you-drag (draw) edit can pick its
-  // mode: 'sequence' -> freehand append; otherwise -> you-draw-it column upsert.
-  order?: string | null;
+  // The line's connection MODE, so a create-as-you-drag (draw) edit can pick its
+  // behaviour: 'sequence' -> freehand append; otherwise -> you-draw-it column
+  // upsert. (WHICH column sorts the points is the `order` CHANNEL, not this.)
+  connect?: 'domain' | 'sequence' | null;
   // The feature's transient per-gesture driver session: the zone/handle lock a
   // lifecycle driver classified at dragstart (brush/brushRect), a draw's mode +
   // locked series, an axis drag's handle snapshot. Read (and, for pointer
@@ -1379,9 +1380,13 @@ export interface Mark {
    */
   requires?: MarkRequirement[];
 
-  /** Line-family series grouping. See plot/line.js. */
+  /** Line-family series grouping: the FIELD name, resolved from the `series`
+   *  channel (falling back to fill's / stroke's field) by `seriesFieldOf`. */
   seriesKey?: string | null;
-  order?: string;
+  /** How points connect when no `order` channel is given: sort by the domain axis,
+   *  or keep array order. WHICH column sorts them is the `order` CHANNEL — an
+   *  option may never name one. */
+  connect?: 'domain' | 'sequence';
   samples?: number;
   supportsSeries?: boolean;
 

@@ -495,18 +495,27 @@ export function resolveStyle(scales, channels, datum, defaults = {}, index, data
  * it differently (line read stroke, area read fill-then-stroke), so a coloured
  * area and a coloured line grouped by different channels.
  *
- * Precedence: the explicit `series` option wins; otherwise the field behind a
- * paint channel, fill before stroke — Observable Plot's `z` default, so a
- * coloured chart groups with no extra config. (Plot's `z` alias is not accepted:
- * one name per concept.)
+ * `series` is a CHANNEL — `channels: { series: { field: 'group' } }` — because it
+ * names a column, and `channels` is the only place a mark names one. It was a plain
+ * top-level option (`series: 'group'`, plus a `z` alias), which is exactly the
+ * "an option may never name a data column" rule this API otherwise holds to, and it
+ * meant the one encoding that decides a line chart's shape was invisible to
+ * everything that reads a channel map.
  *
- * `series` is the public option name; `seriesKey` is the internal feature field.
- * @param {any} opts normalized mark options
+ * It is a RAW channel: the grouping key is read off the datum (`d[seriesField]`)
+ * and never scaled, so marks declare it in `Mark.rawChannels` and no scale is built
+ * for it. A grouping is an identity, not a magnitude — cf. Vega-Lite's `detail`.
+ *
+ * Precedence: an explicit `series` channel wins; otherwise the field behind a paint
+ * channel, fill before stroke — Observable Plot's `z` default, so a coloured chart
+ * groups with no extra config.
+ *
+ * `series` is the public channel name; `seriesKey` is the internal feature field.
  * @param {Record<string, any>} channels the mark's channel map
  * @returns {string | null}
  */
-export function seriesFieldOf(opts, channels = {}) {
-    return opts.series
+export function seriesFieldOf(channels = {}) {
+    return (channels.series && channels.series.field)
         || (channels.fill && channels.fill.field)
         || (channels.stroke && channels.stroke.field)
         || null;
@@ -556,6 +565,28 @@ export function rawChannel(channels, name, datum, fallback, index, data) {
         );
     }
     return fallback;
+}
+
+/**
+ * The field a line-family mark sorts its points by: the `order` CHANNEL's field, or
+ * null when there is none (the mark then follows its `connect` mode).
+ *
+ * `order` is a channel because it names a COLUMN, and `channels` is the only place
+ * a mark names one. It was a plain option taking a bare field name
+ * (`order: 'stop'`), which is the same defect `series` had. Pointing the option at
+ * another channel instead (`order: { channel: 'x' }`) was tried and does not work:
+ * the common case sorts by a column bound to NOTHING — a route's `stop` number is
+ * an ordering key and not an encoding — so there is no channel to point at.
+ *
+ * It is a RAW channel: the sort key is read off the datum and never scaled, so
+ * marks declare it in `Mark.rawChannels`. The MODE (sort by the domain axis, or
+ * connect in array order) is a separate question with no column in it, and lives on
+ * the `connect` option.
+ * @param {Record<string, any>} channels
+ * @returns {string | null}
+ */
+export function orderFieldOf(channels = {}) {
+    return (channels.order && channels.order.field) || null;
 }
 
 /**
@@ -622,6 +653,12 @@ const MISTAKEN_OPTIONS = {
     edit: 'attach an edit to a channel — y: { field: "…", edit: move() } — or pass several with `edits: [...]`.',
     r: 'the radius channel is `size` (px), on every mark.',
     handleRadius: "a sub-element's radius is `handleSize`.",
+    order: 'order is a CHANNEL — it names the column to sort by: '
+        + 'channels: { order: { field: "…" } }. The MODE (sort by the domain axis, or '
+        + 'connect in array order) is the `connect` option: connect: "domain" | "sequence".',
+    series: 'series is a CHANNEL — it names a column, and `channels` is the only place '
+        + 'a mark names one: channels: { series: { field: "…" } }.',
+    z: 'the grouping channel is `series`: channels: { series: { field: "…" } }.',
     constraints: 'a constraint is a DATASET invariant — it gates every edit from every '
         + 'mark, whichever one declared it — so writing it inside a mark says something '
         + 'the engine does not mean. Put it on the Elicit spec: constraints: [...].',

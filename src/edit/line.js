@@ -49,11 +49,11 @@ export function anchor(options = {}) {
             let seriesVal = null;
             if (into === 'nearest') {
                 seriesVal = nearestSeries(ctx.marks || [], ctx.pointer.x, ctx.pointer.y, threshold);
-                // Freehand line (order: 'sequence'): no nearby line, but one already
+                // Freehand line (connect: 'sequence'): no nearby line, but one already
                 // exists — extend THAT line (append in draw order) rather than spawning
                 // a new series, so a far click keeps a single path. Domain lines, and
                 // into:'new', still start a fresh series.
-                if (seriesVal == null && ctx.order === 'sequence' && sField && (ctx.data || []).length) {
+                if (seriesVal == null && ctx.connect === 'sequence' && sField && (ctx.data || []).length) {
                     seriesVal = ctx.data[ctx.data.length - 1][sField];
                 }
             }
@@ -145,7 +145,7 @@ export function newSeries(options = {}) {
  *             path, e.g. a route over a map).
  * So one gesture both draws new lines and reshapes drawn ones — near edits, far draws.
  * The engine (draw driver) owns the per-drag lock; this apply reads it from
- * ctx.session (mode + locked series) and ctx.order.
+ * ctx.session (mode + locked series) and ctx.connect.
  *   along / value  : the positional axes ("x"/"y"); the independent axis the line
  *                    runs ALONG, and the axis it carries a value on. Defaults x/y.
  *   channels       : governed channels (default [along, value]); freehand needs both.
@@ -174,7 +174,7 @@ export function draw(options = {}) {
             if (!st) return undefined; // engine sets the per-drag lock on dragstart
             const sField = seriesField || ctx.seriesKey || null;
             const seriesVal = st.drawSeries;
-            const freehandLine = ctx.order === 'sequence';
+            const freehandLine = ctx.connect === 'sequence';
 
             /** @type {Record<string, import('../types').ResolvedChannel>} */
             const byName = {};

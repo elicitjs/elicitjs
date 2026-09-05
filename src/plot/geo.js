@@ -12,7 +12,7 @@
 //   geoLine     — coordinate lists / MultiLineString paths + vertex handles
 //   geoRect     — geographic AABB (west/south/east/north)
 
-import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, resolveHandles, markCommon, rawChannel} from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, resolveHandles, markCommon, rawChannel, orderFieldOf} from './mark.js';
 import { textNodeAt } from './text.js';
 import { resolveFormat } from '../format.js';
 import { warn } from '../core/dev.js';
@@ -333,17 +333,17 @@ export function geoPolygon(options = {}) {
 }
 
 /**
- * Order a series' rows for connection.
- *   'sequence'  -> array order as drawn (the connected-scatter default)
- *   <field>     -> ascending by that field (a timestamp, a rank, …)
+ * Order a series' rows for connection: by the `order` CHANNEL's column when one is
+ * given, else array order as drawn (a geo trail's natural default).
  * @param {{ d: any, i: number, x: number, y: number }[]} group
- * @param {string} order
+ * @param {Record<string, any>} channels
  * @returns {{ d: any, i: number, x: number, y: number }[]}
  */
-function orderRows(group, order) {
-    if (!order || order === 'sequence') return group;
+function orderRows(group, channels) {
+    const field = orderFieldOf(channels);
+    if (!field) return group;
     return group.slice().sort((a, b) => {
-        const av = a.d[order], bv = b.d[order];
+        const av = a.d[field], bv = b.d[field];
         if (av == null || bv == null) return 0;
         return av < bv ? -1 : av > bv ? 1 : 0;
     });
@@ -358,7 +358,8 @@ function orderRows(group, order) {
  *                              handles carry `channel: 'vertex'` + `vertexIndex`.
  *
  *   lon / lat               -> ONE PATH ACROSS ROWS, connecting the dataset's
- *                              points in `order` (default 'sequence'), grouped by
+ *                              points by the `order` channel when given, else in
+ *                              array order (`connect`, default 'sequence'), grouped by
  *                              `series`. This is the geographic connected scatter
  *                              — the geo sibling of the `path` mark. Put the
  *                              draggable dots on a sibling geoPoint mark and the
@@ -368,7 +369,7 @@ function orderRows(group, order) {
  * @returns {import('../types').Mark}
  */
 export function geoLine(options = {}) {
-    const opts = normalizeMarkOptions(options, { mark: 'geoLine', allow: ['curve', 'handles', 'handleSize', 'handleColor', 'order', 'showVertices', 'series'] });
+    const opts = normalizeMarkOptions(options, { mark: 'geoLine', allow: ['curve', 'handles', 'handleSize', 'handleColor', 'connect', 'showVertices'] });
     const {
         channels = {},
         id,
@@ -385,8 +386,8 @@ export function geoLine(options = {}) {
     const rowMode = !!(channels.lon && channels.lat);
     const lonKey = fieldOf(channels, 'lon') || 'lon';
     const latKey = fieldOf(channels, 'lat') || 'lat';
-    const seriesField = seriesFieldOf(opts, channels);
-    const order = opts.order || 'sequence';
+    const seriesField = seriesFieldOf(channels);
+    const connect = opts.connect || 'sequence';
     // Per-row lines own their vertices; a connected scatter's dots belong to a
     // sibling geoPoint (so they can be dragged independently).
     const showVertices = opts.showVertices != null ? opts.showVertices : !rowMode;
@@ -397,14 +398,14 @@ export function geoLine(options = {}) {
             markName: 'geoLine',
             channels,
             // Read raw (no scale), like `line`'s / `area`'s / `link`'s.
-            rawChannels: ['curve'],
+            rawChannels: ['curve', 'series', 'order'],
             supportsGeo: true,
             lonKey,
             latKey,
             xKey: lonKey,
             yKey: latKey,
             seriesKey: seriesField,
-            order,
+            connect,
             supportsSeries: true,
             /**
              * @param {any[]} currentData
@@ -435,7 +436,7 @@ export function geoLine(options = {}) {
                 const handleStyle = resolveHandles(scales, { handles, handleSize, handleColor });
                 for (const group of groups.values()) {
                     if (group.length < 2) continue; // nothing to connect
-                    const pts = orderRows(group, order);
+                    const pts = orderRows(group, channels);
                     const style = resolveStyle(scales, channels, group[0].d, {
                         stroke: '#1d4ed8',
                         strokeWidth: 2,

@@ -1,7 +1,7 @@
 // @ts-check
 import { isBand, baselineOf } from '../core/scales.js';
 import { claimEdge } from '../edit/shared.js';
-import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel} from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel, orderFieldOf} from './mark.js';
 
 // area: a filled path under a series (the distributional sibling of line). Same
 // grouping / ordering knobs as line; emits one filled `path` per series plus
@@ -65,7 +65,7 @@ function claimSpanEdges(group, channels, edits) {
  * @returns {import('../types').Mark}
  */
 function buildArea(options, forcedValueAxis) {
-    const opts = normalizeMarkOptions(options, { mark: 'area', allow: ['curve', 'handles', 'handleSize', 'handleColor', 'order', 'samples', 'series'] });
+    const opts = normalizeMarkOptions(options, { mark: 'area', allow: ['curve', 'handles', 'handleSize', 'handleColor', 'connect', 'samples'] });
     const {
         channels: declaredChannels = {},
         id,
@@ -74,12 +74,12 @@ function buildArea(options, forcedValueAxis) {
         handles = true,
         handleSize,
         handleColor,
-        order = 'domain',
+        connect = 'domain',
         samples
     } = opts;
 
     const { xKey, yKey } = positionalKeys(declaredChannels);
-    const seriesField = seriesFieldOf(opts, declaredChannels);
+    const seriesField = seriesFieldOf(declaredChannels);
     // Span mode is decided once per mark (not per datum), exactly as bar/rect do it.
     const hasXSpan = !!(declaredChannels.x1 && declaredChannels.x2);
     const hasYSpan = !!(declaredChannels.y1 && declaredChannels.y2);
@@ -91,12 +91,12 @@ function buildArea(options, forcedValueAxis) {
         markName: 'area',
         channels,
         // Read raw (no scale), like `line`'s and `link`'s.
-        rawChannels: ['curve'],
+        rawChannels: ['curve', 'series', 'order'],
         discreteScale: 'point',
         xKey,
         yKey,
         seriesKey: seriesField,
-        order,
+        connect,
         samples,
         supportsSeries: true,
         /**
@@ -141,15 +141,17 @@ function buildArea(options, forcedValueAxis) {
             for (const [series, rows] of groups) {
                 const groupRows = rows || [];
                 const sorted = [...groupRows];
-                if (order === 'domain') {
+                const orderField = orderFieldOf(channels);
+                if (orderField) {
+                    sorted.sort((a, b) => (a.d[orderField] < b.d[orderField] ? -1
+                        : a.d[orderField] > b.d[orderField] ? 1 : 0));
+                } else if (connect === 'domain') {
                     const domainKey = valueAxis === 'y' ? xKey : yKey;
                     sorted.sort((a, b) => {
                         const av = a.d[domainKey], bv = b.d[domainKey];
                         if (av instanceof Date && bv instanceof Date) return /** @type {any} */ (av) - /** @type {any} */ (bv);
                         return av < bv ? -1 : av > bv ? 1 : 0;
                     });
-                } else if (order !== 'sequence' && typeof order === 'string') {
-                    sorted.sort((a, b) => (a.d[order] < b.d[order] ? -1 : a.d[order] > b.d[order] ? 1 : 0));
                 }
 
                 const areaInk = themeOf(scales).ink;

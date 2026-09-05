@@ -473,6 +473,21 @@ A mark used to accept `constraints` as sugar, which the engine promoted to the d
 
 Don't scope a constraint to a feature, and don't re-add the promotion path. If a constraint's *guide* only makes sense for certain mark shapes (e.g. `maintainSum`'s cap-tick needs a band axis), guard the guide function, not the constraint itself.
 
+**An OPTION may never name a data column — `channels` is the only place a mark
+names one.** This is the general form of "a second name for a field on a mark",
+and three options broke it. `series` (plus an undeclared `z` alias) was a bare
+field name, so the one encoding that decides a line chart's shape was invisible to
+everything that reads a channel map; it is now a channel, read RAW (the grouping
+key is an identity, never scaled — cf. Vega-Lite's `detail`), falling back to
+fill's then stroke's field as before. `bar`'s `stack` accepted a field name too and
+now says only WHETHER to stack, taking its grouping from the same `series` channel
+as every other series mark. `order` was a bare field name; note that pointing it at
+another channel (`order: { channel: 'x' }`) was tried and does NOT work — the
+common case sorts by a column bound to nothing, like a route's `stop` number — so
+it is a channel of its own. What remains an option is the MODE, renamed `connect`
+(`'domain' | 'sequence'`), because a mode names no column. One word never spans
+both tiers.
+
 **A scoped edit's `type` IS its dotted path, and drivers claim by type.**
 `edit.line.draw()` <-> `{ "type": "line.draw" }`. This was documented in
 `edit/index.js` and `index.d.ts` long before it was true: only `edit.legend.*`
@@ -602,7 +617,7 @@ aimed at the row before it.
 - The structure, its edits and its capability flag share ONE word: `structure: 'network'`, `edit.network.*`, `scope: 'network'`, `supportsNetwork`. A driver keeps its own name (`connectDriver`) — that names a lifecycle, not a scope.
 - `size` is a radius in px, on every mark. Not `r`, not `handleRadius` — those were three names for one idea. A sub-element's radius is `handleSize`.
 - `fill` / `stroke` are the colour channels. There is no `color` channel (it used to mean a fill fallback on `point`/`line` *and* the label colour on `axis`).
-- `series` is the public option name; `seriesKey` is the internal feature field. Don't introduce a third synonym.
+- `series` is the public CHANNEL name; `seriesKey` is the internal feature field. Don't introduce a third synonym.
 - `pick` values are target-selection strategies or driver keys (`direct`, `nearest`, `plane`, `sweep`, `draw`) — not arbitrary interaction descriptors.
 - `constrain` (edit-scoped, singular) vs `constraints` (plural, the dataset's invariants — canonical on `spec`, accepted on a mark as sugar and promoted) — keep the distinction; don't rename one to match the other.
 - `mode` was SIX unrelated vocabularies across the public surface, with `strategy` a
@@ -672,6 +687,9 @@ aimed at the row before it.
   what lets the JSON Schema be generated from a key set that is actually known.
 - A second interaction/dispatch system alongside `edit`.
 - A `data` or `onChange` option on a mark, or a per-feature data store keyed by feature id.
+- An OPTION that names a data column. `series`, `order` and `bar`'s `stack` each
+  did; they are channels now (`stack` kept only its boolean, `order`'s mode became
+  `connect`). A mark names a column in `channels`, nowhere else.
 - Constraints scoped to the feature that declared them — or a `constraints` option
   on a mark or element at all, promoted or not. `spec.constraints` is the one home.
 - Direct `scale(value)` calls in mark `build()` instead of `encodeChannel`.

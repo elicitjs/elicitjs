@@ -22,10 +22,12 @@ import { groupByPosition, stackLayout, stackDescriptor } from './stack.js';
 // core/resolve.js's axis aliasing), so they're read through encodeChannel exactly
 // like the single-value form.
 //
-// Optional `stack: true | <seriesField>` stacks bars that share a category: each
-// segment sits on the cumulative sum of prior series in that band. Declare a
-// schema domain that covers the stacked total. Span mode and stack are mutually
-// exclusive (span wins).
+// Optional `stack: true` stacks bars that share a category: each segment sits on
+// the cumulative sum of prior series in that band. WHICH rows form a series is the
+// `series` channel's job (falling back to fill's / stroke's field), not this
+// option's — `stack` used to accept a field name too, which made it a second place
+// a mark could name a column. Declare a schema domain that covers the stacked
+// total. Span mode and stack are mutually exclusive (span wins).
 
 /**
  * Stack order within one band. Data order by default; a series field sorts by
@@ -97,7 +99,7 @@ function buildBar(options, forcedOrientation) {
     // every mark does. Explicit `channels.fill` still wins.
     const opts = normalizeMarkOptions(options, {
         mark: 'bar',
-        allow: ['orientation', 'stack', 'series', 'handles', 'handleSize', 'handleColor'],
+        allow: ['orientation', 'stack', 'handles', 'handleSize', 'handleColor'],
     });
     const {
         channels = {},
@@ -122,11 +124,9 @@ function buildBar(options, forcedOrientation) {
     // mark (not per datum) — the missing form (baseline+value) stays the default.
     const hasXSpan = !!(channels.x1 && channels.x2);
     const hasYSpan = !!(channels.y1 && channels.y2);
-    // `stack: 'field'` names the series outright; `stack: true` infers it the same
-    // way every series-grouping mark does.
-    const seriesField = typeof stack === 'string' ? stack
-        : stack === true ? seriesFieldOf(opts, channels)
-            : null;
+    // The grouping comes from the `series` channel, exactly as it does on every
+    // other series-grouping mark. `stack` says only WHETHER to stack.
+    const seriesField = stack ? seriesFieldOf(channels) : null;
     const doStack = !!stack && !hasXSpan && !hasYSpan;
 
     const markEdits = edits || [];
@@ -138,6 +138,8 @@ function buildBar(options, forcedOrientation) {
         ...markCommon(opts),
         markName: 'bar',
         channels,
+        // The grouping key is read off the datum, never scaled.
+        rawChannels: ['series'],
         edits: markEdits,
         // Capability flag: what edit.stack.* needs to work (see SCOPE_CAPABILITY).
         // Only a STACKED bar partitions a total — an unstacked one is a set of

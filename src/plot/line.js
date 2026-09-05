@@ -1,18 +1,18 @@
 // @ts-check
 import { isBand } from '../core/scales.js';
-import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel} from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel, orderFieldOf} from './mark.js';
 
 // line: a connected-path mark over an ordered set of points. It is deliberately
 // GENERAL — a you-draw-it curve, a multi-series line chart, a connected scatter
 // plot, and a hand-drawn 2D path are the same mark along four orthogonal knobs:
 //
-//   grouping  `series` (alias `z`)  -> which points form one line (defaults to
-//                                       the stroke field, so lines auto-colour)
-//   ordering  `order`               -> 'domain'   : sort each series by the domain
-//                                                    axis (a function / time series)
-//                                       'sequence' : connect in creation/array order
+//   grouping  `series` channel      -> which points form one line (defaults to
+//                                       the fill/stroke field, so lines auto-colour)
+//   ordering  `order` CHANNEL       -> sort each series by that column
+//             `connect` option      -> 'domain'   : sort by the domain axis
+//                                                    (a function / time series)
+//                                      'sequence' : connect in creation/array order
 //                                                    (connected scatter, map path)
-//                                       <field>    : sort by that field
 //   editing   the edits on the handles (drag direct/nearest/sweep) — not set here
 //   creation  anchor()/newSeries() primitives (see edit/index.js)
 //
@@ -25,20 +25,20 @@ import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, theme
 //   x: domain, y: value  -> lineY (time series)      x: value, y: domain -> lineX
 //
 // `line` auto-detects the value axis; `lineY`/`lineX` force one. `path` is the
-// same mark with `order: 'sequence'`, for an order-as-drawn 2D path.
+// same mark with `connect: 'sequence'`, for an order-as-drawn 2D path.
 
 const SINGLE = '__single__'; // group key when no series field is set
 
 /**
  * @param {any} options
  * @param {'x' | 'y' | null} forcedValueAxis which axis carries the value
- * @param {string} [defaultOrder] 'domain' (presets) or 'sequence' (scatter/path)
+ * @param {string} [defaultConnect] 'domain' (presets) or 'sequence' (scatter/path)
  * @returns {import('../types').Mark}
  */
-function buildLine(options, forcedValueAxis, defaultOrder = 'domain') {
+function buildLine(options, forcedValueAxis, defaultConnect = 'domain') {
     // Desugar top-level style shorthands (stroke: '…', strokeWidth: …) into the
     // channels so line reads style the same way every mark does.
-    const opts = normalizeMarkOptions(options, { mark: 'line', allow: ['curve', 'handles', 'handleSize', 'handleColor', 'order', 'samples', 'series'] });
+    const opts = normalizeMarkOptions(options, { mark: 'line', allow: ['curve', 'handles', 'handleSize', 'handleColor', 'connect', 'samples'] });
     const {
         channels = {},
         id,
@@ -47,13 +47,13 @@ function buildLine(options, forcedValueAxis, defaultOrder = 'domain') {
         handles = true,
         handleSize,
         handleColor,
-        order = defaultOrder,
+        connect = defaultConnect,
         samples
     } = opts;
 
     const { xKey, yKey } = positionalKeys(channels);
 
-    const seriesField = seriesFieldOf(opts, channels);
+    const seriesField = seriesFieldOf(channels);
 
     return {
         ...markCommon(opts),
@@ -62,13 +62,13 @@ function buildLine(options, forcedValueAxis, defaultOrder = 'domain') {
         // `curve` is read raw (no scale), so it must be declared — same contract as
         // `link`, which resolves its own per-row `curve` the same way. It was a plain
         // option here and a raw channel there: one name, two tiers.
-        rawChannels: ['curve'],
+        rawChannels: ['curve', 'series', 'order'],
         // A line's domain axis is continuous (a point per datum, no band width).
         discreteScale: 'point',
         xKey,
         yKey,
         seriesKey: seriesField,
-        order,
+        connect,
         samples,
         // Groups points into series, so the line-scoped edits (edit.line.*) apply.
         // The engine dev-warns if a line-scoped edit lands on a mark without this.
@@ -127,7 +127,7 @@ function buildLine(options, forcedValueAxis, defaultOrder = 'domain') {
             // One connector path per series, its points ordered per `order`.
             for (const group of groups.values()) {
                 if (group.length < 2) continue; // nothing to connect
-                const pts = orderPoints(group, order, domainAxis, seriesField);
+                const pts = orderPoints(group, connect, domainAxis, channels);
                 const style = resolveStyle(scales, channels, group[0].d, lineDefaults, group[0].i, currentData);
                 // One path per SERIES, so a channel-bound curve resolves once per
                 // series against that series' first row — the same rule a line's
@@ -187,27 +187,27 @@ function buildLine(options, forcedValueAxis, defaultOrder = 'domain') {
 }
 
 /**
- * Order one series' points for its connecting path.
- *   'domain'   -> sort by the domain-axis pixel (a monotonic function / series)
- *   'sequence' -> array order as-is (connect as drawn)
- *   <field>    -> sort by that data field
+ * Order one series' points for its connecting path. An `order` CHANNEL wins — it
+ * names the column to sort by — otherwise the `connect` mode decides.
  * @param {any[]} group
- * @param {string} order
+ * @param {string} connect 'domain' | 'sequence'
  * @param {'x' | 'y'} domainAxis
- * @param {string | null} seriesField
+ * @param {Record<string, any>} channels
  * @returns {any[]}
  */
-function orderPoints(group, order, domainAxis, seriesField) {
-    if (order === 'sequence') return group;
-    if (order === 'domain') {
+function orderPoints(group, connect, domainAxis, channels) {
+    const field = orderFieldOf(channels);
+    if (field) {
+        return [...group].sort((a, b) => {
+            const av = a.d[field], bv = b.d[field];
+            return av < bv ? -1 : av > bv ? 1 : 0;
+        });
+    }
+    if (connect === 'domain') {
         const key = domainAxis === 'x' ? 'cx' : 'cy';
         return [...group].sort((a, b) => a[key] - b[key]);
     }
-    // A named field to sort by.
-    return [...group].sort((a, b) => {
-        const av = a.d[order], bv = b.d[order];
-        return av < bv ? -1 : av > bv ? 1 : 0;
-    });
+    return group;
 }
 
 /**

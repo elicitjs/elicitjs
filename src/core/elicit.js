@@ -1615,7 +1615,7 @@ export function Elicit(spec) {
             // The line's ordering knob and the engine's per-gesture driver session
             // (zone/handle locks, draw mode), for edits that read their driver's
             // lock (draw, brushSpan/brushRect, axis.scale). Harmless to the rest.
-            order: feature.order || null,
+            connect: feature.connect || null,
             session: (ui.session && ui.session[feature.id]) || null,
             // The primary selected datum index (transient pipeline state), so an
             // edit's apply/when can target or arbitrate on the selection — e.g. a

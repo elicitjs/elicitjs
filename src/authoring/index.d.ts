@@ -192,26 +192,35 @@ export function resolveStyle(scales: import("../types.js").ScaleMap, channels: R
  * it differently (line read stroke, area read fill-then-stroke), so a coloured
  * area and a coloured line grouped by different channels.
  *
- * Precedence: the explicit `series` option wins; otherwise the field behind a
- * paint channel, fill before stroke — Observable Plot's `z` default, so a
- * coloured chart groups with no extra config. (Plot's `z` alias is not accepted:
- * one name per concept.)
+ * `series` is a CHANNEL — `channels: { series: { field: 'group' } }` — because it
+ * names a column, and `channels` is the only place a mark names one. It was a plain
+ * top-level option (`series: 'group'`, plus a `z` alias), which is exactly the
+ * "an option may never name a data column" rule this API otherwise holds to, and it
+ * meant the one encoding that decides a line chart's shape was invisible to
+ * everything that reads a channel map.
  *
- * `series` is the public option name; `seriesKey` is the internal feature field.
- * @param {any} opts normalized mark options
+ * It is a RAW channel: the grouping key is read off the datum (`d[seriesField]`)
+ * and never scaled, so marks declare it in `Mark.rawChannels` and no scale is built
+ * for it. A grouping is an identity, not a magnitude — cf. Vega-Lite's `detail`.
+ *
+ * Precedence: an explicit `series` channel wins; otherwise the field behind a paint
+ * channel, fill before stroke — Observable Plot's `z` default, so a coloured chart
+ * groups with no extra config.
+ *
+ * `series` is the public channel name; `seriesKey` is the internal feature field.
  * @param {Record<string, any>} channels the mark's channel map
  * @returns {string | null}
  */
-export function seriesFieldOf(opts: any, channels?: Record<string, any>): string | null;
+export function seriesFieldOf(channels?: Record<string, any>): string | null;
 /**
  * The options every mark must pass through VERBATIM, gathered in one place.
  *
  * Spread this first in a factory's returned object; any key the mark states
  * itself afterwards wins (`bar` renames its own to `edits: markEdits`). One
- * helper because "a mark factory that accepts `edits`/`constraints` and drops
- * them" is a bug this codebase has already shipped once — `rule` silently
- * dropped all four for a long time, which made a draggable whisker impossible.
- * Four names in one place cannot drift the way four names in 29 places did.
+ * helper because "a mark factory that accepts `edits` and drops them" is a bug this
+ * codebase has already shipped once — `rule` silently dropped every one of these
+ * for a long time, which made a draggable whisker impossible. Three names in one
+ * place cannot drift the way three names in 29 places did.
  *
  * ── WHICH TABLE A MARK DRAWS ───────────────────────────────────────────────
  * A mark is a view over exactly ONE table of the dataset. `table:` names it.
@@ -225,12 +234,11 @@ export function seriesFieldOf(opts: any, channels?: Record<string, any>): string
  * indirection is what lets a schema call its tables `claims`/`supports` and
  * need no `table:` written anywhere.
  * @param {any} opts the result of normalizeMarkOptions
- * @returns {{ id: any, edits: any, constraints: any, table: any }}
+ * @returns {{ id: any, edits: any, table: any }}
  */
 export function markCommon(opts: any): {
     id: any;
     edits: any;
-    constraints: any;
     table: any;
 };
 /**
@@ -908,7 +916,7 @@ export function noteBox(text: string, opts?: {
 // ── from src/plot/axis.js ───────────────────────────────────────────────────
 /**
  * `axis`'s own option vocabulary, on top of the universal chart-element options
- * (id / edit / edits / constraints / field). Exported so core/axes.js can hand a
+ * (id / edit / edits / field). Exported so core/axes.js can hand a
  * grid only the options a grid reads, instead of forwarding the whole axis config.
  * Keep in sync with the destructure in `axis` below.
  * @type {string[]}
@@ -922,7 +930,7 @@ export const GRID_OPTIONS: string[];
 // ── from src/plot/legend.js ─────────────────────────────────────────────────
 /**
  * `legend`'s own option vocabulary, on top of the universal chart-element options
- * (id / edit / edits / constraints / field). Keep in sync with the destructure in
+ * (id / edit / edits / field). Keep in sync with the destructure in
  * `legend` below — a wrong entry is a false positive, which is worse than none.
  * @type {string[]}
  */

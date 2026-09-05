@@ -28,11 +28,11 @@ export const drawDriver = {
                 session.set({ mode: 'edit', drawSeries: near, px: event.x, py: event.y });
             } else {
                 const sField = feature.seriesKey || null;
-                // Freehand lines (order: 'sequence') stay ONE path: a far drag
+                // Freehand lines (connect: 'sequence') stay ONE path: a far drag
                 // continues the existing line — appending in draw order — instead of
                 // spawning a new series. `into: 'new'` opts back into a fresh line;
                 // domain lines still start a new series per drag.
-                const continueLine = feature.order === 'sequence'
+                const continueLine = feature.connect === 'sequence'
                     && data.length > 0
                     && edits[0].into !== 'new';
                 const key = continueLine
