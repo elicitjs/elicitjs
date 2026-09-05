@@ -1,11 +1,19 @@
 // @ts-check
 // waffle.js — a waffle mark: like bar, it shows a quantity for a category, but
 // subdivides the block into a grid of CELLS so a reader can COUNT exact amounts
-// and a gesture can pick a proportion cell-by-cell. It mirrors bar's structure
-// (band = category axis + thickness, linear = value axis + length from a
-// baseline; orientation autodetected or forced by waffleX/waffleY).
+// and a gesture can pick a proportion cell-by-cell. It mirrors bar's structure:
+// the band axis carries the category and the block's thickness, the count axis
+// carries its length from a baseline.
 //
-//   waffleY({ channels: { x: { field: 'cat' }, count: { field: 'n' } } })
+//   waffleY({ channels: { x: { field: 'cat' }, count: { field: 'n' } } })  // blocks grow UP
+//   waffleX({ channels: { y: { field: 'cat' }, count: { field: 'n' } } })  // blocks grow RIGHT
+//
+// Orientation comes from the CHANNEL MAP — the category's axis is the band, so the
+// count runs along the other one — with `waffleX`/`waffleY` and `orientation` as
+// explicit overrides. Unlike `bar`, it cannot be read off the scales at build time:
+// the count scale's RANGE needs the direction before any build() runs. It also
+// needn't be, because a waffle binds exactly ONE positional channel now that the
+// magnitude lives on `count`.
 //
 // The invariant that makes a waffle a waffle (Observable Plot's model): ONE CELL
 // IS A FIXED QUANTITY. `unit` (default 1) is the value each cell represents, so
@@ -46,7 +54,7 @@
 // `edit.waffle.fill({ gesture: 'click' })` at mark level for tap-to-set alongside
 // drag-to-fill.
 
-import { isBand, bandwidthOf, bandStartOf, baselineOf } from '../core/scales.js';
+import { bandwidthOf, bandStartOf, baselineOf } from '../core/scales.js';
 import { warn } from '../core/dev.js';
 import { encodeChannel, categoryOf, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon} from './mark.js';
 
@@ -94,16 +102,29 @@ function buildWaffle(options, forcedOrientation) {
 
     const { xKey, yKey } = positionalKeys(channels);
 
+    // ORIENTATION is a CHANNEL-MAP question, and it has to be one: the count
+    // scale's RANGE needs the direction before any build() runs (channelRange's
+    // `count` case reads the accumulated `countAxis`), so it cannot come from
+    // asking the scales what they turned out to be. It is also ANSWERABLE
+    // statically, which is a consequence of the count family: now that the
+    // magnitude lives on `count`, a waffle binds exactly ONE positional channel —
+    // the category — so the axis that channel sits on IS the band, and the other
+    // direction is the count's. (`bar` still asks the scales, because it binds
+    // both x and y and only their KINDS can say which one is the band.)
+    const orientation = forcedOrientation || orientationOption
+        || (channels.y && !channels.x ? 'horizontal' : 'vertical');
+    const vertical = orientation !== 'horizontal';
+
     return {
         ...markCommon(opts),
         markName: 'waffle',
         channels,
         // Which screen direction the count axis runs along, so the resolver can give
-        // its scale a range (see AXIS_OF / channelRange). Forced by waffleX/waffleY,
-        // exactly as `forcedOrientation` is.
-        countAxis: forcedOrientation === 'horizontal' ? 'x'
-            : forcedOrientation === 'vertical' ? 'y'
-                : (orientationOption === 'horizontal' ? 'x' : 'y'),
+        // its scale a range (see AXIS_OF / channelRange). It is the direction the
+        // category ISN'T on, which is why it agrees with `build` by construction —
+        // a declared 'y' here with a block drawn horizontally put every cell off the
+        // side of the frame, and nothing warned.
+        countAxis: vertical ? 'y' : 'x',
         discreteScale: 'band',
         xKey,
         yKey,
@@ -131,20 +152,12 @@ function buildWaffle(options, forcedOrientation) {
         build: (currentData, scales) => {
             const { x: xScale, y: yScale } = scales;
 
-            let orientation = forcedOrientation || orientationOption;
-            if (!orientation) {
-                if (isBand(xScale)) orientation = 'vertical';
-                else if (isBand(yScale)) orientation = 'horizontal';
-                else orientation = 'vertical';
-            }
-
             /** @type {import('../types').FeatureNode[]} */
             const nodes = [];
 
             const waffleDefaults = markDefaults(scales, 'waffle', { fill: themeOf(scales).ink });
             currentData.forEach((/** @type {any} */ d, i) => {
                 const style = resolveStyle(scales, channels, d, waffleDefaults, i, currentData);
-                const vertical = orientation !== 'horizontal';
                 // A `symbol` channel (or shape:'symbol') fills the block with glyph
                 // cells — an emoji waffle (🍎🍎🍎 for a count of 3). Every cell of a
                 // datum shares its glyph; empty cells stay faint but grabbable.

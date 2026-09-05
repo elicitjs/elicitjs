@@ -1414,7 +1414,14 @@ export interface Mark {
   /** Which screen direction this mark's COUNT axis runs along. Declared because
    *  `axisOf` is a static channel->axis map and cannot know a mark's orientation:
    *  the resolver accumulates this onto the count bucket (like `discreteScale`) and
-   *  `channelRange` reads it. Set by `waffle`/`dotStack`. */
+   *  `channelRange` reads it. Set by `waffle`/`dotStack`.
+   *
+   *  It is resolved at FACTORY time, from the CHANNEL MAP — a counting mark binds
+   *  exactly one positional channel, so the axis that channel sits on is the band
+   *  and the count runs along the other. It cannot come from the scales in
+   *  `build()`: this value is what gives the count scale its range, so it is read
+   *  before any build runs, and a declaration that disagreed with what the mark
+   *  then drew put every cell off the side of the frame. */
   countAxis?: 'x' | 'y';
   /** Pixels per token, for a mark whose count is DERIVED rather than encoded
    *  (`dotStack`: one row is one token, so there is no column). The resolver

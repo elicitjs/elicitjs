@@ -491,6 +491,20 @@ accumulates it onto the bucket exactly as it already does `discreteScale`
 (`a.discretePref`), and `channelRange` reads it. Don't reach for a mark-aware
 `axisOf` when the answer is a per-bucket hint.
 
+**A counting mark resolves its ORIENTATION from the CHANNEL MAP, at factory time —
+not from the scales in `build()`.** `bar` may ask the scales which of x/y turned out
+to be a band, because it binds BOTH and only their kinds can say. `waffle` and
+`dotStack` may not, for two reasons. It is too LATE: `Mark.countAxis` is what gives
+the count scale its RANGE, and the resolver needs it before any `build` runs — a
+mark that declared `'y'` and then drew horizontally put every cell off the side of
+the frame, with nothing to warn and a page that still rendered. And it is
+UNNECESSARY: now that the magnitude lives on `count`, these marks bind exactly ONE
+positional channel, so the axis that channel sits on IS the band and the count runs
+along the other one. One expression (`channels.y && !channels.x`) answers it before
+there are any scales, and `countAxis` and `build` read the same value by
+construction. `orientation` is the explicit override on all three marks, spelled the
+same way — `'horizontal' | 'vertical'`, with `...X`/`...Y` forcing it.
+
 **A count is either ENCODED or DERIVED, and the mark says which.** `waffle` binds
 the `count` channel (`unit` is the exchange rate: one cell is worth `unit` of the
 field, so at the default `unit: 1` the column value IS the cell count, and the mark
@@ -827,6 +841,9 @@ aimed at the row before it.
   way, when `plot/stack.js` answers both — or an edit re-deriving a mark's layout from
   scratch instead of inverting through the `node.stack` the mark stamped.
 - A `groupBy` option on any mark. The encoding is the grouping.
+- A counting mark that reads its orientation off the SCALES in `build()`. The count
+  scale's range is fixed before then; the channel map is the one source, and the
+  answer must be the same one `Mark.countAxis` reported.
 - A category minted as `null`, or any creator that can only be completed by typing.
 - A glyph painted part by part, so every row's last part sits above every row's
   first. It reads fine until two glyphs overlap; group by `glyph` and order by row.

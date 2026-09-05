@@ -360,6 +360,95 @@ async function main() {
         check('count axis: absent where nobody asked for it',
             Math.max(...noAxisTicks, 0) <= 0, `found ticks ${JSON.stringify(noAxisTicks)}`);
 
+        // ---- Orientation: a HORIZONTAL waffle (/marks/waffle #orientation) --
+        // Orientation is resolved from the CHANNEL MAP, not from the scales, because
+        // the count scale's RANGE is needed before build() runs. When the two
+        // disagreed the count scale ran vertically while the block drew
+        // horizontally, and every cell landed off the side of the frame — the page
+        // still rendered, so only geometry read back from the DOM catches it.
+        console.log('\nHorizontal waffle + dotStack (#orientation)');
+        await open('/marks/waffle', '#orientation svg rect.mark');
+        const hCells = await page.$$eval('#orientation svg rect.mark', (rs) => rs.map((r) => ({
+            x: +r.getAttribute('x'), y: +r.getAttribute('y'),
+            w: +r.getAttribute('width'), h: +r.getAttribute('height'),
+            fill: (r.getAttribute('fill') || r.style.fill || '').toLowerCase(),
+        })));
+        const hRows = new Map();
+        for (const c of hCells) {
+            const k = Math.round(c.y / 5) * 5;
+            if (!hRows.has(k)) hRows.set(k, []);
+            hRows.get(k).push(c);
+        }
+        // Cells cluster into `multiple` rows ACROSS the band per block — the square-cell
+        // rule picks that, so it is not 1 and must not be assumed. Every block has the
+        // same number of rows (same totalCells, same multiple), so chunking the sorted
+        // rows into four equal groups recovers the blocks without a gap threshold.
+        const subRows = [...hRows.entries()].sort((a, b) => a[0] - b[0]); // top → bottom
+        check('horizontal waffle: 4 blocks of 32 cells, in equal rows across the band',
+            hCells.length === 128 && subRows.length % 4 === 0,
+            `${hCells.length} cells in ${subRows.length} rows`);
+        // Every cell must be inside the frame. The bug drew them from the frame's
+        // BOTTOM rightwards, i.e. past the right edge and below the plot.
+        const frameBox = await page.$eval('#orientation svg', (svg) => ({
+            w: +svg.getAttribute('width') || svg.getBoundingClientRect().width,
+            h: +svg.getAttribute('height') || svg.getBoundingClientRect().height,
+        }));
+        check('horizontal waffle: every cell is inside the frame',
+            hCells.every((c) => c.x >= -1 && c.y >= -1 && c.x + c.w <= frameBox.w + 1 && c.y + c.h <= frameBox.h + 1),
+            `frame ${frameBox.w}x${frameBox.h}, worst cell ${JSON.stringify(hCells.reduce((a, c) => (c.x + c.w > a.x + a.w ? c : a), hCells[0]))}`);
+        const perBlock = subRows.length / 4;
+        const hBlocks = [0, 1, 2, 3].map((k) =>
+            subRows.slice(k * perBlock, (k + 1) * perBlock).flatMap(([, cs]) => cs));
+        // A block runs ALONG x: it spans far more distinct x than y.
+        const b0 = hBlocks[0] || [];
+        check('horizontal waffle: a block runs along x, not up y',
+            new Set(b0.map((c) => Math.round(c.x))).size
+            > new Set(b0.map((c) => Math.round(c.y))).size * 3,
+            `${new Set(b0.map((c) => Math.round(c.x))).size} x's, ${new Set(b0.map((c) => Math.round(c.y))).size} y's`);
+        // unit 10 over a 0..320 domain: values 210/200/310/40 fill 21/20/31/4 cells.
+        // The y range runs [height, 0], so the first category sits at the BOTTOM —
+        // read the blocks bottom-up to get them in declared domain order.
+        const hFilled = hBlocks
+            .map((cs) => cs.filter((c) => c.fill === '#4f46e5').length)
+            .reverse();
+        check('horizontal waffle: filled counts are value/unit per category',
+            JSON.stringify(hFilled) === JSON.stringify([21, 20, 31, 4]),
+            `got ${JSON.stringify(hFilled)}`);
+        // The count axis follows the mark: it is anchored at the BOTTOM here, so its
+        // ticks spread across x rather than down y.
+        const hAxisTicks = await page.$$eval('#orientation svg text',
+            (ts) => ts.filter((t) => /^\d+$/.test(t.textContent.trim()))
+                .map((t) => ({ x: +t.getAttribute('x'), y: +t.getAttribute('y') })));
+        check('horizontal waffle: the count axis runs along the bottom',
+            hAxisTicks.length > 2
+            && new Set(hAxisTicks.map((t) => Math.round(t.x))).size > 2
+            && new Set(hAxisTicks.map((t) => Math.round(t.y))).size === 1,
+            `${hAxisTicks.length} ticks, ${new Set(hAxisTicks.map((t) => Math.round(t.y))).size} distinct y`);
+
+        // A horizontal dotStack: tokens stack RIGHTWARD from the left edge, so a
+        // slot's tokens share a y and step in x by the token pitch.
+        await open('/marks/dotstack', '#orientation svg circle');
+        const tokens = await page.$$eval('#orientation svg circle', (cs) => cs.map((c) => ({
+            cx: +c.getAttribute('cx'), cy: +c.getAttribute('cy'), r: +c.getAttribute('r'),
+            fill: (c.getAttribute('fill') || c.style.fill || '').toLowerCase(),
+        })).filter((c) => c.fill !== 'none'));
+        const tokenRows = new Map();
+        for (const t of tokens) {
+            const k = Math.round(t.cy);
+            if (!tokenRows.has(k)) tokenRows.set(k, []);
+            tokenRows.get(k).push(t);
+        }
+        check('horizontal dotStack: 6 tokens over 3 occupied slots',
+            tokens.length === 6 && tokenRows.size === 3,
+            `${tokens.length} tokens, ${tokenRows.size} rows`);
+        const tallest = [...tokenRows.values()].sort((a, b) => b.length - a.length)[0] || [];
+        const tallestX = tallest.map((t) => t.cx).sort((a, b) => a - b);
+        check('horizontal dotStack: a slot stacks along x at one y',
+            tallest.length === 3
+            && tallestX[1] - tallestX[0] > tallest[0].r
+            && Math.abs((tallestX[2] - tallestX[1]) - (tallestX[1] - tallestX[0])) < 1,
+            `x ${tallestX.map((v) => v.toFixed(1)).join(',')}`);
+
         // ---- Rect heatmap + fixed-size boxes (/marks/rect) ----------------
         // A category on both axes must tile the plane (band cells), and padding 0
         // must leave NO gap between cells — the whole point of a heatmap. The

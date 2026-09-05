@@ -24,11 +24,14 @@
 // category position through encodeChannel; the stack offset is derived count
 // geometry, the same class as a bar's band interval.
 //
-// `dotStackY` (default) stacks upward with the category on x; `dotStackX` stacks
-// rightward with the category on y — the bare + X/Y pairing every directional
-// mark in this codebase follows.
+// `dotStackY` stacks upward with the category on x; `dotStackX` stacks rightward
+// with the category on y — the bare + X/Y pairing every directional mark in this
+// codebase follows. Bare `dotStack` reads the direction off the CHANNEL MAP (the
+// category's axis is the band, so tokens stack along the other one), and takes
+// `orientation: 'horizontal' | 'vertical'` — bar's and waffle's word for the same
+// choice. Like waffle's, it is resolved statically rather than from the scales,
+// because the derived count scale needs the direction before any build() runs.
 
-import { isDiscrete } from '../core/scales.js';
 import { encodeChannel, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon} from './mark.js';
 
 /**
@@ -54,17 +57,29 @@ function slotsOf(scale, key, data) {
  * @returns {import('../types').Mark}
  */
 function buildDotStack(options, forcedAxis) {
-    const opts = normalizeMarkOptions(options, { mark: 'dotStack', allow: ['gap', 'ghost', 'label'] });
+    const opts = normalizeMarkOptions(options, { mark: 'dotStack', allow: ['orientation', 'gap', 'ghost', 'label'] });
     const {
         channels = {},
         id,
         edits,
+        orientation: orientationOption,
         gap = 2,
         ghost = true,
         label = false
     } = opts;
 
     const { xKey, yKey } = positionalKeys(channels);
+
+    // Which axis the tokens stack ALONG — the count direction, resolved from the
+    // CHANNEL MAP rather than from the scales. It has to be static: the derived
+    // count scale's range needs the direction before any build() runs (see
+    // core/resolve.js), and a dotStack binds exactly ONE positional channel (the
+    // slot), so the axis that channel sits on is the category and the other is the
+    // count's. `orientation` is bar's and waffle's word for the same choice, so it
+    // means the same thing here: 'horizontal' stacks rightward.
+    const stackAxis = forcedAxis
+        || (orientationOption ? (orientationOption === 'horizontal' ? 'x' : 'y')
+            : (channels.y && !channels.x ? 'x' : 'y'));
 
     // The token pitch, for the DERIVED count scale (core/resolve.js). A token is a
     // unit of count, so every token shares one radius; `size` is a constant here by
@@ -81,7 +96,7 @@ function buildDotStack(options, forcedAxis) {
         // That asymmetry with `waffle` (which encodes its magnitude) is the data
         // model, and it is why they are two marks. The pitch is what makes the axis
         // exact: pixels -> count is linear, so the scale needs no data.
-        countAxis: forcedAxis || 'y',
+        countAxis: stackAxis,
         countPitch: 2 * tokenRadius + gap,
         // Tokens sit in discrete slots; a point scale gives each slot a tick.
         discreteScale: 'point',
@@ -95,11 +110,6 @@ function buildDotStack(options, forcedAxis) {
          * @returns {import('../types').FeatureNode[]}
          */
         build: (currentData, scales, width, height) => {
-            // Stack direction (bar-style autodetect): category on x -> stack UP
-            // (along y); a categorical y with no x category -> stack RIGHT (along x).
-            let stackAxis = forcedAxis;
-            if (!stackAxis) stackAxis = (isDiscrete(scales.y) && !isDiscrete(scales.x)) ? 'x' : 'y';
-
             // Token radius, from the `size` shorthand. A token is a unit of count,
             // so the stack geometry needs ONE radius for every token — resolve it
             // against no datum, which yields the constant (or the default).

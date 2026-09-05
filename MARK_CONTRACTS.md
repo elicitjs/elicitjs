@@ -124,7 +124,7 @@ N/A = use a different edit family (documented).
 <tr>
 <td><code>dotStack</code> / <code>dotStackX</code> / <code>dotStackY</code></td>
 <td>data</td>
-<td>category; stack count geometry</td>
+<td>category (one positional channel); stack count geometry</td>
 <td>natural (canonical)</td>
 <td>tokens</td>
 <td>—</td>
@@ -132,7 +132,7 @@ N/A = use a different edit family (documented).
 <tr>
 <td><code>waffle</code> / <code>waffleX</code> / <code>waffleY</code></td>
 <td>data</td>
-<td>band + value; unit grid</td>
+<td>band (one positional channel) + <code>count</code>; unit grid</td>
 <td>N/A → <code>edit.waffle.fill</code></td>
 <td>cells (<code>node.grid</code>, <code>node.effectShape</code>)</td>
 <td>discrete on x or y; <code>supportsWaffle</code></td>
