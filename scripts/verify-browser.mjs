@@ -344,6 +344,22 @@ async function main() {
             !!hoverOutline[0] && hoverOutline[0].w > cellBox * 1.5 && hoverOutline[0].h > cellBox * 1.5,
             `outline ${hoverOutline[0] && `${hoverOutline[0].w}×${hoverOutline[0].h}`}, cell ${cellBox}`);
 
+        // ---- The COUNT axis (/marks/waffle #count-axis) --------------------
+        // A waffle's magnitude is `count`, on an axis of its own. The axis is
+        // opt-in, so this section asks for it: assert it DRAWS, that its ticks read
+        // in DATA units (not cell ordinals — the two differ whenever unit != 1),
+        // and that it is absent where nobody asked.
+        await open('/marks/waffle', '#count-axis svg');
+        const countTicks = await page.$$eval('#count-axis svg text',
+            (ts) => ts.map((t) => t.textContent.trim()).filter((t) => /^\d+$/.test(t)).map(Number));
+        check('count axis: it draws when asked for', countTicks.length > 0, `${countTicks.length} numeric ticks`);
+        check('count axis: ticks are in DATA units, not cell ordinals',
+            Math.max(...countTicks, 0) > 32, `max tick ${Math.max(...countTicks, 0)} (unit=10, domain 0..320)`);
+        const noAxisTicks = await page.$$eval('#counts svg text',
+            (ts) => ts.map((t) => t.textContent.trim()).filter((t) => /^\d+$/.test(t)).map(Number));
+        check('count axis: absent where nobody asked for it',
+            Math.max(...noAxisTicks, 0) <= 0, `found ticks ${JSON.stringify(noAxisTicks)}`);
+
         // ---- Rect heatmap + fixed-size boxes (/marks/rect) ----------------
         // A category on both axes must tile the plane (band cells), and padding 0
         // must leave NO gap between cells — the whole point of a heatmap. The

@@ -187,18 +187,30 @@ const SYMBOL_CHANNELS = new Set(['symbol']);
 // `radius` is deliberately absent: nothing needs a radial SCALE yet
 // (`innerRadius`/`outerRadius` are px options), and a keyword with no consumer is
 // one the grammar cannot justify.
-/** @type {Record<string, 'x' | 'y' | 'theta'>} */
+// `count` is the third family: an axis whose unit is the MARK's own cell or token.
+// A waffle's cell is worth `unit` of the field; a dotStack's token is one row. It
+// gets its own bucket so it never unions with a y domain — a countable block and a
+// bar's height are not the same quantity — and it is drawn only when asked for
+// (core/axes.js), like a legend, because it reserves layout space.
+//
+// BUCKETING (which domain) and ORIENTATION (which screen direction the range runs)
+// are separate questions, which is why this map can stay static: the mark declares
+// `Mark.countAxis`, the resolver accumulates it per bucket exactly as it does
+// `discreteScale`, and `channelRange` reads it. `axisOf` never becomes mark-aware.
+/** @type {Record<string, 'x' | 'y' | 'theta' | 'count'>} */
 const AXIS_OF = {
     x: 'x', x1: 'x', x2: 'x',
     y: 'y', y1: 'y', y2: 'y',
     theta: 'theta', theta2: 'theta',
+    count: 'count',
 };
 
 /**
- * The positional axis a channel shares its scale with ('x', 'y' or 'theta'), or
- * undefined for a non-positional channel (fill, size, opacity, angle, ...).
+ * The positional axis a channel shares its scale with ('x', 'y', 'theta' or
+ * 'count'), or undefined for a non-positional channel (fill, size, opacity,
+ * angle, ...).
  * @param {string} channelName
- * @returns {'x' | 'y' | 'theta' | undefined}
+ * @returns {'x' | 'y' | 'theta' | 'count' | undefined}
  */
 export function axisOf(channelName) {
     return AXIS_OF[channelName];
@@ -456,10 +468,12 @@ function colorRange(type, theme, opts = {}) {
  * @param {import('../types').ScaleType} type
  * @param {{ width: number, height: number }} dims
  * @param {any} [theme] the resolved theme (supplies default palette/ramp/diverging)
- * @param {{ measure?: import('../types').MeasureType, index?: number, count?: number }} [opts]
+ * @param {{ measure?: import('../types').MeasureType, index?: number, count?: number,
+ *   countAxis?: 'x' | 'y' }} [opts]
  *   what the data IS, which encoding this is among those sharing the channel, and
- *   how many categories it has. Colour reads all three; every other channel's
- *   range is fixed.
+ *   how many categories it has. Colour reads the first three; `countAxis` is the
+ *   count family's screen direction, accumulated from the mark (see AXIS_OF).
+ *   Every other channel's range is fixed.
  * @returns {any[]}
  */
 export function channelRange(channelName, type, dims, theme, opts = {}) {
@@ -480,6 +494,11 @@ export function channelRange(channelName, type, dims, theme, opts = {}) {
         // so they get the same default and separate scales.
         case 'theta': return [180, 0];
         case 'angle': return [180, 0];
+        // A COUNT axis runs along whichever screen direction the mark stacks in,
+        // which `axisOf` cannot know — the channel name is the same either way.
+        // The mark declares it (`Mark.countAxis`), the resolver accumulates it, and
+        // it arrives here as `opts.countAxis`. Same shape as `discretePref`.
+        case 'count': return opts.countAxis === 'x' ? [0, dims.width] : [dims.height, 0];
     }
     // Family-based ranges: any opacity/colour channel gets the same output range
     // as its base channel, so fillOpacity/strokeOpacity and fill/stroke behave

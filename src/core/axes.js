@@ -3,7 +3,7 @@
 // global `axes` convenience into composable axis/grid marks. Kept out of the
 // engine so elicit.js stays setup + render loop.
 
-import { axisX, axisY, gridX, gridY, GRID_OPTIONS } from '../plot/axis.js';
+import { axis, axisX, axisY, gridX, gridY, GRID_OPTIONS } from '../plot/axis.js';
 
 /**
  * The subset of an axis config a GRID reads. `axes: { y: { grid: true, ticks: 8,
@@ -63,6 +63,13 @@ function originTransform(ch) {
  *                present, axes cross at the origin (intercept/slope frame)
  *   false     -> no axes at all
  *   { x, y }  -> per-channel config object, or `false` to suppress that channel.
+ *
+ * The COUNT axis is opt-in, so it is absent from the default pass: `count` sits
+ * with `legends` rather than with x/y because it RESERVES LAYOUT SPACE for a scale
+ * a reader can already read off the marks — a waffle's cells and a dotStack's
+ * tokens are countable by eye, which is the point of those marks. Ask for it with
+ * `axes: { count: true }`, and it draws along whichever screen direction the mark
+ * stacks in (`Mark.countAxis`).
  * @param {any[]} features
  * @param {any} axesOpt
  * @returns {any[]} the axis/grid marks to prepend (drawn behind marks)
@@ -78,6 +85,22 @@ export function autoAxes(features, axesOpt) {
     /** @param {string} ch */
     const hasExplicit = (ch) => flat.some((f) => (f.isAxis || f.isGrid) && f.channel === ch);
     const builders = { x: { axis: axisX, grid: gridX }, y: { axis: axisY, grid: gridY } };
+    // A count axis, only when asked for. It draws on the screen side the counting
+    // mark stacks along, which the mark itself declares.
+    if (axesOpt && axesOpt.count && !hasExplicit('count')) {
+        const counter = flat.find((f) => f.countAxis);
+        if (counter) {
+            const cfg = axesOpt.count === true ? {} : { ...axesOpt.count };
+            // Built through `axis` directly, not axisX/axisY: those pin `channel`
+            // AFTER the spread, so they would overwrite 'count' with 'x'/'y'. The
+            // anchor is what carries the direction here.
+            injected.push(axis({
+                anchor: counter.countAxis === 'x' ? 'bottom' : 'left',
+                ...cfg,
+                channel: 'count',
+            }));
+        }
+    }
     for (const ch of /** @type {const} */ (['x', 'y'])) {
         const cfg = axesOpt ? axesOpt[ch] : undefined;
         if (cfg === false) continue;           // channel suppressed

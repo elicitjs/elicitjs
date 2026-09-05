@@ -473,13 +473,39 @@ A mark used to accept `constraints` as sugar, which the engine promoted to the d
 
 Don't scope a constraint to a feature, and don't re-add the promotion path. If a constraint's *guide* only makes sense for certain mark shapes (e.g. `maintainSum`'s cap-tick needs a band axis), guard the guide function, not the constraint itself.
 
-**There are three coordinate FAMILIES, and `axisOf` is a static map.** Cartesian
-(`x`, `y` + the `x1/x2`, `y1/y2` span partners) and POLAR (`theta`, `theta2`,
-whose axis element is `axisRadial`). `axisOf` must stay a static channel→axis map:
-making it mark-aware to accommodate one mark's orientation is the special case the
-engine avoids everywhere else. `radius` is deliberately NOT minted — nothing needs
-a radial scale yet (`innerRadius`/`outerRadius` are px options), and a keyword with
-no consumer is one the grammar cannot justify.
+**There are three coordinate FAMILIES, and `axisOf` is a static map.** CARTESIAN
+(`x`, `y` + the `x1/x2`, `y1/y2` span partners), POLAR (`theta`, `theta2`, whose
+axis element is `axisRadial`), and COUNT (`count`, whose unit is the MARK's own
+cell or token). `axisOf` must stay a static channel→axis map: making it mark-aware
+to accommodate one mark's orientation is the special case the engine avoids
+everywhere else. `radius` is deliberately NOT minted — nothing needs a radial scale
+yet (`innerRadius`/`outerRadius` are px options), and a keyword with no consumer is
+one the grammar cannot justify.
+
+**BUCKETING and ORIENTATION are separate questions, which is what keeps `axisOf`
+static.** A `count` channel gets its own bucket — "how many cells" and "how far up
+the y axis" are different quantities, so a waffle and a bar never union domains —
+but the channel name cannot say which screen direction its RANGE runs, because it
+is `count` either way. So the mark declares `Mark.countAxis`, `resolveScales`
+accumulates it onto the bucket exactly as it already does `discreteScale`
+(`a.discretePref`), and `channelRange` reads it. Don't reach for a mark-aware
+`axisOf` when the answer is a per-bucket hint.
+
+**A count is either ENCODED or DERIVED, and the mark says which.** `waffle` binds
+the `count` channel (`unit` is the exchange rate: one cell is worth `unit` of the
+field, so at the default `unit: 1` the column value IS the cell count, and the mark
+warns when the domain is not a whole number of units — that is exactly when the
+name stops being true). `dotStack` binds NOTHING: one row is one token, so there is
+no column to encode, and `resolveScales` synthesises the scale from the declared
+`countPitch` (`2r + gap`), which is exact because the pitch is uniform. That
+asymmetry is the DATA MODEL — it is why they are two marks and not one mark with an
+option — so it is documented, not smoothed over.
+
+The count axis is OPT-IN (`axes: { count: true }`), sitting with `legends` rather
+than with x/y, because it reserves layout space for a scale these marks already
+make countable by eye. It reports DATA units so it agrees with the column. Note it
+is built through `axis()` directly and carries its direction in its ANCHOR:
+`axisX`/`axisY` pin `channel` after the spread, so they would overwrite it.
 
 **`theta` is a POSITION; `angle` is a ROTATION. They were one channel.** `theta` is
 where a mark sits on the polar axis — a needle's bearing, an arc's sweep; `angle` is

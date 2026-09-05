@@ -169,7 +169,12 @@ export function axis(options = {}) {
         id,
     } = options;
 
-    const isX = channel === 'x';
+    // Which way this axis RUNS. For x/y the channel says it. A `count` axis runs
+    // along whichever screen direction its mark stacks in, which the channel name
+    // cannot carry (it is `count` either way), so the ANCHOR decides — and the
+    // anchor is the visual truth for any channel that is not x or y.
+    const isX = channel === 'x'
+        || (channel !== 'y' && (anchor === 'bottom' || anchor === 'top'));
     const edits = elementEdits(options, channel);
     const editable = edits.length > 0;
 
@@ -356,6 +361,7 @@ export function grid(options = {}) {
         id,
     } = options;
 
+    // A grid has no anchor — it spans the plot — so its direction is the channel's.
     const isX = channel === 'x';
 
     return {

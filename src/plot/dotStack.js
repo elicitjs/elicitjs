@@ -66,10 +66,23 @@ function buildDotStack(options, forcedAxis) {
 
     const { xKey, yKey } = positionalKeys(channels);
 
+    // The token pitch, for the DERIVED count scale (core/resolve.js). A token is a
+    // unit of count, so every token shares one radius; `size` is a constant here by
+    // construction (build resolves it against a null datum), which is what makes the
+    // pitch knowable before there is any data.
+    const tokenRadius = (channels.size && channels.size.value != null) ? +channels.size.value : 7;
+
     return {
         ...markCommon(opts),
         markName: 'dotStack',
         channels,
+        // This mark COUNTS, so it has a count axis — but it declares no `count`
+        // channel, because one row IS one token and there is no column to encode.
+        // That asymmetry with `waffle` (which encodes its magnitude) is the data
+        // model, and it is why they are two marks. The pitch is what makes the axis
+        // exact: pixels -> count is linear, so the scale needs no data.
+        countAxis: forcedAxis || 'y',
+        countPitch: 2 * tokenRadius + gap,
         // Tokens sit in discrete slots; a point scale gives each slot a tick.
         discreteScale: 'point',
         xKey,

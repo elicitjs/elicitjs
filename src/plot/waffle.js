@@ -5,7 +5,7 @@
 // (band = category axis + thickness, linear = value axis + length from a
 // baseline; orientation autodetected or forced by waffleX/waffleY).
 //
-//   waffleY([{ cat: 'apples', value: 212 }, ...], { x: 'cat', y: 'value' })
+//   waffleY({ channels: { x: { field: 'cat' }, count: { field: 'n' } } })
 //
 // The invariant that makes a waffle a waffle (Observable Plot's model): ONE CELL
 // IS A FIXED QUANTITY. `unit` (default 1) is the value each cell represents, so
@@ -18,7 +18,15 @@
 // still fill the block height — floor(sqrt(totalCells * thickness / blockLen)) —
 // so a full waffle reaches the value's height on the axis and rows stay countable.
 //
-// The value's fill LEVEL is still resolved through encodeChannel (the single
+// The magnitude channel is `count`, on its own COUNT AXIS — not `y`. What a waffle
+// encodes is "how many cells", which is a different question from "how far up the y
+// axis", and putting both on one domain would union a bar's height with a countable
+// block. `unit` is the exchange rate: one cell is worth `unit` of the field, so with
+// the default `unit: 1` the column value IS the cell count. The axis stays in DATA
+// units so it agrees with the column that fed it, and it is opt-in
+// (`axes: { count: true }`), like a legend, because it reserves layout space.
+//
+// The fill LEVEL is still resolved through encodeChannel (the single
 // field->pixel path) so a plain `move()` on the value channel fills to the
 // pointer; the grid quantizes that level into whole cells. Empty cells (up to the
 // domain top) are drawn too so the whole block is one direct-pick drag target —
@@ -58,7 +66,8 @@ function domainExtent(scale) {
         'a waffle needs a declared DOMAIN on its value axis — one cell is a fixed '
         + 'quantity, so the number of cells is (domain span / unit). Without it the '
         + 'domain falls back to [0, 1] and the grid stops being countable. Declare it: '
-        + 'schema: { <field>: { type: "quantitative", domain: [0, max] } }.'
+        + 'schema: { <field>: { type: "quantitative", domain: [0, max] } }, and bind it '
+        + 'to the `count` channel.'
     );
     return [0, 1];
 }
@@ -89,6 +98,12 @@ function buildWaffle(options, forcedOrientation) {
         ...markCommon(opts),
         markName: 'waffle',
         channels,
+        // Which screen direction the count axis runs along, so the resolver can give
+        // its scale a range (see AXIS_OF / channelRange). Forced by waffleX/waffleY,
+        // exactly as `forcedOrientation` is.
+        countAxis: forcedOrientation === 'horizontal' ? 'x'
+            : forcedOrientation === 'vertical' ? 'y'
+                : (orientationOption === 'horizontal' ? 'x' : 'y'),
         discreteScale: 'band',
         xKey,
         yKey,
@@ -140,8 +155,12 @@ function buildWaffle(options, forcedOrientation) {
                 // split bar makes. `bandStart`/`thickness` place the block across
                 // its category; the value scale sets where each cell row lands.
                 const bandScale = vertical ? xScale : yScale;
-                const valueChannel = vertical ? 'y' : 'x';
-                const valueScale = vertical ? yScale : xScale;
+                // The magnitude is the COUNT channel, on the count axis — not x/y.
+                // A waffle's quantity is "how many cells", which is a different
+                // question from "how far up the y axis", and unioning the two would
+                // put a bar's height and a countable block on one domain.
+                const valueChannel = 'count';
+                const valueScale = /** @type {any} */ (scales).count;
                 const bandKey = vertical ? xKey : yKey;
 
                 const bandStart = bandStartOf(
@@ -166,7 +185,23 @@ function buildWaffle(options, forcedOrientation) {
                 // filling the block height — i.e. multiple = floor(sqrt(totalCells *
                 // thickness / blockLen)). A user override is honoured (clamped so it
                 // never overflows the band).
-                const totalCells = Math.max(1, Math.round(domainSpan / unit));
+                // One cell = `unit` of the field, so the block holds domainSpan/unit
+                // cells. When that is not a whole number the grid cannot represent the
+                // declared domain exactly: the top cell is a fraction, `count` stops
+                // reading as the literal number of cells, and the rounding below hides
+                // it. Say so — this is precisely the case where the channel's NAME
+                // stops being true.
+                const exactCells = domainSpan / unit;
+                if (Math.abs(exactCells - Math.round(exactCells)) > 1e-9) {
+                    warn(
+                        'waffle:unit',
+                        `a waffle's domain span (${domainSpan}) is not a whole number of `
+                        + `\`unit\`s (${unit}) — it needs ${exactCells.toFixed(2)} cells, so the `
+                        + `grid is rounded to ${Math.round(exactCells)} and one cell no longer `
+                        + `means exactly ${unit}. Pick a unit that divides the domain.`
+                    );
+                }
+                const totalCells = Math.max(1, Math.round(exactCells));
                 let multiple = multipleOption;
                 if (!(multiple >= 1)) {
                     const fit = Math.sqrt((totalCells * thickness) / blockLen);

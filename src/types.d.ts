@@ -772,6 +772,19 @@ export interface Channels extends StyleChannels {
   theta?: ChannelSpec;
   // Span partner for `theta`, on the same axis (as x2 is to x).
   theta2?: ChannelSpec;
+  // A COUNT — a quantity measured in the MARK's own units: a waffle's cell (worth
+  // `unit` of the field), a dotStack's token (one row). Positional, on a count axis
+  // of its own, so it never unions with a y domain: "how many cells" and "how far
+  // up the y axis" are different questions about different quantities.
+  //
+  // The axis is OPT-IN (`axes: { count: true }`), like a legend rather than like
+  // x/y, because it reserves layout space for something these marks already make
+  // countable by eye. It reports DATA units, so it agrees with the column.
+  //
+  // A mark either ENCODES its count (waffle binds this channel) or DERIVES it
+  // (dotStack: one row is one token, no column, so it declares `countPitch` and
+  // the resolver synthesises the scale).
+  count?: ChannelSpec;
   [channel: string]: ChannelSpec | undefined;
 }
 
@@ -1398,6 +1411,17 @@ export interface Mark {
    */
   requires?: MarkRequirement[];
 
+  /** Which screen direction this mark's COUNT axis runs along. Declared because
+   *  `axisOf` is a static channel->axis map and cannot know a mark's orientation:
+   *  the resolver accumulates this onto the count bucket (like `discreteScale`) and
+   *  `channelRange` reads it. Set by `waffle`/`dotStack`. */
+  countAxis?: 'x' | 'y';
+  /** Pixels per token, for a mark whose count is DERIVED rather than encoded
+   *  (`dotStack`: one row is one token, so there is no column). The resolver
+   *  synthesises a linear count scale from it, which is exact because the pitch is
+   *  uniform. A mark that encodes its count (`waffle`) leaves this unset — its
+   *  scale comes from the `count` channel like any other. */
+  countPitch?: number;
   /** Line-family series grouping: the FIELD name, resolved from the `series`
    *  channel (falling back to fill's / stroke's field) by `seriesFieldOf`. */
   seriesKey?: string | null;

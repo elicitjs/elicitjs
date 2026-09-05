@@ -91,7 +91,7 @@ export function resolveScales(features, tables, spec, dims) {
   // find its declaration once two tables share an axis), any explicit data type or
   // scale option, the mark's preferred discrete scale, and the flat list of values
   // across all marks (for inference).
-  /** @type {Record<string, { fields: string[], fieldRefs: { table: string, field: string }[], schemas: any[], undeclared: string[], measure?: any, scaleOpt?: any, discretePref?: any, values: any[] }>} */
+  /** @type {Record<string, { fields: string[], fieldRefs: { table: string, field: string }[], schemas: any[], undeclared: string[], measure?: any, scaleOpt?: any, discretePref?: any, countAxis?: any, values: any[] }>} */
   const acc = {};
 
   /** @param {string} ch */
@@ -204,6 +204,10 @@ export function resolveScales(features, tables, spec, dims) {
       if (a.measure == null && chSpec.type != null) a.measure = chSpec.type;
       if (a.scaleOpt == null && chSpec.scale != null) a.scaleOpt = chSpec.scale;
       if (a.discretePref !== "band") a.discretePref = pref;
+      // Which screen direction a COUNT axis runs along. Same shape as
+      // `discretePref`: a per-mark hint accumulated onto the bucket, read when the
+      // scale is built. `axisOf` stays a static map because of this.
+      if (a.countAxis == null && feature.countAxis) a.countAxis = feature.countAxis;
 
       if (chSpec.field != null) {
         if (!a.fields.includes(chSpec.field)) a.fields.push(chSpec.field);
@@ -332,6 +336,8 @@ export function resolveScales(features, tables, spec, dims) {
         measure,
         index: bucketIndex[bucket] || 0,
         count: domain.length,
+        // Which way a count axis runs — declared by the mark, accumulated above.
+        countAxis: a.countAxis,
       });
     if (opt.reverse && Array.isArray(range)) range = [...range].reverse();
 
@@ -374,6 +380,34 @@ export function resolveScales(features, tables, spec, dims) {
       for (const name of bucketMembers[bucket] || []) {
         if (scales[name] === undefined) scales[name] = scale;
       }
+    }
+  }
+
+  // ── A DERIVED count scale ──────────────────────────────────────────────────
+  // The count family has two shapes, and only one of them is an encoding. A
+  // `waffle` ENCODES a magnitude on `count`, so the bucket pass above already
+  // built its scale from the column. A `dotStack` DERIVES its count: one row is
+  // one token, there is no column, and the quantity is how many rows share a slot.
+  // That is the data-model difference that makes them two marks rather than one
+  // mark with an option — so it is a real asymmetry, not an oversight.
+  //
+  // It still has an axis, because the mapping is exact: tokens sit at a uniform
+  // pitch (`2r + gap`), so pixels->count is linear with no data needed. The mark
+  // declares that pitch and which way it stacks; the domain is however many whole
+  // tokens fit the plot, which keeps the axis stable as rows come and go.
+  if (scales.count === undefined) {
+    const counter = features.find(
+      (f) => f && f.countAxis && f.countPitch > 0,
+    );
+    if (counter) {
+      const along = counter.countAxis === "x" ? dims.width : dims.height;
+      const capacity = Math.max(1, Math.floor(along / counter.countPitch));
+      const span = capacity * counter.countPitch;
+      const derived = createScale(
+        { channel: "count", type: "linear", domain: [0, capacity] },
+        counter.countAxis === "x" ? [0, span] : [dims.height, dims.height - span],
+      );
+      if (derived) scales.count = derived;
     }
   }
 
