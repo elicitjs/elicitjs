@@ -62,14 +62,15 @@ function originTransform(ch) {
  *   undefined -> default axis on both positional channels; when a trend mark is
  *                present, axes cross at the origin (intercept/slope frame)
  *   false     -> no axes at all
- *   { x, y }  -> per-channel config object, or `false` to suppress that channel.
+ *   { x, y, origin } -> per-channel config object (`false` suppresses a channel),
+ *                plus `origin` to STATE the frame explicitly rather than let it
+ *                follow from which marks happen to be present.
  *
- * The COUNT axis is opt-in, so it is absent from the default pass: `count` sits
- * with `legends` rather than with x/y because it RESERVES LAYOUT SPACE for a scale
- * a reader can already read off the marks — a waffle's cells and a dotStack's
- * tokens are countable by eye, which is the point of those marks. Ask for it with
- * `axes: { count: true }`, and it draws along whichever screen direction the mark
- * stacks in (`Mark.countAxis`).
+ * `origin` is the escape hatch for that inference: `true` forces the
+ * origin-crossing frame (useful beyond trend — any chart whose domains span
+ * zero on both axes), `false` forces the ordinary left/bottom frame even
+ * alongside a `trend`/`trendBand` mark. Left unset, the default above still
+ * applies, so every existing spec that never mentions `axes` is unaffected.
  * @param {any[]} features
  * @param {any} axesOpt
  * @returns {any[]} the axis/grid marks to prepend (drawn behind marks)
@@ -77,9 +78,12 @@ function originTransform(ch) {
 export function autoAxes(features, axesOpt) {
     if (axesOpt === false) return [];
     const flat = flattenFeatures(features);
-    // Trend's natural frame is axes through the origin. Only when the chart left
-    // `axes` unspecified — an explicit axes:{} always wins.
-    const originCross = axesOpt == null && flat.some((f) => f.isTrend);
+    const origin = axesOpt && typeof axesOpt === 'object' ? axesOpt.origin : undefined;
+    // Trend's natural frame is axes through the origin. An explicit `origin` wins
+    // outright; otherwise it's inferred, and only when `axes` was left unspecified
+    // — any other explicit axes:{} always wins.
+    const originCross = origin === true
+        || (origin === undefined && axesOpt == null && flat.some((f) => f.isTrend));
     /** @type {any[]} */
     const injected = [];
     /** @param {string} ch */

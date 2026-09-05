@@ -1952,7 +1952,15 @@ export interface ElicitSpec {
   // Global axis convenience: `false` = no axes; `{ x, y }` = per-channel config or
   // `false` to suppress that channel; omitted = default axes on both positional
   // channels. Desugars into composable axis/grid marks.
-  axes?: false | { x?: AxisSpec | false; y?: AxisSpec | false };
+  //   origin  states the FRAME explicitly rather than leaving it inferred: `true`
+  //           crosses both axes at zero (trend's natural frame, and usable on any
+  //           chart whose domains span it); `false` forces the ordinary left/bottom
+  //           frame even alongside a `trend`/`trendBand` mark. Omitted, the frame
+  //           still follows the marks present, exactly as before this existed.
+  //   count   opt-in axis for a COUNTABLE mark (waffle, dotStack) — reserves layout
+  //           space for a scale the mark already makes countable by eye, so it
+  //           defaults off like a legend rather than on like x/y.
+  axes?: false | { x?: AxisSpec | false; y?: AxisSpec | false; origin?: boolean; count?: boolean | AxisSpec };
   // The legend counterpart to `axes` — the IMPLICIT layer for the NON-positional
   // scales, desugared into legend marks by core/legends.js's autoLegends.
   //   true              one legend per non-positional channel bound to a field
