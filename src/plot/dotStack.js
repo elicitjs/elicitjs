@@ -32,7 +32,8 @@
 // choice. Like waffle's, it is resolved statically rather than from the scales,
 // because the derived count scale needs the direction before any build() runs.
 
-import { encodeChannel, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon} from './mark.js';
+import { encodeChannel, categoryOf, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, resolveValueAxis } from './mark.js';
+import { MARK_OPTIONS } from '../vocabulary.js';
 
 /**
  * The discrete slots along the category axis — the ghost/label layer iterates
@@ -53,11 +54,10 @@ function slotsOf(scale, key, data) {
 
 /**
  * @param {any} options
- * @param {'x' | 'y' | null} forcedAxis  The axis tokens stack ALONG ('y' = up, 'x' = right).
  * @returns {import('../types').Mark}
  */
-function buildDotStack(options, forcedAxis) {
-    const opts = normalizeMarkOptions(options, { mark: 'dotStack', allow: ['orientation', 'gap', 'ghost', 'label'] });
+function buildDotStack(options) {
+    const opts = normalizeMarkOptions(options, { mark: 'dotStack', allow: MARK_OPTIONS.dotStack });
     const {
         channels = {},
         id,
@@ -77,9 +77,7 @@ function buildDotStack(options, forcedAxis) {
     // slot), so the axis that channel sits on is the category and the other is the
     // count's. `orientation` is bar's and waffle's word for the same choice, so it
     // means the same thing here: 'horizontal' stacks rightward.
-    const stackAxis = forcedAxis
-        || (orientationOption ? (orientationOption === 'horizontal' ? 'x' : 'y')
-            : (channels.y && !channels.x ? 'x' : 'y'));
+    const stackAxis = resolveValueAxis(channels, null, { orientation: orientationOption, single: 'other' });
 
     // The token pitch, for the DERIVED count scale (core/resolve.js). A token is a
     // unit of count, so every token shares one radius; `size` is a constant here by
@@ -89,7 +87,7 @@ function buildDotStack(options, forcedAxis) {
 
     return {
         ...markCommon(opts),
-        markName: 'dotStack',
+        type: 'dotStack',
         channels,
         // This mark COUNTS, so it has a count axis — but it declares no `count`
         // channel, because one row IS one token and there is no column to encode.
@@ -125,10 +123,10 @@ function buildDotStack(options, forcedAxis) {
             // BEFORE the tokens (draw order == z-order: rings sit behind the stack).
             /** @type {Map<any, number>} */
             const counts = new Map();
-            for (const d of currentData) {
-                const key = d[categoryKey];
+            currentData.forEach((d, i) => {
+                const key = categoryOf(channels, categoryChannel, d, categoryKey, i, currentData);
                 counts.set(key, (counts.get(key) || 0) + 1);
-            }
+            });
 
             /** The pixel of a slot's `n`-th token along the stack axis. */
             const placeAt = (/** @type {any} */ datum, /** @type {number} */ n) => {
@@ -164,7 +162,7 @@ function buildDotStack(options, forcedAxis) {
             /** @type {Map<any, number>} */
             const seen = new Map();
             currentData.forEach((/** @type {any} */ d, i) => {
-                const key = d[categoryKey];
+                const key = categoryOf(channels, categoryChannel, d, categoryKey, i, currentData);
                 const n = seen.get(key) || 0;
                 seen.set(key, n + 1);
                 const style = resolveStyle(scales, channels, d, markDefaults(scales, 'dotStack', { fill: themeOf(scales).ink }), i, currentData);
@@ -218,7 +216,7 @@ function buildDotStack(options, forcedAxis) {
  * @returns {import('../types').Mark}
  */
 export function dotStack(options = {}) {
-    return buildDotStack(options, null);
+    return buildDotStack(options);
 }
 
 /**
@@ -227,7 +225,7 @@ export function dotStack(options = {}) {
  * @returns {import('../types').Mark}
  */
 export function dotStackY(options = {}) {
-    return buildDotStack(options, 'y');
+    return dotStack({ ...options, orientation: 'vertical' });
 }
 
 /**
@@ -236,5 +234,5 @@ export function dotStackY(options = {}) {
  * @returns {import('../types').Mark}
  */
 export function dotStackX(options = {}) {
-    return buildDotStack(options, 'x');
+    return dotStack({ ...options, orientation: 'horizontal' });
 }

@@ -20,6 +20,9 @@
 // (identical to `DEFAULT_THEME.widget`), used when no theme rode in on the context.
 
 import { custom } from '../guides/index.js';
+
+/** Stamp a guide's identity: the keyword a spec names it by. @param {string} type @param {import('../types').Guide} g */
+const typed = (type, g) => Object.assign(g, { type });
 import { bandwidthOf } from '../core/scales.js';
 
 export const THEME = {
@@ -50,7 +53,8 @@ const categoriesOf = (scale) => (scale && Array.isArray(scale.domainConfig) ? sc
  */
 export function optionRings(options = {}) {
     const { labelOffset = 30, radius: radiusOpt } = options;
-    return custom((/** @type {any} */ ctx) => {
+    // Its own keyword, not `custom`: this guide appears in a spec by name.
+    return typed('optionRings', custom((/** @type {any} */ ctx) => {
         const { scales, height } = ctx;
         const tw = widgetTheme(ctx);
         const radius = radiusOpt != null ? radiusOpt : tw.radius;
@@ -83,7 +87,7 @@ export function optionRings(options = {}) {
             });
         }
         return nodes;
-    });
+    }));
 }
 
 /**
@@ -94,7 +98,8 @@ export function optionRings(options = {}) {
  */
 export function cellGrid(options = {}) {
     const { pad = 3 } = options;
-    return custom((/** @type {any} */ ctx) => {
+    // Its own keyword, not `custom`: this guide appears in a spec by name.
+    return typed('cellGrid', custom((/** @type {any} */ ctx) => {
         const { scales } = ctx;
         const tw = widgetTheme(ctx);
         const cols = categoriesOf(scales.x);
@@ -130,7 +135,7 @@ export function cellGrid(options = {}) {
             });
         }
         return nodes;
-    });
+    }));
 }
 
 /**
@@ -140,7 +145,8 @@ export function cellGrid(options = {}) {
  */
 export function sliderTrack(options = {}) {
     const { format = (/** @type {any} */ v) => String(v) } = options;
-    return custom((/** @type {any} */ ctx) => {
+    // Its own keyword, not `custom`: this guide appears in a spec by name.
+    return typed('sliderTrack', custom((/** @type {any} */ ctx) => {
         const { scales, width, height } = ctx;
         const tw = widgetTheme(ctx);
         if (!scales.x) return [];
@@ -154,7 +160,7 @@ export function sliderTrack(options = {}) {
             { type: 'text', x: 0, y: cy + 26, text: format(lo), textAnchor: 'start', fontSize: tw.labelSize, fill: tw.label },
             { type: 'text', x: width, y: cy + 26, text: format(hi), textAnchor: 'end', fontSize: tw.labelSize, fill: tw.label }
         ];
-    });
+    }));
 }
 
 /**
@@ -166,13 +172,14 @@ export function sliderTrack(options = {}) {
  */
 export function prompt(text, options = {}) {
     const { y = -18 } = options;
-    return custom((/** @type {any} */ ctx) => {
+    // Its own keyword, not `custom`: this guide appears in a spec by name.
+    return typed('prompt', custom((/** @type {any} */ ctx) => {
         const tw = widgetTheme(ctx);
         return text ? [{
             type: 'text', x: 0, y, text,
             textAnchor: 'start', fontSize: tw.questionSize, fill: tw.question
         }] : [];
-    });
+    }));
 }
 
 /**
@@ -184,7 +191,8 @@ export function prompt(text, options = {}) {
  */
 export function crosshair(labels = {}) {
     const { x = 'x', y = 'y' } = labels;
-    return custom((/** @type {any} */ ctx) => {
+    // Its own keyword, not `custom`: this guide appears in a spec by name.
+    return typed('crosshair', custom((/** @type {any} */ ctx) => {
         const { width, height } = ctx;
         const tw = widgetTheme(ctx);
         const cx = width / 2, cy = height / 2;
@@ -212,5 +220,5 @@ export function crosshair(labels = {}) {
             t(cx, -8, `${y} (high)`, 'middle'),
             t(cx, height + 20, `${y} (low)`, 'middle')
         ];
-    });
+    }));
 }

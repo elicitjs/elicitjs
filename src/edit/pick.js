@@ -34,7 +34,7 @@ export function distanceToMark(mark, px, py) {
     // rotation-invariant about its own centre, so this is a no-op there.
     const p = unrotate(mark, px, py);
     if (mark.type === 'circle') {
-        return Math.hypot(px - mark.cx, py - mark.cy);
+        return Math.hypot(p.x - mark.cx, p.y - mark.cy);
     }
     if (mark.type === 'ellipse') {
         // Distance to the CENTRE, like a circle — proximity ranks candidates, and an
@@ -354,12 +354,12 @@ export function resolveThreshold(value, fallback = DEFAULT_PICK_THRESHOLD) {
  * and then wrote `pickThreshold(edit) || THEIRS` — which can never reach the `||`,
  * because pickThreshold always returns at least 40. Both constants were dead, and
  * an axis handle was being grabbed from 40px away instead of 14.
- * @param {import('../types').Edit} edit
+ * @param {import('../types').Edit | null | undefined} edit
  * @param {number} [fallback]
  * @returns {number}
  */
 export function pickThreshold(edit, fallback = DEFAULT_PICK_THRESHOLD) {
-    return resolveThreshold(edit.threshold, fallback);
+    return resolveThreshold(edit ? edit.threshold : undefined, fallback);
 }
 
 // A brush's edge zone needs a usable px radius; 0 would mean "the exact pixel

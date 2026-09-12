@@ -56,7 +56,8 @@
 
 import { bandwidthOf, bandStartOf, baselineOf } from '../core/scales.js';
 import { warn } from '../core/dev.js';
-import { encodeChannel, categoryOf, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon} from './mark.js';
+import { encodeChannel, categoryOf, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, resolveValueAxis, orientationOf } from './mark.js';
+import { MARK_OPTIONS } from '../vocabulary.js';
 
 /** @param {any} scale @returns {[number, number]} */
 function domainExtent(scale) {
@@ -82,11 +83,10 @@ function domainExtent(scale) {
 
 /**
  * @param {any} options
- * @param {string | null} forcedOrientation
  * @returns {import('../types').Mark}
  */
-function buildWaffle(options, forcedOrientation) {
-    const opts = normalizeMarkOptions(options, { mark: 'waffle', allow: ['orientation', 'unit', 'multiple', 'gap', 'shape', 'showEmpty', 'emptyFill'] });
+function buildWaffle(options) {
+    const opts = normalizeMarkOptions(options, { mark: 'waffle', allow: MARK_OPTIONS.waffle });
     const {
         channels = {},
         id,
@@ -111,13 +111,13 @@ function buildWaffle(options, forcedOrientation) {
     // the category — so the axis that channel sits on IS the band, and the other
     // direction is the count's. (`bar` still asks the scales, because it binds
     // both x and y and only their KINDS can say which one is the band.)
-    const orientation = forcedOrientation || orientationOption
-        || (channels.y && !channels.x ? 'horizontal' : 'vertical');
+    // No scales: a counting mark answers this at FACTORY time (see resolveValueAxis).
+    const orientation = orientationOf(resolveValueAxis(channels, null, { orientation: orientationOption, single: 'other' }));
     const vertical = orientation !== 'horizontal';
 
     return {
         ...markCommon(opts),
-        markName: 'waffle',
+        type: 'waffle',
         channels,
         // Which screen direction the count axis runs along, so the resolver can give
         // its scale a range (see AXIS_OF / channelRange). It is the direction the
@@ -353,7 +353,7 @@ function buildWaffle(options, forcedOrientation) {
  * @returns {import('../types').Mark}
  */
 export function waffle(options = {}) {
-    return buildWaffle(options, null);
+    return buildWaffle(options);
 }
 
 /**
@@ -361,7 +361,7 @@ export function waffle(options = {}) {
  * @returns {import('../types').Mark}
  */
 export function waffleY(options = {}) {
-    return buildWaffle(options, 'vertical');
+    return waffle({ ...options, orientation: 'vertical' });
 }
 
 /**
@@ -369,5 +369,5 @@ export function waffleY(options = {}) {
  * @returns {import('../types').Mark}
  */
 export function waffleX(options = {}) {
-    return buildWaffle(options, 'horizontal');
+    return waffle({ ...options, orientation: 'horizontal' });
 }

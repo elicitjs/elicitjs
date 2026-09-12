@@ -7,7 +7,7 @@
 /** @type {import('./index.js').Driver} */
 export const planeDriver = {
     name: 'plane',
-    wants: (e) => e.pick === 'plane',
+    sessionKeys: [],
     onEvent({ event, edits, runEdit }) {
         let changed = false;
         edits

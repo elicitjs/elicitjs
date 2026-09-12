@@ -56,6 +56,7 @@
 
 import {
     encodeChannel, resolveStyle, normalizeMarkOptions, themeOf, markDefaults, resolveHandles, markCommon, rawChannel,} from './mark.js';
+import { MARK_OPTIONS } from '../vocabulary.js';
 import { textNodeAt } from './text.js';
 import { measureBlock } from '../core/measure.js';
 import { LINK_SHAPES, LINK_CURVES, LINK_SIDES } from './linkGeometry.js';
@@ -131,9 +132,10 @@ function resolveJoin(channels, options, context, table) {
     const refs = refFieldsOf(links);
     const sourceField = (channels.source && channels.source.field) || refs[0];
     const targetField = (channels.target && channels.target.field) || refs[1];
-    // The node column that holds identities. `key` is the schema's answer; `key:` on
-    // the mark is the override for a table that declares none.
-    const keyField = options.key || nodes.key;
+    // The node column that holds identities: the node table's `key: true` field.
+    // The schema's statement, and only the schema's — a `key:` option on the mark was
+    // an option naming a data column, which `channels` alone may do.
+    const keyField = nodes.key;
 
     return {
         rows: (context.tables && context.tables[nodesName]) || [],
@@ -350,23 +352,11 @@ function separationBows(rows, sourceField, targetField, directed, spread) {
 export function link(options = {}) {
     const opts = normalizeMarkOptions(options, {
         mark: 'link',
-        allow: [
-            'key', 'curve', 'curvature', 'spread', 'arrow', 'arrowSize',
-            'inset', 'sourceInset', 'targetInset', 'loopRadius', 'table', 'format',
-            'labelBackground', 'labelPadding', 'labelRadius', 'labelOpacity',
-            'nodeWidth', 'nodeHeight', 'cornerRadius', 'sourceSide', 'targetSide',
-            // `link` draws endpoint handles through the shared contract
-            // (resolveHandles, below), so it takes the shared vocabulary. These
-            // were missing from this list for a long time: the keys still reached
-            // the mark through `...rest`, so they WORKED while `warnUnknownOptions`
-            // reported them as options the mark does not read — the one place the
-            // diagnostics contradicted the behaviour.
-            'handles', 'handleSize', 'handleColor',
-        ],
+        allow: MARK_OPTIONS.link,
     });
     const {
         channels = {}, id, edits, table,
-        key, curve = 'line', curvature = 'auto', spread = AUTO_SPREAD,
+        curve = 'line', curvature = 'auto', spread = AUTO_SPREAD,
         arrow = 'auto', arrowSize = 6, loopRadius = LOOP_RADIUS,
         inset = 0, sourceInset, targetInset, format: formatOpt,
         nodeWidth, nodeHeight, cornerRadius = 0,
@@ -384,7 +374,7 @@ export function link(options = {}) {
 
     return {
         ...markCommon(opts),
-        markName: 'link',
+        type: 'link',
         channels,
         // Explicit name wins; otherwise the table filling the `links` role — which is
         // what lets a renamed schema work with no `table:` anywhere.

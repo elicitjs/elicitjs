@@ -27,18 +27,19 @@
 // symmetric across x and y, so 1D-along-x and 1D-along-y are the same code path.
 
 import { encodeChannel, encodeAngle, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon} from './mark.js';
+import { MARK_OPTIONS } from '../vocabulary.js';
 
 /**
  * @param {any} [options]
  * @returns {import('../types').Mark}
  */
 export function point(options = {}) {
-    const opts = normalizeMarkOptions(options, { mark: 'point', allow: ['shape'] });
+    const opts = normalizeMarkOptions(options, { mark: 'point', allow: MARK_OPTIONS.point });
     const { channels = {}, id, edits, shape = 'circle' } = opts;
 
     return {
         ...markCommon(opts),
-        markName: 'point',
+        type: 'point',
         channels,
         // A dot's categorical axis wants a point per category (a tick, no width).
         discreteScale: 'point',

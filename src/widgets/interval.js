@@ -155,7 +155,3 @@ export function interval(opts = {}) {
     };
 }
 
-/** @param {any} [opts] @returns {import('../types').ElicitSpec} */
-export function ci(opts = {}) {
-    return interval(opts);
-}

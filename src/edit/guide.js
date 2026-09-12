@@ -180,9 +180,18 @@ export function buildEditGuide(feature, edit, ctx) {
     // too. Plus any edit-scoped guard sugar.
     if (parts.bounds && primary && primary.scale) {
         const style = parts.bounds;
-        const invariants = [...(constraints || []), ...edit.constrain];
+        // Only a DESCRIPTOR can say what it is about and how to draw it; a bare
+        // function constraint is opaque and draws nothing.
+        const invariants = /** @type {import('../types').ConstraintSpec[]} */ (
+            [...(constraints || []), ...edit.constrain].filter((c) => typeof c !== 'function')
+        );
         for (const constraint of invariants) {
-            if (constraint.field && primary.field && constraint.field !== primary.field) continue;
+            // A rule ABOUT other columns is not this handle's rule; one naming none
+            // follows the edit, so it is.
+            const about = constraint.field == null
+                ? null
+                : /** @type {string[]} */ ([]).concat(constraint.field);
+            if (about && primary.field && !about.includes(primary.field)) continue;
             nodes.push(...constraintGuide(constraint, {
                 feature, data, scales, width, height, primary, color: style.color, style
             }));
@@ -270,7 +279,7 @@ function trackGuide(feature, edit, ctx, style) {
 /**
  * Dispatch a constraint to its boundary drawer. A constraint may carry its own
  * drawer via defineConstraint's meta.guide (takes precedence).
- * @param {import('../types').Constraint} constraint
+ * @param {import('../types').ConstraintSpec} constraint
  * @param {any} gctx
  * @returns {import('../types').FeatureNode[]}
  */
@@ -278,10 +287,10 @@ function constraintGuide(constraint, gctx) {
     if (typeof constraint.guide === 'function') {
         return constraint.guide(gctx) || [];
     }
-    switch (constraint.constraintType) {
-        case 'clamp': return clampGuide(constraint.options, gctx);
-        case 'maintainSum': return maintainSumGuide(constraint.options, gctx);
-        case 'snap': return snapGuide(constraint.options, gctx);
+    switch (constraint.type) {
+        case 'clamp': return clampGuide(constraint.options || {}, gctx);
+        case 'maintainSum': return maintainSumGuide(constraint.options || {}, gctx);
+        case 'snap': return snapGuide(constraint.options || {}, gctx);
         // No guide, by design, for the rest:
         //   count / unique  cardinality rules (how many rows / per category), not
         //                   value bounds — there's no line on a value axis to draw.
@@ -425,8 +434,9 @@ function clampBoxGuide(invariants, resolved, gctx) {
     const xCh = resolved.find((ch) => axisOf(ch.name) === 'x');
     const yCh = resolved.find((ch) => axisOf(ch.name) === 'y');
     if (!xCh || !yCh || !xCh.scale || !yCh.scale) return [];
-    const xClamp = invariants.find((c) => c.constraintType === 'clamp' && c.field === xCh.field);
-    const yClamp = invariants.find((c) => c.constraintType === 'clamp' && c.field === yCh.field);
+    const specs = /** @type {import('../types').ConstraintSpec[]} */ (invariants.filter((c) => typeof c !== 'function'));
+    const xClamp = specs.find((c) => c.type === 'clamp' && c.field === xCh.field);
+    const yClamp = specs.find((c) => c.type === 'clamp' && c.field === yCh.field);
     if (!xClamp || !yClamp) return [];
     const xo = xClamp.options || {}, yo = yClamp.options || {};
     if (xo.min == null || xo.max == null || yo.min == null || yo.max == null) return [];
@@ -458,11 +468,12 @@ function clampBoxGuide(invariants, resolved, gctx) {
  * ticks — discrete slots to sit a cap over). On two continuous axes (a line /
  * scatter) there is no slot geometry, so the guide draws nothing (the maintainSum
  * data invariant still holds; only its visualization is band-specific).
- * @param {{ targetSum: number }} options
+ * @param {{ total?: number }} options
  * @param {any} gctx
  * @returns {import('../types').FeatureNode[]}
  */
-function maintainSumGuide({ targetSum }, gctx) {
+function maintainSumGuide({ total }, gctx) {
+    if (typeof total !== 'number') return [];
     const { feature, data, scales, primary, color } = gctx;
     const valueName = primary.name;
     const valueAxis = axisOf(valueName) || (valueName === 'x' ? 'x' : 'y');
@@ -483,7 +494,7 @@ function maintainSumGuide({ targetSum }, gctx) {
         const sumOthers = data.reduce(
             (/** @type {number} */ s, /** @type {any} */ o) => (o[catKey] === d[catKey] ? s : s + o[valueKey]), 0
         );
-        const cap = targetSum - sumOthers;
+        const cap = total - sumOthers;
         if (cap < dMin || cap > dMax) return; // off-chart
 
         const catPos = catScale(d[catKey]);

@@ -1,4 +1,5 @@
 // @ts-check
+import { GUIDE_OPTIONS } from '../vocabulary.js';
 // guides.region — a declarative shaded band between two values on an axis (an
 // "acceptable range", a target zone). Like guides.rule it positions in data
 // space through scale.encode, so it composes across scale types, and any option
@@ -15,7 +16,7 @@ import { resolveGuideOptions, warnUnknownGuideOptions } from './shared.js';
  * the docs table, and (later) the JSON grammar.
  * @type {string[]}
  */
-export const REGION_OPTIONS = ['x', 'y', 'fill', 'opacity', 'stroke', 'label'];
+export const REGION_OPTIONS = GUIDE_OPTIONS.region;
 
 /**
  * @param {{ x?: any, y?: any, fill?: any, opacity?: any }} [options]
@@ -25,6 +26,7 @@ export function region(options = {}) {
     warnUnknownGuideOptions('region', options, REGION_OPTIONS);
     return {
         views: 'state',
+        type: 'region',
         build: (_rows, _scales, _w, _h, ctx) => {
             const { scales, width, height } = ctx;
             // Fill/opacity default to the theme's region tokens; an option still wins.

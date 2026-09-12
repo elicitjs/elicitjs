@@ -1,5 +1,5 @@
 // @ts-check
-import { defineConstraint } from './define.js';
+import { defineConstraint, constraintOptions } from './define.js';
 
 // unique: a per-category cardinality invariant — at most `max` data elements may
 // share the same category KEY. Where `count` caps the whole dataset, `unique`
@@ -25,14 +25,15 @@ import { defineConstraint } from './define.js';
  * @returns {import('../types').Constraint}
  */
 export function unique(options = {}) {
-    const { field = 'x', max = 1, strategy = 'reject' } = options;
-    const fields = Array.isArray(field) ? field : [field];
+    const { field, max = 1, strategy = 'reject' } = constraintOptions('unique', options);
     // Composite category key for a datum. The unit-separator won't appear in a
     // category label, so the join is collision-free.
-    const keyOf = (/** @type {any} */ d) => fields.map((f) => d[f]).join('\u001f');
 
     return defineConstraint(
-        ({ data, activeIndex }) => {
+        ({ data, activeIndex, fields }) => {
+            // The columns whose combination must be unique: the rule's own, else
+            // the one column the dispatching edit writes.
+            const keyOf = (/** @type {any} */ d) => fields.map((f) => d[f]).join('\u001f');
             // Group datum indices by their category key (insertion order within
             // each group == age, oldest first).
             /** @type {Map<any, number[]>} */

@@ -93,19 +93,7 @@ export const STANDARD_STYLE_CHANNELS = Object.keys(STYLE_DEFAULTS);
 // by the mark, not swept by resolveStyle), so `text({ text: 'hi', dy: -8 })`
 // reads like every other shorthand. (`format` is a mark-level option, not a
 // channel — it stays off this list.)
-const SHORTHANDS = [
-    ...STANDARD_STYLE_CHANNELS,
-    'size', 'symbol', 'text', 'fontSize', 'textAnchor', 'lineAnchor', 'dx', 'dy',
-    // A mark's ROTATION IN PLACE, in math degrees (0° = +x, CCW). Constant form is
-    // a visual-space shorthand; a scaled field goes through the angle channel's
-    // scale so rotate() is an exact inverse. Not a style channel — marks that care
-    // read it themselves.
-    //
-    // `theta` — the polar POSITION a needle points along and an arc sweeps — is
-    // deliberately NOT here: it is positional, and positional channels (x, y) are
-    // not shorthands either. Write it as a channel.
-    'angle',
-];
+const SHORTHANDS = MARK_SHORTHANDS;
 
 // The theme helpers a mark's build() reads its DEFAULT ink/fonts from. Re-exported
 // here so a mark imports its whole style vocabulary from one module (marks already
@@ -123,6 +111,7 @@ import { warn, warningsEnabled } from '../core/dev.js';
 // A scale is one ENCODING — (channel, field) — not one channel. `scaleKey` is the
 // single source of that key; see core/scales.js for why.
 import { scaleKey } from '../core/scales.js';
+import { MARK_UNIVERSAL_OPTIONS, MARK_SHORTHANDS, ELEMENT_UNIVERSAL_OPTIONS } from '../vocabulary.js';
 
 /**
  * Evaluate a derived channel's `fn(d, i, data)` in VISUAL space. The result is
@@ -296,6 +285,73 @@ export function positionalKeys(channels) {
         yKey: (ch.y && ch.y.field) || 'y',
     };
 }
+
+/**
+ * Which axis a directional mark's VALUE runs along — the ONE orientation rule.
+ *
+ * Every directional mark (bar, tick, rule, line, area, curve, text, waffle,
+ * dotStack, rect) has to answer this, and each used to answer it its own way:
+ * from the scales, from the channel map, from a declared span, or only when
+ * forced. Six rules under three spellings meant `curveY` and `areaY` inferred
+ * opposite things from the same `y1`/`y2` pair. This is that decision, once,
+ * with the two places marks legitimately differ DECLARED as arguments:
+ *
+ *   orientation  the author's word. 'vertical' = the value runs along y (a bar
+ *                that grows upward, a rule at a y, a line whose y is edited);
+ *                'horizontal' = along x. The `…Y`/`…X` factory variants are
+ *                sugar that pin it: `barY(o) === bar({ ...o, orientation: 'vertical' })`.
+ *   extent       what a declared x1/x2 or y1/y2 pair MEANS: 'value' (area, rect,
+ *                bar — the pair IS the value, so its axis is the value axis) or
+ *                'span' (rule, tick, curve — the pair is the chord the mark is
+ *                drawn along, so the OTHER axis is the value axis).
+ *   single       what exactly one bound positional channel means: 'value' (rule,
+ *                text — the lone channel is where the mark sits) or 'other' (waffle,
+ *                dotStack, curve — the lone channel is the category/chord, and the
+ *                value runs along the other axis).
+ *
+ * Precedence: the option; a declared pair; a band scale (the band is the category,
+ * so the value is the other axis — only when `scales` are passed, which a counting
+ * mark deliberately does not, since it must answer at factory time); a lone
+ * channel; else y.
+ * @param {Record<string, any> | undefined} channels
+ * @param {import('../types').ScaleMap | null | undefined} scales
+ * @param {{ orientation?: string, extent?: 'value' | 'span', single?: 'value' | 'other' }} [opts]
+ * @returns {'x' | 'y'}
+ */
+export function resolveValueAxis(channels, scales, { orientation, extent = 'value', single = 'value' } = {}) {
+    if (orientation === 'horizontal') return 'x';
+    if (orientation === 'vertical') return 'y';
+    const ch = channels || {};
+    /** @param {'x' | 'y'} a @returns {'x' | 'y'} */
+    const other = (a) => (a === 'x' ? 'y' : 'x');
+    const xPair = !!(ch.x1 || ch.x2), yPair = !!(ch.y1 || ch.y2);
+    if (xPair !== yPair) {
+        const pairAxis = xPair ? 'x' : 'y';
+        return extent === 'span' ? other(pairAxis) : pairAxis;
+    }
+    if (scales) {
+        const xBand = isBandScale(scales.x), yBand = isBandScale(scales.y);
+        if (xBand && !yBand) return 'y';
+        if (yBand && !xBand) return 'x';
+    }
+    const hasX = !!ch.x, hasY = !!ch.y;
+    if (hasX !== hasY) {
+        const bound = hasX ? 'x' : 'y';
+        return single === 'value' ? bound : other(bound);
+    }
+    return 'y';
+}
+
+/** @param {any} scale */
+const isBandScale = (scale) => !!(scale && scale.kind === 'band');
+
+/**
+ * The `orientation` word for a value axis — the inverse of `resolveValueAxis`, for
+ * a mark whose own vocabulary is the word rather than the axis.
+ * @param {'x' | 'y'} axis
+ * @returns {'horizontal' | 'vertical'}
+ */
+export const orientationOf = (axis) => (axis === 'x' ? 'horizontal' : 'vertical');
 
 /**
  * Resolve a datum's CATEGORY on a band/point axis — the discrete-axis counterpart
@@ -615,7 +671,7 @@ export function orderFieldOf(channels = {}) {
  * It belongs on the spec. See MISTAKEN_OPTIONS.
  * @type {string[]}
  */
-const UNIVERSAL_OPTIONS = ['channels', 'id', 'edits', 'table'];
+const UNIVERSAL_OPTIONS = MARK_UNIVERSAL_OPTIONS;
 
 /**
  * The options every mark must pass through VERBATIM, gathered in one place.
@@ -825,7 +881,7 @@ export const AXIS_CHROME = ['stroke', 'strokeWidth', 'fill', 'fontSize'];
  */
 // `constraints` is absent for the same reason it is absent from a MARK's
 // universal options, and doubly so here: an element draws a SCALE, not rows.
-const UNIVERSAL_ELEMENT_OPTIONS = ['id', 'edit', 'edits', 'field', 'table'];
+const UNIVERSAL_ELEMENT_OPTIONS = ELEMENT_UNIVERSAL_OPTIONS;
 
 /**
  * Validate a CHART ELEMENT's options. The counterpart to normalizeMarkOptions for

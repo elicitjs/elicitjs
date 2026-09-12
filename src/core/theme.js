@@ -78,7 +78,7 @@ export const DEFAULT_THEME = {
     // Annotation literals keep the historical look; edit-guide parts merge under
     // GUIDE_PARTS defaults, then under a per-edit `guide: { … }` override.
     guide: {
-        rule: { stroke: '#64748b', strokeDasharray: '5 4' },
+        rule: { stroke: '#64748b', strokeDasharray: '5 4', strokeWidth: 1, opacity: 0.9 },
         region: { fill: '#64748b', opacity: 0.1 },
         // `currentStroke`/`currentWidth` ring the swatch(es) the target row(s)
         // currently hold, so a picker says what a click would REPLACE as well as

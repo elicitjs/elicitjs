@@ -28,6 +28,7 @@
 
 import { makeEdit, claimEdge, mintDatum } from './shared.js';
 import { encodeChannel } from '../plot/mark.js';
+import { pickThreshold } from './pick.js';
 import { nodeChannelsOf } from '../plot/link.js';
 import { isDirected } from '../core/schema.js';
 import { warn } from '../core/dev.js';
@@ -130,7 +131,7 @@ export function connect(options = {}) {
             }
 
             const from = nodes.rows[session.fromIndex];
-            const to = nearestNodeRow(ctx, nodes, (ctx.edit && ctx.edit.threshold) || CONNECT_THRESHOLD);
+            const to = nearestNodeRow(ctx, nodes, pickThreshold(ctx.edit, CONNECT_THRESHOLD));
             // Released over empty space: no link.
             if (!from || !to) return undefined;
             // Released back on the node it started from. Meaningless in an argument
@@ -193,7 +194,7 @@ export function rewire(options = {}) {
             const field = ctx.channels[0] && ctx.channels[0].field;
             if (!which || !field) return undefined;
 
-            const to = nearestNodeRow(ctx, nodes, (ctx.edit && ctx.edit.threshold) || CONNECT_THRESHOLD);
+            const to = nearestNodeRow(ctx, nodes, pickThreshold(ctx.edit, CONNECT_THRESHOLD));
             if (!to) return undefined;
             const toId = to.row[nodes.key];
             if (toId == null || ctx.datum[field] === toId) return undefined;

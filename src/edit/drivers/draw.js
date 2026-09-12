@@ -13,7 +13,7 @@ import { nextSeriesKey } from '../shared.js';
 /** @type {import('./index.js').Driver} */
 export const drawDriver = {
     name: 'draw',
-    wants: (e) => e.pick === 'draw',
+    sessionKeys: ['mode', 'drawSeries', 'lastDomain', 'lastX', 'lastY', 'px', 'py'],
     onEvent({ feature, event, edits, marks, data, session, runEdit }) {
         const threshold = pickThreshold(edits[0]);
         let changed = false;

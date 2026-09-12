@@ -1,6 +1,6 @@
 {
   "name": "elicitjs",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.0",
   "description": "Declarative, grammar-of-graphics-inspired library for interactive visual belief elicitation.",
   "type": "module",
   "main": "./src/index.js",
@@ -33,6 +33,13 @@
     "MARK_CONTRACTS.md",
     "LICENSE"
   ],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "publishConfig": {
+    "tag": "alpha",
+    "access": "public"
+  },
   "scripts": {
     "prepublishOnly": "npm run build:lib",
     "dev": "npm run dev --prefix ../elicitjs-docs",
@@ -43,7 +50,10 @@
     "verify:browser": "node scripts/verify-browser.mjs",
     "check:warnings": "node scripts/check-warnings.mjs",
     "check:exports": "node scripts/check-exports.mjs",
-    "gen:types": "node scripts/gen-authoring-types.mjs"
+    "gen:types": "node scripts/gen-authoring-types.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check:bundle": "node scripts/check-bundle.mjs"
   },
   "keywords": [
     "visualization",
@@ -65,13 +75,16 @@
   "bugs": {
     "url": "https://github.com/elicitjs/elicitjs/issues"
   },
-  "dependencies": {
-    "d3": "^7.9.0"
+  "peerDependencies": {
+    "d3": "^7"
   },
   "devDependencies": {
     "@types/d3": "^7.4.3",
+    "jsdom": "^30.0.1",
     "playwright": "^1.61.1",
     "typescript": "^6.0.3",
-    "vite": "^8.1.3"
+    "vite": "^8.1.3",
+    "vitest": "^5.0.0",
+    "d3": "^7.9.0"
   }
 }

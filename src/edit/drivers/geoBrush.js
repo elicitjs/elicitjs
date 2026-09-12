@@ -103,7 +103,8 @@ function boundsFields(feature) {
 /** @type {import('./index.js').Driver} */
 export const geoBrushDriver = {
     name: 'geoBrush',
-    wants: (e) => e.pick === 'geoBrush',
+    options: ['edgeInset', 'move'],
+    sessionKeys: ['px', 'py', 'hoverIndex', 'activeIndex', 'zone', 'edges', 'grab', 'box0', 'cursor'],
     selects: true,
     onEvent({ feature, event, edits, marks, data, scales, session, runEdit }) {
         const edit = edits[0];

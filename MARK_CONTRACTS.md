@@ -1,8 +1,7 @@
 # Mark & element contracts
 
 Author-facing predictability matrix for every factory. Kind, channels, create fitness,
-handles / signifiers, and scale requirements. Prefer `elicit.elements.*` for scale
-chrome; `plot.*` still aliases those factories.
+handles / signifiers, and scale requirements. Scale chrome lives in `elicit.elements.*`.
 
 Live docs: sibling repo `elicitjs-docs` → `/concepts/contracts`.
 
@@ -146,15 +145,15 @@ N/A = use a different edit family (documented).
 <td>—</td>
 </tr>
 <tr>
-<td><code>arc</code> / <code>pie</code> / <code>donut</code></td>
+<td><code>arc</code> / <code>donut</code></td>
 <td>data</td>
-<td><code>value</code> magnitudes; optional x/y</td>
+<td><code>theta</code> magnitudes (raw; the mark normalizes them); optional x/y</td>
 <td><code>edit.stack.cut</code> / <code>merge</code></td>
 <td>rim boundary dots (<code>node.edge</code>)</td>
-<td><code>supportsArc</code>, <code>supportsStack</code></td>
+<td><code>supportsStack</code></td>
 </tr>
 <tr>
-<td><code>composite</code> (alias <code>group</code>)</td>
+<td><code>composite</code></td>
 <td>data</td>
 <td>composite channels → parts. BOX MODE (switched on by a part stating <code>frame:</code>): x/y/size define a per-datum box and are withheld from the trickle; a local part with no x/y sits at the ORIGIN</td>
 <td>depends on parts; mark-level edits ride the LAST part, or the BOX in box mode</td>

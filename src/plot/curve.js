@@ -51,7 +51,8 @@
 
 import {
     encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions,
-    themeOf, markDefaults, positionalKeys, markCommon,} from './mark.js';
+    themeOf, markDefaults, positionalKeys, markCommon, resolveValueAxis } from './mark.js';
+import { MARK_OPTIONS } from '../vocabulary.js';
 import { HIT_WIDTH, sampleQuadratic } from './hitpath.js';
 
 /**
@@ -75,17 +76,16 @@ function rotatePoint(p, pivot, deg) {
 
 /**
  * @param {any} options
- * @param {'x' | 'y' | null} forcedSpanAxis which axis the chord runs along
  * @returns {import('../types').Mark}
  */
-function buildCurve(options, forcedSpanAxis) {
-    const opts = normalizeMarkOptions(options, { mark: 'curve', allow: ['length'] });
+function buildCurve(options) {
+    const opts = normalizeMarkOptions(options, { mark: 'curve', allow: MARK_OPTIONS.curve });
     const { channels = {}, id, edits, length } = opts;
     const { xKey, yKey } = positionalKeys(channels);
 
     return {
         ...markCommon(opts),
-        markName: 'curve',
+        type: 'curve',
         channels,
         // A curve sits on a tick, not in an interval — it marks a position, and its
         // span is stated by its own endpoint channels.
@@ -103,9 +103,10 @@ function buildCurve(options, forcedSpanAxis) {
         build: (currentData, scales, width, height) => {
             // The chord runs along x unless the spec says (or shows) otherwise: a
             // declared y1/y2 pair is a vertical span.
-            const spanAxis = forcedSpanAxis
-                || (channels.y1 && channels.y2 ? 'y' : 'x');
-            const valueAxis = spanAxis === 'x' ? 'y' : 'x';
+            // A declared pair is the CHORD; a lone x or y is the chord's centre, so the
+            // value (where the bow sits) runs along the other axis.
+            const valueAxis = resolveValueAxis(channels, scales, { orientation: opts.orientation, extent: 'span', single: 'other' });
+            const spanAxis = valueAxis === 'x' ? 'y' : 'x';
             const spanFull = spanAxis === 'x' ? width : height;
             const valueFull = valueAxis === 'x' ? width : height;
 
@@ -203,7 +204,7 @@ function buildCurve(options, forcedSpanAxis) {
  * @returns {import('../types').Mark}
  */
 export function curve(options = {}) {
-    return buildCurve(options, null);
+    return buildCurve(options);
 }
 
 /**
@@ -212,7 +213,7 @@ export function curve(options = {}) {
  * @returns {import('../types').Mark}
  */
 export function curveY(options = {}) {
-    return buildCurve(options, 'x');
+    return curve({ ...options, orientation: 'vertical' });
 }
 
 /**
@@ -221,5 +222,5 @@ export function curveY(options = {}) {
  * @returns {import('../types').Mark}
  */
 export function curveX(options = {}) {
-    return buildCurve(options, 'y');
+    return curve({ ...options, orientation: 'horizontal' });
 }

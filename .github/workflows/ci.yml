@@ -1,0 +1,21 @@
+name: ci
+on:
+  push:
+  pull_request:
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # The four gates a fresh clone can run. The browser gates (verify:browser,
+      # check:warnings) drive the sibling docs repo and stay local.
+      - run: npm run typecheck
+      - run: npm run check:exports
+      - run: npm test
+      - run: npm run build:lib
+      - run: npm run check:bundle

@@ -13,6 +13,7 @@
 //   geoRect     — geographic AABB (west/south/east/north)
 
 import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, resolveHandles, markCommon, rawChannel, orderFieldOf} from './mark.js';
+import { MARK_OPTIONS } from '../vocabulary.js';
 import { textNodeAt } from './text.js';
 import { resolveFormat } from '../format.js';
 import { warn } from '../core/dev.js';
@@ -62,22 +63,28 @@ function fieldOf(channels, name) {
  * @returns {import('../types').Mark}
  */
 export function geoBasemap(options = {}) {
-    const opts = normalizeMarkOptions(options, { mark: 'geoBasemap', allow: ['geojson', 'features'] });
+    const opts = normalizeMarkOptions(options, {
+        mark: 'geoBasemap', allow: MARK_OPTIONS.geoBasemap,
+        // Basemap paint is CHROME: there is no datum to resolve it against, so it
+        // stays a plain option (as an axis's stroke does) rather than desugaring
+        // into a channel — which is what silently turned every one of these into
+        // `undefined` and drew the default map whatever the author wrote.
+        except: ['stroke', 'strokeWidth', 'fill'],
+    });
     const {
         channels = {},
         id,
         edits,
         geojson,
-        features: geoFeatures,
         stroke = '#94a3b8',
         strokeWidth = 0.75,
         fill = '#e2e8f0',
     } = opts;
-    const object = geojson || geoFeatures || null;
+    const object = geojson || null;
 
     return {
         ...markCommon(opts),
-        markName: 'geoBasemap',
+        type: 'geoBasemap',
         channels,
         supportsGeo: true,
         /**
@@ -152,7 +159,9 @@ export function geoBasemap(options = {}) {
  * @returns {import('../types').Mark}
  */
 export function geoTile(options = {}) {
-    const opts = normalizeMarkOptions(options, { mark: 'geoTile', allow: ['url', 'subdomains', 'tileSize', 'minZoom', 'maxZoom', 'zoomOffset', 'attribution', 'attributionSize'] });
+    const opts = normalizeMarkOptions(options, { mark: 'geoTile', allow: MARK_OPTIONS.geoTile,
+        // Tile opacity is chrome, like a basemap's paint — see geoBasemap.
+        except: ['opacity'] });
     const {
         channels = {},
         id,
@@ -170,7 +179,7 @@ export function geoTile(options = {}) {
 
     return {
         ...markCommon(opts),
-        markName: 'geoTile',
+        type: 'geoTile',
         channels,
         // Verbatim — map chrome rarely edits, but dropping these after normalize
         // made geoTile the only mark that silently discarded author-supplied edits.
@@ -236,14 +245,14 @@ export function geoTile(options = {}) {
  * @returns {import('../types').Mark}
  */
 export function geoPoint(options = {}) {
-    const opts = normalizeMarkOptions(options, { mark: 'geoPoint', allow: ['shape'] });
+    const opts = normalizeMarkOptions(options, { mark: 'geoPoint', allow: MARK_OPTIONS.geoPoint });
     const { channels = {}, id, edits } = opts;
     const lonKey = fieldOf(channels, 'lon') || 'lon';
     const latKey = fieldOf(channels, 'lat') || 'lat';
 
     return {
         ...markCommon(opts),
-        markName: 'geoPoint',
+        type: 'geoPoint',
         channels,
         supportsGeo: true,
         lonKey,
@@ -289,13 +298,13 @@ export function geoPoint(options = {}) {
  * @returns {import('../types').Mark}
  */
 export function geoPolygon(options = {}) {
-    const opts = normalizeMarkOptions(options, { mark: 'geoPolygon', allow: [] });
+    const opts = normalizeMarkOptions(options, { mark: 'geoPolygon', allow: MARK_OPTIONS.geoPolygon });
     const { channels = {}, id, edits } = opts;
     const geomKey = fieldOf(channels, 'geometry') || 'geometry';
 
     return {
         ...markCommon(opts),
-        markName: 'geoPolygon',
+        type: 'geoPolygon',
         channels,
         supportsGeo: true,
         geometryKey: geomKey,
@@ -369,7 +378,7 @@ function orderRows(group, channels) {
  * @returns {import('../types').Mark}
  */
 export function geoLine(options = {}) {
-    const opts = normalizeMarkOptions(options, { mark: 'geoLine', allow: ['curve', 'handles', 'handleSize', 'handleColor', 'connect', 'showVertices'] });
+    const opts = normalizeMarkOptions(options, { mark: 'geoLine', allow: MARK_OPTIONS.geoLine });
     const {
         channels = {},
         id,
@@ -395,7 +404,7 @@ export function geoLine(options = {}) {
     if (rowMode) {
         return {
             ...markCommon(opts),
-            markName: 'geoLine',
+            type: 'geoLine',
             channels,
             // Read raw (no scale), like `line`'s / `area`'s / `link`'s.
             rawChannels: ['curve', 'series', 'order'],
@@ -479,7 +488,7 @@ export function geoLine(options = {}) {
 
     return {
         ...markCommon(opts),
-        markName: 'geoLine',
+        type: 'geoLine',
         channels,
         supportsGeo: true,
         coordinatesKey: coordsKey,
@@ -569,7 +578,7 @@ export function geoLine(options = {}) {
  * @returns {import('../types').Mark}
  */
 export function geoText(options = {}) {
-    const opts = normalizeMarkOptions(options, { mark: 'geoText', allow: ['format'] });
+    const opts = normalizeMarkOptions(options, { mark: 'geoText', allow: MARK_OPTIONS.geoText });
     const { channels = {}, id, edits, format: formatOpt } = opts;
     const lonKey = fieldOf(channels, 'lon') || 'lon';
     const latKey = fieldOf(channels, 'lat') || 'lat';
@@ -577,7 +586,7 @@ export function geoText(options = {}) {
 
     return {
         ...markCommon(opts),
-        markName: 'geoText',
+        type: 'geoText',
         channels,
         supportsGeo: true,
         lonKey,
@@ -609,7 +618,7 @@ export function geoText(options = {}) {
  * @returns {import('../types').Mark}
  */
 export function geoRect(options = {}) {
-    const opts = normalizeMarkOptions(options, { mark: 'geoRect', allow: [] });
+    const opts = normalizeMarkOptions(options, { mark: 'geoRect', allow: MARK_OPTIONS.geoRect });
     const { channels = {}, id, edits } = opts;
     const westKey = fieldOf(channels, 'west') || 'west';
     const southKey = fieldOf(channels, 'south') || 'south';
@@ -618,7 +627,7 @@ export function geoRect(options = {}) {
 
     return {
         ...markCommon(opts),
-        markName: 'geoRect',
+        type: 'geoRect',
         channels,
         supportsGeo: true,
         westKey,

@@ -1,4 +1,5 @@
 // @ts-check
+import { ELEMENT_OPTIONS } from '../vocabulary.js';
 // legend.js — a legend for a NON-POSITIONAL channel (fill / stroke / size /
 // symbol), built as a COMPOSABLE MARK the same way axes are (plot/axis.js). A
 // legend is "an axis for a channel that has no plot position": it reads the
@@ -48,11 +49,7 @@ import { scaleKey } from '../core/scales.js';
  * `legend` below — a wrong entry is a false positive, which is worse than none.
  * @type {string[]}
  */
-export const LEGEND_OPTIONS = [
-    'channel', 'anchor', 'orient', 'swatchSize', 'gap', 'labelWidth', 'rampLength',
-    'rampThickness', 'ticks', 'tickFormat', 'title', 'row', 'stroke', 'fill',
-    'fontSize', 'handleColor', 'handleSize',
-];
+export const LEGEND_OPTIONS = ELEMENT_OPTIONS.legend;
 
 /** Numeric view of a domain value (a Date sorts by its timestamp). */
 const numOf = (/** @type {any} */ v) => (v instanceof Date ? v.getTime() : v);
@@ -61,15 +58,17 @@ const numOf = (/** @type {any} */ v) => (v instanceof Date ? v.getTime() : v);
 const isColorChannel = (/** @type {string} */ ch) => ch === 'fill' || ch === 'stroke';
 
 /**
- * Does this scale want a continuous RAMP (a gradient) rather than swatches?
- * A `sequential`/`diverging` colour scale, or any continuous (invertible) scale.
- * Read via the capability model, never a `scale.type` allowlist for control flow —
- * `type` is consulted only to tell a colour ramp from a numeric one.
+ * Does this scale want a continuous RAMP (a gradient) rather than swatches? Any
+ * continuous (invertible) scale, or a colour ramp — which is 'discrete' by the
+ * invert test but declares `ramp: true` (core/scales.js stamps it). Capability
+ * flags only: this line once read `scale.type === 'sequential'`, the one branch on a
+ * scale's type outside core/scales.js, and an adopted d3.scaleSequential (no type)
+ * silently drew swatches.
  * @param {any} scale
  * @returns {boolean}
  */
 function isRampScale(scale) {
-    return scale.kind === 'continuous' || scale.type === 'sequential' || scale.type === 'diverging';
+    return scale.kind === 'continuous' || !!scale.ramp;
 }
 
 /**
@@ -266,7 +265,7 @@ export function legend(options = {}) {
 
     return {
         id,
-        markName: 'legend',
+        type: 'legend',
         isLegend: true,
         views: 'scale',
         channel,

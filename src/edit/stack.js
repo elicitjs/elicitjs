@@ -275,6 +275,7 @@ export function edge(options = {}) {
     const { when: userWhen, ...rest } = options;
     return makeEdit({
         type: 'stack.edge',
+        inverts: true,
         gesture: 'drag',
         pick: 'direct',
         scope: 'stack',

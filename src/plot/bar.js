@@ -1,6 +1,7 @@
 // @ts-check
 import { isBand, bandwidthOf, bandStartOf, baselineOf } from '../core/scales.js';
-import { encodeChannel, encodeValue, categoryOf, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon} from './mark.js';
+import { encodeChannel, encodeValue, categoryOf, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, resolveValueAxis, orientationOf } from './mark.js';
+import { MARK_OPTIONS } from '../vocabulary.js';
 import { groupByPosition, stackLayout, stackDescriptor } from './stack.js';
 
 // bar: a rectangular mark that composes across orientations. The band axis is
@@ -90,16 +91,15 @@ function stackOffsets(data, channels, catChannel, catKey, valueKey, seriesField)
 
 /**
  * @param {any} options
- * @param {string | null} forcedOrientation
  * @returns {import('../types').Mark}
  */
-function buildBar(options, forcedOrientation) {
+function buildBar(options) {
     // Desugar top-level style shorthands (e.g. the legacy `fill: 'steelblue'`)
     // into the channels as constant channels, so bar reads style the same way
     // every mark does. Explicit `channels.fill` still wins.
     const opts = normalizeMarkOptions(options, {
         mark: 'bar',
-        allow: ['orientation', 'stack', 'handles', 'handleSize', 'handleColor'],
+        allow: MARK_OPTIONS.bar,
     });
     const {
         channels = {},
@@ -136,7 +136,7 @@ function buildBar(options, forcedOrientation) {
 
     return {
         ...markCommon(opts),
-        markName: 'bar',
+        type: 'bar',
         channels,
         // The grouping key is read off the datum, never scaled.
         rawChannels: ['series'],
@@ -157,12 +157,7 @@ function buildBar(options, forcedOrientation) {
         build: (currentData, scales) => {
             const { x: xScale, y: yScale } = scales;
 
-            let orientation = forcedOrientation || orientationOption;
-            if (!orientation) {
-                if (isBand(xScale)) orientation = 'vertical';
-                else if (isBand(yScale)) orientation = 'horizontal';
-                else orientation = 'vertical';
-            }
+            const orientation = orientationOf(resolveValueAxis(channels, scales, { orientation: orientationOption }));
 
             // Which axis carries the category, and which the magnitude. Named once
             // here because the stack layout, the node stamp and the boundary handles
@@ -353,7 +348,7 @@ function buildBar(options, forcedOrientation) {
  * @returns {import('../types').Mark}
  */
 export function bar(options = {}) {
-    return buildBar(options, null);
+    return buildBar(options);
 }
 
 /**
@@ -361,7 +356,7 @@ export function bar(options = {}) {
  * @returns {import('../types').Mark}
  */
 export function barY(options = {}) {
-    return buildBar(options, 'vertical');
+    return bar({ ...options, orientation: 'vertical' });
 }
 
 /**
@@ -369,5 +364,5 @@ export function barY(options = {}) {
  * @returns {import('../types').Mark}
  */
 export function barX(options = {}) {
-    return buildBar(options, 'horizontal');
+    return bar({ ...options, orientation: 'horizontal' });
 }

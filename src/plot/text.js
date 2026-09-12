@@ -34,6 +34,7 @@
 //   textY — value on y, x parked at the horizontal centre (a 1-D label along y)
 
 import { encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions, rawChannel, markDefaults, positionalKeys, markCommon, themeOf} from './mark.js';
+import { MARK_OPTIONS } from '../vocabulary.js';
 import { measureBlock } from '../core/measure.js';
 import { warn } from '../core/dev.js';
 import { resolveFormat } from '../format.js';
@@ -134,19 +135,18 @@ export function textNodeAt(scales, channels, d, i, px, py, opts = {}) {
 
 /**
  * @param {any} options
- * @param {'x' | 'y' | null} forcedAxis the single positional axis (textX/textY)
  * @returns {import('../types').Mark}
  */
-function buildText(options, forcedAxis) {
+function buildText(options) {
     const opts = normalizeMarkOptions(options, {
-        mark: 'text', allow: ['format', 'wrap', 'lineHeight'],
+        mark: 'text', allow: MARK_OPTIONS.text,
     });
     const { channels = {}, id, edits, format: formatOpt, wrap, lineHeight } = opts;
     const format = resolveFormat(formatOpt);
 
     return {
         ...markCommon(opts),
-        markName: 'text',
+        type: 'text',
         channels,
         // Channels this mark resolves ITSELF, with no scale — everything it reads
         // through `rawChannel`. It declared NONE of them, so binding a field to any
@@ -168,6 +168,8 @@ function buildText(options, forcedAxis) {
             return currentData.map((d, i) => {
                 // Position: each axis through its global scale, parked at the centre
                 // when the axis isn't used (textX/textY force the counter-axis centre).
+                const forcedAxis = opts.orientation === 'vertical' ? 'y'
+                    : opts.orientation === 'horizontal' ? 'x' : null;
                 const x = forcedAxis === 'y'
                     ? width / 2
                     : encodeChannel(scales, channels, 'x', d, width / 2, i, currentData);
@@ -187,7 +189,7 @@ function buildText(options, forcedAxis) {
  * @returns {import('../types').Mark}
  */
 export function text(options = {}) {
-    return buildText(options, null);
+    return buildText(options);
 }
 
 /**
@@ -196,7 +198,7 @@ export function text(options = {}) {
  * @returns {import('../types').Mark}
  */
 export function textX(options = {}) {
-    return buildText(options, 'x');
+    return text({ ...options, orientation: 'horizontal' });
 }
 
 /**
@@ -205,5 +207,5 @@ export function textX(options = {}) {
  * @returns {import('../types').Mark}
  */
 export function textY(options = {}) {
-    return buildText(options, 'y');
+    return text({ ...options, orientation: 'vertical' });
 }

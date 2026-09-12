@@ -8,6 +8,18 @@ import { visualForChannel, axisOf } from '../core/encoding.js';
 import { rangeExtent } from '../core/scales.js';
 import { schemaDefaults } from '../core/schema.js';
 import { warn } from '../core/dev.js';
+import { EDIT_UNIVERSAL_OPTIONS, EDIT_OPTIONS } from '../vocabulary.js';
+
+/**
+ * The option keys an edit was handed that neither `makeEdit` nor its factory's
+ * vocabulary accounts for, stamped on the descriptor for the engine's
+ * `warnUnknownEditOptions` to check against the edit's DRIVER (a driver's knobs
+ * ride the descriptor by design — `Driver.options` declares them — and only the
+ * engine can see the registry). An enumerable symbol: the edit is copied by spread
+ * on its way through `collectEdits`, and a spread keeps enumerable symbol keys
+ * while JSON.stringify ignores them.
+ */
+export const UNVERIFIED = Symbol('elicit.unverifiedOptions');
 
 /**
  * @param {any} v
@@ -19,10 +31,10 @@ export const asList = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]);
  * Compose an edit's OWN structural guard with an author-supplied `when`, so both
  * must pass.
  *
- * Several edits are only meaningful on a particular kind of node — `edit.arc.edge`
+ * Several edits are only meaningful on a particular kind of node — `edit.stack.edge`
  * on a boundary handle, `edit.scale.categories`' three on a tick label / remove
- * glyph, `edit.face.expression` on a handle carrying a drag track. That guard is
- * part of what the edit IS, not a default the caller is choosing.
+ * glyph. That guard is part of what the edit IS, not a default the caller is
+ * choosing.
  *
  * Those factories used to drop the caller's options entirely rather than risk a
  * `when` overwriting the guard — which also silently swallowed `stage`, `guide`,
@@ -74,8 +86,15 @@ export function claimPick(options, type, pick) {
  */
 export function makeEdit(spec) {
     const { channel, channels, ...rest } = spec;
+    // Keys the vocabulary does not know. An edit whose type has no entry is a
+    // custom one built here directly, and is not checked.
+    const allow = EDIT_OPTIONS[spec.type];
+    const unverified = allow
+        ? Object.keys(rest).filter((k) => !EDIT_UNIVERSAL_OPTIONS.includes(k) && !allow.includes(k))
+        : [];
     return {
         ...rest,
+        ...(unverified.length ? { [UNVERIFIED]: unverified } : {}),
         type: spec.type,
         // Stable handle for `el.control(name)` — the name an external controller
         // (a slider, a picker, a rotate icon) addresses this edit by. null (the
@@ -120,6 +139,10 @@ export function makeEdit(spec) {
         // (newSeries/draw), leaves this null: "the touched datum" is genuinely
         // ambiguous, and null means "resolve nothing around it".
         cardinality: spec.cardinality || null,
+        // Does this edit run a POINTER back through a channel's scale, so it needs
+        // that scale to invert? Declared, so the dead-drag guard reads a capability
+        // rather than an allowlist of type names (which missed rank and stack.edge).
+        inverts: !!spec.inverts,
         apply: spec.apply
     };
 }

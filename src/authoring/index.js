@@ -53,7 +53,7 @@ export {
     resolveHandles,
     HANDLE_DEFAULTS,
     // the xKey/yKey a mark reports back to the edit layer.
-    positionalKeys,
+    positionalKeys, resolveValueAxis, orientationOf,
     // which field groups rows into a series (the line family).
     seriesFieldOf,
     // the style channels resolveStyle sweeps onto every node.
@@ -111,6 +111,13 @@ export { measureText, wrapText, noteBox } from '../core/measure.js';
 // against (`warnUnknownElementOptions`). Exported so one list can drive the docs
 // and, later, the JSON grammar. They are names of options, not spec keywords, so
 // they belong here and not in `elements.*`.
+// The option registry itself — every factory's vocabulary, one file, no imports.
+export {
+    MARK_OPTIONS, MARK_UNIVERSAL_OPTIONS, MARK_SHORTHANDS,
+    ELEMENT_OPTIONS, ELEMENT_UNIVERSAL_OPTIONS,
+    GUIDE_OPTIONS, GUIDE_UNIVERSAL_OPTIONS,
+    EDIT_OPTIONS, EDIT_UNIVERSAL_OPTIONS, CONSTRAINT_OPTIONS,
+} from '../vocabulary.js';
 export { AXIS_OPTIONS, GRID_OPTIONS } from '../plot/axis.js';
 export { LEGEND_OPTIONS } from '../plot/legend.js';
 export { AXIS_RADIAL_OPTIONS } from '../plot/axisRadial.js';

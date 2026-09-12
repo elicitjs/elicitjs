@@ -1,4 +1,5 @@
 // @ts-check
+import { GUIDE_OPTIONS } from '../vocabulary.js';
 // guides.proximity: draw the CATCHMENT of a named feature's proximity pick — the
 // dashed ring at the pointer showing how far it reaches to find a mark.
 //
@@ -22,7 +23,7 @@ import { warnUnknownGuideOptions } from './shared.js';
  * the docs table, and (later) the JSON grammar.
  * @type {string[]}
  */
-export const PROXIMITY_OPTIONS = ['target', 'stroke', 'strokeDasharray', 'strokeWidth', 'opacity'];
+export const PROXIMITY_OPTIONS = GUIDE_OPTIONS.proximity;
 
 /**
  * Paint options are named the way every OTHER `guides.*` factory names them —
@@ -42,6 +43,7 @@ export function proximity(options) {
 
     return {
         views: 'state',
+        type: 'proximity',
         build: (_rows, _scales, _w, _h, ctx) => {
             const info = ctx.ui && ctx.ui.session && ctx.ui.session[target];
             if (!info || info.px == null || info.py == null || info.threshold == null) return [];

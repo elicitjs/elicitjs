@@ -1,5 +1,6 @@
 // @ts-check
-import { defineConstraint } from './define.js';
+import { defineConstraint, constraintOptions } from './define.js';
+import { warn } from '../core/dev.js';
 
 // ordering: keeps several fields of a row in a fixed order — a data invariant.
 //
@@ -55,22 +56,23 @@ function movedIndex(order, active, before) {
 }
 
 /**
- * @param {{ fields?: string[], lower?: string, upper?: string,
- *   strategy?: 'push' | 'block' }} [options]
- *   fields  the row's fields, in the order they must stay in (>= 2).
- *   lower / upper  sugar for the two-field case.
+ * @param {{ field?: string | string[], strategy?: 'push' | 'block' }} [options]
+ *   field   the row's columns, in the order they must stay in (>= 2).
  *   strategy  'push' (default) moves the neighbours aside; 'block' rejects the edit.
  * @returns {import('../types').Constraint}
  */
 export function ordering(options = {}) {
-    const { fields, lower, upper, strategy = 'push' } = options;
-    const order = fields || (lower && upper ? [lower, upper] : []);
+    const { field, strategy = 'push' } = constraintOptions('ordering', options);
+    const order = Array.isArray(field) ? field : (field != null ? [field] : []);
 
     if (order.length < 2) {
-        throw new Error(
-            '[elicit] ordering() needs at least two fields, in order — e.g. ' +
-            "ordering({ fields: ['lo', 'mean', 'hi'] }) or ordering({ lower: 'lo', upper: 'hi' })"
+        warn(
+            'ordering:fields',
+            'ordering() needs at least two columns, in order — ' +
+            "ordering({ field: ['lo', 'mean', 'hi'] }). " +
+            'Without them the constraint accepts every edit unchanged.'
         );
+        return defineConstraint(() => undefined, { type: 'ordering', options: { strategy }, field: order });
     }
 
     return defineConstraint(
@@ -100,6 +102,6 @@ export function ordering(options = {}) {
         },
         // The guide draws on the value axis, so name the first ordered field; an
         // edit on any of them shares that axis (they're bucketed onto one scale).
-        { type: 'ordering', options: { fields: order, strategy }, field: order[0] }
+        { type: 'ordering', options: { strategy }, field: order }
     );
 }

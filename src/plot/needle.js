@@ -24,15 +24,31 @@
 //   handles: true|false|'hit' — false emits no hub and silences the path
 
 import { encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions, markDefaults, resolveHandles, markCommon} from './mark.js';
+import { MARK_OPTIONS } from '../vocabulary.js';
 import { warn } from '../core/dev.js';
-import { arcSpan, needleTriangle } from './polar.js';
+import { needleTriangle } from './polar.js';
 
 /**
  * @param {any} [options]
  * @returns {import('../types').Mark}
  */
 export function needle(options = {}) {
-    const opts = normalizeMarkOptions(options, { mark: 'needle', allow: ['length', 'handles', 'handleSize', 'handleColor', 'baseWidth', 'arc', 'orient', 'start', 'end'] });
+    const opts = normalizeMarkOptions(options, { mark: 'needle', allow: MARK_OPTIONS.needle });
+    // A needle's SPAN is its theta scale's RANGE — `[180, 0]` by default, the left
+    // semicircle through the top. It used to accept arc/orient/start/end here too,
+    // and computed a span it never applied: a scale is resolved by the engine, not
+    // owned by a mark. Say where the knob actually is.
+    for (const dead of ['arc', 'orient', 'start', 'end']) {
+        if (options && options[dead] !== undefined) {
+            warn(
+                `needle:span:${dead}`,
+                `needle({ ${dead}: … }) does nothing: a needle's sweep is the theta scale's ` +
+                `range. Set it on the channel — channels: { theta: { field, scale: { range: ` +
+                `[180, 0] } } } — or chart-wide with scales: { theta: { range } }; axisRadial ` +
+                `takes arc/orient/start/end for the chrome.`
+            );
+        }
+    }
     // A needle's direction is `theta` — a POLAR POSITION, which is what axisRadial
     // draws and what a fan legend keys. `angle` is a mark's rotation in place, and
     // it is a universal style shorthand, so it reaches every mark: left unchecked, a
@@ -59,25 +75,22 @@ export function needle(options = {}) {
         handleSize,
         handleColor,
         baseWidth = 10,
-        arc: arcOpt,
-        orient,
-        start,
-        end,
     } = opts;
 
-    // Documented span — keep scale.range in sync (default orient:'top' → [180, 0]).
-    void arcSpan({ arc: arcOpt, orient, start, end });
-    const angleField = channels.angle && channels.angle.field;
+    // The belief sits on `theta`; x/y only place the pivot. The keys used to be
+    // derived from `angle` — the very channel the warning above says this mark
+    // does not read — so with the documented spelling both were undefined.
+    const thetaField = channels.theta && channels.theta.field;
     const xField = channels.x && channels.x.field;
     const yField = channels.y && channels.y.field;
 
     return {
         ...markCommon(opts),
-        markName: 'needle',
+        type: 'needle',
         channels,
         discreteScale: 'point',
-        xKey: xField || angleField,
-        yKey: yField || angleField,
+        xKey: xField || thetaField,
+        yKey: yField || thetaField,
         /**
          * @param {any[]} currentData
          * @param {any} scales
@@ -116,7 +129,6 @@ export function needle(options = {}) {
                     data: d,
                     index: i,
                     cursor: handleStyle.grabbable ? 'grab' : undefined,
-                    ...(handleStyle.grabbable ? {} : { pointerEvents: 'none' }),
                 });
 
                 // Hub = this mark's handle. Respect the shared contract: false emits

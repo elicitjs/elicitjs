@@ -35,6 +35,7 @@ const GRAB_THRESHOLD = 40;
 /** @type {import('./index.js').Driver} */
 export const moveDriver = {
     name: 'move',
+    sessionKeys: ['move'],
     // Exactly `edit.move`, never `edit.geo.move`. Both used to report `type: 'move'`,
     // and this test does not look at `scope`, so `edit.geo.move({ mode: 'relative' })`
     // was silently claimed HERE and anchored its deltas through `axisOf` and the

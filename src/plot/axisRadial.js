@@ -1,4 +1,5 @@
 // @ts-check
+import { ELEMENT_OPTIONS } from '../vocabulary.js';
 // axisRadial.js — a circular / semicircular axis as a CHART ELEMENT (sibling of
 // axisX/axisY). It views the global `theta` SCALE — the POLAR ANGULAR POSITION,
 // not `angle`, which is a mark's rotation in place — (`views: 'scale'`), paints
@@ -44,11 +45,7 @@ function anchorFor(x, cx, eps = 1) {
 }
 
 /** @type {string[]} */
-export const AXIS_RADIAL_OPTIONS = [
-    'channel', 'channels', 'radius', 'innerRadius', 'bandWidth', 'ticks', 'tickValues',
-    'tickFormat', 'tickSize', 'labelOffset', 'bands', 'title', 'arc', 'orient',
-    'start', 'end', 'labelFill', 'stroke', 'strokeWidth', 'fontSize',
-];
+export const AXIS_RADIAL_OPTIONS = ELEMENT_OPTIONS.axisRadial;
 
 /**
  * @param {any} [options]
@@ -90,7 +87,7 @@ export function axisRadial(options = {}) {
 
     return {
         id,
-        markName: 'axisRadial',
+        type: 'axisRadial',
         channel,
         // Placement / band-colour only — see header. Not a data-mark channel map.
         channels,

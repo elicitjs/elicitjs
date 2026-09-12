@@ -56,7 +56,7 @@ function lockFrom(handle) {
 /** @type {import('./index.js').Driver} */
 export const axisDragDriver = {
     name: 'axisDrag',
-    wants: (e) => e.pick === 'axisDrag',
+    sessionKeys: ['axis', 'grabEnd', 'anchorPixel', 'anchorValue', 'grabPixel', 'grabValue', 'pxPerUnit', 'cursor'],
     onEvent({ event, edits, marks, session, runEdit }) {
         const edit = edits[0];
         const threshold = pickThreshold(edit, HANDLE_THRESHOLD);

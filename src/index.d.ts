@@ -1,48 +1,112 @@
 /**
- * Public API typings for `elicit-js` / `@elicit`.
+ * Public API typings for `elicitjs`.
  * Shape interfaces live in `./types`; this file declares the callable surface.
+ *
+ * Every factory's options are typed on a per-factory interface whose runtime twin
+ * is `src/vocabulary.js`; `npm run check:exports` holds the two to each other.
  */
 import type {
+  AllocationOptions,
   AnchorOptions,
+  ArcOptions,
+  AreaOptions,
+  AxisOptions,
+  AxisRadialOptions,
+  AxisScaleOptions,
+  BarOptions,
   BrushRectOptions,
   BrushSpanOptions,
-  Channels,
-  ChartElementOptions,
+  CellGridGuideOptions,
+  ChartElement,
+  ClampOptions,
+  CompositeOptions,
   Constraint,
+  ConstraintContext,
+  ConstraintResult,
+  CountOptions,
   CreateOptions,
+  CrosshairGuideOptions,
+  CurveOptions,
   DeepPartial,
+  DotStackOptions,
   DrawOptions,
   Edit,
   EditOptions,
+  EditTextOptions,
   ElicitElement,
   ElicitSpec,
-  Guide,
+  EllipseOptions,
   FaceOptions,
-  CompositeOptions,
+  GeoBasemapOptions,
+  GeoBrushOptions,
+  GeoCreateRectOptions,
+  GeoDrawOptions,
+  GeoLineOptions,
+  GeoPointOptions,
+  GeoPolygonOptions,
+  GeoRectOptions,
+  GeoRemoveVertexOptions,
+  GeoTextOptions,
+  GeoTileOptions,
+  GridOptions,
+  Guide,
+  HistogramOptions,
+  IntervalOptions,
+  LabeledValueOptions,
   LegendEditOptions,
+  LegendElementOptions,
+  LikertOptions,
+  LineConeOptions,
+  LineOptions,
   LinkOptions,
-  MarkOptions,
+  MaintainSumOptions,
+  Mark,
+  MatrixOptions,
+  MonotonicOptions,
+  MoveOptions,
+  MultipleChoiceOptions,
+  NeedleOptions,
   NetworkConnectOptions,
   NetworkEndpointOptions,
   NewSeriesOptions,
+  NodeOptions,
+  OptionRingsGuideOptions,
+  OrderingOptions,
+  PointOptions,
+  ProbabilityTokensOptions,
+  PromptGuideOptions,
+  ProximityGuideOptions,
+  RankingOptions,
+  RectOptions,
+  RegionGuideOptions,
+  RegionWidgetOptions,
+  RemainingGuideOptions,
   Renderer,
   RotateOptions,
+  RuleGuideOptions,
+  RuleOptions,
+  ScaleCategoriesOptions,
   SelectEditOptions,
+  SliderOptions,
+  SliderTrackGuideOptions,
+  SlideOptions,
+  SnapOptions,
+  SpacingOptions,
+  StackCutOptions,
+  StickerOptions,
+  TextOptions,
+  Theme,
+  ThermometerOptions,
+  TickOptions,
+  ToggleOptions,
   TrendBandOptions,
   TrendEditOptions,
   TrendOptions,
-  MoveOptions,
-  SlideOptions,
-  StickerOptions,
-  Theme,
-  ToggleOptions,
-  WidgetOptions,
+  UniqueOptions,
+  WaffleOptions,
 } from './types.js';
 
 export type * from './types.js';
-
-/** A mark factory’s return value — a feature the engine can build / dispatch. */
-export type Mark = Record<string, unknown>;
 
 export function Elicit(spec: ElicitSpec): ElicitElement;
 
@@ -53,72 +117,73 @@ export function Elicit(spec: ElicitSpec): ElicitElement;
  * Closed on purpose (no index signature): these names are the grammar's mark
  * vocabulary, so an unknown one should be an error, not `any`.
  *
- * The BARE form is the mark and infers its value axis from the scales; the
- * `...X` / `...Y` siblings are sugar that force one orientation.
+ * Every name here is a KEYWORD. The `…X` / `…Y` pairs are the bare mark with its
+ * `orientation` pinned — `barY(o) === bar({ ...o, orientation: 'vertical' })` —
+ * and a JSON spec may name either. `path` is `line({ connect: 'sequence' })`;
+ * `donut` is `arc` with an inner radius; `face`, `node` and `sticker` are
+ * `composite`s of ordinary marks. There is no `pie`: a full pie IS `arc()`.
  */
 export const plot: {
   // Rectangular / interval
-  bar(options?: MarkOptions): Mark;
-  barX(options?: MarkOptions): Mark;
-  barY(options?: MarkOptions): Mark;
-  rect(options?: MarkOptions): Mark;
-  rectX(options?: MarkOptions): Mark;
-  rectY(options?: MarkOptions): Mark;
-  tick(options?: MarkOptions): Mark;
-  tickX(options?: MarkOptions): Mark;
-  tickY(options?: MarkOptions): Mark;
-  rule(options?: MarkOptions): Mark;
-  ruleX(options?: MarkOptions): Mark;
-  ruleY(options?: MarkOptions): Mark;
-  waffle(options?: MarkOptions): Mark;
-  waffleX(options?: MarkOptions): Mark;
-  waffleY(options?: MarkOptions): Mark;
+  bar(options?: BarOptions): Mark;
+  barX(options?: BarOptions): Mark;
+  barY(options?: BarOptions): Mark;
+  rect(options?: RectOptions): Mark;
+  rectX(options?: RectOptions): Mark;
+  rectY(options?: RectOptions): Mark;
+  tick(options?: TickOptions): Mark;
+  tickX(options?: TickOptions): Mark;
+  tickY(options?: TickOptions): Mark;
+  rule(options?: RuleOptions): Mark;
+  ruleX(options?: RuleOptions): Mark;
+  ruleY(options?: RuleOptions): Mark;
+  waffle(options?: WaffleOptions): Mark;
+  waffleX(options?: WaffleOptions): Mark;
+  waffleY(options?: WaffleOptions): Mark;
   // Point / token
-  point(options?: MarkOptions): Mark;
-  ellipse(options?: MarkOptions): Mark;
-  dotStack(options?: MarkOptions): Mark;
-  dotStackX(options?: MarkOptions): Mark;
-  dotStackY(options?: MarkOptions): Mark;
+  point(options?: PointOptions): Mark;
+  ellipse(options?: EllipseOptions): Mark;
+  dotStack(options?: DotStackOptions): Mark;
+  dotStackX(options?: DotStackOptions): Mark;
+  dotStackY(options?: DotStackOptions): Mark;
   // Connected sequences. `line` reads a value against a domain axis; `path`
   // connects points in creation order with both axes free.
-  line(options?: MarkOptions): Mark;
-  lineX(options?: MarkOptions): Mark;
-  lineY(options?: MarkOptions): Mark;
-  path(options?: MarkOptions): Mark;
-  area(options?: MarkOptions): Mark;
-  areaX(options?: MarkOptions): Mark;
-  areaY(options?: MarkOptions): Mark;
-  curve(options?: MarkOptions): Mark;
-  curveX(options?: MarkOptions): Mark;
-  curveY(options?: MarkOptions): Mark;
-  // Angular. `donut` is a preset of `arc` (a default inner radius), not an alias.
-  // There is no `pie`: it was `arc` with arc's own defaults restated, so it was a
-  // second keyword for one concept. A full pie IS `arc()`.
-  arc(options?: MarkOptions): Mark;
-  donut(options?: MarkOptions): Mark;
-  needle(options?: MarkOptions): Mark;
+  line(options?: LineOptions): Mark;
+  lineX(options?: LineOptions): Mark;
+  lineY(options?: LineOptions): Mark;
+  path(options?: LineOptions): Mark;
+  area(options?: AreaOptions): Mark;
+  areaX(options?: AreaOptions): Mark;
+  areaY(options?: AreaOptions): Mark;
+  curve(options?: CurveOptions): Mark;
+  curveX(options?: CurveOptions): Mark;
+  curveY(options?: CurveOptions): Mark;
+  // Angular
+  arc(options?: ArcOptions): Mark;
+  donut(options?: ArcOptions): Mark;
+  needle(options?: NeedleOptions): Mark;
   // Text
-  text(options?: MarkOptions): Mark;
-  textX(options?: MarkOptions): Mark;
-  textY(options?: MarkOptions): Mark;
+  text(options?: TextOptions): Mark;
+  textX(options?: TextOptions): Mark;
+  textY(options?: TextOptions): Mark;
   // Parametric — channels are PARAMETERS of a curve, not columns of free rows.
   trend(options?: TrendOptions): Mark;
   trendBand(options?: TrendBandOptions): Mark;
-  // Glyphs
-  composite(options?: CompositeOptions): Mark;
-  face(options?: FaceOptions): Mark;
-  node(options?: MarkOptions): Mark;
-  sticker(options?: StickerOptions): Mark;
+  // Glyphs — a composite desugars into its parts, so these return the PARTS.
+  composite(options?: CompositeOptions): Mark[];
+  face(options?: FaceOptions): Mark[];
+  node(options?: NodeOptions): Mark[];
+  sticker(options?: StickerOptions): Mark[];
   // Network — the one mark whose geometry comes from a JOIN.
   link(options?: LinkOptions): Mark;
   // Geographic — placed through the chart's `projection`.
-  geoBasemap(options?: MarkOptions): Mark;
-  geoTile(options?: MarkOptions): Mark;
-  geoPoint(options?: MarkOptions): Mark;
-  geoPolygon(options?: MarkOptions): Mark;
-  geoLine(options?: MarkOptions): Mark;
-  geoText(options?: MarkOptions): Mark;
-  geoRect(options?: MarkOptions): Mark;
+  geoBasemap(options?: GeoBasemapOptions): Mark;
+  geoTile(options?: GeoTileOptions): Mark;
+  geoPoint(options?: GeoPointOptions): Mark;
+  geoPolygon(options?: GeoPolygonOptions): Mark;
+  geoLine(options?: GeoLineOptions): Mark;
+  geoText(options?: GeoTextOptions): Mark;
+  geoRect(options?: GeoRectOptions): Mark;
 };
 
 /**
@@ -127,17 +192,17 @@ export const plot: {
  * `channels` map, and their edits reshape the schema's DOMAIN.
  */
 export const elements: {
-  axis(options?: ChartElementOptions): Mark;
-  axisX(options?: ChartElementOptions): Mark;
-  axisY(options?: ChartElementOptions): Mark;
-  axisRadial(options?: ChartElementOptions): Mark;
-  grid(options?: ChartElementOptions): Mark;
-  gridX(options?: ChartElementOptions): Mark;
-  gridY(options?: ChartElementOptions): Mark;
-  legend(options?: ChartElementOptions): Mark;
-  legendColor(options?: ChartElementOptions): Mark;
-  legendSize(options?: ChartElementOptions): Mark;
-  legendSymbol(options?: ChartElementOptions): Mark;
+  axis(options?: AxisOptions): ChartElement;
+  axisX(options?: AxisOptions): ChartElement;
+  axisY(options?: AxisOptions): ChartElement;
+  axisRadial(options?: AxisRadialOptions): ChartElement;
+  grid(options?: GridOptions): ChartElement;
+  gridX(options?: GridOptions): ChartElement;
+  gridY(options?: GridOptions): ChartElement;
+  legend(options?: LegendElementOptions): ChartElement;
+  legendColor(options?: LegendElementOptions): ChartElement;
+  legendSize(options?: LegendElementOptions): ChartElement;
+  legendSymbol(options?: LegendElementOptions): ChartElement;
 };
 
 /**
@@ -145,7 +210,7 @@ export const elements: {
  *
  * Universal edits work on any mark carrying the channels they govern. The scoped
  * namespaces name what their edits are ABOUT; the JS path is also the JSON
- * keyword (`edit.line.draw()` <-> `{ "type": "line.draw" }`).
+ * keyword and the descriptor's `type` (`edit.line.draw()` <-> `{ "type": "line.draw" }`).
  *
  * NAMESPACE and `scope` are separate: the namespace is the subject, `scope` names
  * a mark capability the engine checks. `edit.network.connect` is in the `network`
@@ -168,12 +233,13 @@ export const edit: {
   remove(options?: EditOptions): Edit;
   // ── value ─────────────────────────────────────────────────────────────────
   set(options?: EditOptions): Edit;
-  editText(options?: EditOptions): Edit;
+  editText(options?: EditTextOptions): Edit;
   rank(options?: EditOptions): Edit;
   // ── chart state (writes no data row) ─────────────────────────────────────
   select(options?: SelectEditOptions): Edit;
-  // ── escape hatch ──────────────────────────────────────────────────────────
-  custom(fn: Edit['apply'], options?: EditOptions): Edit;
+  // ── escape hatch: the one factory whose options are an open bag, for the
+  //    knobs a custom driver (registerDriver) reads off the descriptor ───────
+  custom(fn: Edit['apply'], options?: EditOptions & Record<string, unknown>): Edit;
 
   /** Arbitration predicates for an edit's `when`. */
   when: {
@@ -193,8 +259,8 @@ export const edit: {
     anchor(options?: AnchorOptions): Edit;
     newSeries(options?: NewSeriesOptions): Edit;
     draw(options?: DrawOptions): Edit;
-    sweep(options?: DrawOptions): Edit;
-    removeSeries(options?: EditOptions): Edit;
+    sweep(options?: MoveOptions): Edit;
+    removeSeries(options?: AnchorOptions): Edit;
   };
   /**
    * Reshapes the DOMAIN of the scale a chart element draws (the schema), not the
@@ -202,11 +268,11 @@ export const edit: {
    */
   scale: {
     /** Returns THREE edits — one authoring act, three descriptors. Spread it. */
-    categories(options?: EditOptions): Edit[];
+    categories(options?: ScaleCategoriesOptions): Edit[];
   };
   /** Axis-only: drags a positional RANGE, which only an axis has. */
   axis: {
-    scale(options?: EditOptions): Edit;
+    scale(options?: AxisScaleOptions): Edit;
   };
   /** Turns a legend into an input; reads geometry only a legend stamps. */
   legend: {
@@ -216,7 +282,7 @@ export const edit: {
   /** A whole divided among rows: `cut` splits, `edge` moves value across a
    *  boundary, `merge` fuses — each preserving the total by construction. */
   stack: {
-    cut(options?: EditOptions): Edit;
+    cut(options?: StackCutOptions): Edit;
     edge(options?: EditOptions): Edit;
     merge(options?: EditOptions): Edit;
   };
@@ -234,38 +300,43 @@ export const edit: {
    *  are plain `create`/`remove`. */
   network: {
     connect(options?: NetworkConnectOptions): Edit;
-    rewire(options?: NetworkEndpointOptions): Edit;
+    rewire(options?: EditOptions): Edit;
     reverse(options?: NetworkEndpointOptions): Edit;
   };
   /** Placed through the chart's `projection`. */
   geo: {
     move(options?: EditOptions): Edit;
     create(options?: CreateOptions): Edit;
-    draw(options?: EditOptions): Edit;
+    draw(options?: GeoDrawOptions): Edit;
     dragVertex(options?: EditOptions): Edit;
-    removeVertex(options?: EditOptions): Edit;
-    brush(options?: EditOptions): Edit;
-    createRect(options?: CreateOptions): Edit;
+    removeVertex(options?: GeoRemoveVertexOptions): Edit;
+    brush(options?: GeoBrushOptions): Edit;
+    createRect(options?: GeoCreateRectOptions): Edit;
   };
 };
 
 /**
  * CONSTRAINTS — pure data invariants over the elicited dataset. They gate and
- * REPAIR every edit, whichever mark fired it.
+ * REPAIR every edit, whichever mark fired it. Each returns a descriptor
+ * `{ type, field?, options, apply }` (see `ConstraintSpec`); a `field` left out
+ * means "the column the dispatching edit writes".
  */
 export const constraints: {
   /** The extension point: author a rule against a data-only context. One word for
    *  "author your own X" in every grammar namespace — cf. `edit.custom`,
    *  `guides.custom`. (`authoring.defineConstraint` is the same function.) */
-  custom(spec: Constraint | Record<string, unknown>): Constraint;
-  clamp(options?: Record<string, unknown>): Constraint;
-  maintainSum(options?: Record<string, unknown>): Constraint;
-  count(options?: Record<string, unknown>): Constraint;
-  unique(options?: Record<string, unknown>): Constraint;
-  snap(options?: Record<string, unknown>): Constraint;
-  ordering(options?: Record<string, unknown>): Constraint;
-  monotonic(options?: Record<string, unknown>): Constraint;
-  spacing(options?: Record<string, unknown>): Constraint;
+  custom(
+    apply: (ctx: ConstraintContext) => ConstraintResult,
+    meta?: { type?: string; field?: string | string[]; options?: Record<string, unknown>; table?: string; guide?: (ctx: any) => any[] },
+  ): Constraint;
+  clamp(options?: ClampOptions): Constraint;
+  maintainSum(options?: MaintainSumOptions): Constraint;
+  count(options?: CountOptions): Constraint;
+  unique(options?: UniqueOptions): Constraint;
+  snap(options?: SnapOptions): Constraint;
+  ordering(options?: OrderingOptions): Constraint;
+  monotonic(options?: MonotonicOptions): Constraint;
+  spacing(options?: SpacingOptions): Constraint;
 };
 
 /**
@@ -275,48 +346,50 @@ export const constraints: {
  */
 export const guides: {
   /** A reference line at a value, positioned through the scales. */
-  rule(options?: Record<string, unknown>): Guide;
+  rule(options?: RuleGuideOptions): Guide;
   /** A shaded band between two values — an acceptable range, a target zone. */
-  region(options?: Record<string, unknown>): Guide;
+  region(options?: RegionGuideOptions): Guide;
   /** What is left to allocate under a rule. Reads its target from a
    *  `maintainSum` constraint when you don't pass one, so the number the reader
    *  is held to and the number they are shown cannot drift. */
-  remaining(options?: Record<string, unknown>): Guide;
+  remaining(options?: RemainingGuideOptions): Guide;
   /** The catchment of a proximity pick — how far it reaches to find a mark. */
-  proximity(options?: Record<string, unknown>): Guide;
+  proximity(options?: ProximityGuideOptions): Guide;
   /** The escape hatch: arbitrary read-only nodes from the live context. Named to
    *  match `edit.custom` / `constraints.custom`. */
   custom(build: (ctx: any) => import('./types.js').FeatureNode[]): Guide;
   /** A question prompt above an instrument. */
-  prompt(text: string, options?: Record<string, unknown>): Guide;
+  prompt(text: string, options?: PromptGuideOptions): Guide;
   /** The option rings of a Likert-style scale. */
-  optionRings(options?: Record<string, unknown>): Guide;
+  optionRings(options?: OptionRingsGuideOptions): Guide;
   /** A matrix instrument's cell grid. */
-  cellGrid(options?: Record<string, unknown>): Guide;
+  cellGrid(options?: CellGridGuideOptions): Guide;
   /** A slider's track. */
-  sliderTrack(options?: Record<string, unknown>): Guide;
+  sliderTrack(options?: SliderTrackGuideOptions): Guide;
   /** The crosshair frame of a correlation plot. */
-  crosshair(labels?: Record<string, unknown>): Guide;
+  crosshair(labels?: CrosshairGuideOptions): Guide;
 };
 
 /**
  * WIDGETS — named survey instruments. Each is a pure recipe over the core API and
- * returns a whole `ElicitSpec`, so it composes and serialises like any other spec.
+ * returns a whole `ElicitSpec`. Note the spec holds marks and edits, which carry
+ * functions: it composes like any other spec, but is not JSON until the planned
+ * JSON layer lands.
  */
 export const widgets: {
-  likert(options?: WidgetOptions): ElicitSpec;
-  multipleChoice(options?: WidgetOptions): ElicitSpec;
-  slider(options?: WidgetOptions): ElicitSpec;
-  matrix(options?: WidgetOptions): ElicitSpec;
-  lineCone(options?: WidgetOptions): ElicitSpec;
-  ranking(options?: WidgetOptions): ElicitSpec;
-  allocation(options?: WidgetOptions): ElicitSpec;
-  probabilityTokens(options?: WidgetOptions): ElicitSpec;
-  interval(options?: WidgetOptions): ElicitSpec;
-  histogram(options?: WidgetOptions): ElicitSpec;
-  region(options?: WidgetOptions): ElicitSpec;
-  thermometer(options?: WidgetOptions): ElicitSpec;
-  labeledValue(options?: WidgetOptions): ElicitSpec;
+  likert(options?: LikertOptions): ElicitSpec;
+  multipleChoice(options?: MultipleChoiceOptions): ElicitSpec;
+  slider(options?: SliderOptions): ElicitSpec;
+  matrix(options?: MatrixOptions): ElicitSpec;
+  lineCone(options?: LineConeOptions): ElicitSpec;
+  ranking(options?: RankingOptions): ElicitSpec;
+  allocation(options?: AllocationOptions): ElicitSpec;
+  probabilityTokens(options?: ProbabilityTokensOptions): ElicitSpec;
+  interval(options?: IntervalOptions): ElicitSpec;
+  histogram(options?: HistogramOptions): ElicitSpec;
+  region(options?: RegionWidgetOptions): ElicitSpec;
+  thermometer(options?: ThermometerOptions): ElicitSpec;
+  labeledValue(options?: LabeledValueOptions): ElicitSpec;
 };
 
 /**

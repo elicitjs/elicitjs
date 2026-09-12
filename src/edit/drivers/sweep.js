@@ -10,7 +10,7 @@ import { nearestMark, nearestMarkOnAxis, nearestSeries, pickThreshold } from '..
 /** @type {import('./index.js').Driver} */
 export const sweepDriver = {
     name: 'sweep',
-    wants: (e) => e.pick === 'sweep',
+    sessionKeys: ['px', 'py', 'threshold', 'hoverIndex', 'activeIndex', 'series'],
     selects: true,
     onEvent({ event, edits, marks, session, runEdit }) {
         const threshold = pickThreshold(edits[0]);

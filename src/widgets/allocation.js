@@ -9,7 +9,7 @@ import { prompt } from './theme.js';
 import { widgetTheme } from './shared.js';
 
 /**
- * @param {import('../types').WidgetOptions & { categories?: string[], targetSum?: number,
+ * @param {import('../types').WidgetOptions & { categories?: string[], total?: number,
  *   values?: number[] }} [opts]
  * @returns {import('../types').ElicitSpec}
  */
@@ -17,7 +17,7 @@ export function allocation(opts = {}) {
     const {
         question = 'Allocate the budget',
         categories = ['A', 'B', 'C', 'D'],
-        targetSum = 100,
+        total = 100,
         values,
         onChange,
         width = 480,
@@ -27,7 +27,7 @@ export function allocation(opts = {}) {
     } = opts;
     const t = widgetTheme(theme);
 
-    const equal = targetSum / categories.length;
+    const equal = total / categories.length;
     const data = categories.map((cat, i) => ({
         cat,
         share: values && values[i] != null ? values[i] : equal
@@ -40,12 +40,12 @@ export function allocation(opts = {}) {
         margins: { top: 40, right: 24, bottom: 36, left: 48 },
         schema: {
             cat: { type: 'categorical', domain: categories },
-            share: { type: 'quantitative', domain: [0, targetSum] }
+            share: { type: 'quantitative', domain: [0, total] }
         },
         data,
         constraints: [
-            clamp({ min: 0, max: targetSum, field: 'share' }),
-            maintainSum({ targetSum, field: 'share', strategy: 'redistribute' })
+            clamp({ min: 0, max: total, field: 'share' }),
+            maintainSum({ total, field: 'share', strategy: 'redistribute' })
         ],
         onChange,
         guides: [prompt(question)],

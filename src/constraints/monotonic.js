@@ -1,5 +1,5 @@
 // @ts-check
-import { defineConstraint } from './define.js';
+import { defineConstraint, constraintOptions } from './define.js';
 
 // monotonic: a field may only ever go one way along a series — a data invariant.
 //
@@ -31,12 +31,12 @@ import { defineConstraint } from './define.js';
  * @returns {import('../types').Constraint}
  */
 export function monotonic(options = {}) {
-    const { field = 'y', along = 'x', dir = 'up', series = null } = options;
+    const { field, along = 'x', dir = 'up', series = null } = constraintOptions('monotonic', options);
     const up = dir !== 'down';
 
     return defineConstraint(
-        ({ data, activeIndex }) => {
-            if (!data || data.length < 2) return undefined;
+        ({ data, activeIndex, field }) => {
+            if (!data || data.length < 2 || field == null) return undefined;
 
             // Group into series, each judged on its own. One unkeyed group is the
             // single-line case, so there's one code path.

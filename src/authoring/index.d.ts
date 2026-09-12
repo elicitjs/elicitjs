@@ -76,6 +76,43 @@ export function positionalKeys(channels: Record<string, any> | undefined): {
     yKey: string;
 };
 /**
+ * Which axis a directional mark's VALUE runs along — the ONE orientation rule.
+ *
+ * Every directional mark (bar, tick, rule, line, area, curve, text, waffle,
+ * dotStack, rect) has to answer this, and each used to answer it its own way:
+ * from the scales, from the channel map, from a declared span, or only when
+ * forced. Six rules under three spellings meant `curveY` and `areaY` inferred
+ * opposite things from the same `y1`/`y2` pair. This is that decision, once,
+ * with the two places marks legitimately differ DECLARED as arguments:
+ *
+ *   orientation  the author's word. 'vertical' = the value runs along y (a bar
+ *                that grows upward, a rule at a y, a line whose y is edited);
+ *                'horizontal' = along x. The `…Y`/`…X` factory variants are
+ *                sugar that pin it: `barY(o) === bar({ ...o, orientation: 'vertical' })`.
+ *   extent       what a declared x1/x2 or y1/y2 pair MEANS: 'value' (area, rect,
+ *                bar — the pair IS the value, so its axis is the value axis) or
+ *                'span' (rule, tick, curve — the pair is the chord the mark is
+ *                drawn along, so the OTHER axis is the value axis).
+ *   single       what exactly one bound positional channel means: 'value' (rule,
+ *                text — the lone channel is where the mark sits) or 'other' (waffle,
+ *                dotStack, curve — the lone channel is the category/chord, and the
+ *                value runs along the other axis).
+ *
+ * Precedence: the option; a declared pair; a band scale (the band is the category,
+ * so the value is the other axis — only when `scales` are passed, which a counting
+ * mark deliberately does not, since it must answer at factory time); a lone
+ * channel; else y.
+ * @param {Record<string, any> | undefined} channels
+ * @param {import('../types.js').ScaleMap | null | undefined} scales
+ * @param {{ orientation?: string, extent?: 'value' | 'span', single?: 'value' | 'other' }} [opts]
+ * @returns {'x' | 'y'}
+ */
+export function resolveValueAxis(channels: Record<string, any> | undefined, scales: import("../types.js").ScaleMap | null | undefined, { orientation, extent, single }?: {
+    orientation?: string;
+    extent?: "value" | "span";
+    single?: "value" | "other";
+}): "x" | "y";
+/**
  * Resolve a datum's CATEGORY on a band/point axis — the discrete-axis counterpart
  * to `encodeChannel`.
  *
@@ -131,20 +168,32 @@ export function categoryOf(channels: Record<string, any>, channel: string, datum
  */
 export function encodeValue(scales: import("../types.js").ScaleMap, channels: Record<string, any>, channel: string, value: any, fallback?: any): any;
 /**
- * Resolve the `angle` channel to math degrees (0° = +x, CCW, y-up — the same
- * convention as needle / pointerDegrees). Scaled when an angle scale exists so
- * `rotate()` is an exact inverse; otherwise raw (a `{ value }` constant or the
- * field's literal degrees). Marks stamp the result on `FeatureNode.angle`; the
- * renderer converts to SVG with `rotate(-deg cx cy)`.
+ * Resolve an ANGULAR channel to math degrees (0° = +x, CCW, y-up — the same
+ * convention as needle / pointerDegrees). Scaled when that channel resolved a
+ * scale so `rotate()` is an exact inverse; otherwise raw (a `{ value }` constant
+ * or the field's literal degrees).
+ *
+ * Two channels are angular, and they are different questions:
+ *   `theta`  a POLAR POSITION — a needle's bearing, an arc's sweep. Positional
+ *            (see AXIS_OF), so `axisRadial` is its axis and a legend draws a fan.
+ *   `angle`  a mark's ROTATION IN PLACE — a tilted label, a rotated symbol. Not a
+ *            position, so no axis and no key.
+ * They were ONE channel until this pass, which is why `axisRadial` drew a polar
+ * axis for a scale six marks were using as a rotation.
+ *
+ * Marks stamp the result on `FeatureNode.angle` either way — that field is the
+ * RENDERED rotation, which is what both questions end in; the renderer converts to
+ * SVG with `rotate(-deg cx cy)`.
  * @param {import('../types.js').ScaleMap} scales
  * @param {Record<string, any>} channels
+ * @param {string} channel 'angle' (rotation) or 'theta' (polar position)
  * @param {import('../types.js').Datum | null} datum
  * @param {number} [fallback=0]
  * @param {number} [index] row index, passed to a derived channel's fn
  * @param {import('../types.js').Datum[]} [data] the dataset, passed to a derived fn
  * @returns {number}
  */
-export function encodeAngle(scales: import("../types.js").ScaleMap, channels: Record<string, any>, datum: import("../types.js").Datum | null, fallback?: number, index?: number, data?: import("../types.js").Datum[]): number;
+export function encodeAngle(scales: import("../types.js").ScaleMap, channels: Record<string, any>, channel: string, datum: import("../types.js").Datum | null, fallback?: number, index?: number, data?: import("../types.js").Datum[]): number;
 /**
  * Resolve a datum's glyph on the `symbol` channel, or `undefined` when the mark
  * declares no symbol channel (or the datum's category maps to nothing). A glyph is
@@ -312,6 +361,7 @@ export const STANDARD_STYLE_CHANNELS: string[];
 export const HANDLE_DEFAULTS: {
     size: number;
 };
+export function orientationOf(axis: "x" | "y"): "horizontal" | "vertical";
 /**
  * The style names an AXIS mark treats as chrome (its spine, ticks and labels)
  * rather than as per-datum channels — pass to normalizeMarkOptions's `except`.
@@ -913,6 +963,48 @@ export function noteBox(text: string, opts?: {
     width: number;
     height: number;
 };
+// ── from src/vocabulary.js ──────────────────────────────────────────────────
+/** Options EVERY mark accepts, whatever it draws. (`constraints` is deliberately
+ *  absent: a constraint is a DATASET invariant and belongs on the spec.)
+ *  @type {string[]} */
+export const MARK_UNIVERSAL_OPTIONS: string[];
+/** Top-level constant shorthands every mark desugars into channels
+ *  (`fill: 'red'` -> `channels.fill = { value: 'red' }`). `size` and the text
+ *  names are read by the marks themselves; `angle` is a rotation in place.
+ *  @type {string[]} */
+export const MARK_SHORTHANDS: string[];
+/** Options every chart element accepts. `field` and `table` say WHAT an edit on
+ *  the element writes; an element has no channel map to say it otherwise.
+ *  @type {string[]} */
+export const ELEMENT_UNIVERSAL_OPTIONS: string[];
+/** Options every guide accepts. @type {string[]} */
+export const GUIDE_UNIVERSAL_OPTIONS: string[];
+/** Mark factories: the options each reads on top of the universal mark options
+ *  and the style shorthands (see `normalizeMarkOptions`, plot/mark.js). Keyed by
+ *  the mark keyword; the `…X`/`…Y` variants share their bare mark's entry.
+ *  @type {Record<string, string[]>} */
+export const MARK_OPTIONS: Record<string, string[]>;
+/** Chart elements: the options each reads on top of the universal element options
+ *  (`id`/`edit`/`edits`/`field`/`table` — see `warnUnknownElementOptions`).
+ *  @type {Record<string, string[]>} */
+export const ELEMENT_OPTIONS: Record<string, string[]>;
+/** Guides: the options each reads on top of the universal guide options (`id`).
+ *  @type {Record<string, string[]>} */
+export const GUIDE_OPTIONS: Record<string, string[]>;
+/** The keys `makeEdit` (edit/shared.js) normalizes on EVERY edit — the universal
+ *  edit options. Anything else a factory is handed is either in that factory's
+ *  `EDIT_OPTIONS` entry, a knob its driver declares (`Driver.options`), or a typo.
+ *  @type {string[]} */
+export const EDIT_UNIVERSAL_OPTIONS: string[];
+/** Edit factories: the options each reads on top of `EDIT_UNIVERSAL_OPTIONS`,
+ *  keyed by the edit's `type` (its dotted path). A type with no entry is a custom
+ *  edit built through `makeEdit` directly, and is not validated.
+ *  @type {Record<string, string[]>} */
+export const EDIT_OPTIONS: Record<string, string[]>;
+/** Constraints: the options each reads. `field` is one name or an ordered list,
+ *  and omitting it means "the column the dispatching edit writes".
+ *  @type {Record<string, string[]>} */
+export const CONSTRAINT_OPTIONS: Record<string, string[]>;
 // ── from src/plot/axis.js ───────────────────────────────────────────────────
 /**
  * `axis`'s own option vocabulary, on top of the universal chart-element options
@@ -1290,11 +1382,11 @@ export function hitTest(marks: any[], px: number, py: number): any | null;
  * and then wrote `pickThreshold(edit) || THEIRS` — which can never reach the `||`,
  * because pickThreshold always returns at least 40. Both constants were dead, and
  * an axis handle was being grabbed from 40px away instead of 14.
- * @param {import('../types.js').Edit} edit
+ * @param {import('../types.js').Edit | null | undefined} edit
  * @param {number} [fallback]
  * @returns {number}
  */
-export function pickThreshold(edit: import("../types.js").Edit, fallback?: number): number;
+export function pickThreshold(edit: import("../types.js").Edit | null | undefined, fallback?: number): number;
 /**
  * @param {import('../types.js').Edit} edit
  * @returns {number}
@@ -1346,7 +1438,22 @@ export type DriverContext = {
 };
 export type Driver = {
     name: string;
-    wants: (edit: import("../types.js").Edit) => boolean;
+    /**
+     * a CAPABILITY
+     * claim on an edit not addressed by pick name (never re-test `pick`)
+     */
+    wants?: ((edit: import("../types.js").Edit) => boolean) | undefined;
+    /**
+     * the session keys this driver owns; its
+     * `session.clear()` nulls exactly these
+     */
+    sessionKeys?: string[] | undefined;
+    /**
+     * the per-edit knobs this driver reads off the
+     * descriptor (`edgeInset`, `resize`, …) — the sanctioned passthrough; a key on
+     * an edit that is in neither its factory's vocabulary nor its driver's is reported
+     */
+    options?: string[] | undefined;
     onEvent: (ctx: DriverContext) => boolean;
     /**
      * writes a selection into its session (see above),
@@ -1362,12 +1469,22 @@ export type Driver = {
 export function registerDriver(driver: Driver): void;
 // ── from src/constraints/define.js ──────────────────────────────────────────
 /**
- * Creates a constraint.
+ * Author a constraint from a RULE against the data-only context. The extension
+ * point (`constraints.custom` is this function): write the rule, return the
+ * natural shape, and the plumbing — active datum, field, domain, result
+ * normalization — is done for you.
  * @param {(ctx: import('../types.js').ConstraintContext) => any} reducer
- * @param {any} [meta]
- * @returns {import('../types.js').Constraint}
+ * @param {{ type?: string, field?: string | string[], options?: Record<string, any>,
+ *   table?: string, guide?: (ctx: any) => any[] }} [meta]
+ * @returns {import('../types.js').ConstraintSpec}
  */
-export function defineConstraint(reducer: (ctx: import("../types.js").ConstraintContext) => any, meta?: any): import("../types.js").Constraint;
+export function defineConstraint(reducer: (ctx: import("../types.js").ConstraintContext) => any, meta?: {
+    type?: string;
+    field?: string | string[];
+    options?: Record<string, any>;
+    table?: string;
+    guide?: (ctx: any) => any[];
+}): import("../types.js").ConstraintSpec;
 // ── from src/widgets/theme.js ───────────────────────────────────────────────
 export namespace THEME {
     let accent: string;

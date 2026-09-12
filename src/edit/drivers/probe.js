@@ -51,7 +51,7 @@ function targetIndex(ctx, edit) {
 /** @type {import('./index.js').Driver} */
 export const probeDriver = {
     name: 'probe',
-    wants: (edit) => edit.pick === 'probe',
+    sessionKeys: [],
     onEvent: (ctx) => {
         const { event, edits, preview, stage, runEdit, previewEdit } = ctx;
         if (!edits.length) return false;

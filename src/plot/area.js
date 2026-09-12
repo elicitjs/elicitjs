@@ -1,7 +1,8 @@
 // @ts-check
 import { isBand, baselineOf } from '../core/scales.js';
 import { claimEdge } from '../edit/shared.js';
-import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel, orderFieldOf} from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel, orderFieldOf, resolveValueAxis } from './mark.js';
+import { MARK_OPTIONS } from '../vocabulary.js';
 
 // area: a filled path under a series (the distributional sibling of line). Same
 // grouping / ordering knobs as line; emits one filled `path` per series plus
@@ -61,11 +62,10 @@ function claimSpanEdges(group, channels, edits) {
 
 /**
  * @param {any} options
- * @param {'x' | 'y' | null} forcedValueAxis
  * @returns {import('../types').Mark}
  */
-function buildArea(options, forcedValueAxis) {
-    const opts = normalizeMarkOptions(options, { mark: 'area', allow: ['curve', 'handles', 'handleSize', 'handleColor', 'connect', 'samples'] });
+function buildArea(options) {
+    const opts = normalizeMarkOptions(options, { mark: 'area', allow: MARK_OPTIONS.area });
     const {
         channels: declaredChannels = {},
         id,
@@ -74,8 +74,7 @@ function buildArea(options, forcedValueAxis) {
         handles = true,
         handleSize,
         handleColor,
-        connect = 'domain',
-        samples
+        connect = 'domain'
     } = opts;
 
     const { xKey, yKey } = positionalKeys(declaredChannels);
@@ -88,7 +87,7 @@ function buildArea(options, forcedValueAxis) {
 
     return {
         ...markCommon(opts),
-        markName: 'area',
+        type: 'area',
         channels,
         // Read raw (no scale), like `line`'s and `link`'s.
         rawChannels: ['curve', 'series', 'order'],
@@ -97,7 +96,6 @@ function buildArea(options, forcedValueAxis) {
         yKey,
         seriesKey: seriesField,
         connect,
-        samples,
         supportsSeries: true,
         /**
          * @param {any[]} currentData
@@ -108,16 +106,9 @@ function buildArea(options, forcedValueAxis) {
          */
         build: (currentData, scales, width, height) => {
             const { x: xScale, y: yScale } = scales;
-            let valueAxis = forcedValueAxis;
-            if (!valueAxis) {
-                // Declaring a span picks the value axis on its own — a y1/y2 pair
-                // says "the band runs vertically" as plainly as a band scale does.
-                if (hasYSpan && !hasXSpan) valueAxis = 'y';
-                else if (hasXSpan && !hasYSpan) valueAxis = 'x';
-                else if (isBand(xScale) && !isBand(yScale)) valueAxis = 'y';
-                else if (isBand(yScale) && !isBand(xScale)) valueAxis = 'x';
-                else valueAxis = 'y';
-            }
+            // A declared y1/y2 pair IS the value (the band's two edges), so its axis
+            // is the value axis — extent: 'value', where a tick's pair is its chord.
+            const valueAxis = resolveValueAxis(channels, scales, { orientation: opts.orientation, extent: 'value' });
             const spanMode = valueAxis === 'y' ? hasYSpan : hasXSpan;
 
             /** @type {Map<any, { d: any, i: number }[]>} */
@@ -263,15 +254,15 @@ function buildArea(options, forcedValueAxis) {
 
 /** @param {any} [options] @returns {import('../types').Mark} */
 export function area(options = {}) {
-    return buildArea(options, null);
+    return buildArea(options);
 }
 
 /** @param {any} [options] @returns {import('../types').Mark} */
 export function areaY(options = {}) {
-    return buildArea(options, 'y');
+    return area({ ...options, orientation: 'vertical' });
 }
 
 /** @param {any} [options] @returns {import('../types').Mark} */
 export function areaX(options = {}) {
-    return buildArea(options, 'x');
+    return area({ ...options, orientation: 'horizontal' });
 }

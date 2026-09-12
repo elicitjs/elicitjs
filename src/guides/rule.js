@@ -1,4 +1,5 @@
 // @ts-check
+import { GUIDE_OPTIONS } from '../vocabulary.js';
 // guides.rule — a declarative reference line, positioned in DATA space through
 // the scales. It's the guide counterpart of a mark: you give it a value on a
 // channel and it draws a line across the plot at that position, using the SAME
@@ -23,7 +24,7 @@ import { resolveGuideOptions, warnUnknownGuideOptions } from './shared.js';
  * the docs table, and (later) the JSON grammar.
  * @type {string[]}
  */
-export const RULE_OPTIONS = ['x', 'y', 'stroke', 'strokeDasharray', 'strokeWidth', 'opacity', 'label'];
+export const RULE_OPTIONS = GUIDE_OPTIONS.rule;
 
 /**
  * @param {{ x?: any, y?: any, stroke?: any, strokeDasharray?: any, label?: any }} [options]
@@ -33,14 +34,18 @@ export function rule(options = {}) {
     warnUnknownGuideOptions('rule', options, RULE_OPTIONS);
     return {
         views: 'state',
+        type: 'rule',
         build: (_rows, _scales, _w, _h, ctx) => {
             const { scales, width, height } = ctx;
             // Colour/dash default to the theme's rule tokens (a theme can restyle
             // every reference line); an explicit option still wins.
             const rt = (ctx.theme && ctx.theme.guide && ctx.theme.guide.rule) || {};
             const {
-                x, y, stroke = rt.stroke || '#64748b', strokeDasharray = rt.strokeDasharray || '5 4', label
+                x, y, label,
+                stroke = rt.stroke, strokeDasharray = rt.strokeDasharray,
+                strokeWidth = rt.strokeWidth, opacity = rt.opacity,
             } = resolveGuideOptions(options, ctx);
+            const fontSize = (ctx.theme && ctx.theme.font && ctx.theme.font.labelSize) || 10;
 
             /** @type {import('../types').FeatureNode[]} */
             const nodes = [];
@@ -49,12 +54,12 @@ export function rule(options = {}) {
                 const py = scales.y.encode(y);
                 nodes.push({
                     type: 'line', x1: 0, x2: width, y1: py, y2: py,
-                    stroke, strokeDasharray, strokeWidth: 1, opacity: 0.9,
+                    stroke, strokeDasharray, strokeWidth, opacity,
                     pointerEvents: 'none', guide: true
                 });
                 if (label) nodes.push({
                     type: 'text', x: width - 4, y: py - 4, text: label,
-                    fill: stroke, fontSize: 10, textAnchor: 'end',
+                    fill: stroke, fontSize, textAnchor: 'end',
                     pointerEvents: 'none', guide: true
                 });
             }
@@ -63,12 +68,12 @@ export function rule(options = {}) {
                 const px = scales.x.encode(x);
                 nodes.push({
                     type: 'line', x1: px, x2: px, y1: 0, y2: height,
-                    stroke, strokeDasharray, strokeWidth: 1, opacity: 0.9,
+                    stroke, strokeDasharray, strokeWidth, opacity,
                     pointerEvents: 'none', guide: true
                 });
                 if (label) nodes.push({
                     type: 'text', x: px + 4, y: 10, text: label,
-                    fill: stroke, fontSize: 10, textAnchor: 'start',
+                    fill: stroke, fontSize, textAnchor: 'start',
                     pointerEvents: 'none', guide: true
                 });
             }

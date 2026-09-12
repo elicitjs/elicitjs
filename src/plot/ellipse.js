@@ -35,18 +35,19 @@
 import {
     encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions,
     themeOf, markDefaults, positionalKeys, markCommon,} from './mark.js';
+import { MARK_OPTIONS } from '../vocabulary.js';
 
 /**
  * @param {any} [options]
  * @returns {import('../types').Mark}
  */
 export function ellipse(options = {}) {
-    const opts = normalizeMarkOptions(options, { mark: 'ellipse', allow: [] });
+    const opts = normalizeMarkOptions(options, { mark: 'ellipse', allow: MARK_OPTIONS.ellipse });
     const { channels = {}, id, edits } = opts;
 
     return {
         ...markCommon(opts),
-        markName: 'ellipse',
+        type: 'ellipse',
         channels,
         // Like a dot: its categorical axis wants a tick per category, not an interval.
         discreteScale: 'point',

@@ -52,6 +52,7 @@ export function move(options = {}) {
     }
     return makeEdit({
         type: 'move',
+        inverts: true,
         gesture: 'drag',
         mode,
         ...rest,
@@ -98,6 +99,7 @@ export function move(options = {}) {
 export function moveSpan(options = {}) {
     return makeEdit({
         type: 'moveSpan',
+        inverts: true,
         gesture: 'drag',
         ...options,
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
@@ -139,6 +141,7 @@ export function brushSpan(options = {}) {
     const rest = claimPick(options, 'brushSpan', 'brush');
     return makeEdit({
         type: 'brushSpan',
+        inverts: true,
         gesture: 'drag',
         ...rest,
         pick: 'brush',
@@ -209,6 +212,7 @@ export function brushRect(options = {}) {
     const { resize = 'both', move = true, ...rest } = claimPick(options, 'brushRect', 'brushRect');
     return makeEdit({
         type: 'brushRect',
+        inverts: true,
         gesture: 'drag',
         channels: ['x1', 'x2', 'y1', 'y2'],
         ...rest,
@@ -331,8 +335,23 @@ export const slideAnchorKey = (axis, field) => `${axis}:${field}`;
 export function slide(options = {}) {
     const { axis = 'x', increase, extent, mode = 'relative', ...rest } = options;
     const { towardSmaller } = slideAxis(axis, increase);
+    // A relative slide reads the dragstart anchor the SLIDE driver froze, so it is
+    // served by that driver alone — as a direct pick (the common case: a glyph part
+    // grabbed by its own node) or by name (`pick: 'slide'`, the plane form). Under
+    // any other pick the edit reached its driver by name AND slide's by capability,
+    // and was run and committed twice per tick. Say so and drop the pick.
+    if (mode === 'relative' && rest.pick != null && rest.pick !== 'direct' && rest.pick !== 'slide') {
+        warn(
+            'slide:relative:pick',
+            `slide({ mode: "relative" }) needs the slide driver's dragstart anchor, so it is ` +
+            `served by that driver alone. { pick: "${rest.pick}" } is ignored (direct pick); ` +
+            `use mode: "absolute" with that pick, or pick: "slide" for the plane form.`
+        );
+        delete rest.pick;
+    }
     return makeEdit({
         type: 'slide',
+        inverts: true,
         gesture: 'drag',
         // Direct in both modes. Relative still needs the driver's dragstart anchor,
         // but the driver claims it by CAPABILITY (type + mode) from either dispatch
@@ -389,6 +408,7 @@ export function slide(options = {}) {
 export function resize(options = {}) {
     return makeEdit({
         type: 'resize',
+        inverts: true,
         gesture: 'drag',
         ...options,
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
@@ -455,6 +475,7 @@ export function rotate(options = {}) {
     };
     return makeEdit({
         type: 'rotate',
+        inverts: true,
         gesture: 'drag',
         pick: 'plane',
         ...rest,
@@ -594,6 +615,8 @@ export function toggle(options = {}) {
         gesture: 'click',
         channels: ['x'],
         pick: 'plane',
+        // Mints OR drops a row per click: a creator, with no single active datum.
+        cardinality: 'toggle',
         // No `cardinality`: this gesture mints on an empty slot and drops on a full
         // one, so "the row the gesture touched" has no single answer. Left null,
         // which resolves nothing around it — the honest reading for a slot edit.
@@ -734,6 +757,7 @@ export function editText(options = {}) {
 export function rank(options = {}) {
     return makeEdit({
         type: 'rank',
+        inverts: true,
         gesture: 'drag',
         ...options,
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
@@ -760,7 +784,7 @@ export function rank(options = {}) {
  * select — a SELECTION edit: click a mark to make it the chart's selected row.
  * Selection is transient PIPELINE state the engine owns (ui.selection), NOT a
  * `selected` data column — the same status a hover/preview has. apply() writes no
- * dataset row; it returns a `{ __select }` descriptor under `target: 'selection'`,
+ * dataset row; it returns a `{ index, exclusive, toggle }` descriptor under `target: 'selection'`,
  * which the engine routes to its selection commit exactly the way an axis edit's
  * `{ domains }` routes to the schema. So no `change` fires, nothing lands in undo,
  * and the dataset stays clean.
@@ -796,7 +820,7 @@ export function select(options = {}) {
             // flat override for a chart that is always additive.
             const e = /** @type {any} */ (ctx.event) || {};
             const additive = multi && !!(e.shiftKey || e.metaKey);
-            return { __select: { index: ctx.index, exclusive: additive ? false : exclusive, toggle } };
+            return { index: ctx.index, exclusive: additive ? false : exclusive, toggle };
         }
     });
 }

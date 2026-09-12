@@ -1,4 +1,5 @@
 // @ts-check
+import { ELEMENT_OPTIONS } from '../vocabulary.js';
 // axis.js — axes and gridlines as CHART ELEMENTS (the Observable Plot model).
 //
 // An axis is scale chrome, not a data mark: `views: 'scale'`, singular `channel`,
@@ -27,16 +28,13 @@ import { warnUnknownElementOptions, resolveHandles, elementEdits } from './mark.
  * Keep in sync with the destructure in `axis` below.
  * @type {string[]}
  */
-export const AXIS_OPTIONS = [
-    'channel', 'anchor', 'transform', 'ticks', 'tickValues', 'tickFormat', 'tickSize',
-    'title', 'stroke', 'fill', 'fontSize', 'grid', 'handleColor', 'handleSize',
-];
+export const AXIS_OPTIONS = ELEMENT_OPTIONS.axis;
 
 /**
  * `grid`'s option vocabulary. Keep in sync with the destructure in `grid` below.
  * @type {string[]}
  */
-export const GRID_OPTIONS = ['channel', 'ticks', 'tickValues', 'stroke', 'strokeWidth'];
+export const GRID_OPTIONS = ELEMENT_OPTIONS.grid;
 
 /** Numeric view of a domain value (a Date sorts by its timestamp). */
 const numOf = (/** @type {any} */ v) => (v instanceof Date ? v.getTime() : v);
@@ -180,7 +178,7 @@ export function axis(options = {}) {
 
     return {
         id,
-        markName: 'axis',
+        type: 'axis',
         isAxis: true,
         // A GUIDE: it views the SCALE, not columns of the dataset. See types.d.ts's
         // Mark.views — the engine and resolveChannels branch on this, not on which
@@ -366,7 +364,7 @@ export function grid(options = {}) {
 
     return {
         id,
-        markName: 'grid',
+        type: 'grid',
         isGrid: true,
         views: 'scale',
         channel,

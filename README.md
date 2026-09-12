@@ -11,18 +11,18 @@ y: { field: "n", edit: move() }
 ```
 
 - **Architecture** — see [ARCHITECTURE.md](ARCHITECTURE.md) for how the library is layered and why.
-- **Documentation** — the sibling repo `../elicitjs-docs`, a live-editable docs site that is also the test suite.
+- **Documentation** — the docs site (source: the `elicitjs-docs` repo), live-editable, and also the browser regression suite.
 
-> **Alpha.** ElicitJS is pre-1.0 and under active development. Expect breaking changes between minor versions (`0.1.x` → `0.2.0`); patch releases stay compatible. Pin with `~0.1.0` if you want only patches.
+> **Alpha.** ElicitJS is pre-1.0 and under active development. This is an alpha release (`0.1.0-alpha.x`, published under the `alpha` npm tag): expect breaking changes between alphas and between minor versions. It is ESM-only (so is its one peer dependency, `d3`).
 
 ---
 
 ## Install
 
-ElicitJS is ESM and needs a bundler (Vite, webpack, …) or an import map. Runtime dependency: `d3`.
+ElicitJS is ESM-only and needs a bundler (Vite, webpack, …) or an import map. Peer dependency: `d3` (v7), which you install alongside it.
 
 ```bash
-npm install elicitjs
+npm install elicitjs@alpha d3
 # or from a checkout / GitHub:
 # npm install github:elicitjs/elicitjs
 ```
@@ -81,7 +81,7 @@ const beliefChart = elicit.Elicit({
     { x: "C", y: 25 }, { x: "D", y: 25 },
   ],
   // Data invariants — they gate and repair every edit, from any mark.
-  constraints: [clamp({ min: 0 }), maintainSum({ targetSum: 100 })],
+  constraints: [clamp({ min: 0 }), maintainSum({ total: 100 })],
   onChange: (data) => console.log("elicitation state:", data),
   marks: [
     // `datum` is a DATA-space constant: it goes through the y scale, so the line
@@ -122,6 +122,10 @@ npm run dev            # the docs site, live (wraps ../elicitjs-docs) → http:/
 | `npm run build:docs` | Build the docs site → `../elicitjs-docs/.next/` |
 | `npm run start:docs` | Serve the docs production build |
 | `npm run typecheck` | `tsc --noEmit` against `src/types.d.ts` |
+| `npm test` | Unit tests (vitest): dispatch, option validation, the vocabulary gates, a jsdom smoke round-trip |
+| `npm run check:exports` | Gate: the runtime surface, `src/index.d.ts` and `src/vocabulary.js` agree in both directions |
+| `npm run check:bundle` | Gate: the built bundle still carries its `[elicit]` diagnostics and ships in the tarball |
+| `npm run gen:types` | Regenerate `src/authoring/index.d.ts` from the JSDoc |
 | `npm run verify:browser` | Regression gate: real Chromium driving gestures over the docs |
 | `npm run check:warnings` | Regression gate: zero `[elicit]` warnings on every docs route |
 

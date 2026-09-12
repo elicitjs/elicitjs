@@ -119,7 +119,8 @@ function cursorForZone(zone) {
 /** @type {import('./index.js').Driver} */
 export const brushRectDriver = {
     name: 'brushRect',
-    wants: (e) => e.pick === 'brushRect',
+    options: ['edgeInset', 'resize', 'move'],
+    sessionKeys: ['px', 'py', 'hoverIndex', 'activeIndex', 'zone', 'fields', 'cursor'],
     // Writes hoverIndex/activeIndex (no radial threshold — a rect brush has edge
     // zones, not a snap radius), so the select effect draws the mark highlight.
     selects: true,

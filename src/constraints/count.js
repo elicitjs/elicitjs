@@ -1,5 +1,5 @@
 // @ts-check
-import { defineConstraint } from './define.js';
+import { defineConstraint, constraintOptions } from './define.js';
 
 // count: a dataset *cardinality* invariant — keeps the number of data elements
 // within `max`. A whole-dataset rule (no field), so it returns a full dataset.
@@ -17,7 +17,7 @@ import { defineConstraint } from './define.js';
  * @returns {import('../types').Constraint}
  */
 export function count(options = {}) {
-    const { max = Infinity, strategy = 'replace' } = options;
+    const { max = Infinity, strategy = 'replace' } = constraintOptions('count', options);
 
     return defineConstraint(
         ({ data }) => {

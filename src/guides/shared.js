@@ -21,6 +21,7 @@
 // (see elicit.js's guideCtx). Guides never mutate it, and are never interactive.
 
 import { warn, warningsEnabled } from '../core/dev.js';
+import { GUIDE_UNIVERSAL_OPTIONS } from '../vocabulary.js';
 
 /**
  * Resolve one guide option against the chart context: call it if it's a function,
@@ -54,7 +55,7 @@ export function resolveGuideOptions(options, ctx) {
  * Options every guide accepts, whatever it draws.
  * @type {string[]}
  */
-const UNIVERSAL_GUIDE_OPTIONS = ['id'];
+const UNIVERSAL_GUIDE_OPTIONS = GUIDE_UNIVERSAL_OPTIONS;
 
 /**
  * Guide keys that are WRONG in a specific, diagnosable way. The guide-layer

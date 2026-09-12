@@ -273,15 +273,73 @@ sends the raw coordinate, did the right thing. `_makeDrag` states `.subject(even
 ({ x: event.x, y: event.y }))` for that reason. Never drop it, and never "fix" a
 mark by subtracting its own geometry back out.
 
-**A driver's session is PER FEATURE, not per driver, so a driver may only clear its
-OWN keys.** One mark can carry two lifecycles at once — a network sticker has a
+**A driver's session is PER FEATURE, not per driver, so a driver DECLARES the keys
+it owns.** One mark can carry two lifecycles at once — a network sticker has a
 relative `move` AND `edit.network.connect` — and `runDrivers` hands both the same
-`ui.session[featureId]`. Drivers run in registry order, so `session.clear()` on
-dragend deletes whatever the driver after you was about to read: `move` shipped with
-one and took `connect`'s `fromIndex` with it, so shift-drag drew the rubber band all
-the way across and created nothing, then left the parked proposal ghosting forever
-because `connect`'s dragend never ran. Namespace your state under one key and null
-THAT (`session.set({ move: null })`). Nothing warns; both charts render.
+`ui.session[featureId]`. Drivers run in registry order, so a wholesale clear on
+dragend deleted whatever the driver after you was about to read: `move` shipped with
+one and took `connect`'s `fromIndex` with it. Every driver now lists `sessionKeys`,
+and the `session.clear()` the engine hands it nulls exactly those — ownership by
+contract, not by memory. Add your keys to the list when you add a driver.
+
+**Every edit reaches exactly ONE driver, and `driverFor` decides which.** An exact
+`name === pick` match beats any `wants()` claim, and `wants` is a CAPABILITY
+predicate (a relative slide, a network connect) that never re-tests `pick` — a
+driver only ever named by its pick declares no `wants` at all. `runDrivers` groups
+edits by `driverFor` before iterating the registry in order. It used to hand every
+driver whatever it wanted, so `slide({ pick: 'nearest' })` was run and committed
+twice per tick. A pick that names no registered driver is reported
+(`warnUnclaimedPick`) rather than left as a dead edit.
+
+**Every factory's option vocabulary lives in `src/vocabulary.js`, one file that
+imports nothing.** `MARK_OPTIONS`, `ELEMENT_OPTIONS`, `GUIDE_OPTIONS`,
+`EDIT_OPTIONS` (keyed by dotted type), `CONSTRAINT_OPTIONS`, plus each kind's
+universal set. A mark passes `allow: MARK_OPTIONS.bar`; `makeEdit` looks its
+type up itself and stamps whatever it cannot account for, and the engine's
+`warnUnknownEditOptions` subtracts the knobs the edit's driver declares
+(`Driver.options`) before reporting — that is the sanctioned passthrough, and it
+is why `slide({ exent: 200 })` no longer sits inert. The same lists drive the
+per-factory option interfaces in `types.d.ts`: `check:exports` compares each
+declared options type against its vocabulary in BOTH directions, and
+`test/allow-lists.test.js` compares the vocabulary against what the factory body
+reads. Add an option = add it to the list, the interface, and the body, or a gate
+fails.
+
+**One identity key: `type`, on every feature kind.** A mark stamps `type: 'bar'`,
+an edit `type: 'line.draw'`, a constraint `type: 'clamp'`, a guide
+`type: 'rule'` — the keyword that built it, which is what a JSON compiler reads
+back. It was spelled `markName` / `type` / `constraintType` / nothing. This is a
+different question from a channel's or a field's `type` (a MEASURE), which a
+feature descriptor is never adjacent to.
+
+**A constraint is a DESCRIPTOR, and its `field` follows the edit.** `{ type, field?,
+options, apply(ctx) }`, the parallel of an `Edit`, built by `makeConstraint` /
+`defineConstraint` (`constraints.custom`); a bare function is still accepted in
+`spec.constraints` and `applyConstraint` (`constraints/define.js`) runs either
+shape. `field` omitted means the column the DISPATCHING EDIT writes — the engine
+threads it into the context — so `clamp({ min: 0 })` on a one-column instrument
+names nothing twice. It used to default to the literal `'y'`, a column name baked
+into the library. `field` is one spelling everywhere, a name or an ordered list
+(`ordering({ field: ['lo', 'hi'] })`); the total is `total` (`maintainSum`,
+`guides.remaining`); a constraint validates its options like everything else.
+
+**One orientation rule: `resolveValueAxis` (`plot/mark.js`).** Every directional
+mark answers "which axis does my value run along" through it, and the two places
+marks legitimately differ are ARGUMENTS: `extent` (is a declared x1/x2 pair the
+value, as on area/rect, or the chord, as on rule/tick/curve) and `single` (is a lone
+bound channel where the mark sits, or its category). A counting mark passes no
+scales, which enforces "resolve at factory time" by construction. The option is
+`orientation: 'horizontal' | 'vertical'` — 'vertical' = the value runs along y —
+on every directional mark, and the `…X`/`…Y` variants are `foo({ ...o,
+orientation })`. Don't add a seventh inference site.
+
+**An edit's capabilities are declared, never listed by type.** `cardinality`
+(`'append' | 'appendMany' | 'toggle' | 'delete'`) says how a creator changes the
+dataset's shape; `inverts: true` says the edit runs the pointer back through a
+scale, so the dead-drag guard has something to check. `CREATOR_TYPES` and
+`INVERTING_TYPES` were allowlists of type names and had already missed `rank`,
+`stack.edge` and `network.connect`. `computeEdit` returns one discriminated
+`EditResult` (`kind: 'rows' | 'domain' | 'selection'`) — no sentinel keys.
 
 **A mark with AREA needs `move({ mode: 'relative' })`, and the default stays
 absolute.** Same pair as `slide`, for the same reason and with the same machinery (a
@@ -568,9 +626,8 @@ CARTESIAN move driver and anchored its deltas through `axisOf` and the channel
 scales, while geo's own `apply` inverts through the projection. Nothing could catch
 it — both edits typecheck, both render, only the gesture misbehaves — so
 `check:exports` now asserts the invariant over every scoped namespace. Note the
-knock-on: any allowlist keyed on `type` (`INVERTING_TYPES`, `CREATOR_TYPES` in
-`elicit.js`) must carry the dotted names, and `'sweep'` sat in one of them matching
-nothing at all for as long as `edit.line.sweep` reported `type: 'move'`.
+knock-on: `EDIT_OPTIONS` (`src/vocabulary.js`) is keyed by the dotted name, and a
+driver that claims by type (`drivers/move.js`) sees the dotted name too.
 
 **A channel is SCALED, a raw channel is per-row and UNSCALED, an option is
 constant.** `encodeChannel` is the single datum -> scaled path and `rawChannel`
@@ -601,16 +658,16 @@ only the geometry does.
 
 The contract is the `Mark` interface in `src/types.d.ts` (prose version at the top of `src/plot/mark.js`). Annotate your factory `@returns {import('../types').Mark}` — not `any`. Concretely:
 - `build(currentData, scales, width, height) -> FeatureNode[]` is the one required method. `currentData` is the chart's dataset, handed in by the engine — the mark takes no `data` option and no `onChange`.
-- Call `normalizeMarkOptions(options, { mark: 'yourMark', allow: [...] })`. `allow` is your mark's own option vocabulary on top of the universal ones (`channels`/`id`/`edits`/`constraints`) and the style shorthands; it drives the unknown-option warning, so an author's `color:` or a typo gets told rather than silently dropped into `...rest`. **Keep `allow` in sync when you add an option** — and note the warning is only as good as the list: a wrong entry produces a false positive, which is worse than none. `npm run check:warnings` is what catches that.
+- Add your mark's option vocabulary to `MARK_OPTIONS` in `src/vocabulary.js` and call `normalizeMarkOptions(options, { mark: 'yourMark', allow: MARK_OPTIONS.yourMark })`. The list is your mark's own options on top of the universal ones (`channels`/`id`/`edits`/`table`) and the style shorthands; it drives the unknown-option warning, the per-factory options interface (`YourMarkOptions` in `types.d.ts`), and two gates: `check:exports` (interface ↔ list) and `test/allow-lists.test.js` (list ↔ what the body reads). A wrong entry produces a false positive, which is worse than none; `npm run check:warnings` catches that over the docs.
 - Resolve position/style through `encodeChannel` / `resolveStyle` (value axis) and `categoryOf` (category axis) — don't hand-roll scale lookups or read `datum[key]` raw. Pass `index` and `currentData` to every one of those calls so a derived `{ fn }` channel gets its full `(d, i, data)`.
 - Set `discreteScale: 'band'` (bar/tick — needs an interval) or `'point'` (point/line — needs a tick), and take `xKey`/`yKey` from `positionalKeys(channels)`. This says what the mark needs for *discrete* data; the schema says which fields are discrete. A mark that merely spans (like `rule`) should leave `discreteScale` undefined so a `composite` can stamp its own.
 - Declare `requires` when your geometry genuinely needs a scale capability, rather than letting a fallback stand in for it (see the requires invariant).
-- Stamp `markName: 'yourMark'`, so every dev message says `yourMark()` instead of the engine's positional `feature-3` placeholder.
+- Stamp `type: 'yourMark'` — the one identity key every feature kind carries — so every dev message says `yourMark()` instead of the engine's positional `feature-3` placeholder.
 - If you draw a handle, go through `resolveHandles` and accept `handles` / `handleSize` / `handleColor`. Where its travel range isn't a scale, stamp `node.dm` so `guide: { track: true }` can draw it.
 - Return `edits`, `constraints`, `xKey`, `yKey` from the factory — VERBATIM. `rule` silently dropped all four for a long time, which made a draggable whisker impossible; `trend` and `face` went the other way and injected their own. If a mark accepts an option, it must pass it on unchanged.
 - Don't set `pointerEvents` on your nodes to make them inert — leave it, and the engine silences any mark with no direct-pick edit (see the pointer-transparency invariant). Setting it yourself also disables the mark when it *does* carry an edit.
 - If the mark groups points into series (a line-family mark), set `seriesKey`, `order`, and `supportsSeries: true` so line-scoped edits and the dev guard work.
-- The BARE form is the mark: it infers its value axis from the scales the schema resolved. Where the mark has a natural direction, also export `...X`/`...Y` variants that FORCE one orientation — every directional mark here (`bar`, `tick`, `rect`, `line`, `area`, `curve`, `text`, `dotStack`, `waffle`, `rule`) follows that pairing, and all of them already auto-detect. Don't ship an asymmetric `ruleY`-with-no-`ruleX` again. Note the variants are JS SUGAR: only the bare name is a grammar keyword, because a JSON spec says `{ "mark": "bar" }` and infers orientation from the channels, exactly as Vega-Lite does.
+- The BARE form infers its value axis through `resolveValueAxis` and takes `orientation: 'horizontal' | 'vertical'`. Where the mark has a natural direction, also export the `...X`/`...Y` pair as `foo({ ...o, orientation })` — every directional mark here (`bar`, `tick`, `rect`, `line`, `area`, `curve`, `text`, `dotStack`, `waffle`, `rule`) follows that pairing. Don't ship an asymmetric `ruleY`-with-no-`ruleX` again. The variants are KEYWORDS (decided 2026-09-11, the Observable Plot precedent): a JSON spec may say `{ "mark": "barY" }` or `{ "mark": "bar", "orientation": "vertical" }`, and `index.d.ts` declares both.
 
 **Glyphs: prefer a group of marks over one clever mark.** If a glyph's handles map to distinct *fields* of a row, build it as a `composite` — a group that desugars into ordinary marks (`Elicit` flattens nested arrays in `marks`). Each handle is then its own feature, so direct-pick dispatch keeps a drag on one handle from touching another, and each handle edits a plain `y`/`x` channel. Only when several handles must live on **one** feature over **one** datum (their positions are *derived*, not fields — see `trend`'s intercept/slope, `area`'s span edges) do you need the `channel` node tag to arbitrate. Use `claimEdge(edit, name)` from `src/edit/shared.js` for that guard, never a hand-written `when: ctx => ctx.node.channel === '…'`: `claimEdge` rejects only a *differently* tagged node, so an untagged node (a mark-level edit spanning both handles) and an **absent** one still pass. That second case is load-bearing — a `plane`/`probe`-pick edit carries no node at all, so a guard that demands one silently kills every gesture on it. Reach for the whole pattern last; it was `composite`'s old shape and the parts-as-features form replaced it.
 
@@ -670,7 +727,7 @@ aimed at the row before it.
 - Universal (any mark) → `src/edit/basic.js`, exported top-level from `edit/index.js`.
 - Line-scoped → `src/edit/line.js`, added to the `line` object export (`edit.line.yourEdit`), `scope: 'line'` set.
 - Writing a table other than the one its mark draws → set `Edit.table` to the target ROLE. `computeEdit` then keeps `ctx.data` (the rows the proposal is about) and `ctx.index`/`ctx.datum` (the row the gesture touched) apart, and `targetTableOf` is the ONE place the destination is resolved — computeEdit and runEdit both read it, so a proposal can never be spliced over the wrong table.
-- Build it with `makeEdit` from `shared.js`; reuse `schemaDefaults`/`nextSeriesKey`/`markCenter` rather than reimplementing them.
+- Build it with `makeEdit` from `shared.js`; reuse `schemaDefaults`/`nextSeriesKey`/`markCenter` rather than reimplementing them. Add its options to `EDIT_OPTIONS` in `src/vocabulary.js` under its dotted type (`makeEdit` looks them up), declare `inverts: true` if it runs the pointer back through a scale and a `cardinality` if it mints or drops rows, and give it an options interface in `types.d.ts` — `check:exports` holds the two lists to each other.
 - If it needs proximity/target resolution, use `edit/pick.js`'s `nearestMark`/`nearestSeries`/`nearestMarkOnAxis` — don't write a second distance function.
 - If it needs a multi-event lifecycle, see "Multi-event lifecycles are drivers" above.
 - Create/remove should stay symmetric: if you add a new "build" primitive (like `anchor`/`newSeries`/`draw`), consider whether the corresponding "take apart" primitive exists (`remove`/`removeSeries`) or is a deliberate gap.

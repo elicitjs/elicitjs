@@ -1,5 +1,5 @@
 // @ts-check
-import { defineConstraint } from './define.js';
+import { defineConstraint, constraintOptions } from './define.js';
 
 // clamp: restricts a field's value to a [min, max] range — a data invariant.
 //
@@ -12,7 +12,7 @@ import { defineConstraint } from './define.js';
  * @returns {import('../types').Constraint}
  */
 export function clamp(options = {}) {
-    const { min, max, field = 'y' } = options;
+    const { min, max, field } = constraintOptions('clamp', options);
 
     return defineConstraint(
         ({ value, domain }) => {

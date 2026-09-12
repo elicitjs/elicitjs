@@ -75,6 +75,7 @@ import { ellipse } from './ellipse.js';
 import { tickY } from './tick.js';
 import { curveY } from './curve.js';
 import { normalizeMarkOptions } from './mark.js';
+import { MARK_OPTIONS } from '../vocabulary.js';
 
 /** @param {number} x @returns {number} */
 const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
@@ -122,7 +123,7 @@ const G = {
  * @returns {any[]} the group's features, for Elicit's flattened list
  */
 export function face(options = {}) {
-    const opts = normalizeMarkOptions(options, { mark: 'face', allow: ['ink'] });
+    const opts = normalizeMarkOptions(options, { mark: 'face', allow: MARK_OPTIONS.face });
     const { id, edits, table, ink = G.ink } = opts;
 
     /** @type {Record<string, any>} */

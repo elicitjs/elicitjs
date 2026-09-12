@@ -1,4 +1,5 @@
 // @ts-check
+import { GUIDE_OPTIONS } from '../vocabulary.js';
 // guides.remaining — how much of a budget is still unallocated, and where the
 // running total currently stands against its target.
 //
@@ -31,7 +32,7 @@ import { resolveGuideOptions, warnUnknownGuideOptions } from './shared.js';
  * the docs table, and (later) the JSON grammar.
  * @type {string[]}
  */
-export const REMAINING_OPTIONS = ['field', 'total', 'unit', 'format', 'anchor', 'label', 'fill', 'fontSize'];
+export const REMAINING_OPTIONS = GUIDE_OPTIONS.remaining;
 
 /**
  * The target sum this chart is already enforcing, read off its constraints, or
@@ -44,13 +45,13 @@ export const REMAINING_OPTIONS = ['field', 'total', 'unit', 'format', 'anchor', 
 function targetFromConstraints(constraints, field) {
     for (const c of constraints || []) {
         // `defineConstraint` stamps its metadata on the constraint function:
-        // `constraintType` names the rule, `options` carries its configuration,
+        // `type` names the rule, `options` carries its configuration,
         // `field` the column it governs. That is the same metadata an edit's
         // `guide: true` already reads to draw a channel's bounds.
         const spec = /** @type {any} */ (c);
-        if (!spec || spec.constraintType !== 'maintainSum') continue;
+        if (!spec || spec.type !== 'maintainSum') continue;
         if (spec.field != null && field != null && spec.field !== field) continue;
-        const target = spec.options && spec.options.targetSum;
+        const target = spec.options && spec.options.total;
         if (typeof target === 'number') return target;
     }
     return null;
@@ -75,6 +76,7 @@ export function remaining(options = {}) {
     warnUnknownGuideOptions('remaining', options, REMAINING_OPTIONS);
     return {
         views: 'state',
+        type: 'remaining',
         build: (rows, _scales, width, height, ctx) => {
             const t = (ctx && ctx.theme && ctx.theme.guide && ctx.theme.guide.rule) || {};
             const {

@@ -1,6 +1,7 @@
 // @ts-check
 import { isBand } from '../core/scales.js';
-import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel, orderFieldOf} from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel, orderFieldOf, resolveValueAxis } from './mark.js';
+import { MARK_OPTIONS } from '../vocabulary.js';
 
 // line: a connected-path mark over an ordered set of points. It is deliberately
 // GENERAL — a you-draw-it curve, a multi-series line chart, a connected scatter
@@ -31,14 +32,13 @@ const SINGLE = '__single__'; // group key when no series field is set
 
 /**
  * @param {any} options
- * @param {'x' | 'y' | null} forcedValueAxis which axis carries the value
  * @param {string} [defaultConnect] 'domain' (presets) or 'sequence' (scatter/path)
  * @returns {import('../types').Mark}
  */
-function buildLine(options, forcedValueAxis, defaultConnect = 'domain') {
+function buildLine(options, defaultConnect = 'domain') {
     // Desugar top-level style shorthands (stroke: '…', strokeWidth: …) into the
     // channels so line reads style the same way every mark does.
-    const opts = normalizeMarkOptions(options, { mark: 'line', allow: ['curve', 'handles', 'handleSize', 'handleColor', 'connect', 'samples'] });
+    const opts = normalizeMarkOptions(options, { mark: 'line', allow: MARK_OPTIONS.line });
     const {
         channels = {},
         id,
@@ -47,8 +47,7 @@ function buildLine(options, forcedValueAxis, defaultConnect = 'domain') {
         handles = true,
         handleSize,
         handleColor,
-        connect = defaultConnect,
-        samples
+        connect = defaultConnect
     } = opts;
 
     const { xKey, yKey } = positionalKeys(channels);
@@ -57,7 +56,7 @@ function buildLine(options, forcedValueAxis, defaultConnect = 'domain') {
 
     return {
         ...markCommon(opts),
-        markName: 'line',
+        type: 'line',
         channels,
         // `curve` is read raw (no scale), so it must be declared — same contract as
         // `link`, which resolves its own per-row `curve` the same way. It was a plain
@@ -69,7 +68,6 @@ function buildLine(options, forcedValueAxis, defaultConnect = 'domain') {
         yKey,
         seriesKey: seriesField,
         connect,
-        samples,
         // Groups points into series, so the line-scoped edits (edit.line.*) apply.
         // The engine dev-warns if a line-scoped edit lands on a mark without this.
         supportsSeries: true,
@@ -87,13 +85,10 @@ function buildLine(options, forcedValueAxis, defaultConnect = 'domain') {
             //   explicit (lineY/lineX) wins; else a band axis is the domain, so
             //   the other axis is the value; else the axis carrying an `edit`;
             //   else default to value-on-y (the usual time series).
-            let valueAxis = forcedValueAxis;
-            if (!valueAxis) {
-                if (isBand(xScale)) valueAxis = 'y';
-                else if (isBand(yScale)) valueAxis = 'x';
-                else if (channels.x && channels.x.edit && !(channels.y && channels.y.edit)) valueAxis = 'x';
-                else valueAxis = 'y';
-            }
+            // (A line whose x carried the only edit used to flip to value-on-x by that
+            // fact alone — an orientation you could not see in the spec. State it:
+            // lineX, or orientation: 'horizontal'.)
+            const valueAxis = resolveValueAxis(channels, scales, { orientation: opts.orientation });
             // The domain (sweep) axis is the other one.
             const domainAxis = valueAxis === 'y' ? 'x' : 'y';
 
@@ -215,7 +210,7 @@ function orderPoints(group, connect, domainAxis, channels) {
  * @returns {import('../types').Mark}
  */
 export function line(options = {}) {
-    return buildLine(options, null);
+    return buildLine(options);
 }
 
 /**
@@ -224,7 +219,7 @@ export function line(options = {}) {
  * @returns {import('../types').Mark}
  */
 export function lineY(options = {}) {
-    return buildLine(options, 'y');
+    return line({ ...options, orientation: 'vertical' });
 }
 
 /**
@@ -233,7 +228,7 @@ export function lineY(options = {}) {
  * @returns {import('../types').Mark}
  */
 export function lineX(options = {}) {
-    return buildLine(options, 'x');
+    return line({ ...options, orientation: 'horizontal' });
 }
 
 /**
@@ -248,5 +243,5 @@ export function lineX(options = {}) {
  * @returns {import('../types').Mark}
  */
 export function path(options = {}) {
-    return buildLine(options, null, 'sequence');
+    return buildLine(options, 'sequence');
 }

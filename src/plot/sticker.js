@@ -60,6 +60,7 @@
 // text through the one on top.
 
 import { normalizeMarkOptions, markCommon, rawChannel } from './mark.js';
+import { MARK_OPTIONS } from '../vocabulary.js';
 import { composite } from './composite.js';
 import { rect } from './rect.js';
 import { text } from './text.js';
@@ -98,10 +99,7 @@ export function sticker(options = {}) {
         // channels: they describe the BOX around the text, and a channel would
         // trickle onto the label as well.
         except: ['padding', 'radius', 'maxWidth', 'minWidth', 'lineHeight'],
-        allow: [
-            'padding', 'radius', 'maxWidth', 'minWidth', 'minHeight',
-            'lineHeight', 'fontSize', 'fontFamily', 'format',
-        ],
+        allow: MARK_OPTIONS.sticker,
     });
     const {
         channels = {},
@@ -240,5 +238,5 @@ export function sticker(options = {}) {
     // The composite gets NOTHING editable: no channels to trickle, no edits to hand
     // its last part. Its last-part rules then have nothing to act on, instead of
     // quietly routing the sticker's drag to its own label.
-    return composite({ id: common.id, channels: {}, parts });
+    return composite({ id: common.id, table: common.table, channels: {}, parts });
 }

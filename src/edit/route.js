@@ -61,7 +61,7 @@ export function collectEdits(feature) {
 export function warnMisplacedEdits(feature, label) {
     const channels = feature.channels || {};
     const name_ = label ? label(feature) : `"${feature.id || '?'}"`;
-    const fid = feature.id || feature.markName || '?';
+    const fid = feature.id || feature.type || '?';
     for (const [name, chSpec] of Object.entries(channels)) {
         const key = `${fid}:${name}`;
         if (name === 'edit' || looksLikeEdit(chSpec)) {

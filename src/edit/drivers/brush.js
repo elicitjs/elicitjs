@@ -63,7 +63,8 @@ function classifyZone(feature, scales, datum, channelNames, px, py, edgeInset) {
 /** @type {import('./index.js').Driver} */
 export const brushDriver = {
     name: 'brush',
-    wants: (e) => e.pick === 'brush',
+    options: ['edgeInset'],
+    sessionKeys: ['px', 'py', 'threshold', 'hoverIndex', 'activeIndex', 'zone', 'field'],
     selects: true,
     onEvent({ feature, event, edits, marks, data, scales, session, runEdit }) {
         const edit = edits[0];

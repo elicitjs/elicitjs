@@ -173,6 +173,7 @@ export function draw(options = {}) {
     return makeEdit({
         type: 'geo.draw',
         gesture: 'drag',
+        cardinality: 'appendMany',
         channels: null,
         pick: 'draw',
         scope: 'geo',

@@ -1,5 +1,5 @@
 // @ts-check
-import { defineConstraint } from './define.js';
+import { defineConstraint, constraintOptions } from './define.js';
 
 // snap: quantizes a field's value to a discrete grid — a data invariant.
 //
@@ -18,7 +18,7 @@ import { defineConstraint } from './define.js';
  * @returns {import('../types').Constraint}
  */
 export function snap(options = {}) {
-    const { step = 1, origin = 0, field = 'y' } = options;
+    const { step = 1, origin = 0, field } = constraintOptions('snap', options);
 
     return defineConstraint(
         ({ value }) => {

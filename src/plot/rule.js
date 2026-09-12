@@ -26,17 +26,17 @@
 // handle's drag while an editable one still receives its own.
 
 import { baselineOf, isBand, bandStartOf, bandwidthOf } from '../core/scales.js';
-import { encodeChannel, categoryOf, resolveStyle, normalizeMarkOptions, positionalKeys, markCommon} from './mark.js';
+import { encodeChannel, categoryOf, resolveStyle, normalizeMarkOptions, positionalKeys, markCommon, markDefaults, themeOf, resolveValueAxis } from './mark.js';
+import { MARK_OPTIONS } from '../vocabulary.js';
 
 /**
  * @param {any} options
- * @param {'x' | 'y' | null} forcedValueAxis which axis carries the value
  * @returns {import('../types').Mark}
  */
-function buildRule(options, forcedValueAxis) {
+function buildRule(options) {
     // Desugar style shorthands (stroke, strokeWidth, opacity) into constant
     // channels, so a rule reads style the same way every mark does.
-    const opts = normalizeMarkOptions(options, { mark: 'rule', allow: ['strokeDasharray', 'discreteScale'] });
+    const opts = normalizeMarkOptions(options, { mark: 'rule', allow: MARK_OPTIONS.rule });
     const { channels = {}, id, edits, strokeDasharray, discreteScale } = opts;
 
     // Span mode: a pair of endpoint channels on one axis draws a segment between
@@ -50,7 +50,9 @@ function buildRule(options, forcedValueAxis) {
 
     // Which axis carries the value? Forced by ruleX/ruleY; else inferred from
     // whichever of x / y the mark declares a channel on.
-    const valueAxis = forcedValueAxis || (channels.x ? 'x' : 'y');
+    // A rule is decided at factory time (no scales): its y1/y2 pair is the chord,
+    // and a lone x or y is where it sits.
+    const valueAxis = resolveValueAxis(channels, null, { orientation: opts.orientation, extent: 'span', single: 'value' });
 
     // A rule bound to no field at all is a single reference line, not one line per
     // row — otherwise `ruleY({ channels: { y: { datum: 25 } } })` would stack N
@@ -60,7 +62,7 @@ function buildRule(options, forcedValueAxis) {
 
     return {
         ...markCommon(opts),
-        markName: 'rule',
+        type: 'rule',
         channels,
         // A rule spans; it has no opinion about the discrete scale of the axis it
         // crosses. Left undefined so a composite can stamp its own onto it.
@@ -80,9 +82,9 @@ function buildRule(options, forcedValueAxis) {
 
             /** @param {any} datum @param {number} index */
             const emit = (datum, index) => {
-                const style = resolveStyle(scales, channels, datum || {}, {
-                    stroke: 'black', strokeWidth: 1
-                }, index, currentData);
+                const style = resolveStyle(scales, channels, datum || {},
+                    markDefaults(scales, 'rule', { stroke: themeOf(scales).ink, strokeWidth: 1 }),
+                    index, currentData);
 
                 // Span mode: a segment between two endpoints on spanAxis, at the
                 // datum's category on the other axis. Endpoints resolve through
@@ -153,7 +155,7 @@ function buildRule(options, forcedValueAxis) {
  * @returns {import('../types').Mark}
  */
 export function rule(options = {}) {
-    return buildRule(options, null);
+    return buildRule(options);
 }
 
 /**
@@ -162,7 +164,7 @@ export function rule(options = {}) {
  * @returns {import('../types').Mark}
  */
 export function ruleY(options = {}) {
-    return buildRule(options, 'y');
+    return rule({ ...options, orientation: 'vertical' });
 }
 
 /**
@@ -171,5 +173,5 @@ export function ruleY(options = {}) {
  * @returns {import('../types').Mark}
  */
 export function ruleX(options = {}) {
-    return buildRule(options, 'x');
+    return rule({ ...options, orientation: 'horizontal' });
 }

@@ -1,5 +1,5 @@
 // @ts-check
-import { defineConstraint } from './define.js';
+import { defineConstraint, constraintOptions } from './define.js';
 
 // spacing: adjacent values along a field must stay at least `min` apart — a data
 // invariant.
@@ -28,11 +28,11 @@ import { defineConstraint } from './define.js';
  * @returns {import('../types').Constraint}
  */
 export function spacing(options = {}) {
-    const { field = 'x', min = 1, series = null } = options;
+    const { field, min = 1, series = null } = constraintOptions('spacing', options);
 
     return defineConstraint(
-        ({ data, activeIndex }) => {
-            if (!data || data.length < 2 || !(min > 0)) return undefined;
+        ({ data, activeIndex, field }) => {
+            if (!data || data.length < 2 || !(min > 0) || field == null) return undefined;
 
             /** @type {Map<any, number[]>} */
             const groups = new Map();

@@ -85,6 +85,7 @@
 // goes on the edit (`edit.trend.slope({ stage: 1 })`), like every other edit's stage.
 
 import { resolveStyle, normalizeMarkOptions, markDefaults, encodeValue, positionalKeys, resolveHandles, markCommon} from './mark.js';
+import { MARK_OPTIONS } from '../vocabulary.js';
 import { paramChannels, readParams, anchorsOf, lineSegment, segmentEnds, valueAt } from './trendGeometry.js';
 import { warn } from '../core/dev.js';
 
@@ -95,7 +96,7 @@ import { warn } from '../core/dev.js';
 export function trend(options = {}) {
     const opts = normalizeMarkOptions(options, {
         mark: 'trend',
-        allow: ['anchor', 'probe', 'grip', 'handles', 'handleSize', 'handleColor']
+        allow: MARK_OPTIONS.trend
     });
     const {
         edits,
@@ -125,7 +126,7 @@ export function trend(options = {}) {
 
     return {
         ...markCommon(opts),
-        markName: 'trend',
+        type: 'trend',
         channels,
         // Signals autoAxes to cross at the origin when the chart leaves `axes` unset.
         isTrend: true,

@@ -1,6 +1,7 @@
 // @ts-check
 import { isBand, bandSpan } from '../core/scales.js';
-import { encodeChannel, categoryOf, encodeAngle, resolveStyle, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon} from './mark.js';
+import { encodeChannel, categoryOf, encodeAngle, resolveStyle, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, resolveValueAxis } from './mark.js';
+import { MARK_OPTIONS } from '../vocabulary.js';
 
 // tick: a thin line-segment mark (Observable Plot's tick). It marks a VALUE on
 // one axis (the linear/continuous axis) and SPANS the other axis — a category
@@ -63,13 +64,12 @@ function resolveSpan(spanAxis, scale, channels, scales, datum, key, fullLength, 
 
 /**
  * @param {any} options
- * @param {'x' | 'y' | null} forcedValueAxis which axis carries the value
  * @returns {import('../types').Mark}
  */
-function buildTick(options, forcedValueAxis) {
+function buildTick(options) {
     // Desugar top-level style shorthands (stroke: '…', strokeWidth: …) into the
     // channels so tick reads style the same way every mark does.
-    const opts = normalizeMarkOptions(options, { mark: 'tick', allow: ['inset', 'length'] });
+    const opts = normalizeMarkOptions(options, { mark: 'tick', allow: MARK_OPTIONS.tick });
     const {
         channels = {},
         id,
@@ -82,7 +82,7 @@ function buildTick(options, forcedValueAxis) {
 
     return {
         ...markCommon(opts),
-        markName: 'tick',
+        type: 'tick',
         channels,
         // A tick sits within a band (like a bar) — it wants the band interval to
         // span, so it asks for the band variant of the categorical scale.
@@ -101,12 +101,8 @@ function buildTick(options, forcedValueAxis) {
 
             // Which axis carries the value (the line's position)? Explicit wins;
             // otherwise the band axis is the span, so the OTHER axis is the value.
-            let valueAxis = forcedValueAxis;
-            if (!valueAxis) {
-                if (isBand(xScale)) valueAxis = 'y';
-                else if (isBand(yScale)) valueAxis = 'x';
-                else valueAxis = 'y';
-            }
+            // A declared x1/x2 (y1/y2) pair is the tick's CHORD, so the value is the other axis.
+            const valueAxis = resolveValueAxis(channels, scales, { orientation: opts.orientation, extent: 'span' });
 
             // A tick reads as a stroked line, so its per-mark defaults are
             // stroke/strokeWidth rather than a fill; stroke follows the theme ink.
@@ -162,7 +158,7 @@ function buildTick(options, forcedValueAxis) {
  * @returns {import('../types').Mark}
  */
 export function tick(options = {}) {
-    return buildTick(options, null);
+    return buildTick(options);
 }
 
 /**
@@ -171,7 +167,7 @@ export function tick(options = {}) {
  * @returns {import('../types').Mark}
  */
 export function tickY(options = {}) {
-    return buildTick(options, 'y');
+    return tick({ ...options, orientation: 'vertical' });
 }
 
 /**
@@ -180,5 +176,5 @@ export function tickY(options = {}) {
  * @returns {import('../types').Mark}
  */
 export function tickX(options = {}) {
-    return buildTick(options, 'x');
+    return tick({ ...options, orientation: 'horizontal' });
 }

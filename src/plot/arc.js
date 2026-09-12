@@ -46,6 +46,7 @@
 // work with maintainSum.
 
 import { encodeChannel, resolveStyle, normalizeMarkOptions, markDefaults, resolveHandles, markCommon} from './mark.js';
+import { MARK_OPTIONS } from '../vocabulary.js';
 import { arcSpan, arcPath, polarToXY } from './polar.js';
 import { isBand, bandwidthOf } from '../core/scales.js';
 import { groupByPosition, stackLayout, stackDescriptor } from './stack.js';
@@ -57,10 +58,7 @@ import { groupByPosition, stackLayout, stackDescriptor } from './stack.js';
 export function arc(options = {}) {
     const opts = normalizeMarkOptions(options, {
         mark: 'arc',
-        allow: [
-            'outerRadius', 'innerRadius', 'padAngle', 'arc', 'start', 'end',
-            'handles', 'handleSize', 'handleColor',
-        ],
+        allow: MARK_OPTIONS.arc,
     });
     const {
         channels = {},
@@ -82,7 +80,10 @@ export function arc(options = {}) {
     } = opts;
 
     const markEdits = edits || [];
-    const editable = markEdits.length > 0;
+    // Boundary handles serve the stack edits only (they address a row PAIR), so they
+    // are armed by one — the same rule `bar` applies. Any other edit on the mark
+    // (a cycle on fill, a remove) used to arm them too, drawing grips nothing read.
+    const editable = markEdits.some((/** @type {any} */ e) => e && e.scope === 'stack');
 
     const [spanStart, spanEnd] = arcSpan({
         arc: arcOpt || 'full',
@@ -93,7 +94,7 @@ export function arc(options = {}) {
 
     return {
         ...markCommon(opts),
-        markName: 'arc',
+        type: 'arc',
         channels,
         // `theta` is read RAW here, and that is a statement about this mark, not
         // about the channel: an arc NORMALIZES its magnitudes itself (stackLayout,
@@ -284,17 +285,11 @@ export function arc(options = {}) {
                             strokeWidth: handleStyle.visible ? handleStyle.strokeWidth : 0,
                             cursor: 'grab',
                             index: members[local],
-                            // Edge-edit payload (read by edit.arc.edge's apply / when).
+                            // A boundary handle: the pair it separates, and the stack
+                            // descriptor edit.stack.* inverts through.
                             edge: true,
                             loIndex: members[local],
                             hiIndex: members[local + 1],
-                            // `members` / `pivot*` / `span*` / `pad` are the pre-stack
-                            // payload edit.arc.edge read directly. edit.stack.* reads
-                            // `stack` instead; they are kept so a spec still pinned to
-                            // the deprecated edge edit keeps working.
-                            members,
-                            pivotX: cx, pivotY: cy,
-                            spanStart, spanEnd, pad,
                             stack: stackDescriptor({ members, local, field: thetaField, geometry }),
                         });
                     }

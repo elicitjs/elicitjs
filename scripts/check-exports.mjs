@@ -131,6 +131,89 @@ for (const ns of NAMESPACES) {
     }
 }
 
+// ── Every factory's DECLARED options match the options it READS ─────────────
+// src/vocabulary.js is what each factory validates its options against at run
+// time; the per-factory interfaces in src/types.d.ts are what a TypeScript caller
+// is allowed to pass. Both directions matter: an option typed but never read is a
+// silent no-op with a green typecheck, and one read but never typed is an API
+// nobody can call. `widgets`, `format` and `authoring` carry no vocabulary yet
+// and are skipped; so is any member whose options parameter is not an object.
+const vocab = await import(path.join(root, 'src/vocabulary.js'));
+const baseMark = (m) => (vocab.MARK_OPTIONS[m] ? m
+    : ({ path: 'line', donut: 'arc' })[m] || (/[XY]$/.test(m) && vocab.MARK_OPTIONS[m.slice(0, -1)] ? m.slice(0, -1) : null));
+const baseElement = (m) => (vocab.ELEMENT_OPTIONS[m] ? m
+    : /^axis[XY]$/.test(m) ? 'axis' : /^grid[XY]$/.test(m) ? 'grid' : /^legend/.test(m) ? 'legend' : null);
+const VOCAB = {
+    plot: { universal: [...vocab.MARK_UNIVERSAL_OPTIONS, ...vocab.MARK_SHORTHANDS], of: (m) => { const b = baseMark(m); return b ? vocab.MARK_OPTIONS[b] : null; } },
+    elements: { universal: vocab.ELEMENT_UNIVERSAL_OPTIONS, of: (m) => { const b = baseElement(m); return b ? vocab.ELEMENT_OPTIONS[b] : null; } },
+    guides: { universal: vocab.GUIDE_UNIVERSAL_OPTIONS, of: (m) => vocab.GUIDE_OPTIONS[m] || null },
+    constraints: { universal: [], of: (m) => vocab.CONSTRAINT_OPTIONS[m] || null },
+    edit: { universal: vocab.EDIT_UNIVERSAL_OPTIONS, of: (m) => vocab.EDIT_OPTIONS[m === 'scale.categories' ? 'scale.addCategory' : m] || null },
+};
+
+/**
+ * The property names of a call signature's options parameter (the last parameter
+ * whose type is an object with named properties), or null when there is none or
+ * it is an open index signature.
+ */
+function declaredOptionNames(memberSymbol) {
+    const decl = memberSymbol.valueDeclaration || memberSymbol.declarations?.[0];
+    if (!decl) return { skip: 'no declaration' };
+    const type = checker.getTypeOfSymbolAtLocation(memberSymbol, decl);
+    const sig = type.getCallSignatures()[0];
+    if (!sig) return { skip: 'not callable' };
+    const params = sig.getParameters();
+    for (let i = params.length - 1; i >= 0; i--) {
+        const p = params[i];
+        const pd = p.valueDeclaration || p.declarations?.[0];
+        let pt = checker.getTypeOfSymbolAtLocation(p, pd);
+        // `options?: X` arrives as X | undefined.
+        if (pt.isUnion()) pt = pt.types.find((t) => !(t.flags & ts.TypeFlags.Undefined)) || pt;
+        if (pt.getCallSignatures().length) continue; // a function argument (custom's apply)
+        const props = pt.getProperties().map((q) => q.getName());
+        if (checker.getIndexInfoOfType(pt, ts.IndexKind.String)) return { open: true, props };
+        if (props.length) return { props };
+    }
+    return { skip: 'no options parameter' };
+}
+
+/** Walk a namespace type: yields [dotted.path, symbol] for every callable member. */
+function* members(nsSymbol, prefix = '') {
+    const decl = nsSymbol.valueDeclaration || nsSymbol.declarations?.[0];
+    const type = checker.getTypeOfSymbolAtLocation(nsSymbol, decl);
+    for (const p of type.getProperties()) {
+        const pd = p.valueDeclaration || p.declarations?.[0];
+        const pt = checker.getTypeOfSymbolAtLocation(p, pd);
+        const name = prefix ? `${prefix}.${p.getName()}` : p.getName();
+        if (pt.getCallSignatures().length) yield [name, p];
+        else if (pt.getProperties().length) yield* members(p, name);
+    }
+}
+
+let signaturesChecked = 0;
+for (const ns of Object.keys(VOCAB)) {
+    const nsSymbol = checker.getExportsOfModule(moduleSymbol).find((s) => s.getName() === ns);
+    if (!nsSymbol) continue;
+    const { universal, of } = VOCAB[ns];
+    for (const [member, symbol] of members(nsSymbol)) {
+        if (member === 'custom' || member === 'when' || member.startsWith('when.')) continue;
+        const allow = of(member);
+        if (!allow) continue; // no vocabulary entry: nothing to hold it to
+        const got = declaredOptionNames(symbol);
+        if (got.skip) continue;
+        signaturesChecked += 1;
+        if (got.open) {
+            fail(`${ns}.${member}() is typed with an open options bag, so its ${allow.length} runtime options are untyped. Declare them.`);
+            continue;
+        }
+        const known = new Set([...universal, ...allow]);
+        const extra = got.props.filter((k) => !known.has(k));
+        const missing = allow.filter((k) => !got.props.includes(k));
+        if (extra.length) fail(`${ns}.${member}() is typed to accept ${extra.map((k) => `\`${k}\``).join(', ')}, which the factory never reads (src/vocabulary.js).`);
+        if (missing.length) fail(`${ns}.${member}() reads ${missing.map((k) => `\`${k}\``).join(', ')} (src/vocabulary.js) but its options type does not declare ${missing.length > 1 ? 'them' : 'it'}.`);
+    }
+}
+
 // ── Every scoped edit's `type` IS its dotted path ───────────────────────────
 // `edit.line.draw()` <-> { "type": "line.draw" }. That has been the documented
 // convention (edit/index.js, index.d.ts) far longer than it was true: only
@@ -171,4 +254,4 @@ const counted = NAMESPACES
     .filter((ns) => runtime[ns] && typeof runtime[ns] === 'object')
     .map((ns) => `${ns}: ${Object.keys(runtime[ns]).length}`)
     .join(', ');
-console.log(`check-exports: OK — ${declaredTop.size} top-level exports (${counted})`);
+console.log(`check-exports: OK — ${declaredTop.size} top-level exports (${counted}); ${signaturesChecked} option signatures match src/vocabulary.js`);

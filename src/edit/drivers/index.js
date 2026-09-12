@@ -13,7 +13,21 @@
 // — so a lifecycle edit can sit on a glyph part beside other direct edits.
 //
 // A driver is:
-//   { name, wants(edit) -> bool, onEvent(ctx) -> boolean changed, selects? }
+//   { name, wants?(edit) -> bool, sessionKeys, onEvent(ctx) -> boolean changed, selects? }
+//
+// WHICH driver serves an edit is decided in ONE place, `driverFor`, and every edit
+// reaches exactly one driver: an exact `name === edit.pick` match first, then the
+// first driver whose `wants` claims it. `wants` is a CAPABILITY predicate (a
+// relative slide/move, a network connect) and never re-tests `pick` — a driver that
+// is only ever named by its pick declares no `wants` at all. This used to be
+// looser: `runDrivers` handed every driver whatever it `wants`ed, so an edit two
+// drivers claimed (`slide({ pick: 'nearest' })`) was run and committed twice per tick.
+//
+// `sessionKeys` names the keys this driver writes into the per-FEATURE session.
+// The session is shared by every driver on the mark (a sticker carries a relative
+// move AND a connect), so the `clear()` a driver is handed nulls ITS keys only —
+// ownership is declared, not remembered. A wholesale clear once deleted a connect
+// driver's `fromIndex` before its own dragend ran.
 // `selects: true` declares that the driver writes a SELECTION into its session
 // (hoverIndex/activeIndex, and optionally px/py/threshold) — which is what lets an
 // edit with `guide: true` draw the `select` effect (snap ring + mark highlight)
@@ -76,7 +90,13 @@ import { connectDriver } from './connect.js';
  *
  * @typedef {Object} Driver
  * @property {string} name
- * @property {(edit: import('../../types').Edit) => boolean} wants
+ * @property {(edit: import('../../types').Edit) => boolean} [wants] a CAPABILITY
+ *   claim on an edit not addressed by pick name (never re-test `pick`)
+ * @property {string[]} [sessionKeys] the session keys this driver owns; its
+ *   `session.clear()` nulls exactly these
+ * @property {string[]} [options] the per-edit knobs this driver reads off the
+ *   descriptor (`edgeInset`, `resize`, …) — the sanctioned passthrough; a key on
+ *   an edit that is in neither its factory's vocabulary nor its driver's is reported
  * @property {(ctx: DriverContext) => boolean} onEvent
  * @property {boolean} [selects] writes a selection into its session (see above),
  *   so an edit with `guide: true` can draw the `select` effect for it.
@@ -91,8 +111,9 @@ export const drivers = [planeDriver, nearestDriver, sweepDriver, drawDriver, bru
  * @param {Driver} driver
  */
 export function registerDriver(driver) {
-    if (!driver || !driver.name || typeof driver.wants !== 'function' || typeof driver.onEvent !== 'function') {
-        throw new Error('[elicit] registerDriver expects { name, wants(edit), onEvent(ctx) }');
+    if (!driver || !driver.name || typeof driver.onEvent !== 'function'
+        || (driver.wants != null && typeof driver.wants !== 'function')) {
+        throw new Error('[elicit] registerDriver expects { name, onEvent(ctx), wants?(edit), sessionKeys? }');
     }
     const i = drivers.findIndex((d) => d.name === driver.name);
     if (i >= 0) drivers[i] = driver;
@@ -110,7 +131,7 @@ export function registerDriver(driver) {
  * @returns {Driver | undefined}
  */
 export function driverFor(edit) {
-    return drivers.find((d) => d.name === edit.pick) || drivers.find((d) => d.wants(edit));
+    return drivers.find((d) => d.name === edit.pick) || drivers.find((d) => d.wants ? d.wants(edit) : false);
 }
 
 /**

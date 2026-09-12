@@ -133,6 +133,7 @@
 // aimed at the row before it.
 
 import { normalizeMarkOptions, encodeChannel, positionalKeys, themeOf } from './mark.js';
+import { MARK_OPTIONS } from '../vocabulary.js';
 import { createFrameScale, bandwidthOf, isBand, scaleKey } from '../core/scales.js';
 import {
     frameSpecOf, normalizeFrameKey, frameFamilyOf, frameLocalRange, channelRange
@@ -357,7 +358,7 @@ export function composite(options = {}) {
     const glyph = `glyph#${++glyphSeq}`;
     // Desugar top-level shorthands (fill, angle, size, …) into composite channels
     // so `composite({ fill: 'steelblue', angle: 45, parts })` works like a mark.
-    const opts = normalizeMarkOptions(options, { mark: 'composite', allow: ['parts', 'discreteScale', 'table'] });
+    const opts = normalizeMarkOptions(options, { mark: 'composite', allow: MARK_OPTIONS.composite });
     const {
         id,
         parts = [],
@@ -426,7 +427,7 @@ export function composite(options = {}) {
         if (framed.length && part.supportsSeries) {
             warn(
                 `composite:series:${name}:${i}`,
-                `composite "${name}" contains a series mark (${part.markName || 'a line-family mark'}) ` +
+                `composite "${name}" contains a series mark (${part.type || 'a line-family mark'}) ` +
                 `with local (frame) channels. A frame is per ROW, so the mark is built one row at a ` +
                 `time and cannot group rows into a series. Position it on the global scales, or ` +
                 `move it out of the composite.`
@@ -526,7 +527,7 @@ export function composite(options = {}) {
 
     const box = {
         id: `${name}/frame`,
-        markName: 'composite',
+        type: 'composite',
         // In the glyph's paint group, but as a `hit` node it stays at the bottom of
         // it: a box covers its whole glyph, so interleaved by row it would take
         // every gesture aimed at the row before it.

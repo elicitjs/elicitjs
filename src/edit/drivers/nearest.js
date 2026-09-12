@@ -10,7 +10,7 @@ import { nearestMark, pickThreshold } from '../pick.js';
 /** @type {import('./index.js').Driver} */
 export const nearestDriver = {
     name: 'nearest',
-    wants: (e) => e.pick === 'nearest',
+    sessionKeys: ['px', 'py', 'threshold', 'hoverIndex', 'activeIndex'],
     selects: true,
     onEvent({ event, edits, marks, session, runEdit }) {
         const threshold = pickThreshold(edits[0]);

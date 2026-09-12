@@ -1,6 +1,7 @@
 // @ts-check
 import { isBand, bandwidthOf, bandStartOf, baselineOf, rangeExtent } from '../core/scales.js';
 import { encodeChannel, categoryOf, encodeAngle, resolveStyle, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon} from './mark.js';
+import { MARK_OPTIONS } from '../vocabulary.js';
 
 // rect: the generalized bar. A bar fixes ONE axis to a categorical band (position
 // + thickness) and draws the OTHER as a length from a baseline (or an explicit
@@ -87,10 +88,9 @@ function resolveExtent(axis, channels, scales, scale, datum, key, forcedValue, f
 
 /**
  * @param {any} options
- * @param {'x' | 'y' | null} forcedValueAxis which axis is forced to baseline→value
  * @returns {import('../types').Mark}
  */
-function buildRect(options, forcedValueAxis) {
+function buildRect(options) {
     // `width`/`height` are pixel EXTENTS (see resolveExtent's SIZE branch) and `rx`
     // a corner radius — all three are read as channels, so they are listed here to
     // let the top-level shorthand `rect({ width: 120 })` through rather than have it
@@ -98,8 +98,12 @@ function buildRect(options, forcedValueAxis) {
     // shorthand desugars to `{ value }` for every mark, and `width` means nothing on
     // a point or a line.
     const opts = normalizeMarkOptions(options, {
-        mark: 'rect', allow: ['width', 'height', 'rx'],
+        mark: 'rect', allow: MARK_OPTIONS.rect,
     });
+    // A rect resolves each axis on its own (span / size / band / value / extent);
+    // `orientation` only FORCES one axis to baseline→value (rectY: the y axis).
+    const forcedValueAxis = opts.orientation === 'vertical' ? 'y'
+        : opts.orientation === 'horizontal' ? 'x' : null;
     const { channels = {}, id, edits, width: widthOpt, height: heightOpt, rx: rxOpt } = opts;
     // `width` / `height` / `rx` are CHANNELS (resolved through encodeChannel below),
     // and this is their constant SHORTHAND — the same relationship `fill: 'red'` has
@@ -118,7 +122,7 @@ function buildRect(options, forcedValueAxis) {
 
     return {
         ...markCommon(opts),
-        markName: 'rect',
+        type: 'rect',
         channels,
         // A rect wants the band interval on any categorical axis (like a bar).
         discreteScale: 'band',
@@ -178,7 +182,7 @@ function buildRect(options, forcedValueAxis) {
  * @returns {import('../types').Mark}
  */
 export function rect(options = {}) {
-    return buildRect(options, null);
+    return buildRect(options);
 }
 
 /**
@@ -187,7 +191,7 @@ export function rect(options = {}) {
  * @returns {import('../types').Mark}
  */
 export function rectX(options = {}) {
-    return buildRect(options, 'x');
+    return rect({ ...options, orientation: 'horizontal' });
 }
 
 /**
@@ -196,5 +200,5 @@ export function rectX(options = {}) {
  * @returns {import('../types').Mark}
  */
 export function rectY(options = {}) {
-    return buildRect(options, 'y');
+    return rect({ ...options, orientation: 'vertical' });
 }

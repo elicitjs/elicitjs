@@ -33,6 +33,7 @@
 // picking.
 
 import { normalizeMarkOptions, markCommon } from './mark.js';
+import { MARK_OPTIONS } from '../vocabulary.js';
 import { composite } from './composite.js';
 import { point } from './point.js';
 import { text } from './text.js';
@@ -63,7 +64,7 @@ export function node(options = {}) {
     const opts = normalizeMarkOptions(options, {
         mark: 'node',
         except: ['dy'],
-        allow: ['dy', 'shape', 'format', 'handles', 'handleSize', 'handleColor'],
+        allow: MARK_OPTIONS.node,
     });
     const { channels = {}, dy = -16, shape, format } = opts;
     const common = markCommon(opts);

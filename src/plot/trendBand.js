@@ -46,6 +46,7 @@
 // the mark the reader grabs; the band re-derives on the next render.
 
 import { resolveStyle, normalizeMarkOptions, markDefaults, themeOf, encodeValue, positionalKeys, resolveHandles, markCommon} from './mark.js';
+import { MARK_OPTIONS } from '../vocabulary.js';
 import {
     paramChannels, readParams, anchorsOf, valueAt,
     lineSegment, segmentEnds, envelopePolygon, nestedEnvelopes, sampleLines
@@ -59,8 +60,7 @@ import { warn } from '../core/dev.js';
 export function trendBand(options = {}) {
     const opts = normalizeMarkOptions(options, {
         mark: 'trendBand',
-        allow: ['render', 'levels', 'samples', 'seed', 'sigma', 'distribution',
-            'anchor', 'probe', 'grip', 'handles', 'handleSize', 'handleColor']
+        allow: MARK_OPTIONS.trendBand
     });
     const {
         edits,
@@ -97,7 +97,7 @@ export function trendBand(options = {}) {
 
     return {
         ...markCommon(opts),
-        markName: 'trendBand',
+        type: 'trendBand',
         channels,
         supportsTrend: true,
         // Shares the trend's origin-crossing axis frame — a band without its line

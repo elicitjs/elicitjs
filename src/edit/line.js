@@ -9,6 +9,7 @@
 //   draw      — author a line by dragging (drag), edit-aware
 //   sweep     — you-draw-it: repaint each point the pointer crosses (drag)
 
+import { warn } from '../core/dev.js';
 import { makeEdit, schemaDefaults, nextSeriesKey, numOf, invertChannel, mintDatum } from './shared.js';
 import { nearestSeries, nearestMark, nearestMarkOnAxis, resolveThreshold } from './pick.js';
 import { resolveSamples } from '../core/samples.js';
@@ -87,6 +88,8 @@ export function newSeries(options = {}) {
     return makeEdit({
         type: 'line.newSeries',
         gesture: 'dblclick',
+        // Seeds a WHOLE line — many rows at once, so no single active datum.
+        cardinality: 'appendMany',
         channels: [along, value],
         pick: 'plane',
         scope: 'line',
@@ -164,6 +167,8 @@ export function draw(options = {}) {
     return makeEdit({
         type: 'line.draw',
         gesture: 'drag',
+        cardinality: 'appendMany',
+        inverts: true,
         channels: [along, value],
         pick: 'draw',
         scope: 'line',
@@ -263,17 +268,29 @@ export function draw(options = {}) {
 /**
  * sweep — you-draw-it painting: a drag that repaints the value of each point the
  * pointer crosses (series-scoped in the engine). Convenience over `move`.
- * @param {import('../types').EditOptions} [options]
+ * @param {import('../types').MoveOptions} [options]
  * @returns {import('../types').Edit}
  */
 export function sweep(options = {}) {
+    // The sweep driver re-resolves its target every tick and freezes no grab
+    // anchor, so a relative sweep would read a session that is never written and
+    // commit a no-op on every pointermove. Absolute is the only mode that means
+    // anything here; say so instead of dying quietly.
+    if (options.mode === 'relative') {
+        warn(
+            'sweep:relative',
+            'edit.line.sweep({ mode: "relative" }) is not a mode a sweep has — the pointer\'s ' +
+            'POSITION is the value it paints. Ignoring mode.'
+        );
+        options = { ...options, mode: 'absolute' };
+    }
     // A sweep IS a move (same apply, same inversion) but it gets its OWN type, not
     // move's: a scoped edit's type is its dotted path. Reporting `type: 'move'` left
     // it sharing an identity with `edit.move`, so `sweep({ mode: 'relative' })` would
     // have been claimed by the relative-move driver as well as the sweep one — the
     // same collision that made `edit.geo.move` misbehave. Options still override,
     // so an author can put it back deliberately.
-    return move({ pick: 'sweep', guide: true, scope: 'line', ...options, type: 'line.sweep' });
+    return move(/** @type {any} */ ({ pick: 'sweep', guide: true, scope: 'line', ...options, type: 'line.sweep' }));
 }
 
 /**

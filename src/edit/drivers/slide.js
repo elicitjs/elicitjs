@@ -31,8 +31,8 @@ const GRAB_THRESHOLD = 40;
 /** @type {import('./index.js').Driver} */
 export const slideDriver = {
     name: 'slide',
-    wants: (e) => e.pick === 'slide'
-        || (e.type === 'slide' && /** @type {any} */ (e).mode === 'relative'),
+    sessionKeys: ['index', 'slide'],
+    wants: (e) => e.type === 'slide' && /** @type {any} */ (e).mode === 'relative',
     onEvent({ feature, event, edits, marks, data, index, session, runEdit }) {
         if (!edits.length) return false;
         let changed = false;

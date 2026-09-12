@@ -205,6 +205,10 @@ export interface CustomScaleProperties {
   temporal: boolean;
   domainConfig?: any[];
   invertible: boolean;
+  // A colour RAMP: a continuous domain interpolated to a paint (sequential /
+  // diverging). Not invertible — a colour can't be driven backwards — but its domain
+  // is an interval, which is what a legend reads to draw a gradient with ticks.
+  ramp?: boolean;
   encode: (value: any, fallback?: any) => any;
   invertValue: (pixel: number) => any;
   domain?: () => any[];
@@ -306,6 +310,12 @@ export interface EditContext {
   // The edit being dispatched, so a `when` predicate can arbitrate against the
   // edit's own knobs (when.near reads its `threshold`). Purely informational.
   edit?: Edit;
+  // The table this edit WRITES (its name), the whole dataset keyed by table name,
+  // and the canonical schema — for an edit that looks across tables (a rewire
+  // resolves a node id while writing a link row). Read-only by convention.
+  table?: string;
+  tables?: Record<string, Datum[]>;
+  schemaSpec?: SchemaSpec;
 }
 
 export interface ResolvedChannel {
@@ -321,20 +331,46 @@ export interface ConstraintContext {
   oldData: Datum[];
   activeIndex: number | null;
   active?: Datum;
-  field: string;
+  // The column the rule is about: the constraint's own `field`, else the one the
+  // dispatching edit writes. Undefined only when neither exists.
+  field: string | undefined;
+  // The same, as a list — a rule about several columns (ordering, unique) reads this.
+  fields: string[];
   value?: any;
   domain?: number[];
+  // Which table these rows are, and the rest of the dataset, for a rule that spans
+  // tables. Pure data, like everything else here.
+  table?: string;
+  tables?: Record<string, Datum[]>;
 }
 
-export interface Constraint {
-  (newData: Datum[], oldData: Datum[], context: any): Datum[] | boolean | undefined;
-  constraintType?: string;
-  options?: any;
-  field?: string;
+// What a constraint's `apply` may return: a value for the active datum's field, a
+// partial datum to merge, a whole replacement dataset, a rejection, or "unchanged".
+export type ConstraintResult = number | Record<string, any> | Datum[] | boolean | undefined;
+
+// A constraint DESCRIPTOR — the parallel of `Edit`, built by `makeConstraint` /
+// `defineConstraint` (`constraints.custom`). See constraints/define.js.
+export interface ConstraintSpec {
+  // Which keyword built it ('clamp', 'maintainSum', 'custom', …): the one identity
+  // key every feature kind carries. edit/guide.js draws a rule's bounds by it.
+  type: string;
+  // The column(s) the rule is ABOUT. Omitted: the column the dispatching edit writes.
+  field?: string | string[];
+  // The rule's own configuration, kept so a guide can read it.
+  options?: Record<string, any>;
+  // The table the rule is about, by role or name. Default: the primary table.
+  table?: string;
   // A constraint's own boundary DRAWER (distinct from an Edit's boolean `guide`):
   // returns the scene nodes visualizing where it limits interaction.
   guide?: (ctx: any) => any[];
+  apply: (ctx: ConstraintContext) => ConstraintResult;
 }
+
+// The low-level form: a bare function over the proposal. Still accepted in
+// `spec.constraints`; `applyConstraint` runs either shape.
+export type ConstraintFn = (newData: Datum[], oldData: Datum[], context: any) => Datum[] | boolean | undefined;
+
+export type Constraint = ConstraintSpec | ConstraintFn;
 
 export interface Edit {
   type: string;
@@ -346,7 +382,8 @@ export interface Edit {
   gesture: string;
   channels: string[] | null;
   when: ((ctx: EditContext) => boolean) | null;
-  pick: 'direct' | 'nearest' | 'plane' | 'sweep' | 'draw' | 'brush' | 'brushRect' | 'probe' | (string & {});
+  pick: 'direct' | 'nearest' | 'plane' | 'sweep' | 'draw' | 'brush' | 'brushRect' | 'geoBrush'
+    | 'probe' | 'axisDrag' | 'slide' | (string & {});
   // null = universal (any mark). Otherwise the mark FAMILY this edit needs, which
   // is also where it lives in the API (the scope shows in the name: edit.line.*,
   // edit.arc.*, edit.waffle.*, edit.geo.*, edit.axis.*). Each scope names a mark
@@ -354,7 +391,8 @@ export interface Edit {
   // isAxis — and the engine dev-warns when the mark it's attached to lacks it,
   // instead of leaving you a silently dead gesture. See SCOPE_CAPABILITY in
   // core/elicit.js.
-  scope: 'line' | 'axis' | 'arc' | 'stack' | 'waffle' | 'geo' | 'trend' | 'network' | null;
+  // Typed off the engine's capability table, so the union cannot drift from it.
+  scope: keyof typeof import('./core/guards.js').SCOPE_CAPABILITY | null;
   // Which TABLE this edit's proposal replaces, named by ROLE. Omitted (all but the
   // graph edits), it writes the table its own mark draws — which is what every edit
   // did before structures, and still is on a single-table chart. `edit.network.connect`
@@ -401,7 +439,12 @@ export interface Edit {
   // Declare 'append' on a custom minting edit to get create()'s treatment. An edit
   // that both mints and drops (toggle), or appends many rows at once (newSeries,
   // draw), leaves this null: "the touched datum" has no single answer there.
-  cardinality?: 'append' | 'delete' | null;
+  cardinality?: 'append' | 'appendMany' | 'toggle' | 'delete' | null;
+  // Does this edit run a POINTER POSITION back through a channel's scale? Then it
+  // needs that scale to invert, and the engine's dead-drag guard reports a channel
+  // whose scale cannot. Declared by move/slide/resize/rotate/… and by any custom
+  // edit that inverts; a capability, never a list of type names.
+  inverts?: boolean;
   // This edit is completed by TYPING, so a node its feature draws should open the
   // renderer's inline editor on double-click. A declared CAPABILITY, read by the
   // engine's tagging pass into `FeatureNode.editText` — which is why the engine
@@ -451,9 +494,18 @@ export interface EditOptions {
   guide?: boolean | GuideSpec;
   stage?: number;
   advance?: boolean;
-  cardinality?: 'append' | 'delete' | null;
-  // Driver-specific knobs pass through onto the descriptor.
-  [key: string]: any;
+  cardinality?: 'append' | 'appendMany' | 'toggle' | 'delete' | null;
+  inverts?: boolean;
+  // The rest of the descriptor an author may override (see Edit).
+  table?: string;
+  scope?: Edit['scope'];
+  into?: 'nearest' | 'new';
+  target?: 'domain' | 'selection';
+  inline?: boolean;
+  multiline?: boolean;
+  // CLOSED: a factory's own knobs are typed on its options interface (SlideOptions,
+  // BrushRectOptions, …), and `edit.custom` alone takes an open bag for a custom
+  // driver's knobs. An unknown key here is a typo, which `makeEdit` also reports.
 }
 
 export interface CreateOptions extends EditOptions {
@@ -596,6 +648,15 @@ export interface DomainEditResult {
 // A derived-channel accessor: computed per datum in VISUAL space (its result is
 // used as-is, never scaled). `i`/`data` are supplied by per-datum marks and may
 // be undefined at constant-resolving call sites.
+// What `computeEdit` (core/elicit.js) resolves a gesture to, after `apply` and
+// the invariants: replacement rows for the edit's table, a DOMAIN write (the
+// schema, plus rows it couples to), or a SELECTION change. One discriminated
+// shape, so commit and preview branch on `kind` and never sniff a sentinel key.
+export type EditResult =
+  | { kind: 'rows'; rows: Datum[] }
+  | { kind: 'domain'; result: DomainEditResult }
+  | { kind: 'selection'; selection: { index: number | null; exclusive?: boolean; toggle?: boolean; clear?: boolean } };
+
 export type ChannelFn = (d: Datum, i?: number, data?: Datum[]) => any;
 
 // A single channel binding on a mark (Observable Plot's model, declarative).
@@ -819,16 +880,35 @@ export interface MarkOptions {
   // `theta` shorthand: theta is POSITIONAL, and positional channels (x, y) are not
   // shorthands either.
   angle?: number | ChannelFn;
-  // Text-mark display formatter: a d3-format string or `(value) => string`.
-  // Display-only — the underlying field stays the raw value. See `elicit.format`.
-  format?: string | ((v: any) => string);
   id?: string;
-  edits?: any[];
+  edits?: Edit[];
+  // Which TABLE this mark is a view over, by NAME (see Mark.table).
+  table?: string;
   // No `constraints` here on purpose: a constraint is a DATASET invariant and gates
   // every edit from every mark, so one written inside a mark reads as scoped to that
   // mark and is not. `ElicitSpec.constraints` is the only home.
-  [key: string]: any;
+  //
+  // CLOSED: a mark's own options are typed on its interface (BarOptions, …), and
+  // `src/vocabulary.js` is the runtime twin `check:exports` holds them to.
 }
+
+/** The handle contract: drawn+grabbable / neither / invisible-but-grabbable. */
+export type Handles = boolean | 'hit';
+
+/** Which axis a directional mark's value runs along ('vertical' = y). The `…Y`/`…X`
+ *  factory variants pin it: `barY(o) === bar({ ...o, orientation: 'vertical' })`. */
+export type Orientation = 'horizontal' | 'vertical';
+
+/** Shared by every mark that draws a grip (see resolveHandles in plot/mark.js). */
+export interface HandleOptions {
+  handles?: Handles;
+  handleSize?: number;
+  handleColor?: string;
+}
+
+/** Text-mark display formatter: a d3-format string or `(value) => string`.
+ *  Display-only — the underlying field stays the raw value. See `elicit.format`. */
+export type Format = string | ((v: any) => string);
 
 // A face's parameter names. Each is a CHANNEL that the face preset forwards to a
 // concrete channel on one of its parts (mouthCurve -> the mouth curve's
@@ -873,10 +953,7 @@ export interface FaceOptions extends MarkOptions {
 // drawing choices the schema can't state. `curve` and `arrow` are also readable
 // PER ROW as channels (`channels: { curve: { field: 'kind' } }`), which is how one
 // link mark draws several kinds of connector.
-export interface LinkOptions extends MarkOptions {
-  // The node column holding identities. Defaults to the node table's `key: true`
-  // field — an override only for a table that declares none.
-  key?: string;
+export interface LinkOptions extends MarkOptions, HandleOptions {
   // Connector shape. Default 'line'; promoted to 'arc' when separation bows it.
   curve?: LinkCurve;
   // Apex offset as a fraction of the chord. 'auto' (the default) asks the TABLE:
@@ -920,7 +997,7 @@ export interface LinkOptions extends MarkOptions {
   // The plate's fill opacity (default 0.9) — lower it to let the connector show
   // through the mask.
   labelOpacity?: number;
-  format?: string | ((v: any) => any);
+  format?: Format;
 }
 
 // `sticker` — a rounded box with text in it, sized by the text. A preset over
@@ -936,14 +1013,17 @@ export interface StickerOptions extends MarkOptions {
   minHeight?: number;
   // Baseline step between wrapped lines, in px. Defaults to 1.35 × the font size.
   lineHeight?: number;
-  // Used for MEASUREMENT as well as drawing, so the box matches what is painted.
+  // Used for MEASUREMENT as well as drawing, so the box matches what is painted;
+  // a shorthand, like on every mark.
   fontSize?: number;
   fontFamily?: string;
-  format?: string | ((v: any) => any);
+  format?: Format;
 }
 
 // `edit.network.connect` — drag from one node to another to create a link.
-export interface NetworkConnectOptions extends CreateOptions {
+// `source`/`target` here name the link table's two `ref` COLUMNS — the network
+// vocabulary — so the descriptor-level `target` (a write destination) is omitted.
+export interface NetworkConnectOptions extends Omit<CreateOptions, 'target'> {
   // Endpoint columns, when they aren't the link table's two `ref`s in order.
   source?: string;
   target?: string;
@@ -955,7 +1035,7 @@ export interface NetworkConnectOptions extends CreateOptions {
 }
 
 // `edit.network.rewire` / `edit.network.reverse`.
-export interface NetworkEndpointOptions extends EditOptions {
+export interface NetworkEndpointOptions extends Omit<EditOptions, 'target'> {
   source?: string;
   target?: string;
   threshold?: number;
@@ -995,7 +1075,7 @@ export interface TrendAnchorOptions extends MarkOptions {
   // the x domain's other end. Setting it under the default grip dev-warns.
   probe?: number;
   // true | false | 'hit' — the shared handle contract (plot/mark.js).
-  handles?: boolean | 'hit';
+  handles?: Handles;
   handleSize?: number;
   handleColor?: string;
 }
@@ -1080,7 +1160,8 @@ export interface CompositeOptions {
   // Mark-level edits. Ride the last part in plain mode; in box mode they ride the
   // box, whose channel map holds the glyph's placement columns.
   edits?: Edit[];
-  [key: string]: any;
+  // The table the glyph is a view over; stamped onto its box and every part.
+  table?: string;
 }
 
 /**
@@ -1132,7 +1213,9 @@ export interface Guide {
     context?: any
   ): FeatureNode[];
   id?: string;
-  markName?: string;
+  /** Which guide keyword built it (`'rule'`, `'region'`, `'prompt'`, …). The one
+   *  identity key every feature kind carries — see `Mark.type`. */
+  type?: string;
 }
 
 /**
@@ -1186,72 +1269,108 @@ export type GuideOption<T> = T | ((ctx: any) => T);
 
 /**
  * What you PASS to a chart-element factory — the counterpart of `MarkOptions` for
- * a `views: 'scale'` feature.
- *
- * The runtime vocabularies are `AXIS_OPTIONS` / `GRID_OPTIONS` / `LEGEND_OPTIONS`
- * / `AXIS_RADIAL_OPTIONS`, checked by `warnUnknownElementOptions`; this is their
- * union as a type, so a typo is caught at compile time as well as at run time.
- * Note there is no `channels` map and no style SHORTHAND desugaring: an element's
- * `stroke`/`fill`/`fontSize` paint chrome, because it has no datum to resolve
- * them against.
+ * a `views: 'scale'` feature, one interface PER element. The runtime twin is
+ * `ELEMENT_OPTIONS` (src/vocabulary.js), checked by `warnUnknownElementOptions`
+ * and held to these declarations by `check:exports`. There is no `channels` map
+ * and no style-shorthand desugaring: an element's `stroke`/`fill`/`fontSize`
+ * paint chrome, because it has no datum to resolve them against.
  */
-export interface ChartElementOptions {
+export interface ElementOptionsBase {
   /** The single scale this element draws, by channel name (`'x'`, `'fill'`, …). */
   channel?: string;
-  /** Which side of the plot it sits on. */
-  anchor?: string;
   /**
-   * Edit(s) on this element — `edit.axis.*`, `edit.legend.*`. Both spellings are
-   * read (see `elementEdits` in plot/mark.js); `edits` used to validate clean and
-   * then be silently dropped.
+   * Edit(s) on this element — `edit.axis.*`, `edit.scale.*`, `edit.legend.*`. Both
+   * spellings are read (see `elementEdits` in plot/mark.js).
    */
   edit?: Edit | Edit[] | Edit[][];
   edits?: Edit[];
   id?: string;
   /**
    * The COLUMN an edit on this element writes. An element has no channel map, so
-   * unpinned the field falls back to `scale.fields[0]` — the union of every field
-   * bucketed onto the channel, in first-seen feature order. Pin it whenever more
-   * than one mark binds the channel, or the spec never said which column a gesture
-   * lands in. Read by `resolveChannels` (edit/route.js).
+   * unpinned the field falls back to `scale.fields[0]`. Pin it whenever more than
+   * one mark binds the channel.
    */
   field?: string;
-  /**
-   * The TABLE that column is in, by NAME. Unset, an element takes the structure's
-   * primary table — it declares no `tableRole`. Resolved in the engine's one
-   * feature-binding pass, exactly like a mark's `table`.
-   */
+  /** The TABLE that column is in, by NAME. Unset, the structure's primary table. */
   table?: string;
-  /** Ticks: how many, which, how to format, how long. */
+}
+
+/** Width/height/scales-aware override of an axis's base translate — e.g. cross at
+ *  the origin: `({ scales }) => ({ y: scales.y(0) })`. */
+export type AxisTransform = (ctx: {
+  width: number;
+  height: number;
+  scales: ScaleMap;
+  anchor: string;
+  base: { x: number; y: number };
+}) => { x?: number; y?: number };
+
+/** `elements.axis` / `axisX` / `axisY` — and one positional entry of `spec.axes`. */
+export interface AxisOptions extends ElementOptionsBase {
+  channel?: 'x' | 'y';
+  /** Base side; default x->'bottom', y->'left'. Drives tick side + label placement. */
+  anchor?: 'bottom' | 'top' | 'left' | 'right';
+  transform?: AxisTransform;
+  /** Tick count hint (linear); ignored for band/point. */
   ticks?: number | any[];
   tickValues?: any[];
-  tickFormat?: string | ((v: any) => string);
+  tickFormat?: Format;
   tickSize?: number;
   title?: string;
-  /** Chrome paint — a spine, its labels, a grid line. */
+  /** Chrome paint: the spine + ticks, the labels + title (text nodes). */
   stroke?: string;
-  strokeWidth?: number;
   fill?: string;
   fontSize?: number;
-  /** Handles, through the one shared handle contract. */
+  /** Also emit a paired gridline element. */
+  grid?: boolean | GridOptions;
   handleSize?: number;
   handleColor?: string;
-  /** axis only: draw grid lines with it; `transform` offsets the whole element. */
-  grid?: boolean | Record<string, any>;
-  transform?: string;
-  /** legend only: swatch/ramp geometry, and which row its edit writes to. */
-  orient?: 'horizontal' | 'vertical';
-  swatchSize?: number;
-  gap?: number;
-  labelWidth?: number;
-  rampLength?: number;
-  rampThickness?: number;
-  row?: number;
-  /** axisRadial only: ring geometry, plus optional per-row placement channels. */
+}
+
+/** `elements.grid` / `gridX` / `gridY`. */
+export interface GridOptions extends ElementOptionsBase {
+  channel?: 'x' | 'y';
+  ticks?: number | any[];
+  tickValues?: any[];
+  stroke?: string;
+  strokeWidth?: number;
+}
+
+/** `elements.legend` / `legendColor` / `legendSize` / `legendSymbol` — the
+ *  presentation half is `LegendOptions`, the same object a channel's `legend:` takes. */
+export interface LegendElementOptions extends ElementOptionsBase, LegendOptions {
+  channel?: string;
+}
+
+/** `elements.axisRadial`. */
+export interface AxisRadialOptions extends ElementOptionsBase {
+  /** Optional per-row PLACEMENT channels (x/y/fill) for one ring per row — the one
+   *  documented exception to "an element has no channel map". */
+  channels?: Channels;
   radius?: number;
   innerRadius?: number;
-  channels?: Channels;
+  bandWidth?: number;
+  ticks?: number | any[];
+  tickValues?: any[];
+  tickFormat?: Format;
+  tickSize?: number;
+  labelOffset?: number;
+  /** Coloured categorical bands around the ring. */
+  bands?: any[];
+  title?: string;
+  /** The sweep: a named arc, or its side, or explicit start/end degrees. */
+  arc?: string;
+  orient?: 'top' | 'right' | 'bottom' | 'left';
+  start?: number;
+  end?: number;
+  labelFill?: string;
+  stroke?: string;
+  strokeWidth?: number;
+  fontSize?: number;
 }
+
+/** Any element's options — for a caller holding an element of unknown kind. */
+export type ChartElementOptions = AxisOptions | GridOptions | LegendElementOptions | AxisRadialOptions;
 
 export interface ChartElement {
   build(
@@ -1276,7 +1395,8 @@ export interface ChartElement {
   isLegend?: boolean;
 
   id?: string;
-  markName?: string;
+  /** Which element keyword built it (`'axis'`, `'grid'`, `'legend'`, `'axisRadial'`). */
+  type?: string;
   /** The element's edits (edit.axis.*, edit.legend.*), already flattened to a list. */
   edits?: Edit[];
   /**
@@ -1359,7 +1479,7 @@ export interface Mark {
 
   /** The channel map — also the source resolveScales reads to build scales. */
   channels?: Channels;
-  /** Author-supplied id. Optional, so dev messages fall back to `markName`. */
+  /** Author-supplied id. Optional, so dev messages fall back to `type`. */
   id?: string;
   /** Mark-level (joint / arbitrary) edits; channel-level ones live on the channel. */
   edits?: Edit[];
@@ -1381,8 +1501,15 @@ export interface Mark {
   xKey?: string;
   yKey?: string;
 
-  /** The factory name, stamped for dev messages (`bar()` beats `mark "undefined"`). */
-  markName?: string;
+  /**
+   * Which mark keyword built this feature (`'bar'`, `'point'`, …) — stamped by the
+   * factory, read by dev messages (`bar()` beats `mark "feature-3"`) and, later, by
+   * the JSON layer to round-trip a spec. The ONE identity key: an edit's `type` is
+   * its keyword too, and so is a constraint's and a guide's. It is a different
+   * question from a channel's or a field's `type` (a MEASURE), which a feature
+   * descriptor is never adjacent to.
+   */
+  type?: string;
 
   /**
    * The GLYPH this feature is a part of, stamped by `composite` on every feature it
@@ -1436,14 +1563,13 @@ export interface Mark {
    *  or keep array order. WHICH column sorts them is the `order` CHANNEL — an
    *  option may never name one. */
   connect?: 'domain' | 'sequence';
-  samples?: number;
   supportsSeries?: boolean;
 
   /** Capability flags the engine's scope guard reads (see SCOPE_CAPABILITY). */
   supportsGeo?: boolean;
   supportsWaffle?: boolean;
   // Does this mark partition a total among a group of rows — so a boundary between
-  // two of them exists to cut, drag or merge? Set by arc/pie/donut always, and by
+  // two of them exists to cut, drag or merge? Set by arc/donut always, and by
   // `bar` only when it is actually stacking (an unstacked bar is a set of
   // independent lengths, with no boundary at all). Gates edit.stack.* via
   // SCOPE_CAPABILITY.
@@ -1622,7 +1748,7 @@ export interface FeatureNode {
   // the same mapping that drew the node (see frameScalesFor in core/elicit.js).
   frame?: ScaleMap;
   // The STACK this node belongs to, stamped by any mark that partitions a total
-  // among its rows (a `bar` with `stack`, arc/pie/donut — see plot/stack.js). Same
+  // among its rows (a `bar` with `stack`, arc/donut — see plot/stack.js). Same
   // idea as `frame`: the mark that encoded the layout carries the means to invert
   // it, so edit.stack.* works on both marks without knowing which it is on.
   //   members  the group's rows, as global dataset indices in stack order
@@ -1710,40 +1836,6 @@ export interface Session {
   move?: { index: number, anchors: Record<string, { startPx: number, startValue: any }> } | null;
 }
 
-// Config for a single positional axis (the `axes` convenience, or an explicit
-// axisX/axisY mark). Axes and gridlines are composable marks (see plot/axis.js).
-export interface AxisSpec {
-  channel?: 'x' | 'y';
-  // Base side; default x->'bottom', y->'left'. Drives tick side + label placement.
-  anchor?: 'bottom' | 'top' | 'left' | 'right';
-  // Width/height/scales-aware override of the base translate — e.g. cross at the
-  // origin: `({ scales }) => ({ y: scales.y(0) })`.
-  transform?: (ctx: {
-    width: number;
-    height: number;
-    scales: ScaleMap;
-    anchor: string;
-    base: { x: number; y: number };
-  }) => { x?: number; y?: number };
-  ticks?: number;               // tick count hint (linear); ignored for band/point
-  tickValues?: any[];           // explicit tick values (overrides `ticks`)
-  tickFormat?: string | ((v: any) => string); // d3-format string or a formatter
-  tickSize?: number;
-  title?: string;
-  stroke?: string;   // spine + ticks
-  fill?: string;     // tick labels + title (they are text nodes)
-  fontSize?: number;
-  grid?: boolean;               // also emit a paired gridline mark
-  // Make the axis INTERACTIVE (opt-in; axes are inert by default). A domain edit
-  // (edit.axis.scale() for a numeric/temporal axis, edit.scale.categories() for a
-  // discrete one) reshapes the field's schema domain — grids, guides and marks
-  // reflow from it. Accepts one edit or a list.
-  edit?: Edit | Edit[];
-  // The schema field whose domain this axis edits, when the axis's channel carries
-  // more than one field and the edit shouldn't touch them all. Defaults to every
-  // field on the axis (scale.fields).
-  field?: string;
-}
 
 // Interaction-effects layer: transient visual feedback for interaction STATE,
 // kept separate from mark style channels and customizable per chart. Three states —
@@ -1788,7 +1880,7 @@ export interface Theme {
   grid: { stroke: string; strokeWidth: number };
   // Annotation guides (guides/*) plus edit-guide part tokens (edit/guide.js).
   guide: {
-    rule: { stroke: string; strokeDasharray: string };
+    rule: { stroke: string; strokeDasharray: string; strokeWidth: number; opacity: number };
     region: { fill: string; opacity: number };
     legend: {
       stroke: string;
@@ -1867,8 +1959,6 @@ export interface GuideSpec {
  * A copy-on-top was the alternative for the second half and cannot express it: you
  * cannot dim a mark by drawing over it.
  *
- * Legacy `grab`/`select` keys are still accepted at runtime and migrated with a warn
- * (see core/effects.js).
  */
 export interface EffectsSpec {
   /** Pointer is over / proximity has selected this mark. */
@@ -1905,7 +1995,7 @@ export interface ElicitSpec {
   width?: number;
   height?: number;
   margins?: { top: number; right: number; bottom: number; left: number };
-  marks?: any[];
+  marks?: (Mark | Mark[])[];
   // Chart elements (`elicit.elements.*` — axis / grid / legend / axisRadial).
   // Concatenated with `marks` into the feature list; same factories also work
   // inside `marks`. Prefer this key when the
@@ -1960,7 +2050,7 @@ export interface ElicitSpec {
   //   count   opt-in axis for a COUNTABLE mark (waffle, dotStack) — reserves layout
   //           space for a scale the mark already makes countable by eye, so it
   //           defaults off like a legend rather than on like x/y.
-  axes?: false | { x?: AxisSpec | false; y?: AxisSpec | false; origin?: boolean; count?: boolean | AxisSpec };
+  axes?: false | { x?: AxisOptions | false; y?: AxisOptions | false; origin?: boolean; count?: boolean | AxisOptions };
   // The legend counterpart to `axes` — the IMPLICIT layer for the NON-positional
   // scales, desugared into legend marks by core/legends.js's autoLegends.
   //   true              one legend per non-positional channel bound to a field
@@ -1968,14 +2058,14 @@ export interface ElicitSpec {
   // Defaults to none, unlike `axes`: a legend RESERVES layout space, so injecting
   // one by default would silently shrink the plot the moment a `fill` field appears.
   // An explicit legend mark in `marks` always wins for its channel.
-  legends?: boolean | Record<string, any>;
+  legends?: boolean | Record<string, LegendOptions | boolean>;
   // Customizable interaction-effects layer (grab / proximity-select).
   effects?: EffectsSpec;
   // The chart's theme (style layer): default colours, fonts, and affordance tokens.
   // A partial, deep-merged over the built-in DEFAULT_THEME (and any setTheme() base).
   // See Theme (the resolved shape) and DeepPartial.
   theme?: DeepPartial<Theme>;
-  guides?: any[];
+  guides?: Guide[];
   // Sizing mode. 'fixed' (default) draws at the pixel width/height. 'scale' wraps
   // the SVG in a viewBox so the browser scales it to fill the parent (one draw,
   // aspect ratio preserved). 'reflow' (or `true`) measures the parent and redraws
@@ -2237,3 +2327,306 @@ export interface ChannelAccepts {
   values: any[] | null;
   range: any[] | null;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Per-factory OPTION interfaces. Each mirrors one entry of src/vocabulary.js —
+// the runtime list a factory validates against — and `check:exports` holds the
+// two to each other in both directions: an option typed here that the factory
+// never reads fails the gate, and so does one it reads that is not typed.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Marks ──────────────────────────────────────────────────────────────────
+export interface ArcOptions extends MarkOptions, HandleOptions {
+  outerRadius?: number;
+  innerRadius?: number;
+  /** Gap between slices, in degrees. */
+  padAngle?: number;
+  /** The sweep: 'full' (default) or a named partial arc, or explicit start/end degrees. */
+  arc?: string;
+  start?: number;
+  end?: number;
+}
+export interface AreaOptions extends MarkOptions, HandleOptions {
+  orientation?: Orientation;
+  /** d3 curve interpolation name ('linear', 'monotoneX', 'step', …). */
+  curve?: string;
+  /** How points connect with no `order` channel: by the domain axis, or in array order. */
+  connect?: 'domain' | 'sequence';
+}
+export interface BarOptions extends MarkOptions, HandleOptions {
+  orientation?: Orientation;
+  /** Stack the bars sharing a band on each other's cumulative total. */
+  stack?: boolean;
+}
+export interface CurveOptions extends MarkOptions {
+  orientation?: Orientation;
+  /** Chord length in px when no x1/x2 (y1/y2) pair is declared. */
+  length?: number;
+}
+export interface DotStackOptions extends MarkOptions {
+  orientation?: Orientation;
+  /** Gap between tokens, in px. */
+  gap?: number;
+  /** Draw ghost rings for the empty slots. */
+  ghost?: boolean;
+  /** Label each column with its count. */
+  label?: boolean;
+}
+export type EllipseOptions = MarkOptions;
+export interface GeoBasemapOptions extends MarkOptions {
+  /** A GeoJSON Feature / FeatureCollection / Geometry to draw. */
+  geojson?: any;
+}
+export interface GeoTileOptions extends MarkOptions {
+  /** A `{z}/{x}/{y}` tile URL template (OSM by default). */
+  url?: string;
+  subdomains?: string[];
+  tileSize?: number;
+  minZoom?: number;
+  maxZoom?: number;
+  zoomOffset?: number;
+  /** Drawn by default — a licence condition of every tile service. */
+  attribution?: string | false;
+  attributionSize?: number;
+}
+export type GeoPointOptions = MarkOptions;
+export type GeoPolygonOptions = MarkOptions;
+export type GeoRectOptions = MarkOptions;
+export interface GeoLineOptions extends MarkOptions, HandleOptions {
+  curve?: string;
+  connect?: 'domain' | 'sequence';
+  /** Draw a handle at each vertex (default: on for per-row coordinate lists). */
+  showVertices?: boolean;
+}
+export interface GeoTextOptions extends MarkOptions {
+  format?: Format;
+}
+export interface LineOptions extends MarkOptions, HandleOptions {
+  orientation?: Orientation;
+  curve?: string;
+  connect?: 'domain' | 'sequence';
+}
+export interface NeedleOptions extends MarkOptions, HandleOptions {
+  /** Needle length in px (else the `size` channel). */
+  length?: number;
+  /** Width of the needle's base, in px. */
+  baseWidth?: number;
+}
+export interface NodeOptions extends MarkOptions {
+  /** The LABEL's vertical offset from the dot, in px. */
+  dy?: number;
+  shape?: 'circle' | 'square';
+  format?: Format;
+}
+export interface PointOptions extends MarkOptions {
+  shape?: 'circle' | 'square';
+}
+export interface RectOptions extends MarkOptions {
+  orientation?: Orientation;
+  /** A fixed pixel extent centred on the x/y anchor (else band / value / span). */
+  width?: number | ChannelFn;
+  height?: number | ChannelFn;
+  /** Corner radius, in px. */
+  rx?: number;
+}
+export interface RuleOptions extends MarkOptions {
+  orientation?: Orientation;
+  strokeDasharray?: string;
+  /** What this rule needs from a discrete axis, when it sits inside a composite. */
+  discreteScale?: 'band' | 'point';
+}
+export interface TextOptions extends MarkOptions {
+  orientation?: Orientation;
+  format?: Format;
+  /** Wrap width in px (`true` = the plot width). */
+  wrap?: number | boolean;
+  /** Baseline step between wrapped lines, in px. */
+  lineHeight?: number;
+}
+export interface TickOptions extends MarkOptions {
+  orientation?: Orientation;
+  /** Shrink the tick inside its band by this many px each side. */
+  inset?: number;
+  /** Tick length in px when it sits on a point (not band) axis. */
+  length?: number;
+}
+export interface WaffleOptions extends MarkOptions {
+  orientation?: Orientation;
+  /** How much of the field one cell is worth. */
+  unit?: number;
+  /** Cells across the band. */
+  multiple?: number;
+  gap?: number;
+  shape?: 'rect' | 'circle' | 'symbol';
+  showEmpty?: boolean;
+  emptyFill?: string;
+}
+
+// ── Edits (the ones with knobs of their own; the rest take EditOptions) ─────
+export interface EditTextOptions extends EditOptions {}
+export interface AxisScaleOptions extends EditOptions {
+  /** The schema field whose domain the axis edits, when the channel carries more than one. */
+  field?: string;
+  /** 'rescale' (default) re-divides the axis in place; 'grow' resizes the chart. */
+  mode?: 'rescale' | 'grow';
+}
+export interface ScaleCategoriesOptions extends EditOptions {
+  field?: string;
+  /** 'grow' adds one band-step per category instead of re-dividing the axis. */
+  mode?: 'rescale' | 'grow';
+}
+export interface StackCutOptions extends EditOptions {
+  /** Seed values for the minted row's other fields. */
+  defaults?: Record<string, any>;
+  /** The minted category's label, when the domain is `open`. */
+  label?: string | ((n: number) => string);
+  /** The category column, when it isn't the series channel's. */
+  categoryField?: string;
+}
+export interface GeoRemoveVertexOptions extends EditOptions {
+  /** Refuse to drop below this many vertices. */
+  min?: number;
+}
+export interface GeoDrawOptions extends CreateOptions {
+  /** Freehand pointer-sampling distance in px. */
+  minDist?: number;
+}
+export interface GeoBrushOptions extends EditOptions {
+  /** Whether a body drag translates the whole box. */
+  move?: boolean;
+  edgeInset?: number;
+}
+export interface GeoCreateRectOptions extends CreateOptions {
+  /** The minted box's size, in degrees. */
+  width?: number;
+  height?: number;
+  edgeInset?: number;
+}
+
+// ── Constraints ────────────────────────────────────────────────────────────
+/** Shared by the rules that are about one column (or, for ordering/unique, several). */
+export interface FieldConstraintOptions {
+  /** The column(s) the rule is about. Omitted: the column the dispatching edit writes. */
+  field?: string | string[];
+}
+export interface ClampOptions extends FieldConstraintOptions {
+  /** Bounds; an omitted one falls back to the field's declared domain. */
+  min?: number;
+  max?: number;
+}
+export interface SnapOptions extends FieldConstraintOptions {
+  step?: number;
+  origin?: number;
+}
+export interface CountOptions {
+  /** Maximum number of rows. */
+  max?: number;
+  /** 'replace' (default) keeps the newest `max`; 'reject' refuses the edit. */
+  strategy?: 'replace' | 'reject';
+}
+export interface UniqueOptions extends FieldConstraintOptions {
+  /** Rows allowed per distinct key (default 1). */
+  max?: number;
+  strategy?: 'reject' | 'replace';
+}
+export interface MaintainSumOptions extends FieldConstraintOptions {
+  /** The total the rows must sum to. */
+  total?: number;
+  strategy?: 'cap' | 'normalize' | 'redistribute';
+}
+export interface OrderingOptions {
+  /** The row's columns, in the order they must stay in (>= 2). */
+  field?: string[];
+  /** 'push' (default) moves the neighbours aside; 'block' rejects the edit. */
+  strategy?: 'push' | 'block';
+}
+export interface MonotonicOptions extends FieldConstraintOptions {
+  /** The axis field the run is ordered along. */
+  along?: string;
+  dir?: 'up' | 'down';
+  /** A series column, so each line is its own run. */
+  series?: string | null;
+}
+export interface SpacingOptions extends FieldConstraintOptions {
+  /** Minimum gap between adjacent values, in the field's units. */
+  min?: number;
+  series?: string | null;
+}
+
+// ── Guides (every option may be a literal or a function of the chart context) ─
+export interface RuleGuideOptions {
+  id?: string;
+  x?: GuideOption<any>;
+  y?: GuideOption<any>;
+  stroke?: GuideOption<string>;
+  strokeDasharray?: GuideOption<string>;
+  strokeWidth?: GuideOption<number>;
+  opacity?: GuideOption<number>;
+  label?: GuideOption<string>;
+}
+export interface RegionGuideOptions {
+  id?: string;
+  /** A [lo, hi] pair on either axis. */
+  x?: GuideOption<[any, any]>;
+  y?: GuideOption<[any, any]>;
+  fill?: GuideOption<string>;
+  opacity?: GuideOption<number>;
+  stroke?: GuideOption<string>;
+  label?: GuideOption<string>;
+}
+export interface RemainingGuideOptions {
+  id?: string;
+  /** The column summed. Defaults to the chart's maintainSum field. */
+  field?: GuideOption<string>;
+  /** The target. Defaults to the chart's maintainSum total. */
+  total?: GuideOption<number>;
+  unit?: GuideOption<string>;
+  format?: GuideOption<Format>;
+  anchor?: GuideOption<'top' | 'right' | 'bottom' | 'left'>;
+  label?: GuideOption<string>;
+  fill?: GuideOption<string>;
+  fontSize?: GuideOption<number>;
+}
+export interface ProximityGuideOptions {
+  id?: string;
+  /** The feature id whose proximity session the guide draws. */
+  target?: GuideOption<string>;
+  stroke?: GuideOption<string>;
+  strokeDasharray?: GuideOption<string>;
+  strokeWidth?: GuideOption<number>;
+  opacity?: GuideOption<number>;
+}
+export interface PromptGuideOptions { id?: string; y?: number }
+export interface OptionRingsGuideOptions { id?: string; labelOffset?: number; radius?: number }
+export interface CellGridGuideOptions { id?: string; pad?: number }
+export interface SliderTrackGuideOptions { id?: string; format?: Format }
+export interface CrosshairGuideOptions { id?: string; x?: string; y?: string }
+
+// ── Widgets ────────────────────────────────────────────────────────────────
+export interface LikertOptions extends WidgetOptions { options?: string[]; value?: any }
+export interface MultipleChoiceOptions extends WidgetOptions { options?: string[]; max?: number; value?: any[] }
+export interface SliderOptions extends WidgetOptions { domain?: [number, number]; step?: number; value?: number; format?: (v: any) => string }
+export interface MatrixOptions extends WidgetOptions { questions?: string[]; options?: string[]; value?: any[] }
+export interface LineConeOptions extends Omit<WidgetOptions, 'stage'> {
+  /** The two axis field names. */
+  x?: string;
+  y?: string;
+  /** Seed correlation and spread. */
+  r?: number;
+  spread?: number;
+  samples?: number;
+  seed?: number;
+  render?: 'region' | 'gradient' | 'samples';
+}
+export interface RankingOptions extends WidgetOptions { items?: string[] }
+export interface AllocationOptions extends WidgetOptions { categories?: string[]; total?: number; values?: number[] }
+export interface ProbabilityTokensOptions extends WidgetOptions { bins?: string[]; maxTokens?: number }
+export interface IntervalOptions extends WidgetOptions { category?: string; mean?: number; lo?: number; hi?: number; domain?: [number, number] }
+export interface HistogramOptions extends WidgetOptions { bins?: string[]; max?: number; values?: number[] }
+export interface RegionWidgetOptions extends WidgetOptions {
+  xDomain?: [number, number];
+  yDomain?: [number, number];
+  x1?: number; x2?: number; y1?: number; y2?: number;
+}
+export interface ThermometerOptions extends WidgetOptions { domain?: [number, number]; step?: number; value?: number }
+export interface LabeledValueOptions extends WidgetOptions { input?: 'number' | 'text'; value?: any; domain?: [number, number]; label?: string }

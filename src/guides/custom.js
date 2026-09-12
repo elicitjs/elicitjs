@@ -26,6 +26,7 @@
 export function custom(build) {
     return {
         views: 'state',
+        type: 'custom',
         build: (_rows, _scales, _w, _h, ctx) => (build(ctx) || []).map((node) => ({
             pointerEvents: 'none',
             ...node,
