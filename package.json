@@ -1,6 +1,6 @@
 {
   "name": "elicitjs",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0-alpha.1",
   "description": "Declarative, grammar-of-graphics-inspired library for interactive visual belief elicitation.",
   "type": "module",
   "main": "./src/index.js",
