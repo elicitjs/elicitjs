@@ -120,7 +120,7 @@ async function main() {
         // ---- Every documented route mounts -------------------------------
         console.log('\nAll routes (elicitjs-docs)');
         const routes = [
-            '/', '/overview', '/concepts', '/concepts/contracts', '/sizing', '/renderers', '/authoring',
+            '/', '/start', '/api', '/overview', '/concepts', '/concepts/contracts', '/sizing', '/renderers', '/authoring',
             '/marks/bar', '/marks/rect', '/marks/area', '/marks/tick', '/marks/point',
             '/marks/ellipse', '/marks/curve',
             '/marks/symbol', '/marks/face', '/marks/text', '/marks/line', '/marks/composite',

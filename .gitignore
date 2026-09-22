@@ -4,6 +4,8 @@ jspm_packages/
 web_modules/
 
 # --- Build & Distribution ---
+# `npm pack` output — a local smoke-test artifact, never committed.
+*.tgz
 # Lib bundle (vite.lib.config.js) → dist/; docs site (vite.config.js) → site/.
 dist/
 site/
