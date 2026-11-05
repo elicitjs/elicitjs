@@ -166,22 +166,64 @@ function buildText(options) {
          */
         build: (currentData, scales, width, height) => {
             return currentData.map((d, i) => {
-                // Position: each axis through its global scale, parked at the centre
-                // when the axis isn't used (textX/textY force the counter-axis centre).
-                const forcedAxis = opts.orientation === 'vertical' ? 'y'
-                    : opts.orientation === 'horizontal' ? 'x' : null;
-                const x = forcedAxis === 'y'
-                    ? width / 2
-                    : encodeChannel(scales, channels, 'x', d, width / 2, i, currentData);
-                const y = forcedAxis === 'x'
-                    ? height / 2
-                    : encodeChannel(scales, channels, 'y', d, height / 2, i, currentData);
+                const { x, y } = anchorOf(d, i, currentData, scales, width, height);
                 return textNodeAt(scales, channels, d, i, x, y, {
                     format, data: currentData, wrap, lineHeight,
                 });
             });
-        }
+        },
+
+        // A label's box: another shape over the same rows is the node, if there is one.
+        labelBox: true,
+        /**
+         * The block this row's text occupies, so a lone label — an emoji, a word —
+         * can be a network node. Measured the way the text is drawn: anchored by
+         * `textAnchor` / `lineAnchor`, shifted by `dx` / `dy`. A rotated label keeps
+         * its unrotated box.
+         * @param {any} d @param {number} i @param {any[]} rows
+         * @param {import('../types').ScaleMap} scales @param {number} width @param {number} height
+         * @returns {import('../types').NodeBox}
+         */
+        nodeBox: (d, i, rows, scales, width, height) => {
+            const at = anchorOf(d, i, rows, scales, width, height);
+            const dx = +rawChannel(channels, 'dx', d, 0, i, rows) || 0;
+            const dy = +rawChannel(channels, 'dy', d, 0, i, rows) || 0;
+            const fontSize = +rawChannel(channels, 'fontSize', d, 12, i, rows) || 12;
+            const block = measureBlock(format(rawChannel(channels, 'text', d, '', i, rows)), {
+                maxWidth: typeof wrap === 'function' ? wrap(d, i, rows) : wrap,
+                fontSize,
+                fontFamily: (themeOf(scales).font && themeOf(scales).font.family) || undefined,
+                lineHeight,
+            });
+            const hw = block.width / 2;
+            const hh = block.height / 2;
+            const anchor = rawChannel(channels, 'textAnchor', d, 'middle', i, rows);
+            const line = rawChannel(channels, 'lineAnchor', d, 'middle', i, rows);
+            const x = at.x + dx;
+            const y = at.y + dy;
+            return {
+                cx: anchor === 'start' ? x + hw : anchor === 'end' ? x - hw : x,
+                cy: line === 'top' ? y + hh : line === 'bottom' ? y - hh : y,
+                hw,
+                hh,
+            };
+        },
     };
+
+    /**
+     * Where a row's label is anchored: each axis through its global scale, parked at
+     * the centre when the axis isn't used (textX/textY force the counter-axis centre).
+     * @param {any} d @param {number} i @param {any[]} rows
+     * @param {import('../types').ScaleMap} scales @param {number} width @param {number} height
+     */
+    function anchorOf(d, i, rows, scales, width, height) {
+        const forcedAxis = opts.orientation === 'vertical' ? 'y'
+            : opts.orientation === 'horizontal' ? 'x' : null;
+        return {
+            x: forcedAxis === 'y' ? width / 2 : encodeChannel(scales, channels, 'x', d, width / 2, i, rows),
+            y: forcedAxis === 'x' ? height / 2 : encodeChannel(scales, channels, 'y', d, height / 2, i, rows),
+        };
+    }
 }
 
 /**

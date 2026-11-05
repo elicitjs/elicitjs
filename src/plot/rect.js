@@ -129,6 +129,23 @@ function buildRect(options) {
         xKey,
         yKey,
         /**
+         * The box this rect draws for one row — the same two extents build() reads,
+         * so a link docked to a sticker's body ends at the paper's edge.
+         * @param {any} d @param {number} i @param {any[]} rows
+         * @param {import('../types').ScaleMap} scales @param {number} width @param {number} height
+         * @returns {import('../types').NodeBox}
+         */
+        nodeBox: (d, i, rows, scales, width, height) => {
+            const xExt = resolveExtent('x', channels, scales, scales.x, d, xKey, forcedValueAxis === 'x', width, i, rows);
+            const yExt = resolveExtent('y', channels, scales, scales.y, d, yKey, forcedValueAxis === 'y', height, i, rows);
+            return {
+                cx: (xExt.lo + xExt.hi) / 2,
+                cy: (yExt.lo + yExt.hi) / 2,
+                hw: (xExt.hi - xExt.lo) / 2,
+                hh: (yExt.hi - yExt.lo) / 2,
+            };
+        },
+        /**
          * @param {any[]} currentData
          * @param {import('../types').ScaleMap} scales
          * @param {number} width

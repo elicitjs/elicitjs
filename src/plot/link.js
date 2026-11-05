@@ -49,10 +49,14 @@
 // DATA reaches the drawing: the schema says the network is directed, so the arrows
 // appear, and a mark never hard-codes an opinion about it.
 //
-// Endpoint HANDLES appear only when `source`/`target` carries an edit — the same
-// "inert until the spec names the column" rule every mark follows. Two handles on
-// one feature means they arbitrate, so each is tagged `node.channel` and guarded by
-// `claimEdge` (the trend/area pattern), never by a hand-written `when`.
+// Endpoint HANDLES appear only where an edit writes that end (`rewire` in `edits`,
+// or an edit on the `source`/`target` channel) — the same "inert until the spec
+// names the column" rule every mark follows. Each is tagged `node.channel` with its
+// end, shown only while the link is lit, and painted above the nodes (`raise`).
+//
+// The node BOX comes from the mark that draws the nodes (`context.nodeBox`, its
+// `Mark.nodeBox` rule), never from an option here, so a link end, a node's port and
+// a drop target agree on where every edge is.
 
 import {
     encodeChannel, resolveStyle, normalizeMarkOptions, themeOf, markDefaults, resolveHandles, markCommon, rawChannel,} from './mark.js';
@@ -60,6 +64,9 @@ import { MARK_OPTIONS } from '../vocabulary.js';
 import { textNodeAt } from './text.js';
 import { measureBlock } from '../core/measure.js';
 import { LINK_SHAPES, LINK_CURVES, LINK_SIDES } from './linkGeometry.js';
+import { routingGrid, resolveEnds, facingSide, loopSides, SIDE_NORMALS, MAX_SLIDE } from './linkRouter.js';
+import { roleAllows } from './port.js';
+import { nodeChannelsOf, nodeBoxesOf } from './nodeBox.js';
 import { HIT_WIDTH } from './hitpath.js';
 import { isDirected } from '../core/schema.js';
 import { resolveFormat } from '../format.js';
@@ -68,6 +75,9 @@ import { warn } from '../core/dev.js';
 // Apex offset, as a fraction of the chord, between adjacent links of one pair when
 // `curvature: 'auto'` fans them apart.
 const AUTO_SPREAD = 0.16;
+// The most `"auto"` will bow a labelled sibling to clear its neighbour's label: past
+// this an arc stops reading as a link between two nodes.
+const MAX_AUTO_BOW = 0.9;
 
 // How far a self-loop reaches from its node, in px, when the spec names no size.
 const LOOP_RADIUS = 22;
@@ -76,6 +86,11 @@ const LOOP_RADIUS = 22;
 // states, in px. Small enough to read as "just off the point", so a bare
 // `curve: 'orthogonal'` on a dot network still leaves each node square-on.
 const DEFAULT_EXTENT = 12;
+
+// Corner rounding of a routed connector when the spec names none, in px. A
+// square-cornered elbow reads as a wiring diagram; every board tool rounds by
+// default, and both docs examples passed 8 or 10 before this became the default.
+const CORNER_RADIUS = 8;
 
 // The inline editor a link declares for itself (`node.editBox`): centred on the
 // label's own midpoint, wide enough for a short phrase, and as tall as the label
@@ -147,22 +162,6 @@ function resolveJoin(channels, options, context, table) {
 }
 
 /**
- * Which channels place a NODE. The link reads its endpoints through these against
- * the node row, so a link is self-contained: it does not depend on which mark
- * happens to draw the nodes, or on that mark existing at all.
- * @param {Record<string, any>} channels
- * @param {any} nodes the nodes TableSchema
- * @returns {Record<string, any>}
- */
-export function nodeChannelsOf(channels, nodes) {
-    const has = (/** @type {string} */ f) => !!(nodes && nodes.fields[f]);
-    return {
-        x: channels.x || (has('x') ? { field: 'x' } : undefined),
-        y: channels.y || (has('y') ? { field: 'y' } : undefined),
-    };
-}
-
-/**
  * Pull the segment's ends in by `inset` px, so a link stops short of a node instead
  * of running under it. Purely geometric — it never reads the node mark's geometry,
  * which would couple a mark to a mark.
@@ -186,49 +185,49 @@ function insetSegment(x1, y1, x2, y2, start, end) {
 }
 
 /**
- * A node's half-extents, for the kinds that dock to a BOX rather than to a point.
+ * An edge an author named, or null — the end SLIDES along the box toward the
+ * other node (`'auto'` is the older spelling of the same thing).
  *
- * Read off the NODE row through `rawChannel`, so `nodeWidth` is a constant on the
- * mark, a column on the node table, or a derived `{ fn }` — the same three forms
- * `curve` and `arrow` already take. This is the only way the size can reach here:
- * asking the mark that draws the nodes what it drew would be a mark reading another
- * feature's geometry, which nothing in this library is allowed to do.
- * @param {Record<string, any>} channels
- * @param {any} row the NODE row @param {number} index its index in the node table
- * @param {any[]} rows the node table
- * @param {number} w default width @param {number} h default height
- * @returns {{ hw: number, hh: number }}
- */
-function nodeExtentOf(channels, row, index, rows, w, h) {
-    const width = +rawChannel(channels, 'nodeWidth', row, w, index, rows);
-    const height = +rawChannel(channels, 'nodeHeight', row, h, index, rows);
-    return {
-        hw: (Number.isFinite(width) ? width : w) / 2,
-        hh: (Number.isFinite(height) ? height : h) / 2,
-    };
-}
-
-/**
- * An edge an author named, or `'auto'`.
- *
- * A side is PRESENTATION, not data. It is read raw like `curve` and `arrow`, so it
- * is a mark option by default and becomes a column only if the spec points it at a
- * `{ field }` — which is what keeps a drawing preference out of an elicited dataset
- * unless the author decides it belongs there.
+ * A side is read raw like `curve` and `arrow`: a mark option, a derived `{ fn }`,
+ * or a column when the spec points it at a `{ field }` or the links table declares
+ * `sides`. A pinned side is the one thing that stops an end sliding.
  * @param {any} value @param {string} which the option's name, for the message
- * @returns {string}
+ * @returns {string | null}
  */
 function resolveSide(value, which) {
-    if (value === undefined || value === null || value === 'auto') return 'auto';
+    if (value === undefined || value === null || value === 'auto') return null;
     const v = String(value);
     if (LINK_SIDES.includes(v)) return v;
     warn(
         `link:side:${v}`,
         `link() got ${which}: ${JSON.stringify(value)}, which is not an edge. Use ` +
-        `${LINK_SIDES.map((s) => `"${s}"`).join(', ')}, or "auto" to let the two nodes' ` +
-        `relative position choose. Routing automatically.`
+        `${LINK_SIDES.map((s) => `"${s}"`).join(', ')}, or null to let the end slide ` +
+        `along the box toward the other node. Sliding.`
     );
-    return 'auto';
+    return null;
+}
+
+/**
+ * Where along its edge a port sits, as a signed fraction of that edge from the
+ * midpoint. Read raw like a side, for the same reason: a position on an edge is
+ * PRESENTATION, a mark option by default and a column only when the spec points
+ * it at one. Clamped so a link never leaves from a corner.
+ * @param {any} value @param {string} which the option's name, for the message
+ * @returns {number}
+ */
+function resolveOffset(value, which) {
+    if (value === undefined || value === null) return 0;
+    const v = +value;
+    if (!Number.isFinite(v)) {
+        warn(
+            `link:offset:${which}`,
+            `link() got ${which}: ${JSON.stringify(value)}, which is not a number. It is a ` +
+            `fraction of the edge from its midpoint, between ${-MAX_SLIDE} and ${MAX_SLIDE}. ` +
+            `Using the midpoint.`
+        );
+        return 0;
+    }
+    return Math.max(-MAX_SLIDE, Math.min(MAX_SLIDE, v));
 }
 
 /**
@@ -345,6 +344,25 @@ function separationBows(rows, sourceField, targetField, directed, spread) {
 }
 
 /**
+ * Each self-loop's place among the loops on its node (0, 1, …), and -1 for a row that
+ * is not a loop — so several loops on one node take different edges, then nest.
+ * Like separationBows, a question about the TABLE.
+ * @param {any[]} rows @param {string} sourceField @param {string} targetField
+ * @returns {number[]}
+ */
+function loopRanks(rows, sourceField, targetField) {
+    /** @type {Map<string, number>} */
+    const count = new Map();
+    return rows.map((d) => {
+        if (!d || d[sourceField] == null || d[sourceField] !== d[targetField]) return -1;
+        const key = String(d[sourceField]);
+        const n = count.get(key) || 0;
+        count.set(key, n + 1);
+        return n;
+    });
+}
+
+/**
  * link — one row of the links table drawn between the nodes it references.
  * @param {any} [options]
  * @returns {import('../types').Mark}
@@ -359,18 +377,22 @@ export function link(options = {}) {
         curve = 'line', curvature = 'auto', spread = AUTO_SPREAD,
         arrow = 'auto', arrowSize = 6, loopRadius = LOOP_RADIUS,
         inset = 0, sourceInset, targetInset, format: formatOpt,
-        nodeWidth, nodeHeight, cornerRadius = 0,
+        cornerRadius = CORNER_RADIUS,
         sourceSide = 'auto', targetSide = 'auto',
+        sourceOffset = 0, targetOffset = 0,
         labelBackground, labelPadding = LABEL_PADDING,
         labelRadius = LABEL_RADIUS, labelOpacity = LABEL_OPACITY,
     } = opts;
 
     const format = resolveFormat(formatOpt);
+    // Which ends get a handle: an end whose column an edit WRITES — an edit placed on
+    // that channel, or a mark-level edit naming it (`edit.network.rewire()` names
+    // both ends). The same "inert until an edit names the column" rule as every mark.
+    /** @param {string} name */
+    const endEdited = (name) => !!(channels[name] && channels[name].edit)
+        || (Array.isArray(edits) && edits.some((e) => e && Array.isArray(e.channels) && e.channels.includes(name)));
     /** @type {Record<string, boolean>} */
-    const handleEdits = {
-        source: !!(channels.source && channels.source.edit),
-        target: !!(channels.target && channels.target.edit),
-    };
+    const handleEdits = { source: endEdited('source'), target: endEdited('target') };
 
     return {
         ...markCommon(opts),
@@ -382,17 +404,13 @@ export function link(options = {}) {
         tableRole: 'links',
         // Declares the capability the `network`-scoped edits check for.
         supportsNetwork: true,
-        // Channels this mark resolves ITSELF, with no scale. The node extents name
-        // columns of the NODE table — which the chart's scale pass cannot see, since
-        // it resolves a mark's channels against the mark's own table — and a side is
-        // a literal edge name. Declaring them keeps a well-declared `nodeWidth` from
-        // being reported as an undeclared field.
-        // Every channel `link` reads through `rawChannel` belongs here — the list
-        // was four of seven, so `curve`, `arrow` and the label's `fontSize`
-        // resolved a global scale nothing ever reads.
+        // Channels this mark resolves ITSELF, with no scale: a side is a literal edge
+        // name, an offset a fraction of an edge. Every channel `link` reads through
+        // `rawChannel` belongs here — the list was four of seven once, so `curve`,
+        // `arrow` and the label's `fontSize` resolved a global scale nothing read.
         rawChannels: [
-            'nodeWidth', 'nodeHeight', 'sourceSide', 'targetSide',
-            'curve', 'arrow', 'fontSize',
+            'sourceSide', 'targetSide',
+            'sourceOffset', 'targetOffset', 'curve', 'arrow', 'fontSize',
         ],
         // A link spans between two positions; it has no opinion about the discrete
         // scale of an axis it crosses (same reasoning as rule).
@@ -444,11 +462,23 @@ export function link(options = {}) {
             const handle = resolveHandles(scales, opts);
             const startInset = sourceInset != null ? sourceInset : inset;
             const endInset = targetInset != null ? targetInset : inset;
-            // A node with no stated size still needs a box to dock to. `inset` is the
-            // spec's own "how far off a node does a link stop", so it doubles as the
-            // half-extent when nothing better is declared.
-            const extentW = +nodeWidth || (inset || DEFAULT_EXTENT) * 2;
-            const extentH = +nodeHeight || (inset || DEFAULT_EXTENT) * 2;
+            // The node table's box rule: the box the mark DRAWING the nodes declares
+            // (`Mark.nodeBox` — a dot's radius, a sticker's paper), handed over by the
+            // engine. The same rule places the ports and tests a drop, so a link end,
+            // a port and a drop target agree on where an edge is.
+            const rule = (context && context.nodeBox) || null;
+            // The node table's PORTS rule (a `ports` channel on the node mark): an end
+            // on a node with ports meets it AT a port.
+            const portsRule = (context && context.nodePorts) || null;
+            // With no rule a node still needs a box to dock to. `inset` is the spec's
+            // own "how far off a node does a link stop", so it doubles as the
+            // half-extent.
+            const extentW = (inset || DEFAULT_EXTENT) * 2;
+            const extentH = (inset || DEFAULT_EXTENT) * 2;
+            // Only a declared box makes a chord kind dock at the box instead of
+            // insetting along the chord: the fallback is a guess, and clipping every
+            // dot network's links at a guessed 12px square would shorten all of them.
+            const sized = !!rule;
 
             // Whether source→target is a DIRECTION is the schema's statement, read
             // once here and passed down — never re-derived per row, and never
@@ -459,6 +489,7 @@ export function link(options = {}) {
             const autoBows = curvature === 'auto'
                 ? separationBows(currentData, join.sourceField, join.targetField, directed, spread)
                 : null;
+            const loopRank = loopRanks(currentData, join.sourceField, join.targetField);
 
             // The label is NOT the line. `stroke`/`strokeWidth` on a link describe the
             // CONNECTOR, and resolveStyle sweeps the style channels onto every node a
@@ -490,6 +521,28 @@ export function link(options = {}) {
                 if (k !== undefined && k !== null && !byKey.has(k)) byKey.set(k, { row, index: i });
             });
 
+            // Every node's box, for a routed kind to dock to and to detour around.
+            // Built on the first row that needs it — a chart of straight links never
+            // pays for it — and ONCE per build, because "what else sits between these
+            // two nodes" is a question about the TABLE, exactly like separationBows.
+            // The routing grid is derived from the same boxes and shared the same way.
+            /** @type {(import('./linkRouter.js').LinkBox | null)[] | null} */
+            let boxes = null;
+            /** @type {import('./linkRouter.js').LinkBox[]} */
+            let obstacles = [];
+            /** @type {import('./linkRouter.js').RoutingGrid | undefined} */
+            let grid;
+            const nodeBoxes = () => {
+                if (boxes) return boxes;
+                const built = nodeBoxesOf(
+                    scales, channels, nodesTable, join.rows, rule, extentW, extentH, width, height
+                );
+                obstacles = /** @type {import('./linkRouter.js').LinkBox[]} */ (built.filter(Boolean));
+                grid = routingGrid(obstacles);
+                boxes = built;
+                return built;
+            };
+
             /** @type {import('../types').FeatureNode[]} */
             const out = [];
 
@@ -497,23 +550,45 @@ export function link(options = {}) {
                 const from = byKey.get(d ? d[join.sourceField] : undefined);
                 const to = byKey.get(d ? d[join.targetField] : undefined);
                 // A reference naming no node draws nothing. Half-formed rows are
-                // invisible rather than drawn at the origin.
-                if (!from || !to) return;
+                // invisible rather than drawn at the origin — with one exception: in
+                // a GHOST build of a proposal, a row with ONE end resolving to nothing
+                // is a link being drawn or rewired, and that free end is the pointer.
+                // The band is routed exactly as the finished link would be, so what
+                // you see while aiming is what you get on release.
+                const pointer = context && context.ghost && context.ghost.pointer
+                    ? context.ghost.pointer
+                    : null;
+                const freeFrom = !from && to && pointer ? pointer : null;
+                const freeTo = !to && from && pointer ? pointer : null;
+                const free = freeFrom || freeTo;
+                if ((!from && !freeFrom) || (!to && !freeTo)) return;
 
                 // Endpoints resolve through encodeChannel against the NODE row — the
                 // one positional-resolution path, applied to the row that actually
                 // carries the position. No direct scale() call, and no second
                 // inversion path for an edit to have to mirror.
-                const x1 = encodeChannel(scales, nodeChannels, 'x', from.row, width / 2, from.index, join.rows);
-                const y1 = encodeChannel(scales, nodeChannels, 'y', from.row, height / 2, from.index, join.rows);
-                const x2 = encodeChannel(scales, nodeChannels, 'x', to.row, width / 2, to.index, join.rows);
-                const y2 = encodeChannel(scales, nodeChannels, 'y', to.row, height / 2, to.index, join.rows);
+                // With a box rule, a node's centre is its box's — wherever the node
+                // mark put it.
+                const fromBox = rule && from ? nodeBoxes()[from.index] : null;
+                const toBox = rule && to ? nodeBoxes()[to.index] : null;
+                const x1 = fromBox ? fromBox.cx
+                    : from ? encodeChannel(scales, nodeChannels, 'x', from.row, width / 2, from.index, join.rows)
+                        : /** @type {{x:number,y:number}} */ (freeFrom).x;
+                const y1 = fromBox ? fromBox.cy
+                    : from ? encodeChannel(scales, nodeChannels, 'y', from.row, height / 2, from.index, join.rows)
+                        : /** @type {{x:number,y:number}} */ (freeFrom).y;
+                const x2 = toBox ? toBox.cx
+                    : to ? encodeChannel(scales, nodeChannels, 'x', to.row, width / 2, to.index, join.rows)
+                        : /** @type {{x:number,y:number}} */ (freeTo).x;
+                const y2 = toBox ? toBox.cy
+                    : to ? encodeChannel(scales, nodeChannels, 'y', to.row, height / 2, to.index, join.rows)
+                        : /** @type {{x:number,y:number}} */ (freeTo).y;
 
-                const selfLoop = from.index === to.index;
+                const selfLoop = !!to && !!from && from.index === to.index;
                 const arrows = resolveArrow(
                     rawChannel(channels, 'arrow', d, arrow, index, currentData), directed
                 );
-                const bow = autoBows ? autoBows[index] : +curvature || 0;
+                let bow = autoBows ? autoBows[index] : +curvature || 0;
 
                 // A row referencing one node twice has no chord to draw along, so it
                 // takes the loop whatever the spec asked for — the alternative was
@@ -535,12 +610,6 @@ export function link(options = {}) {
                 // links between one pair, not from the spec naming a curve.
                 if (kind === 'line' && bow) kind = 'arc';
 
-                // The clearance each end needs: the spec's inset, plus room for an
-                // arrowhead where one is drawn. A chord shape gets it subtracted along
-                // the chord; a box shape gets it as a gap off the edge it docks to.
-                const startGap = startInset + (arrows.source ? arrowSize : 0);
-                const endGap = endInset + (arrows.target ? arrowSize : 0);
-
                 // How the shape wants to be fed is the SHAPE's statement, not a branch
                 // on its name here: a point-to-point kind takes the chord already
                 // pulled in, a box-docking kind takes the two centres and the boxes.
@@ -548,26 +617,140 @@ export function link(options = {}) {
                 let seg;
                 /** @type {import('./linkGeometry.js').LinkShapeOptions} */
                 const shapeOpts = { loopRadius, cornerRadius: +cornerRadius || 0 };
+                // Where each end meets its node: a pinned edge, or null to slide
+                // along the box toward the other end. Read per row for every kind —
+                // a straight or curved link honours a pinned side too.
+                const sourcePort = {
+                    side: resolveSide(
+                        rawChannel(channels, 'sourceSide', d, sourceSide, index, currentData), 'sourceSide'
+                    ),
+                    offset: resolveOffset(
+                        rawChannel(channels, 'sourceOffset', d, sourceOffset, index, currentData), 'sourceOffset'
+                    ),
+                };
+                const targetPort = {
+                    side: resolveSide(
+                        rawChannel(channels, 'targetSide', d, targetSide, index, currentData), 'targetSide'
+                    ),
+                    offset: resolveOffset(
+                        rawChannel(channels, 'targetOffset', d, targetOffset, index, currentData), 'targetOffset'
+                    ),
+                };
+                // The fallback boxes only guard a row byKey has already vetted: the
+                // same encodeChannel reads as x1/y1 above, so a box IS its endpoint.
+                const boxOf = (/** @type {number} */ i, /** @type {number} */ cx, /** @type {number} */ cy) =>
+                    nodeBoxes()[i] || { cx, cy, hw: extentW / 2, hh: extentH / 2 };
+                // A free end is a point, so a route runs straight to the pointer.
+                const sourceBox = from ? boxOf(from.index, x1, y1) : { cx: x1, cy: y1, hw: 0, hh: 0 };
+                const targetBox = to ? boxOf(to.index, x2, y2) : { cx: x2, cy: y2, hw: 0, hh: 0 };
+
+                // A node with PORTS is met at a port: an unpinned end takes the usable
+                // port facing the other end (leaving by an `out` side, arriving by an
+                // `in`). A node without ports has none to take, and its ends slide.
+                /** @param {any} node @param {'source' | 'target'} end @returns {string[] | null} */
+                const portSides = (node, end) => {
+                    if (!portsRule || !node) return null;
+                    const roles = portsRule(node.row, node.index, join.rows) || {};
+                    const sides = LINK_SIDES.filter((s) => roleAllows(roles[s], end));
+                    return sides.length ? sides : null;
+                };
+                const sourcePorts = portSides(from, 'source');
+                const targetPorts = portSides(to, 'target');
+                if (selfLoop) {
+                    // A loop has no other end to face: `loopSides` picks its edges
+                    // from what the node allows and how many loops it already has.
+                    const sides = loopSides(
+                        sourcePorts, targetPorts, sourcePort.side, targetPort.side, Math.max(0, loopRank[index])
+                    );
+                    shapeOpts.loopOut = sides.out;
+                    shapeOpts.loopIn = sides.in;
+                    shapeOpts.nest = sides.nest;
+                } else if (sourcePorts && !sourcePort.side) {
+                    sourcePort.side = facingSide(sourceBox, sourcePorts, { x: targetBox.cx, y: targetBox.cy });
+                }
+                if (!selfLoop && targetPorts && !targetPort.side) {
+                    targetPort.side = facingSide(targetBox, targetPorts, { x: sourceBox.cx, y: sourceBox.cy });
+                }
+
+                // The clearance each end needs: the CONNECTION BUFFER (`inset`, how far
+                // off the node's shape a link stops), plus room for an arrowhead where
+                // one is drawn. An end at a PORT takes no buffer — it connects to the
+                // port itself. A chord shape gets it subtracted along the chord; a box
+                // shape gets it as a gap off the edge it docks to.
+                const startGap = (sourcePorts ? 0 : startInset) + (arrows.source ? arrowSize : 0);
+                const endGap = (targetPorts ? 0 : endInset) + (arrows.target ? arrowSize : 0);
+
                 if (entry.anchors === 'box') {
                     seg = { x1, y1, x2, y2 };
-                    const a = nodeExtentOf(channels, from.row, from.index, join.rows, extentW, extentH);
-                    const b = nodeExtentOf(channels, to.row, to.index, join.rows, extentW, extentH);
-                    shapeOpts.source = { cx: x1, cy: y1, hw: a.hw, hh: a.hh };
-                    shapeOpts.target = { cx: x2, cy: y2, hw: b.hw, hh: b.hh };
+                    shapeOpts.source = sourceBox;
+                    shapeOpts.target = targetBox;
                     shapeOpts.sourceGap = startGap;
                     shapeOpts.targetGap = endGap;
-                    shapeOpts.sourceSide = resolveSide(
-                        rawChannel(channels, 'sourceSide', d, sourceSide, index, currentData), 'sourceSide'
+                    shapeOpts.obstacles = obstacles;
+                    shapeOpts.grid = grid;
+                    shapeOpts.sourcePort = sourcePort;
+                    shapeOpts.targetPort = targetPort;
+                } else if (selfLoop) {
+                    seg = { x1, y1, x2: x1, y2: y1 };
+                    // Docked on the node's box when one is declared; a guessed box
+                    // would put the loop on a square nothing draws.
+                    if (sized) {
+                        shapeOpts.source = sourceBox;
+                        shapeOpts.sourceGap = startGap;
+                        shapeOpts.targetGap = endGap;
+                    } else {
+                        // Above the centre, a pair separated by the bow's sign.
+                        delete shapeOpts.loopOut;
+                        shapeOpts.nest = Math.floor(Math.max(0, loopRank[index]) / 2);
+                    }
+                } else if (sized || sourcePort.side || targetPort.side) {
+                    // A chord kind docks at the box: the chord is clipped where it
+                    // leaves each node (plus the gap), or at a pinned edge's midpoint.
+                    // That is what makes a straight link to a wide sticker end at the
+                    // sticker, and what lets a curve leave a pinned edge square-on.
+                    const ends = resolveEnds(
+                        sourceBox, sourcePort, startGap,
+                        targetBox, targetPort, endGap
                     );
-                    shapeOpts.targetSide = resolveSide(
-                        rawChannel(channels, 'targetSide', d, targetSide, index, currentData), 'targetSide'
-                    );
+                    // A ROUND node (a dot, an ellipse, a glyph's head) is met on its
+                    // curve, not on the box around it: an unpinned end clipped at the
+                    // box's corner stopped up to 41% of the radius further out on a
+                    // diagonal. The gap grows both radii alike.
+                    const onCircle = (/** @type {any} */ box, /** @type {number} */ gap, /** @type {{ x: number, y: number }} */ toward) => {
+                        const dx = toward.x - box.cx;
+                        const dy = toward.y - box.cy;
+                        const rx = box.hw + gap;
+                        const ry = box.hh + gap;
+                        const t = 1 / (Math.hypot(dx / (rx || 1e-6), dy / (ry || 1e-6)) || 1);
+                        return { x: box.cx + dx * t, y: box.cy + dy * t };
+                    };
+                    const a = !sourcePort.side && /** @type {any} */ (sourceBox).round
+                        ? onCircle(sourceBox, startGap, targetPort.side ? ends.b : { x: targetBox.cx, y: targetBox.cy })
+                        : ends.a;
+                    const b = !targetPort.side && /** @type {any} */ (targetBox).round
+                        ? onCircle(targetBox, endGap, sourcePort.side ? ends.a : { x: sourceBox.cx, y: sourceBox.cy })
+                        : ends.b;
+                    seg = Math.hypot(b.x - a.x, b.y - a.y) < 1 ? null : { x1: a.x, y1: a.y, x2: b.x, y2: b.y };
+                    if (sourcePort.side) shapeOpts.sourceNormal = SIDE_NORMALS[sourcePort.side];
+                    if (targetPort.side) shapeOpts.targetNormal = SIDE_NORMALS[targetPort.side];
                 } else {
-                    seg = selfLoop
-                        ? { x1, y1, x2: x1, y2: y1 }
-                        : insetSegment(x1, y1, x2, y2, startGap, endGap);
+                    seg = insetSegment(x1, y1, x2, y2, startGap, endGap);
                 }
                 if (!seg) return;
+
+                // `"auto"` fans siblings a fraction of the chord apart, which on a short
+                // chord puts two LABELLED siblings' labels on top of each other. Widen
+                // the fan just enough that each step clears a label — for every
+                // sibling of the pair alike, since they share the chord.
+                if (autoBows && bow && labelChannels && entry.anchors === 'chord' && !selfLoop) {
+                    const chord = Math.hypot(seg.x2 - seg.x1, seg.y2 - seg.y1);
+                    const step = spread * chord / 2;
+                    const fontPx = +rawChannel(channels, 'fontSize', d, 12, index, currentData) || 12;
+                    const need = fontPx + labelPadding * 2 + 2;
+                    if (step > 0 && step < need) {
+                        bow = Math.sign(bow) * Math.min(Math.abs(bow) * (need / step), MAX_AUTO_BOW);
+                    }
+                }
 
                 const style = resolveStyle(scales, channels, d, defaults, index, currentData);
                 const shape = entry.build(seg, bow, shapeOpts);
@@ -604,6 +787,10 @@ export function link(options = {}) {
                         curve: shape.hit ? 'linear' : shape.curve,
                         stroke: 'transparent',
                         strokeWidth: Math.max(HIT_WIDTH, +style.strokeWidth || 0),
+                        // Round, so the hit area covers the very ends: an end handle
+                        // sits ON the end, and is shown only while the link is
+                        // hovered — pointing straight at it must hover the link.
+                        strokeLinecap: 'round',
                         fill: 'none',
                         hit: true,
                         editBox,
@@ -617,6 +804,9 @@ export function link(options = {}) {
                     ...(shape.d ? { d: shape.d } : { points: shape.points, curve: shape.curve }),
                     ...style,
                     fill: 'none',
+                    // A link with no target yet is a distinct STATE, not a theme
+                    // choice: dashed, so the band reads as "not yet a link".
+                    ...(free ? { strokeDasharray: '4 3' } : {}),
                     editBox,
                     data: d,
                     index,
@@ -695,8 +885,12 @@ export function link(options = {}) {
                     out.push(label);
                 }
 
-                // Endpoint handles — only where the spec put an edit, and tagged so
-                // claimEdge can keep a drag on one end off the other.
+                // Endpoint handles — only where an edit writes that end, tagged with the
+                // end so the edit knows which column it moves. Shown only while the
+                // link is hovered, selected or grabbed, and painted above the nodes
+                // (`raise`): an end sits on a node's edge, beside that node's port, and
+                // hidden it takes no pointer events, so it never steals a press meant
+                // for the port.
                 for (const [name, pt] of /** @type {[string, {x:number,y:number}][]} */ ([
                     ['source', shape.start],
                     ['target', shape.end],
@@ -711,6 +905,8 @@ export function link(options = {}) {
                         stroke: handle.stroke,
                         strokeWidth: handle.strokeWidth,
                         channel: name,
+                        onHover: true,
+                        raise: true,
                         data: d,
                         index,
                     });

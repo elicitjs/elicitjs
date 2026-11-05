@@ -47,6 +47,26 @@ export function point(options = {}) {
         ...positionalKeys(channels),
 
         /**
+         * The box a dot occupies, for a network that docks links to it: its centre
+         * and its radius, through the same channels build() reads.
+         * @param {any} d @param {number} i @param {any[]} rows
+         * @param {import('../types').ScaleMap} scales @param {number} width @param {number} height
+         * @returns {import('../types').NodeBox}
+         */
+        nodeBox: (d, i, rows, scales, width, height) => {
+            const r = Math.max(0, +encodeChannel(scales, channels, 'size', d, 5, i, rows) || 0);
+            return {
+                cx: encodeChannel(scales, channels, 'x', d, width / 2, i, rows),
+                cy: encodeChannel(scales, channels, 'y', d, height / 2, i, rows),
+                hw: r,
+                hh: r,
+                // A circle (or a glyph drawn in one) is met on its circle; a square
+                // point on its edges.
+                round: shape !== 'square',
+            };
+        },
+
+        /**
          * @param {any[]} currentData
          * @param {import('../types').ScaleMap} scales
          * @param {number} width

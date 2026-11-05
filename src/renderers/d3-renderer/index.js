@@ -795,6 +795,9 @@ export class D3Renderer {
     // DOM from a mark that happens to be transparent — and a `circle.mark` selector
     // silently picks it up ahead of the part it sits under.
     sel.attr("data-hit", (/** @type {any} */ d) => (d.hit ? "" : null));
+    // A HANDLE's tag (`port`, a link's `source`/`target` end, an area's edge…), so a
+    // test or a stylesheet can tell a port from the link end sitting on top of it.
+    sel.attr("data-channel", (/** @type {any} */ d) => (d.channel != null ? d.channel : null));
     return sel;
   }
 

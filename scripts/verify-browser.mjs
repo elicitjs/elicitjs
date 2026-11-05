@@ -2856,6 +2856,24 @@ async function main() {
         await page.waitForTimeout(200);
         const netEl = '#draw .chart > div';
         const netData = () => page.$eval(netEl, (el) => el.getData());
+        // The connection buffer: a link stops `inset` (3px) off the dot's own edge —
+        // radius 11 + 3 from its centre — not `inset` px from the centre, and not
+        // the dot's radius PLUS a centre-era inset.
+        const bufferGaps = await page.evaluate(() => {
+            const svg = document.querySelector('#draw .chart svg');
+            const dots = [...svg.querySelectorAll('circle')].filter((c) => +c.getAttribute('r') === 11)
+                .map((c) => [+c.getAttribute('cx'), +c.getAttribute('cy')]);
+            const bodies = [...svg.querySelectorAll('path')].filter((p) => {
+                const st = p.getAttribute('stroke');
+                return st && st !== 'none' && st !== 'transparent';
+            });
+            return bodies.map((p) => {
+                const a = p.getPointAtLength(0);
+                return +Math.min(...dots.map(([x, y]) => Math.hypot(x - a.x, y - a.y))).toFixed(1);
+            });
+        });
+        check('network: `inset` is a buffer off the node\'s shape (radius 11 + 3)',
+            bufferGaps.length > 0 && bufferGaps.every((d) => Math.abs(d - 14) < 0.6), JSON.stringify(bufferGaps));
         // Node circles carry the point mark's fill; a link's endpoint handle is a
         // circle too, so index alone would not tell them apart.
         const nodeAt = (i) => page.$$eval('#draw .chart svg circle', (cs, [k, head]) => {
@@ -2987,7 +3005,9 @@ async function main() {
         const h0 = await handleAt(0);
         const p3 = await personAt(2);
         if (h0 && p3) {
+            // The handle shows while its link is hovered; the handle sits on the link.
             await page.mouse.move(h0.x, h0.y);
+            await page.waitForTimeout(200);
             await page.mouse.down();
             await page.mouse.move(p3.x, p3.y, { steps: 10 });
             await page.mouse.up();
@@ -3324,42 +3344,167 @@ async function main() {
             dgCycled.flows[2].kind !== dgRev.flows[2].kind,
             `${dgRev.flows[2].kind} -> ${dgCycled.flows[2].kind}`);
 
-        // Shift-drag one box onto another: connect. This is the check that was
-        // missing when a relative `move` and `connect` first shared a mark — the
-        // move driver's dragend cleared the feature's whole session, taking the
-        // connect driver's `fromIndex` with it, so the band was drawn all the way
-        // across and the release created NOTHING. Both drivers still ran, both
-        // charts still rendered, and every other assertion here passed.
+        // Ports: the dots on a box's edges, hidden until the box is hovered, and the
+        // grab targets for `connect`. A drag from a dot writes its side on the new
+        // link; a drop on a dot writes the target's; a drop on a body writes null.
+        // Each is a geometry-and-data fact the page renders either way.
         const dgBoxes = () => page.$$eval('#diagram .chart svg rect.mark', (rs) => rs.map((r) => {
             const b = r.getBoundingClientRect();
-            return { cx: b.x + b.width / 2, cy: b.y + b.height / 2 };
+            return { x: b.x, y: b.y, w: b.width, h: b.height, cx: b.x + b.width / 2, cy: b.y + b.height / 2 };
         }));
+        // Every port circle: screen position, opacity, and which box edge it sits on.
+        const dgPorts = () => page.evaluate(() => {
+            const boxes = [...document.querySelectorAll('#diagram .chart svg rect.mark')]
+                .map((r) => r.getBoundingClientRect());
+            return [...document.querySelectorAll('#diagram .chart svg circle[data-channel="port"]')].map((c) => {
+                const b = c.getBoundingClientRect();
+                const cx = b.x + b.width / 2;
+                const cy = b.y + b.height / 2;
+                let box = -1;
+                let side = null;
+                boxes.forEach((r, i) => {
+                    const mid = { top: [r.x + r.width / 2, r.y], bottom: [r.x + r.width / 2, r.y + r.height],
+                        left: [r.x, r.y + r.height / 2], right: [r.x + r.width, r.y + r.height / 2] };
+                    for (const [name, [mx, my]] of Object.entries(mid)) {
+                        if (Math.hypot(mx - cx, my - cy) < 3) { box = i; side = name; }
+                    }
+                });
+                return { cx, cy, box, side, opacity: +getComputedStyle(c).opacity };
+            }).filter((p) => p.box >= 0);
+        });
+        const ports0 = await dgPorts();
+        check('diagram: `ports: true` puts four dots per box, each on an edge midpoint',
+            ports0.length === 12 && ports0.every((p) => p.box >= 0 && p.side),
+            JSON.stringify(ports0.map((p) => [p.box, p.side])));
+        check('diagram: the dots are hidden until a box is hovered',
+            ports0.every((p) => p.opacity === 0), JSON.stringify(ports0.map((p) => p.opacity)));
         const bx = await dgBoxes();
-        const dgBefore = await dgData();
-        await page.keyboard.down('Shift');
         await page.mouse.move(bx[0].cx, bx[0].cy);
+        await page.waitForTimeout(150);
+        const ports1 = await dgPorts();
+        check('diagram: hovering a box shows its four dots and no others',
+            ports1.filter((p) => p.box === 0).every((p) => p.opacity === 1)
+            && ports1.filter((p) => p.box !== 0).every((p) => p.opacity === 0),
+            JSON.stringify(ports1.map((p) => [p.box, p.opacity])));
+
+        // Hovering a dot rings THAT dot. The hovered outline used to land on the
+        // first node of the row — the top dot, whichever one the pointer was on —
+        // which read as "only the top port is live".
+        const rightDot = ports1.find((p) => p.box === 0 && p.side === 'right');
+        await page.mouse.move(rightDot.cx, rightDot.cy);
+        await page.waitForTimeout(150);
+        const ring = await page.evaluate(([rx, ry]) => {
+            const rings = [...document.querySelectorAll('#diagram .chart svg circle')]
+                .filter((c) => c.getAttribute('fill') === 'none' || getComputedStyle(c).fill === 'none')
+                .map((c) => { const b = c.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; });
+            return rings.map((r) => +Math.hypot(r.x - rx, r.y - ry).toFixed(1));
+        }, [rightDot.cx, rightDot.cy]);
+        check('diagram: hovering the right dot rings the right dot, not the top one',
+            ring.some((d) => d < 2), JSON.stringify(ring));
+
+        // Drag from box 0's right dot, out into empty space (a dashed band must
+        // already be there), then onto box 2's left dot.
+        const portOf = (ports, box, side) => ports.find((p) => p.box === box && p.side === side);
+        const from = portOf(ports1, 0, 'right');
+        const dgBefore = await dgData();
+        await page.mouse.move(from.cx, from.cy);
+        await page.waitForTimeout(100);
         await page.mouse.down();
-        await page.mouse.move((bx[0].cx + bx[2].cx) / 2, (bx[0].cy + bx[2].cy) / 2, { steps: 8 });
-        await page.mouse.move(bx[2].cx, bx[2].cy, { steps: 8 });
+        const midX = (bx[0].cx + bx[2].cx) / 2;
+        const midY = Math.min(bx[0].y, bx[2].y) - 40; // above both boxes: nothing to land on
+        await page.mouse.move(midX, midY, { steps: 8 });
+        await page.waitForTimeout(100);
+        const band = await page.$$eval('#diagram .chart svg path', (ps) => ps
+            .filter((p) => getComputedStyle(p).pointerEvents === 'none' && p.getAttribute('stroke-dasharray'))
+            .map((p) => ({ len: +p.getTotalLength().toFixed(0) })));
+        check('diagram: a dashed band follows the pointer before any target is near',
+            band.length === 1 && band[0].len > 40, JSON.stringify(band));
+        const ports2 = await dgPorts();
+        const to = portOf(ports2, 2, 'left');
+        await page.mouse.move(to.cx, to.cy, { steps: 8 });
+        await page.waitForTimeout(100);
         await page.mouse.up();
-        await page.keyboard.up('Shift');
         await page.waitForTimeout(350);
         const dgLinked = await dgData();
-        check('diagram: shift-dragging box to box appends exactly one connector',
+        const made = dgLinked.flows[dgLinked.flows.length - 1] || {};
+        check('diagram: dragging dot to dot appends exactly one connector',
             dgLinked.flows.length === dgBefore.flows.length + 1,
             `${dgBefore.flows.length} -> ${dgLinked.flows.length}`);
         check('diagram: the new connector joins the two boxes it was dragged between',
-            !!dgLinked.flows[dgLinked.flows.length - 1]
-            && dgLinked.flows[dgLinked.flows.length - 1].source === dgBefore.steps[0].id
-            && dgLinked.flows[dgLinked.flows.length - 1].target === dgBefore.steps[2].id,
-            JSON.stringify(dgLinked.flows[dgLinked.flows.length - 1]));
+            made.source === dgBefore.steps[0].id && made.target === dgBefore.steps[2].id,
+            JSON.stringify(made));
+        check('diagram: a dot-to-dot link records both sides',
+            made.fromSide === 'right' && made.toSide === 'left', JSON.stringify(made));
         check('diagram: connect defaults fill the new row\'s own columns',
-            (dgLinked.flows[dgLinked.flows.length - 1] || {}).kind === 'orthogonal',
-            JSON.stringify(dgLinked.flows[dgLinked.flows.length - 1]));
+            made.kind === 'orthogonal', JSON.stringify(made));
         check('diagram: no ghost survives the drag that made the connector',
             (await page.$$eval('#diagram .chart svg path',
                 (ps) => ps.filter((p) => getComputedStyle(p).pointerEvents === 'none').length)) === 0,
             'a parked proposal was left on screen');
+        // The pinned link leaves the edge it recorded.
+        const pinnedEnds = await page.evaluate(() => {
+            const boxes = [...document.querySelectorAll('#diagram .chart svg rect.mark')].map((r) => r.getBBox());
+            const bodies = [...document.querySelectorAll('#diagram .chart svg path')].filter((p) => {
+                const s = p.getAttribute('stroke');
+                return s && s !== 'none' && s !== 'transparent';
+            });
+            const p = bodies[bodies.length - 1];
+            const a = p.getPointAtLength(0);
+            const z = p.getPointAtLength(p.getTotalLength());
+            const r0 = boxes[0];
+            const r2 = boxes[2];
+            // Each end stops `inset` + the arrowhead (10px) off its edge.
+            return {
+                leavesRight: Math.abs(a.x - (r0.x + r0.width)) < 16,
+                entersLeft: Math.abs(z.x - r2.x) < 16,
+                end: { x: +z.x.toFixed(1), y: +z.y.toFixed(1) }, left: +r2.x.toFixed(1),
+            };
+        });
+        check('diagram: the pinned link leaves the right edge and enters the left one',
+            pinnedEnds.leavesRight && pinnedEnds.entersLeft, JSON.stringify(pinnedEnds));
+
+        // A drop on a BODY leaves that end sliding: from box 2's bottom dot to box
+        // 0's centre. (Not box 1: the reverse check above turned s2→s3 into s3→s2,
+        // and connect refuses a link that already exists.)
+        await page.mouse.move(bx[2].cx, bx[2].cy);
+        await page.waitForTimeout(150);
+        const ports3 = await dgPorts();
+        const from2 = portOf(ports3, 2, 'bottom');
+        await page.mouse.move(from2.cx, from2.cy);
+        await page.waitForTimeout(100);
+        await page.mouse.down();
+        await page.mouse.move(bx[0].cx, bx[0].cy, { steps: 12 });
+        await page.waitForTimeout(100);
+        await page.mouse.up();
+        await page.waitForTimeout(350);
+        const dgLinked2 = await dgData();
+        const made2 = dgLinked2.flows[dgLinked2.flows.length - 1] || {};
+        check('diagram: a drop on a box body records a null side for that end',
+            dgLinked2.flows.length === dgLinked.flows.length + 1
+            && made2.fromSide === 'bottom' && made2.toSide === null,
+            JSON.stringify(made2));
+
+        // A sliding end moves with the node, continuously: nudge box 1 and the
+        // sliding end's anchor moves by about as much.
+        const slidingEnd = () => page.evaluate(() => {
+            const bodies = [...document.querySelectorAll('#diagram .chart svg path')].filter((p) => {
+                const s = p.getAttribute('stroke');
+                return s && s !== 'none' && s !== 'transparent';
+            });
+            const p = bodies[bodies.length - 1];
+            const z = p.getPointAtLength(p.getTotalLength());
+            return { x: z.x, y: z.y };
+        });
+        const end0 = await slidingEnd();
+        await page.mouse.move(bx[0].cx, bx[0].cy);
+        await page.mouse.down();
+        await page.mouse.move(bx[0].cx + 3, bx[0].cy, { steps: 3 });
+        await page.mouse.up();
+        await page.waitForTimeout(300);
+        const end1 = await slidingEnd();
+        check('diagram: a sliding end follows a small nudge without jumping',
+            Math.hypot(end1.x - end0.x, end1.y - end0.y) < 8,
+            `${JSON.stringify(end0)} -> ${JSON.stringify(end1)}`);
 
         // ---- Orthogonal routing: docked to the BOX, not to the chord ---------
         // The whole point of the kind. A `step` turns on the straight line between
@@ -3367,10 +3512,9 @@ async function main() {
         // usually along an edge and often inside the paper. These assert the three
         // things that stop being true the moment the router regresses to the chord.
         //
-        // `#diagram`'s links dock to boxes measured by `noteBox`, so this also proves
-        // the sizing helper survives being called from a spec rather than from
-        // `sticker` itself — a `nodeWidth` that resolved to NaN still draws a link,
-        // just one anchored at the node's centre again.
+        // `#diagram`'s links dock to the box the sticker itself declares, so this also
+        // proves the box rule reaches `link` — without it a link docks to a 24px
+        // square at the node's centre, well inside the paper.
         const orthoEnds = () => page.evaluate(() => {
             const svg = document.querySelector('#diagram .chart svg');
             const boxes = [...svg.querySelectorAll('rect.mark')].map((r) => {
@@ -3538,6 +3682,394 @@ async function main() {
             curves1.links[0].kind !== curves0.links[0].kind,
             `${curves0.links[0].kind} -> ${curves1.links[0].kind}`);
 
+        // Ports on the network page. Three charts: a sticker board whose links leave
+        // by the right and arrive by the left; a dot network you reconnect by the
+        // ends; and a board whose ports a constraint and a per-row value limit.
+        // What is checked is what only a browser shows: which dots are VISIBLE at
+        // each moment, where they sit, and the rows a drag writes.
+        await page.locator('#ports .chart svg').first().scrollIntoViewIfNeeded();
+        await page.waitForTimeout(250);
+        const portsData = (k = 0) => page.evaluate((i) => document.querySelectorAll('#ports .chart > div')[i].getData(), k);
+        // Every port (`data-channel="port"`), and which note edge it sits on. A link's
+        // end handle sits on the same spot, so geometry alone cannot tell them apart.
+        const portDots = (k = 0, sec = '#ports') => page.evaluate(([i, sel]) => {
+            const svg = document.querySelectorAll(`${sel} .chart svg`)[i];
+            const boxes = [...svg.querySelectorAll('rect.mark')].map((r) => r.getBoundingClientRect());
+            return [...svg.querySelectorAll('circle[data-channel="port"]')].map((c) => {
+                const b = c.getBoundingClientRect();
+                const cx = b.x + b.width / 2;
+                const cy = b.y + b.height / 2;
+                let box = -1;
+                let side = null;
+                boxes.forEach((r, j) => {
+                    const mid = { top: [r.x + r.width / 2, r.y], bottom: [r.x + r.width / 2, r.y + r.height],
+                        left: [r.x, r.y + r.height / 2], right: [r.x + r.width, r.y + r.height / 2] };
+                    for (const [name, [mx, my]] of Object.entries(mid)) {
+                        if (Math.hypot(mx - cx, my - cy) < 3) { box = j; side = name; }
+                    }
+                });
+                return { cx, cy, box, side, shown: +getComputedStyle(c).opacity > 0.5 };
+            }).filter((p) => p.box >= 0);
+        }, [k, sec]);
+        const noteCentres = (k = 0, sec = '#ports') => page.evaluate(([i, sel]) => [...document.querySelectorAll(`${sel} .chart svg`)[i]
+            .querySelectorAll('rect.mark')].map((r) => {
+            const b = r.getBoundingClientRect();
+            return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+        }), [k, sec]);
+        const shownOf = (dots) => dots.filter((p) => p.shown).map((p) => `${p.box}:${p.side}`).sort();
+
+        const pd0 = await portDots();
+        check('ports: `{ out: right, in: left }` puts a dot on the right and left of every note',
+            pd0.length === 8 && pd0.every((p) => p.side === 'right' || p.side === 'left'),
+            JSON.stringify(pd0.map((p) => [p.box, p.side])));
+        check('ports: every dot is hidden at rest', pd0.every((p) => !p.shown), JSON.stringify(shownOf(pd0)));
+        const nc = await noteCentres();
+        await page.mouse.move(nc[0].x, nc[0].y);
+        await page.waitForTimeout(200);
+        const pd1 = await portDots();
+        check('ports: hovering a note shows only the dot a link can LEAVE by',
+            JSON.stringify(shownOf(pd1)) === JSON.stringify(['0:right']), JSON.stringify(shownOf(pd1)));
+
+        // The pinned link idea→draft leaves exactly at idea's right dot (less inset).
+        const pinGap = await page.evaluate(([dx, dy]) => {
+            const svg = document.querySelectorAll('#ports .chart svg')[0];
+            const p = [...svg.querySelectorAll('path')].filter((n) => {
+                const s = n.getAttribute('stroke');
+                return s && s !== 'none' && s !== 'transparent';
+            })[0];
+            const a = p.getPointAtLength(0);
+            const s = new DOMPoint(a.x, a.y).matrixTransform(p.getScreenCTM());
+            return Math.hypot(s.x - dx, s.y - dy);
+        }, [pd1.find((p) => p.box === 0 && p.side === 'right').cx, pd1.find((p) => p.box === 0 && p.side === 'right').cy]);
+        check('ports: a link pinned to an edge leaves from that edge\'s dot',
+            pinGap < 6, `${pinGap.toFixed(1)}px from the dot (inset 4)`);
+
+        // Drag from idea's right dot. idea→draft exists, so only review's and ship's
+        // left dots may light — and the hidden end handle of idea→draft, sitting on
+        // that same dot, must not take the press.
+        const pRows0 = await portsData();
+        const pFrom = pd1.find((p) => p.box === 0 && p.side === 'right');
+        await page.mouse.move(pFrom.cx, pFrom.cy);
+        await page.waitForTimeout(150);
+        await page.mouse.down();
+        await page.mouse.move(pFrom.cx + 30, pFrom.cy - 40, { steps: 6 });
+        await page.waitForTimeout(150);
+        const pdDrag = await portDots();
+        check('ports: during a drag only the dots a release would accept show',
+            JSON.stringify(shownOf(pdDrag).filter((k) => k !== '0:right')) === JSON.stringify(['2:left', '3:left']),
+            JSON.stringify(shownOf(pdDrag)));
+        const pTo = pdDrag.find((p) => p.box === 3 && p.side === 'left');
+        await page.mouse.move(pTo.cx, pTo.cy, { steps: 8 });
+        await page.waitForTimeout(100);
+        await page.mouse.up();
+        await page.waitForTimeout(350);
+        const pRows1 = await portsData();
+        const pMade = pRows1.flows[pRows1.flows.length - 1] || {};
+        check('ports: a dot-to-dot drag appends one link, writing the columns the link names',
+            pRows1.flows.length === pRows0.flows.length + 1
+            && pMade.source === 'idea' && pMade.target === 'ship'
+            && pMade.fromSide === 'right' && pMade.toSide === 'left',
+            JSON.stringify(pMade));
+        check('ports: a press on a dot under a hidden end handle connects, not rewires',
+            JSON.stringify(pRows1.flows.slice(0, pRows0.flows.length)) === JSON.stringify(pRows0.flows),
+            JSON.stringify(pRows1.flows));
+
+        // Rewire. The end handles show only while the connector is hovered; drag the
+        // new link's target end onto review's left dot, then drag it into space.
+        const handles = () => page.evaluate(() => {
+            const svg = document.querySelectorAll('#ports .chart svg')[0];
+            return [...svg.querySelectorAll('circle[data-channel="source"], circle[data-channel="target"]')].map((c) => {
+                const b = c.getBoundingClientRect();
+                return { cx: b.x + b.width / 2, cy: b.y + b.height / 2, shown: +getComputedStyle(c).opacity > 0.5 };
+            });
+        });
+        const hidden0 = await handles();
+        check('ports: a connector\'s end handles are hidden until it is hovered',
+            hidden0.length >= 2 && hidden0.every((h) => !h.shown), JSON.stringify(hidden0.map((h) => h.shown)));
+        const newBody = await page.evaluate(() => {
+            const svg = document.querySelectorAll('#ports .chart svg')[0];
+            const ps = [...svg.querySelectorAll('path')].filter((p) => p.getAttribute('stroke') === 'transparent');
+            const p = ps[ps.length - 1];
+            const at = p.getPointAtLength(p.getTotalLength() / 2);
+            const s = new DOMPoint(at.x, at.y).matrixTransform(p.getScreenCTM());
+            return { x: s.x, y: s.y };
+        });
+        await page.mouse.move(newBody.x, newBody.y);
+        await page.waitForTimeout(200);
+        const shownHandles = (await handles()).filter((h) => h.shown);
+        check('ports: hovering a connector shows a handle at each end',
+            shownHandles.length === 2, JSON.stringify(shownHandles));
+        // The target end is the one nearer ship.
+        const shipLeft = pTo;
+        const newEnd = shownHandles.sort((a, b) => Math.hypot(a.cx - shipLeft.cx, a.cy - shipLeft.cy)
+            - Math.hypot(b.cx - shipLeft.cx, b.cy - shipLeft.cy))[0];
+        await page.mouse.move(newEnd.cx, newEnd.cy, { steps: 4 });
+        await page.waitForTimeout(150);
+        await page.mouse.down();
+        await page.mouse.move(newEnd.cx - 20, newEnd.cy - 60, { steps: 6 });
+        await page.waitForTimeout(150);
+        const pdRewire = await portDots();
+        const reviewLeft = pdRewire.find((p) => p.box === 2 && p.side === 'left');
+        check('ports: dragging a link\'s end lights the dots it could land on',
+            shownOf(pdRewire).includes('2:left') && !shownOf(pdRewire).some((k) => k.endsWith('right')),
+            JSON.stringify(shownOf(pdRewire)));
+        await page.mouse.move(reviewLeft.cx, reviewLeft.cy, { steps: 8 });
+        await page.waitForTimeout(100);
+        await page.mouse.up();
+        await page.waitForTimeout(350);
+        const pRows2 = await portsData();
+        const pRe = pRows2.flows[pRows2.flows.length - 1] || {};
+        check('ports: dropping a link\'s end on another note\'s dot re-points it',
+            pRows2.flows.length === pRows1.flows.length && pRe.source === 'idea' && pRe.target === 'review'
+            && pRe.toSide === 'left', JSON.stringify(pRe));
+
+        // Disconnect: the same end, dropped on nothing.
+        const reBody = await page.evaluate(() => {
+            const svg = document.querySelectorAll('#ports .chart svg')[0];
+            const ps = [...svg.querySelectorAll('path')].filter((p) => p.getAttribute('stroke') === 'transparent');
+            const p = ps[ps.length - 1];
+            const at = p.getPointAtLength(p.getTotalLength() * 0.5);
+            const s = new DOMPoint(at.x, at.y).matrixTransform(p.getScreenCTM());
+            return { x: s.x, y: s.y };
+        });
+        await page.mouse.move(reBody.x, reBody.y);
+        await page.waitForTimeout(200);
+        const reHandles = (await handles()).filter((h) => h.shown)
+            .sort((a, b) => Math.hypot(a.cx - reviewLeft.cx, a.cy - reviewLeft.cy)
+                - Math.hypot(b.cx - reviewLeft.cx, b.cy - reviewLeft.cy));
+        if (reHandles[0]) {
+            await page.mouse.move(reHandles[0].cx, reHandles[0].cy, { steps: 4 });
+            await page.waitForTimeout(150);
+            await page.mouse.down();
+            const svgBox = await page.locator('#ports .chart svg').first().boundingBox();
+            await page.mouse.move(svgBox.x + svgBox.width / 2, svgBox.y + svgBox.height - 6, { steps: 10 });
+            await page.waitForTimeout(100);
+            await page.mouse.up();
+            await page.waitForTimeout(350);
+        }
+        const pRows3 = await portsData();
+        check('ports: dropping a link\'s end on empty space removes the link',
+            pRows3.flows.length === pRows2.flows.length - 1
+            && !pRows3.flows.some((f) => f.source === 'idea' && f.target === 'review'),
+            JSON.stringify(pRows3.flows));
+
+        // Any side to any side: the unpinned ties meet their notes AT a port — an
+        // edge midpoint — with no buffer, not wherever the chord leaves the box.
+        await page.locator('#ports .chart svg').nth(1).scrollIntoViewIfNeeded();
+        await page.waitForTimeout(200);
+        const anyEnds = await page.evaluate(() => {
+            const svg = document.querySelectorAll('#ports .chart svg')[1];
+            const mids = [...svg.querySelectorAll('rect.mark')].flatMap((r) => {
+                const b = r.getBBox();
+                return [[b.x + b.width / 2, b.y], [b.x + b.width, b.y + b.height / 2],
+                    [b.x + b.width / 2, b.y + b.height], [b.x, b.y + b.height / 2]];
+            });
+            const bodies = [...svg.querySelectorAll('path')].filter((p) => {
+                const st = p.getAttribute('stroke');
+                return st && st !== 'none' && st !== 'transparent';
+            });
+            return bodies.flatMap((p) => [p.getPointAtLength(0), p.getPointAtLength(p.getTotalLength())])
+                .map((pt) => +Math.min(...mids.map(([x, y]) => Math.hypot(x - pt.x, y - pt.y))).toFixed(1));
+        });
+        check('ports: with ports on every side, every end meets its note at a port',
+            anyEnds.length === 8 && anyEnds.every((d) => d < 1), JSON.stringify(anyEnds));
+
+        // The dot network: ports sit on each dot's own radius (size 10), not on a
+        // box the spec restated.
+        await page.locator('#recording .chart svg').nth(0).scrollIntoViewIfNeeded();
+        await page.waitForTimeout(200);
+        const dotGeo = await page.evaluate(() => {
+            const svg = document.querySelectorAll('#recording .chart svg')[0];
+            const cs = [...svg.querySelectorAll('circle')].map((c) => ({
+                x: +c.getAttribute('cx'), y: +c.getAttribute('cy'), r: +c.getAttribute('r'),
+            }));
+            const dots = cs.filter((c) => c.r === 10);
+            const small = cs.filter((c) => c.r === 5);
+            const onEdge = small.filter((p) => dots.some((d) => Math.abs(p.y - d.y) < 0.5
+                && Math.abs(Math.abs(p.x - d.x) - 10) < 0.5));
+            return { dots: dots.length, onEdge: onEdge.length };
+        });
+        check('ports: on a dot network each port sits on its dot\'s edge',
+            dotGeo.dots === 3 && dotGeo.onEdge >= 6, JSON.stringify(dotGeo));
+
+        // Limits: a node already at its constraint's limit, and an end step whose
+        // value has no `out`, show no dot at all.
+        await page.locator('#recording .chart svg').nth(1).scrollIntoViewIfNeeded();
+        await page.waitForTimeout(200);
+        const lc = await noteCentres(1, '#recording');
+        await page.mouse.move(lc[0].x, lc[0].y);
+        await page.waitForTimeout(200);
+        const askDots = shownOf(await portDots(1, '#recording'));
+        check('ports: a node at its constraint\'s limit shows no dot', askDots.length === 0, JSON.stringify(askDots));
+        await page.mouse.move(lc[3].x, lc[3].y);
+        await page.waitForTimeout(200);
+        const doneDots = shownOf(await portDots(1, '#recording'));
+        check('ports: an end step with no `out` side shows no dot', doneDots.length === 0, JSON.stringify(doneDots));
+        await page.mouse.move(lc[1].x, lc[1].y);
+        await page.waitForTimeout(200);
+        const checkDots = shownOf(await portDots(1, '#recording'));
+        check('ports: a step with a link still to make shows its out dot',
+            JSON.stringify(checkDots) === JSON.stringify(['1:right']), JSON.stringify(checkDots));
+
+        // Parallel links and loops: a links table declaring `multi` and `selfLoops`
+        // lets connect make a second link between one pair and a link from a state
+        // to itself; a loop is drawn docked on its node, not from its centre.
+        await page.locator('#multi .chart svg').scrollIntoViewIfNeeded();
+        await page.waitForTimeout(250);
+        const smData = () => page.$eval('#multi .chart > div', (el) => el.getData());
+        // The state stickers (label plates are rects too, but short).
+        const smBoxes = () => page.$$eval('#multi .chart svg rect.mark', (rs) => rs
+            .map((r) => r.getBoundingClientRect())
+            .filter((b) => b.height > 30)
+            .map((b) => ({ x: b.x, y: b.y, w: b.width, h: b.height, cx: b.x + b.width / 2, cy: b.y + b.height / 2 })));
+        const smStarts = await page.evaluate(() => {
+            const svg = document.querySelector('#multi .chart svg');
+            const boxes = [...svg.querySelectorAll('rect.mark')].map((r) => r.getBBox()).filter((b) => b.height > 30);
+            const bodies = [...svg.querySelectorAll('path')].filter((p) => {
+                const st = p.getAttribute('stroke');
+                return st && st !== 'none' && st !== 'transparent' && p.getTotalLength() > 20;
+            });
+            // How far each body's START is from the nearest sticker outline; negative inside.
+            return bodies.map((p) => {
+                const pt = p.getPointAtLength(0);
+                return +Math.min(...boxes.map((b) => {
+                    const dx = Math.max(b.x - pt.x, 0, pt.x - (b.x + b.width));
+                    const dy = Math.max(b.y - pt.y, 0, pt.y - (b.y + b.height));
+                    const inside = pt.x > b.x + 1 && pt.x < b.x + b.width - 1 && pt.y > b.y + 1 && pt.y < b.y + b.height - 1;
+                    return inside ? -1 : Math.hypot(dx, dy);
+                })).toFixed(1);
+            });
+        });
+        check('multi: every transition, loops included, leaves from its state\'s outline',
+            smStarts.length === 7 && smStarts.every((d) => d >= 0 && d < 1), JSON.stringify(smStarts));
+
+        const smB = await smBoxes();
+        const smDrag = async (from, to, via) => {
+            await page.mouse.move(from.x - 30, from.y - 30);
+            await page.mouse.move(from.hoverX, from.hoverY);
+            await page.waitForTimeout(150);
+            await page.mouse.move(from.x, from.y);
+            await page.waitForTimeout(150);
+            await page.mouse.down();
+            if (via) await page.mouse.move(via.x, via.y, { steps: 6 });
+            await page.mouse.move(to.x, to.y, { steps: 10 });
+            await page.waitForTimeout(150);
+            await page.mouse.up();
+            await page.waitForTimeout(300);
+        };
+        const [, smClosed, smOpen] = smB;
+        // Closed's right port to Open: a second Closed → Open.
+        await smDrag(
+            { hoverX: smClosed.cx, hoverY: smClosed.cy, x: smClosed.x + smClosed.w, y: smClosed.cy },
+            { x: smOpen.cx, y: smOpen.cy + 4 }
+        );
+        const smAfter1 = await smData();
+        check('multi: connect adds a second link between a pair that already has one',
+            smAfter1.transitions.length === 8
+                && smAfter1.transitions[7].source === 'closed' && smAfter1.transitions[7].target === 'open',
+            JSON.stringify(smAfter1.transitions.at(-1)));
+        // Open's top port round to its own left port: a loop.
+        await smDrag(
+            { hoverX: smOpen.cx, hoverY: smOpen.cy, x: smOpen.cx, y: smOpen.y },
+            { x: smOpen.x, y: smOpen.cy },
+            { x: smOpen.x - 30, y: smOpen.y - 30 }
+        );
+        const smAfter2 = await smData();
+        check('multi: connect from one port of a state to another makes a loop',
+            smAfter2.transitions.length === 9
+                && smAfter2.transitions[8].source === 'open' && smAfter2.transitions[8].target === 'open',
+            JSON.stringify(smAfter2.transitions.at(-1)));
+        // A click on a port is not a loop.
+        await page.mouse.move(smClosed.cx, smClosed.cy);
+        await page.waitForTimeout(150);
+        await page.mouse.move(smClosed.cx, smClosed.y + smClosed.h);
+        await page.waitForTimeout(150);
+        await page.mouse.down();
+        await page.mouse.move(smClosed.cx + 1, smClosed.y + smClosed.h + 1);
+        await page.mouse.up();
+        await page.waitForTimeout(300);
+        check('multi: a click on a port makes no loop', (await smData()).transitions.length === 9);
+
+        // ---- Emoji as nodes (/marks/network#node-marks) ----------------------
+        // A plain text mark declares the box of its measured text, so it can draw
+        // a network's nodes: four ports per emoji, and a drag between two links them.
+        console.log('\nEmoji as nodes (/marks/network#node-marks)');
+        await open('/marks/network', '#node-marks .chart svg');
+        await page.locator('#node-marks .chart svg').scrollIntoViewIfNeeded();
+        await page.waitForTimeout(250);
+        const emData = () => page.$eval('#node-marks .chart > div', (el) => el.getData());
+        const emGlyphs = await page.$$eval('#node-marks .chart svg text.mark', (ts) => ts.map((t) => {
+            const b = t.getBoundingClientRect();
+            return { cx: b.x + b.width / 2, cy: b.y + b.height / 2 };
+        }));
+        const emPorts = await page.$$eval('#node-marks .chart svg circle[data-channel="port"]', (cs) => cs.map((c) => {
+            const b = c.getBoundingClientRect();
+            return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+        }));
+        check('emoji nodes: four ports around each emoji', emGlyphs.length === 5 && emPorts.length === 20,
+            `${emGlyphs.length} emoji, ${emPorts.length} ports`);
+        // happy's left port to angry: a new happy → angry.
+        const [, , emAngry, , emHappy] = emGlyphs;
+        const emHappyLeft = emPorts.filter((p) => Math.abs(p.y - emHappy.cy) < 6 && p.x < emHappy.cx)
+            .sort((p, q) => q.x - p.x)[0];
+        await page.mouse.move(emHappy.cx, emHappy.cy);
+        await page.waitForTimeout(200);
+        await page.mouse.move(emHappyLeft.x, emHappyLeft.y);
+        await page.waitForTimeout(150);
+        await page.mouse.down();
+        await page.mouse.move(emAngry.cx + 20, emAngry.cy - 20, { steps: 8 });
+        await page.mouse.move(emAngry.cx, emAngry.cy, { steps: 6 });
+        await page.waitForTimeout(150);
+        await page.mouse.up();
+        await page.waitForTimeout(300);
+        const emLinks = (await emData()).leadsTo;
+        check('emoji nodes: dragging from one emoji\'s port to another adds a link',
+            emLinks.length === 5 && emLinks[4].source === 'happy' && emLinks[4].target === 'angry',
+            JSON.stringify(emLinks.at(-1)));
+
+        // ---- Faces as network nodes (/marks/network#faces) --------------------
+        // A box-mode glyph declares its box as the node's shape, so `ports` on a
+        // face sits on the head, once per face, and a connect from one face's out
+        // port to another face writes a link — beside the face's own move.
+        console.log('\nFaces as network nodes (/marks/network#faces)');
+        await open('/marks/network', '#faces .chart svg');
+        await page.locator('#faces .chart svg').scrollIntoViewIfNeeded();
+        await page.waitForTimeout(250);
+        const fnData = () => page.$eval('#faces .chart > div', (el) => el.getData());
+        const fnHeads = await page.$$eval('#faces .chart svg circle[data-hit]', (cs) => cs.map((c) => {
+            const b = c.getBoundingClientRect();
+            return { cx: b.x + b.width / 2, cy: b.y + b.height / 2, r: b.width / 2 };
+        }));
+        const fnPorts = await page.$$eval('#faces .chart svg circle[data-channel="port"]', (cs) => cs.map((c) => {
+            const b = c.getBoundingClientRect();
+            return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+        }));
+        const fnOnHead = fnPorts.filter((p) => fnHeads.some((h) => Math.abs(Math.hypot(p.x - h.cx, p.y - h.cy) - h.r) < 1.5));
+        check('face network: four ports per face, each on its head\'s edge',
+            fnHeads.length === 3 && fnPorts.length === 12 && fnOnHead.length === 12,
+            `${fnHeads.length} heads, ${fnPorts.length} ports, ${fnOnHead.length} on a head`);
+        // Cy's bottom (out) port to Ana: a new cy → ana.
+        const [fnAna, , fnCy] = fnHeads;
+        await page.mouse.move(fnCy.cx - 8, fnCy.cy - 8);
+        await page.waitForTimeout(200);
+        await page.mouse.move(fnCy.cx, fnCy.cy + fnCy.r);
+        await page.waitForTimeout(150);
+        await page.mouse.down();
+        await page.mouse.move(fnAna.cx + 30, fnAna.cy + 10, { steps: 8 });
+        await page.mouse.move(fnAna.cx, fnAna.cy, { steps: 6 });
+        await page.waitForTimeout(150);
+        await page.mouse.up();
+        await page.waitForTimeout(300);
+        const fnLinks = (await fnData()).sways;
+        check('face network: dragging from a face\'s port to another face adds a link',
+            fnLinks.length === 3 && fnLinks[2].source === 'cy' && fnLinks[2].target === 'ana',
+            JSON.stringify(fnLinks));
+        const fnBefore = (await fnData()).people[0];
+        await mouseDrag(fnAna.cx - fnAna.r * 0.6, fnAna.cy, fnAna.cx - fnAna.r * 0.6 + 30, fnAna.cy);
+        const fnAfter = (await fnData()).people[0];
+        check('face network: a face still moves by its head', fnAfter.x > fnBefore.x + 3,
+            `x ${fnBefore.x} -> ${fnAfter.x}`);
+
         // Pinned sides. `sourceSide`/`targetSide` are PRESENTATION: read per row like
         // `curve`, held across a move, and — the half worth guarding — never written
         // back. A side that became a column would quietly add a drawing preference to
@@ -3605,6 +4137,74 @@ async function main() {
         check('network: pinning a side writes nothing to the dataset',
             JSON.stringify(sidesRows1.flows) === JSON.stringify(sidesRows0.flows),
             `${JSON.stringify(sidesRows0.flows)} -> ${JSON.stringify(sidesRows1.flows)}`);
+
+        // Routing. An orthogonal connector chooses its edges by score and routes
+        // around other nodes; a near-aligned pair joins straight. These are geometry
+        // facts the page renders either way, so each is measured off the real paths.
+        await page.locator('#routing .chart svg').scrollIntoViewIfNeeded();
+        await page.waitForTimeout(250);
+        const routingShapes = () => page.evaluate(() => {
+            const svg = document.querySelector('#routing .chart svg');
+            const boxes = [...svg.querySelectorAll('rect.mark')].map((r) => {
+                const b = r.getBBox();
+                return { x: b.x, y: b.y, w: b.width, h: b.height };
+            });
+            const bodies = [...svg.querySelectorAll('path')].filter((p) => {
+                const s = p.getAttribute('stroke');
+                return s && s !== 'none' && s !== 'transparent';
+            });
+            return bodies.map((p) => {
+                const len = p.getTotalLength();
+                // Every 2px along the body: is any sample INSIDE a box? The ends
+                // stop `inset` px off an edge, so a clean route has none.
+                let inside = 0;
+                for (let t = 0; t <= len; t += 2) {
+                    const q = p.getPointAtLength(t);
+                    if (boxes.some((r) => q.x > r.x + 1 && q.x < r.x + r.w - 1
+                        && q.y > r.y + 1 && q.y < r.y + r.h - 1)) inside++;
+                }
+                const a = p.getPointAtLength(0);
+                const b = p.getPointAtLength(1);
+                const y = p.getPointAtLength(len - 1);
+                const z = p.getPointAtLength(len);
+                const square = (Math.abs(b.x - a.x) < 0.5 || Math.abs(b.y - a.y) < 0.5)
+                    && (Math.abs(z.x - y.x) < 0.5 || Math.abs(z.y - y.y) < 0.5);
+                // One leg: the path has a single L after its M.
+                const straight = (p.getAttribute('d') || '').split('L').length === 2;
+                return { len: +len.toFixed(1), inside, square, straight };
+            });
+        });
+        const routing0 = await routingShapes();
+        check('routing: three connectors drawn',
+            routing0.length === 3, JSON.stringify(routing0));
+        check('routing: no connector runs through a box',
+            routing0.every((r) => r.inside === 0), JSON.stringify(routing0));
+        check('routing: every connector leaves and arrives square-on',
+            routing0.every((r) => r.square), JSON.stringify(routing0));
+        check('routing: the near-aligned pair joins with one straight leg',
+            routing0.some((r) => r.straight), JSON.stringify(routing0));
+        // Drag the node out of the corridor: the long connector takes a shorter
+        // route and still crosses nothing.
+        const reviewBox = await page.evaluate(() => {
+            const svg = document.querySelector('#routing .chart svg');
+            const rects = [...svg.querySelectorAll('rect.mark')]
+                .map((r) => r.getBoundingClientRect())
+                .sort((a, b) => b.height - a.height);
+            const b = rects[0];
+            return { cx: b.x + b.width / 2, cy: b.y + b.height / 2 };
+        });
+        await page.mouse.move(reviewBox.cx, reviewBox.cy);
+        await page.mouse.down();
+        await page.mouse.move(reviewBox.cx + 230, reviewBox.cy - 50, { steps: 12 });
+        await page.mouse.up();
+        await page.waitForTimeout(300);
+        const routing1 = await routingShapes();
+        const longest = (rs) => Math.max(...rs.map((r) => r.len));
+        check('routing: moving the obstacle away shortens the detour',
+            longest(routing1) < longest(routing0),
+            `${longest(routing0)} -> ${longest(routing1)}`);
+        check('routing: the re-routed connectors still cross nothing, still square-on',
+            routing1.every((r) => r.inside === 0 && r.square), JSON.stringify(routing1));
 
         // A link's own columns: width, colour, and a label you can retype.
         await page.locator('#attributes .chart svg').scrollIntoViewIfNeeded();

@@ -98,10 +98,9 @@ export { groupByPosition, stackLayout, stackDescriptor } from '../plot/stack.js'
 // Text measurement — the ONE measuring context (lazy, guarded for SSR). A wrapped
 // label is one node carrying `lines`, never one node per line.
 //
-// `noteBox` is `sticker`'s own sizing rule, reachable so a `link` docking to an
-// auto-sized note can reach the same answer:
-//   nodeWidth: { fn: d => noteBox(d.label).width }
-// It sits here rather than at the package root because it can only ever appear
+// `noteBox` is `sticker`'s own sizing rule, reachable so something else can be
+// sized to match a note (a `link` needs no help: it docks to the box the sticker
+// declares, `Mark.nodeBox`). It sits here rather than at the package root because it can only ever appear
 // inside a `{ fn }` channel — the one deliberately non-serializable channel form —
 // so it can never become a JSON keyword, and because `measureText`/`wrapText`, its
 // siblings from this same module, were already here.

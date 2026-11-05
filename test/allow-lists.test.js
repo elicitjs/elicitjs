@@ -12,7 +12,7 @@ const FILE = {
     arc: 'arc', area: 'area', bar: 'bar', composite: 'composite', curve: 'curve', dotStack: 'dotStack',
     ellipse: 'ellipse', face: 'face', geoBasemap: 'geo', geoTile: 'geo', geoPoint: 'geo', geoPolygon: 'geo',
     geoLine: 'geo', geoText: 'geo', geoRect: 'geo', line: 'line', link: 'link', needle: 'needle', node: 'node',
-    point: 'point', rect: 'rect', rule: 'rule', sticker: 'sticker', text: 'text', tick: 'tick', trend: 'trend',
+    point: 'point', port: 'port', rect: 'rect', rule: 'rule', sticker: 'sticker', text: 'text', tick: 'tick', trend: 'trend',
     trendBand: 'trendBand', waffle: 'waffle',
 };
 

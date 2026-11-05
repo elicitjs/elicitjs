@@ -120,6 +120,21 @@ mirror and `reverse` warns. `undefined` — the default — is every chart writt
 before the flag existed, and must keep behaving identically; collapsing the three
 into a boolean would silently grow arrows on existing specs.
 
+**What a GESTURE may make of a pair is the links table's statement too.** `multi`
+(a second link between one pair) and `selfLoops` (a link from a node to itself) sit
+beside `directed` — `LINK_FACTS` in `core/schema.js`, read through `linkRulesOf(spec)`
+— which is what makes the four NetworkX kinds (graph, digraph, multigraph,
+multidigraph) plus loops a schema declaration. Both default to NO for gestures (a drop
+where a link already runs, or back on the node you started from, is usually a slip),
+while rows that already hold one still DRAW: `separationBows` fans a parallel pair, and
+a loop docks on its node's box (`loopSides` in `linkRouter.js` picks its edges from the
+node's ports and how many loops it already has). Only an explicit `false` makes
+`validateTables` report a seeded parallel pair or loop. `selfLoops` used to be an
+option on `connect` alone, so `rewire` could not make the loop `connect` could; an
+edit option deciding a fact about the data is the drift this removes. A loop never
+lands on the PORT the drag started from, and on the starting body only once the
+pointer has moved (`session.fromPoint`), so a click on a port is never a loop.
+
 **A connector's SHAPE is a row in `plot/linkGeometry.js`, never a branch in `link`.**
 `LINK_SHAPES` is keyed by kind and each entry is `{ anchors, build }`, where `build`
 returns `{ d? | points?+curve?, hit?, start, end, mid, tangentIn, tangentOut }` — the
@@ -132,10 +147,14 @@ chord, and must still route when a chord inset would have reported the whole seg
 consumed. `start`/`end` are the shape's OWN endpoints, and the mark draws arrowheads
 and endpoint handles there — pairing the segment's ends with a tangent that no longer
 ran along the chord is what left a step's arrowhead sitting off the end of its line.
-A node's rectangle reaches `link` as `nodeWidth`/`nodeHeight` read off the NODE row;
-asking the mark that DRAWS the nodes what it drew would be a mark reading another
-feature's built geometry, which is why `core/measure.js` owns `noteBox` — one sizing
-rule, reachable from both marks and from a spec. `mid` is where a label sits
+A node's rectangle reaches `link` as a RULE, not as geometry: the mark that draws the
+nodes declares `Mark.nodeBox(row, …)` — a pure function of the row (a point's radius,
+a rect's extent, so a sticker's paper) — and the engine hands that one rule to `link`
+(`context.nodeBox`), to the ports, and to the network edits (`ctx.nodeBox`). A link
+still never reads another feature's BUILT nodes (one frame behind, and gone in a
+ghost build); a rule over data has neither problem, for the same reason `noteBox`
+exists. `link` once restated the box as `nodeWidth`/`nodeHeight`, and a port, a link
+end and a drop target that each restated it sat in three different places. `mid` is where a label sits
 and the tangents are what an arrowhead points down, so adding `bezier` did not touch
 the arrow code and adding the next kind won't either. Prefer `points` over `d`
 wherever the shape allows: a polyline is the ONLY geometry `edit/pick.js` can
@@ -145,6 +164,69 @@ body is untouchable. `link` emits that hit path FIRST, beneath the paint — tha
 what gives `edit.network.reverse` and a link-body `remove` something to land on.
 Curvature is signed and dimensionless (an apex fraction of the chord), which is what
 lets `separationBows` fan a pair apart with arithmetic and no layout.
+
+**Where a route GOES is `plot/linkRouter.js`'s question; the shape row only rounds
+it. A link end SLIDES or is PINNED, and nothing CHOOSES a side.** Each end is a PORT
+`{ side, offset }`. With `side: null` the end docks where the ray between the two
+centres leaves the box (`perimeterPort`), so it moves continuously with either node
+and never jumps; with a side it sits at that edge's midpoint (`anchorOn`, offset a
+clockwise fraction of the edge — the convention that makes `±bow` separate a
+reciprocal pair). Two earlier designs CHOSE a side — an axis test, then a score over
+every pair of edges — and both flipped a link's edge as a node was dragged across the
+decision boundary; a sliding end has no decision to flip. The one discontinuity left
+is inherent: an orthogonal exit is perpendicular to an edge, so at a corner the
+direction turns 90° while the position stays put; a sliding end may reach the corner
+for exactly that reason. Two facing sliding ends close a small jog continuously
+(`alignFacing`, one stub of travel each); a pinned end never moves. The grid search
+(`routingGrid` + `searchGrid`) is a REPAIR, run only when the plain Z/C/L route
+crosses a box, falling back to the plain route when no path exists — so the common
+case stays cheap and the chart always draws. Every chord kind docks at the box too
+once a box rule exists: the chord is clipped at the perimeter, and a `bezier` leaving
+a pinned edge takes that edge's normal as its tangent (its arm capped when the edge
+faces away, or it loops). The node boxes come from ONE helper, `plot/nodeBox.js`,
+over the ONE rule, read by `link`, the ports and the network edits alike, and
+`link.build` builds them and the grid ONCE per build (like `separationBows`).
+
+**Where an end meets a node depends on PORTS, and `inset` is a buffer off the SHAPE.**
+On a node with ports (the engine hands `link` the ports rule as `context.nodePorts`)
+an end meets it AT a port: a pinned side uses that port, an unpinned one takes the
+usable port FACING the other end (`facingSide`) — a choice, so it can change port as
+nodes pass, which is what a board tool's magnets do and what the user asked for. A
+node without ports keeps the sliding end; the no-chooser rule above is about THAT case.
+`inset` (the connection buffer) is measured from the node's shape, and an end at a
+port takes none. A round box (`NodeBox.round`, a circle point) is met on its circle by
+straight and curved links; clipping at the square's corner put diagonal ends up to 41%
+of the radius too far out. Body drops write `null`, never a chosen side.
+
+**PORTS are a CHANNEL on the mark that draws the nodes, and the engine shows only the
+usable ones.** `ports: { value | fn | field, edit: edit.network.connect() }` on a
+point/rect/sticker/node — or a glyph — says which edges a link may use (`true`, sides, or `{ out,
+in }` on a directed table — `portRolesOf`, `plot/port.js`). The engine desugars it,
+once, where features are flattened, into a sibling PORT feature placed on the host's
+`nodeBox` and painted after the host's glyph — the composite precedent — so a drag on
+a port reaches `connect` and never the host's `move`. A glyph is a node too: a
+box-mode `composite` (so `face`) declares its BOX as `nodeBox` (round, the circle a
+part of local size 1 fills), and `ports` on a composite goes to ONE feature — the box
+in box mode, the first part declaring `nodeBox` in plain mode — never trickling to
+every part, which would grow a set of ports per part. `text` and `ellipse` declare a
+box too (the measured block; the radii, met on the curve), so an emoji is a node; but
+`text` also declares `labelBox`, and wherever a box is CHOSEN — the engine's box host,
+a plain composite's port host — a mark without it wins, so a `node()`'s links meet its
+dot and never its name. A standalone `port()` mark
+existed and was deleted: it said nothing about which node it belonged to and
+restated the node's size. Visibility is a STATE, so the engine's state pass decides
+it: at rest a lit row shows the ports a link can LEAVE by, and only if one could land
+somewhere; during a drag, exactly the drop targets. "Could land" is a trial COMMIT,
+constraints included: an edit whose drag ends on something declares `Edit.targets`
+(places to try, or null for "nothing to probe"), the engine's `reachableKeys` runs
+each through `computeEdit` without committing, the connect driver parks the result as
+`session.targets`, and the state pass lights those keys (`portKey`) across features —
+a rewire on the link lights the node mark's ports. Hidden is opacity 0 AND no pointer
+events, so an unusable port never swallows a press. A link's end handles are
+`onHover` + `raise` (painted above every mark by `paintOrder`), shown while the link
+is hovered; dragging one re-points that end, and dropping it on nothing REMOVES the
+link, because a link cannot dangle. Don't put a second router beside it, don't read scales in it, and
+don't reintroduce a chooser.
 
 **A whole-dataset edit belongs on exactly one mark PER TABLE.** A plane gesture carries no node, so it fans to *every* feature's plane-pick edits (`dispatchPlaneEdits`). Over one table that means `create()` on two marks appends twice per click, and two `rotate()`s rotate twice. `warnDuplicatePlaneEdits` groups by the table each edit WRITES, because two marks over different tables are not duplicates — a node mark's `create` and a link mark's own creator append to different arrays, and reporting them would make every network chart open with a warning telling you to delete one of two unrelated edits. Direct-pick edits are immune — they route to the touched node's feature alone. The engine dev-warns (`warnDuplicatePlaneEdits`) rather than branching; keep it that way. Sequential composition of *direct* edits within one event is intended: a coupled edit writes fields, sibling marks re-derive on the next render.
 
@@ -356,7 +438,7 @@ change every bar and dot chart already written.
 
 **Scope goes in the name.** An edit that only works on marks with series grouping (a `line` family capability) belongs under `edit.line.*` and must set `scope: 'line'` in its descriptor (the engine dev-warns on a scope mismatch — see `warnScopeMismatch` and the `SCOPE_CAPABILITY` table in `elicit.js`). A genuinely universal edit (works on any mark) stays top-level in `edit.*`. Don't add a mark-specific edit to the top-level namespace "because it's simpler" — that's the flat-namespace problem the namespacing fixed.
 
-Note the namespace and the `scope` are separate decisions. `edit.network.*` is a namespace of three edits and only `rewire`/`reverse` set `scope: 'network'` — they go on a `link` mark, which declares `supportsNetwork`. `connect` goes on the NODE mark, which is an ordinary `point`/`rect`/`composite`, so there is no capability to check and setting a scope would only produce a false warning. Namespace by what the edit is ABOUT; scope only when a real mark capability is required.
+Note the namespace and the `scope` are separate decisions. `edit.network.*` is a namespace of three edits and only `rewire`/`reverse` set `scope: 'network'` — they go on a `link` mark, which declares `supportsNetwork`. `connect` goes on a node mark's `ports` channel (or in the NODE mark's `edits`) — ordinary `point`/`rect`/`composite` marks over the node table — so there is no capability to check and setting a scope would only produce a false warning. Namespace by what the edit is ABOUT; scope only when a real mark capability is required.
 
 **One positional-resolution path.** Every mark resolves a datum → pixel through `encodeChannel` (`src/plot/mark.js`) for its value axis, and a datum → CATEGORY through `categoryOf` for its category axis, before handing that category to the band-geometry helpers (`bandwidthOf`/`bandStartOf`/`baselineOf`/`isBand`/`isDiscrete` in `core/scales.js`). `categoryOf` exists because the band axis used to read `datum[key]` raw in every band mark, so `{ fn }`/`{ datum }` worked on a bar's value axis and were silently ignored on its category axis. It also owns the last-resort "column named after the channel" fallback (and warns when it is used), which used to be spelled `(channels.x && channels.x.field) || 'x'` four different ways — see `positionalKeys`, the one source of `xKey`/`yKey` now. Pass `index`/`data` to every `encodeChannel`/`resolveStyle`/`resolveSymbol` call: a derived `{ fn }` channel takes `(d, i, data)`, and ten marks used to hand it `undefined` for the last two. Do not call `scale(d[key])` directly in a new mark — that reintroduces the "four different ways to place a point" inconsistency that existed across `bar`/`dot`/`rule` before the cleanup. `core/encoding.js` once carried a whole *second*, unused resolution path (`resolveChannel`/`resolveEncoding`/`adjustDatum`/`assignChannel`/`datumFromPointer`); it was deleted. Don't grow another.
 
@@ -663,6 +745,7 @@ The contract is the `Mark` interface in `src/types.d.ts` (prose version at the t
 - Set `discreteScale: 'band'` (bar/tick — needs an interval) or `'point'` (point/line — needs a tick), and take `xKey`/`yKey` from `positionalKeys(channels)`. This says what the mark needs for *discrete* data; the schema says which fields are discrete. A mark that merely spans (like `rule`) should leave `discreteScale` undefined so a `composite` can stamp its own.
 - Declare `requires` when your geometry genuinely needs a scale capability, rather than letting a fallback stand in for it (see the requires invariant).
 - Stamp `type: 'yourMark'` — the one identity key every feature kind carries — so every dev message says `yourMark()` instead of the engine's positional `feature-3` placeholder.
+- If the mark can draw a network's NODES, declare `nodeBox(row, index, rows, scales, width, height)` — the box it draws for that row, from the same channels `build()` reads. Links dock to it and a `ports` channel needs it.
 - If you draw a handle, go through `resolveHandles` and accept `handles` / `handleSize` / `handleColor`. Where its travel range isn't a scale, stamp `node.dm` so `guide: { track: true }` can draw it.
 - Return `edits`, `constraints`, `xKey`, `yKey` from the factory — VERBATIM. `rule` silently dropped all four for a long time, which made a draggable whisker impossible; `trend` and `face` went the other way and injected their own. If a mark accepts an option, it must pass it on unchanged.
 - Don't set `pointerEvents` on your nodes to make them inert — leave it, and the engine silences any mark with no direct-pick edit (see the pointer-transparency invariant). Setting it yourself also disables the mark when it *does* carry an edit.
@@ -824,7 +907,7 @@ aimed at the row before it.
 - A glyph-local position computed as pixel arithmetic on a radius, with an edit that reverses that arithmetic through a hand-rolled track. A composite box's local channel is a real scale; the edit inverts through it.
 - A second glyph mark beside `composite`. Box mode IS the local-frame case; `group` is an alias.
 - A discriminator for box mode read off a channel the composite DECLARES. Several plain glyphs set `x`/`y` on the composite so the parts inherit them; only a part asking for local units switches the mode.
-- Two edits on one mark that read the same component of a drag, or a `rotate` on a handle you grab at its own pivot. `edit.network.connect` beside a plain `move` is the sharpest case yet — `move` drags the source node along under the pointer, so connect resolves the release back to the node it started from and creates nothing at all. `warnConnectConflict` reports it; the fix is `when.shift` / `when.noShift`, not removing one.
+- Two edits on one mark that read the same component of a drag, or a `rotate` on a handle you grab at its own pivot. `edit.network.connect` beside a plain `move` is the sharpest case yet — `move` drags the source node along under the pointer, so connect resolves the release back to the node it started from and creates nothing at all. `warnConnectConflict` reports it; the fix is `when.shift` / `when.noShift`, not removing one — or, better, `connect` on a `ports` channel, whose port feature carries no `move`.
 - A multi-event lifecycle that forces its edit onto the plane when all it needs is a dragstart snapshot. Claim it by capability and read `ctx.index`.
 - A per-mark scoped edit namespace for a glyph whose parameters are plain fields on ordinary parts. (`edit.face.*` existed for exactly that and is gone.)
 - A `domain` or `range` on a channel, or a `spec.x` / `spec.y` scale block. Domains live on the schema; scale config lives on `scale` (per channel) or `spec.scales` (per chart).
@@ -857,10 +940,13 @@ aimed at the row before it.
 - A bare row index used as a chart-wide selection key. `ui.selection` is qualified by table (node 3 and link 3 are different rows); the index-based public API means the PRIMARY table.
 - A second glyph-joining mark beside `link`, or a mark that reads another FEATURE's built nodes. A join goes through the tables, not the scene.
 - A connector shape written as a branch in `link.build()` instead of a row in `LINK_SHAPES`, or a second Bézier sampler beside `plot/hitpath.js`. A rounded corner IS a quadratic — it goes through `sampleQuadratic` with a smaller `samples`, and the result stays a `points` polyline so the pick layer and canvas keep working.
-- A `link` that reads a node mark's drawn geometry to find its box, or a second copy of `sticker`'s sizing rule. `noteBox` (`core/measure.js`) is the one rule; `nodeWidth`/`nodeHeight` are how it reaches a connector.
-- A link SIDE stored as data by default. `sourceSide`/`targetSide` are read raw like `curve`/`arrow`: a mark option or a `{ fn }`, and a column only when the spec names a field. A drawing preference does not belong in an elicited dataset unless its author put it there — and a side the READER drags would have to be a column, because `ui.*` is ephemeral and "an edit writes to a COLUMN".
+- A `link` that reads a node mark's drawn geometry to find its box, or restates it (`nodeWidth`/`nodeHeight` did). The node mark declares `Mark.nodeBox`; the engine hands that rule to every reader.
+- A link SIDE stored as data because a MARK decided, or a schema key that invents columns (`sides: true` did). `sourceSide`/`targetSide` are read raw like `curve`/`arrow`: a mark option or a `{ fn }`, and a column only when the link's channel names a `field` — and that channel is also what `connect` and `rewire` write (handed to `connect` as `ctx.targetChannels`, the channel map of the mark drawing the table it writes). An edit OPTION naming a column (`connect({ source })` did) is the same mistake.
+- A port mark standing apart from its node, or a port shown where it cannot be used. Ports are a channel on the node mark; the engine's trial commit decides what shows.
+- A convenience mark (`node`, `sticker`) offering what plain marks can't. A preset composes; everything it does is doable without it.
 - A link that emits only `d` when `points` would express it. The pick layer measures polylines; a `d`-only body is untouchable under both renderers.
 - `directed` read off the links table directly, collapsed to a boolean, or moved to a channel or the schema root. `isDirected(spec)` is the one accessor.
+- Whether a pair may repeat or a node may link to itself decided by an EDIT option (`connect({ selfLoops })` did). It is `multi` / `selfLoops` on the links table, read through `linkRulesOf(spec)`.
 - A renderer that reports a drag in anything but scene coordinates — d3.drag's
   default subject (the bound datum) is the one that bit us, and it reads as a mark
   that drifts from the pointer by its own geometry.

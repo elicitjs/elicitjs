@@ -44,7 +44,7 @@ const glyphKey = (node) => [
  * top of the upper note's paper. A glyph is one OBJECT, so its features are
  * grouped (`Mark.glyph`) and their nodes are ordered by ROW first: each glyph
  * paints whole, in its parts' declared order, and a later row covers an earlier
- * one completely.
+ * one completely. A node flagged `raise` goes last of all.
  *
  * @param {{ glyph?: string, nodes: any[] }[]} built features in scene order,
  *   each with the nodes its `build()` returned
@@ -78,5 +78,9 @@ export function paintOrder(built) {
         });
         out.push(...group);
     }
-    return out;
+    // A RAISED node (a link's end handle) sits on another mark's edge, so it paints
+    // above every mark — and it is a visible handle, shown only while its row is lit,
+    // not a hit overlay that could outrank a node really drawn there.
+    if (!out.some((n) => n && n.raise)) return out;
+    return [...out.filter((n) => !(n && n.raise)), ...out.filter((n) => n && n.raise)];
 }

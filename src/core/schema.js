@@ -111,11 +111,25 @@ function looksLikeFieldSchema(v) {
 }
 
 /**
- * The keys a table WRAPPER may carry beside its columns. `role` is what the
- * structure means by the table; `directed` is what an ordered pair of its `ref`
- * columns means (see normalizeTable).
+ * What a links table says about its PAIRS — the three facts that tell a graph from
+ * a digraph, a multigraph or a multidigraph, and whether a node may link to itself:
+ *
+ *   directed   source→target is a direction (tri-state; see normalizeTable)
+ *   multi      one pair may be joined by more than one link
+ *   selfLoops  a link may join a node to itself
+ *
+ * Each is a statement about the DATA, so the network edits read it here rather than
+ * taking an option each: `connect` and `rewire` deciding separately whether a second
+ * A→B is allowed is exactly how two gestures on one chart would come to disagree.
  */
-const WRAPPER_KEYS = ['role', 'fields', 'directed'];
+export const LINK_FACTS = ['directed', 'multi', 'selfLoops'];
+
+/**
+ * The keys a table WRAPPER may carry beside its columns. `role` is what the
+ * structure means by the table; the LINK_FACTS are what a pair of its `ref` columns
+ * means (see normalizeTable).
+ */
+const WRAPPER_KEYS = ['role', 'fields', ...LINK_FACTS];
 
 /**
  * Is this a table entry in WRAPPER form (`{ role?, directed?, fields }`) rather than
@@ -156,7 +170,22 @@ function keyFieldOf(fields, name) {
 }
 
 /**
- * Bring a table entry to `{ role, fields, key, directed }`.
+ * The LINK_FACTS an entry states, each only when it is a boolean — an absent fact
+ * stays absent, so "not stated" never reads as `false`.
+ * @param {any} entry
+ * @returns {{ directed?: boolean, multi?: boolean, selfLoops?: boolean }}
+ */
+function linkFactsOf(entry) {
+    /** @type {Record<string, boolean>} */
+    const out = {};
+    for (const fact of LINK_FACTS) {
+        if (typeof entry[fact] === 'boolean') out[fact] = entry[fact];
+    }
+    return out;
+}
+
+/**
+ * Bring a table entry to `{ role, fields, key, directed, multi, selfLoops }`.
  *
  * `directed` is a fact about what an ORDERED PAIR of this table's `ref` columns
  * means, which is why it lives on the table rather than on a channel or on the
@@ -169,6 +198,13 @@ function keyFieldOf(fields, name) {
  * `false` says the pair is unordered (A→B and B→A are the same edge, so `connect`
  * refuses the duplicate); `undefined` says the schema has no opinion, which is
  * every chart written before this existed and must keep behaving identically.
+ *
+ * `multi` and `selfLoops` say whether a GESTURE may make a second link between one
+ * pair, or a link from a node to itself. Both default to no: dropping a link where
+ * one already runs, or back on the node you dragged from, is far more often a slip
+ * than a statement. Rows that already break them still draw — a parallel pair fans
+ * apart and a loop is drawn — and only an explicit `false` reports them (see
+ * `validateDataset`).
  *
  * @param {string} name the table's name (its data key)
  * @param {any} entry
@@ -202,7 +238,7 @@ function normalizeTable(name, entry) {
             role: entry.role || name,
             fields,
             key: keyFieldOf(fields, name),
-            ...(typeof entry.directed === 'boolean' ? { directed: entry.directed } : {}),
+            ...linkFactsOf(entry),
         };
     }
     // Bare field-map sugar: the role is the table's own name.
@@ -301,15 +337,17 @@ export function normalizeSchema(schema) {
         );
     }
 
-    // `directed` says what an ordered pair of `ref` columns means, so it is only
-    // meaningful on the table that HAS such a pair. Declared anywhere else it reads
+    // The link facts say what a pair of `ref` columns means, so they are only
+    // meaningful on the table that HAS such a pair. Declared anywhere else they read
     // as a statement that quietly does nothing.
     for (const [name, table] of Object.entries(tables)) {
-        if (table.directed !== undefined && table.role !== 'links') {
+        if (table.role === 'links') continue;
+        for (const fact of LINK_FACTS) {
+            if (/** @type {any} */ (table)[fact] === undefined) continue;
             warn(
-                `schema:directed:${name}`,
-                `table "${name}" declares \`directed\`, but that describes what an ordered ` +
-                `pair of \`ref\` columns means and this table fills the "${table.role}" role. ` +
+                `schema:${fact}:${name}`,
+                `table "${name}" declares \`${fact}\`, but that describes the pairs of ` +
+                `\`ref\` columns in a links table, and this table fills the "${table.role}" role. ` +
                 `Move it to the table filling the "links" role, or drop it.`
             );
         }
@@ -333,6 +371,19 @@ export function isDirected(spec) {
     const name = spec && spec.byRole && spec.byRole.links;
     const table = name ? spec.tables[name] : null;
     return table ? table.directed : undefined;
+}
+
+/**
+ * What the links table allows a gesture to make: a second link between one pair
+ * (`multi`) and a link from a node to itself (`selfLoops`). Read here, once, so
+ * `connect` and `rewire` cannot disagree. Unstated means no.
+ * @param {import('../types').SchemaSpec} spec
+ * @returns {{ multi: boolean, selfLoops: boolean }}
+ */
+export function linkRulesOf(spec) {
+    const name = spec && spec.byRole && spec.byRole.links;
+    const table = /** @type {any} */ (name ? spec.tables[name] : null);
+    return { multi: !!(table && table.multi), selfLoops: !!(table && table.selfLoops) };
 }
 
 /**
@@ -362,7 +413,8 @@ export function denormalizeSchema(spec) {
     /** @type {Record<string, any>} */
     const tables = {};
     for (const [name, t] of Object.entries(spec.tables)) {
-        const extra = t.directed !== undefined ? { directed: t.directed } : null;
+        const facts = linkFactsOf(t);
+        const extra = Object.keys(facts).length ? facts : null;
         tables[name] = t.role === name && !extra
             ? t.fields
             : { ...(t.role === name ? {} : { role: t.role }), ...extra, fields: t.fields };
@@ -809,6 +861,51 @@ export function validateTables(spec, tables, label = 'data') {
         const scoped = names.length > 1 ? `${label}.${name}` : label;
         validateDataset(spec.tables[name].fields, tables[name] || [], scoped);
         validateRefs(spec, tables, name, scoped);
+        if (spec.tables[name].role === 'links') validatePairs(spec, tables, name, scoped);
+    }
+}
+
+/**
+ * A links table that says `multi: false` or `selfLoops: false` and then seeds a
+ * parallel pair or a loop contradicts itself. Only an EXPLICIT false is checked:
+ * unstated means "a gesture won't make one", and plenty of seeded diagrams already
+ * hold a loop or a parallel pair that they draw on purpose.
+ * @param {import('../types').SchemaSpec} spec
+ * @param {Record<string, import('../types').Datum[]>} tables
+ * @param {string} name @param {string} label
+ * @returns {void}
+ */
+function validatePairs(spec, tables, name, label) {
+    const table = /** @type {any} */ (spec.tables[name]);
+    if (table.multi !== false && table.selfLoops !== false) return;
+    const refs = Object.keys(table.fields).filter((f) => table.fields[f] && table.fields[f].type === 'ref');
+    if (refs.length < 2) return;
+    const [source, target] = refs;
+    const seen = new Set();
+    for (const row of tables[name] || []) {
+        if (!row) continue;
+        const a = row[source];
+        const b = row[target];
+        if (table.selfLoops === false && a != null && a === b) {
+            warn(
+                `schema:selfLoops:${name}`,
+                `${label} has a link from ${JSON.stringify(a)} to itself, but the "${name}" table ` +
+                `declares selfLoops: false. Remove the row, or declare selfLoops: true.`
+            );
+        }
+        if (table.multi === false) {
+            const ordered = table.directed === false && String(b) < String(a) ? [b, a] : [a, b];
+            const key = JSON.stringify(ordered);
+            if (seen.has(key)) {
+                warn(
+                    `schema:multi:${name}`,
+                    `${label} links ${JSON.stringify(a)} and ${JSON.stringify(b)} more than once, ` +
+                    `but the "${name}" table declares multi: false. Remove the duplicate, or ` +
+                    `declare multi: true.`
+                );
+            }
+            seen.add(key);
+        }
     }
 }
 

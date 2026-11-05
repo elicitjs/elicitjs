@@ -225,6 +225,8 @@ export function face(options = {}) {
             x: channels.x,
             y: channels.y,
             size: channels.size,
+            // On a network's node table, where links meet the face: its head.
+            ...(channels.ports ? { ports: channels.ports } : {}),
         },
         parts: [
             // Head. Exactly the box's half-size, at its origin — it states no

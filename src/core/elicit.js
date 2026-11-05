@@ -5,17 +5,18 @@ import { createProjection } from './projection.js';
 import { resolveLock, lockConstraint, isNodeLocked } from './lock.js';
 import { collectEdits, resolveChannels, warnMisplacedEdits } from '../edit/route.js';
 import { markCenter, nudgeTarget } from '../edit/shared.js';
-import { encodeChannel } from '../plot/mark.js';
+import { encodeChannel, rawChannel } from '../plot/mark.js';
+import { portFeature, portRolesOf, portKey } from '../plot/port.js';
 import { drivers, driverFor, needsPlaneOnTop } from '../edit/drivers/index.js';
 import { autoEditGuides } from '../edit/guide.js';
 import { D3Renderer } from '../renderers/d3-renderer/index.js';
-import { resolveEffects, stateEffectNodes, effectStyleFor, elementEffectOf } from './effects.js';
+import { resolveEffects, stateEffectNodes, outlineNodes, effectStyleFor, elementEffectOf } from './effects.js';
 import { resolveTheme } from './theme.js';
 import { autoAxes } from './axes.js';
 import { reserveLegends, legendsFromChannels } from './legends.js';
 import {
     validateTables, inferMeasureOfDomain,
-    normalizeSchema, denormalizeSchema, normalizeData, isBareForm, enforceRefs,
+    normalizeSchema, denormalizeSchema, normalizeData, isBareForm, enforceRefs, isDirected,
 } from './schema.js';
 import { axisOf, pointerForChannel } from './encoding.js';
 import { warn } from './dev.js';
@@ -222,6 +223,122 @@ export function Elicit(spec) {
             : (schemaSpec.byRole[feature.tableRole] || schemaSpec.primary);
     });
 
+    // ── Ports: a channel that becomes a feature ────────────────────────────────
+    // `ports` on a mark drawing a network's nodes says where links may meet it. It
+    // desugars HERE, once, into a sibling PORT feature (plot/port.js) — the composite
+    // precedent: one declared mark, several features. A separate feature is what
+    // keeps a drag on a port off the host's own edits (its `move`), and placing it
+    // after the host's whole glyph keeps it painted on top of the node.
+    const nodesTableName = schemaSpec.byRole.nodes || null;
+    for (let i = 0; i < features.length; i++) {
+        const host = features[i];
+        // A port feature reads its own `ports` channel; it is not a host.
+        const spec = host && !host.portHost && host.views !== 'scale' && host.channels && host.channels.ports;
+        if (!spec) continue;
+        delete host.channels.ports;
+        if (typeof host.nodeBox !== 'function') {
+            warn(
+                `${markLabel(host)}:ports:box`,
+                `mark ${markLabel(host)} has a \`ports\` channel, but it does not declare the box ` +
+                'it draws, so there is no edge to put a port on. Put `ports` on a mark that draws ' +
+                'a node shape: point, rect, ellipse, text, sticker, node, face, or a composite.'
+            );
+            continue;
+        }
+        if (!nodesTableName || host.table !== nodesTableName) {
+            warn(
+                `${markLabel(host)}:ports:table`,
+                `mark ${markLabel(host)} has a \`ports\` channel, but it draws table ` +
+                `"${host.table}", which is not a network's nodes table. Ports are where links ` +
+                'meet NODES: declare schema: { structure: "network", … } and put `ports` on the ' +
+                'mark drawing the nodes.'
+            );
+            continue;
+        }
+        let at = i + 1;
+        while (host.glyph && at < features.length && features[at] && features[at].glyph === host.glyph) at++;
+        features.splice(at, 0, portFeature(host, spec));
+    }
+
+    // The node table's two RULES, stated by the marks that draw the nodes and handed
+    // to every reader: the BOX (where a node's edges are — `Mark.nodeBox`) and the
+    // PORTS (which edges a link may use). `link` docks to the first, the network
+    // edits test drops against both, and the ports sit on the first — so a link end,
+    // a port and a drop target agree by construction. The host of the ports wins the
+    // box too: its box is the one the ports are drawn on.
+    const portFeatures = features.filter((f) => f && f.portHost && f.table === nodesTableName);
+    if (portFeatures.length > 1) {
+        warn(
+            'ports:hosts',
+            `${portFeatures.length} marks draw ports over the "${nodesTableName}" table; only the ` +
+            `first (${markLabel(portFeatures[0].portHost)}) decides where links may meet a node. ` +
+            'Put `ports` on one mark.'
+        );
+    }
+    const portsFeature = portFeatures[0] || null;
+    // A shape over the node table is the node; a label's box (`labelBox`, a text
+    // mark) only when nothing else declares one — so a name beside a dot never wins.
+    const boxed = nodesTableName
+        ? features.filter((f) => f && f.views !== 'scale' && f.table === nodesTableName
+            && typeof f.nodeBox === 'function')
+        : [];
+    const boxHost = portsFeature ? portsFeature.portHost
+        : boxed.find((f) => !f.labelBox) || boxed[0] || null;
+    /** @type {import('../types').NodeBoxRule | null} */
+    let boxRuleMemo = null;
+    /** @type {any[]} */
+    let boxRuleKey = [];
+    /**
+     * The box rule against the CURRENT scales and plot size, memoized per render so
+     * a reader can cache by its identity.
+     * @returns {import('../types').NodeBoxRule | null}
+     */
+    const nodeBoxRule = () => {
+        if (!boxHost) return null;
+        const key = [scales, innerWidth, innerHeight];
+        if (!boxRuleMemo || key.some((k, i) => k !== boxRuleKey[i])) {
+            const s = scales;
+            const w = innerWidth;
+            const h = innerHeight;
+            boxRuleMemo = (row, i, rows) => boxHost.nodeBox(row, i, rows, s, w, h);
+            boxRuleKey = key;
+        }
+        return boxRuleMemo;
+    };
+    /** @type {((row: any, i: number, rows: any[]) => Record<string, string> | null) | null} */
+    const nodePortsRule = portsFeature
+        ? (row, i, rows) => portRolesOf(
+            rawChannel(portsFeature.channels, 'ports', row, false, i, rows), isDirected(schemaSpec)
+        )
+        : null;
+
+    // The channel map of the mark that DRAWS a table, for an edit that writes a table
+    // its own mark doesn't draw (connect, on a node's ports, writes a link row). The
+    // link's channels name the columns, so a column is named in one place only.
+    /** @type {Record<string, Record<string, any> | null>} */
+    const viewerChannels = {};
+    /** @param {string} name @returns {Record<string, any> | null} */
+    const channelsDrawing = (name) => {
+        if (name in viewerChannels) return viewerChannels[name];
+        const viewers = features.filter((f) => f && f.views !== 'scale' && !f.portHost
+            && f.table === name && f.channels);
+        const fieldOf = (/** @type {any} */ f, /** @type {string} */ ch) =>
+            (f.channels[ch] && f.channels[ch].field) || null;
+        for (const ch of ['source', 'target', 'sourceSide', 'targetSide']) {
+            const named = new Set(viewers.map((f) => fieldOf(f, ch)).filter(Boolean));
+            if (named.size > 1) {
+                warn(
+                    `viewers:${name}:${ch}`,
+                    `marks drawing table "${name}" name different columns for \`${ch}\` ` +
+                    `(${[...named].map((n) => `"${n}"`).join(', ')}). An edit writing that table ` +
+                    'uses the first. Name the column on one mark, or the same column on each.'
+                );
+            }
+        }
+        viewerChannels[name] = viewers.length ? viewers[0].channels : null;
+        return viewerChannels[name];
+    };
+
     // Read-only rows (see core/lock.js). `lock: 'seed'` fixes the rows the chart was
     // seeded with — they are given, not elicited — while leaving every later row
     // free; a predicate locks rows by what they ARE. Two halves: a dataset invariant
@@ -366,8 +483,19 @@ export function Elicit(spec) {
     // than being painted by the renderer straight off d3.drag — that split is why
     // `grabbed` used to honour `filter` and silently ignore the rest of its vocabulary
     // (and never drew an outline at all).
-    /** @type {{ session: Record<string, any>, preview: Record<string, { table: string, rows: any[] }> | null, selection: Set<string>, hover: { featureId: string, index: number } | null, grab: { featureId: string, index: number } | null }} */
+    /** @type {{ session: Record<string, any>, preview: Record<string, { table: string, rows: any[], pointer?: { x: number, y: number } }> | null, selection: Set<string>, hover: { featureId: string, index: number, node?: any } | null, grab: { featureId: string, index: number } | null }} */
     const ui = { session: {}, preview: null, selection: new Set(), hover: null, grab: null };
+    // Does the last built scene carry any `onHover` node (a port)? Then a hover
+    // change must re-render even when the `hovered` effect paints nothing.
+    let sceneHasOnHover = false;
+    /**
+     * Which HANDLE of a row a node is, by the tags marks use to tell their handles
+     * apart — stable across rebuilds, which object identity is not.
+     * @param {any} node
+     */
+    const handleKey = (node) => (node
+        ? `${node.index}\0${node.channel ?? ''}\0${node.side ?? ''}\0${node.vertexIndex ?? ''}`
+        : '');
 
     // Selection is stored QUALIFIED BY TABLE. A bare row index is ambiguous the
     // moment a dataset has more than one table — node 3 and link 3 are different
@@ -725,6 +853,7 @@ export function Elicit(spec) {
             // existing mark's four-parameter build() is untouched.
             const nodes = feature.build(currentData, scales, innerWidth, innerHeight, {
                 tables, schema: schemaSpec, table: feature.table,
+                nodeBox: nodeBoxRule(), nodePorts: nodePortsRule,
             });
             featureNodes[feature.id] = nodes;
 
@@ -859,6 +988,10 @@ export function Elicit(spec) {
                     tables: { ...tables, [proposal.table]: proposed },
                     schema: schemaSpec,
                     table: feature.table,
+                    // A ghost build may draw a FREE end at the pointer.
+                    ghost: { pointer: proposal.pointer },
+                    nodeBox: nodeBoxRule(),
+                    nodePorts: nodePortsRule,
                 });
                 const kept = ghostNodes.filter((/** @type {any} */ node) => {
                     const keep = node.index != null ? changedIdx.has(node.index) : anyChanged;
@@ -940,6 +1073,36 @@ export function Elicit(spec) {
         // link 3 in a network.
         /** @type {Record<string, Set<number>>} */
         const selectedByTable = {};
+
+        // Rows LIT by hover or grab, per TABLE rather than per feature: a node tagged
+        // `onHover` (a port) paints only while its row is lit, and the row it belongs
+        // to is lit by hovering ANY feature over that table — the sticker body as
+        // much as the port itself. Hover stays per feature for the `hovered` effect
+        // (a bar's label lights with the bar, not a link with the same index).
+        /** @type {Record<string, Set<number>>} */
+        const litByTable = {};
+        const light = (/** @type {any} */ ref) => {
+            if (!ref || ref.index == null) return;
+            const f = features.find((x) => x.id === ref.featureId);
+            if (!f || f.table == null) return;
+            (litByTable[f.table] || (litByTable[f.table] = new Set())).add(ref.index);
+        };
+        light(ui.hover);
+        light(ui.grab);
+        sceneHasOnHover = false;
+        // While a drag that ends ON something is in flight (connect, rewire), its
+        // driver lists the ports a release could land on (`session.targets`). Then
+        // exactly those ports show, across features: a rewire on the link mark
+        // lights the node mark's ports.
+        /** @type {Set<string> | null} */
+        let dropTargets = null;
+        for (const s of Object.values(ui.session || {})) {
+            if (s && Array.isArray(s.targets)) {
+                dropTargets = dropTargets || new Set();
+                for (const k of s.targets) dropTargets.add(k);
+            }
+        }
+
         for (const feature of features) {
             if (feature.views === 'scale') continue;
             const selected = selectedByTable[feature.table]
@@ -990,12 +1153,55 @@ export function Elicit(spec) {
                 if (style) node.effectStyle = style;
             }
 
+            // Visibility half: an `onHover` node is hidden until its row is lit — by
+            // this feature's own states, or by hover/grab on any feature over the
+            // same table. A PORT is shown only where it is usable: at rest, the ports
+            // a link can start from (and only if one could land somewhere); during a
+            // drag, exactly the drop targets. Hidden is opacity 0 and no pointer
+            // events, so a hidden port never swallows a press meant for the node.
+            const lit = litByTable[feature.table];
+            for (const node of marks) {
+                if (!node || node.ghost || !node.onHover || node.index == null) continue;
+                sceneHasOnHover = true;
+                const i = node.index;
+                const rowOn = (lit && lit.has(i)) || hovered.has(i) || selected.has(i) || grabbed.has(i)
+                    || viaProximity === i;
+                let on = rowOn;
+                if (node.portRole) {
+                    if (dropTargets) {
+                        const source = !!session && session.fromIndex === i && session.fromSide === node.side;
+                        on = source || dropTargets.has(portKey(feature.table, i, node.side));
+                    } else {
+                        on = rowOn && node.portRole !== 'in' && portAvailable(feature, node);
+                    }
+                }
+                if (!on) {
+                    node.effectStyle = { ...(node.effectStyle || {}), opacity: 0 };
+                    node.pointerEvents = 'none';
+                }
+            }
+
             // Overlay half: the padded outline, the one part of the vocabulary that
-            // needs geometry the mark itself doesn't have.
+            // needs geometry the mark itself doesn't have. A hovered HANDLE — one of
+            // several nodes a feature draws for one row — is outlined itself, found
+            // by its tags rather than by identity (this pass runs on freshly built
+            // nodes); every other case outlines the row's first node, as before.
+            const hoverHandle = ui.hover && ui.hover.featureId === feature.id && ui.hover.node
+                && ui.hover.node.channel != null
+                ? marks.find((m) => m && handleKey(m) === handleKey(ui.hover && ui.hover.node))
+                : null;
             for (const [indices, state] of byState) {
                 if (!indices.size) continue;
-                stateEffectNodes(marks, indices, state)
-                    .forEach((/** @type {any} */ node) => { node.guide = true; scene.add(node); });
+                /** @type {any[]} */
+                let overlays;
+                if (state === effects.hovered && hoverHandle && indices.has(hoverHandle.index)) {
+                    const rest = new Set(indices);
+                    rest.delete(hoverHandle.index);
+                    overlays = [...outlineNodes(hoverHandle, state), ...stateEffectNodes(marks, rest, state)];
+                } else {
+                    overlays = stateEffectNodes(marks, indices, state);
+                }
+                overlays.forEach((/** @type {any} */ node) => { node.guide = true; scene.add(node); });
             }
         }
 
@@ -1034,9 +1240,14 @@ export function Elicit(spec) {
      * @param {import('../types').Edit} edit
      * @param {any} event
      * @param {number | null} index
+     * @param {boolean} [preview] is this a PREVIEW (a ghost) rather than a commit?
+     *   An edit may propose a half-made row for a ghost — a link with no target
+     *   yet — that it must never commit; the flag is how it tells the two apart.
+     * @param {any} [sessionOverride] a session to run against instead of the
+     *   feature's own — a trial commit asking "could a drag from HERE land?"
      * @returns {import('../types').EditResult | null}
      */
-    const computeEdit = (feature, edit, event, index) => {
+    const computeEdit = (feature, edit, event, index, preview = false, sessionOverride = undefined) => {
         // WHERE the gesture landed and WHAT it writes are usually the same table, and
         // for every edit that existed before structures they are the same by
         // construction. They come apart for a cross-table edit — `edit.network.connect`
@@ -1111,7 +1322,15 @@ export function Elicit(spec) {
             // (zone/handle locks, draw mode), for edits that read their driver's
             // lock (draw, brushSpan/brushRect, axis.scale). Harmless to the rest.
             connect: feature.connect || null,
-            session: (ui.session && ui.session[feature.id]) || null,
+            session: sessionOverride !== undefined
+                ? sessionOverride
+                : (ui.session && ui.session[feature.id]) || null,
+            // The node table's box and port rules, for an edit that tests a drop
+            // against a node's edges, and the channels of the mark drawing the
+            // table this edit writes (when that is not its own mark's table).
+            nodeBox: nodeBoxRule(),
+            nodePorts: nodePortsRule,
+            targetChannels: targetTable !== feature.table ? channelsDrawing(targetTable) : null,
             // The primary selected datum index (transient pipeline state), so an
             // edit's apply/when can target or arbitrate on the selection — e.g. a
             // `select` edit that reads whether the touched row is already selected.
@@ -1119,7 +1338,8 @@ export function Elicit(spec) {
             // The edit itself, so a `when` predicate can arbitrate against the
             // edit's own knobs (when.near reads its `threshold`). Descriptors are
             // data; self-reference adds no dispatch path.
-            edit
+            edit,
+            preview,
         };
         if (edit.when && !edit.when(ctx)) return null; // arbitration
 
@@ -1373,7 +1593,7 @@ export function Elicit(spec) {
      * @returns {boolean}
      */
     const previewEdit = (feature, edit, event, index) => {
-        const proposed = computeEdit(feature, edit, event, index);
+        const proposed = computeEdit(feature, edit, event, index, true);
         // Only a dataset proposal can be previewed; a domain edit commits directly
         // (numeric drag commits each tick, categorical add/remove is one-shot).
         if (!proposed || proposed.kind !== 'rows') return false;
@@ -1385,9 +1605,88 @@ export function Elicit(spec) {
         // marks view that table — which is not always the mark that proposed it. A
         // connect drag proposes a link row from a node mark, and it is the link mark
         // that has to draw the rubber band.
+        // The POINTER rides along: a proposal may have a free end (a link being
+        // drawn toward the pointer, with no target yet), and the mark that ghosts
+        // it needs to know where that end is.
         if (!ui.preview) ui.preview = {};
-        ui.preview[feature.id] = { table: targetTableOf(feature, edit), rows: newData };
+        ui.preview[feature.id] = {
+            table: targetTableOf(feature, edit),
+            rows: newData,
+            pointer: typeof event.x === 'number' && typeof event.y === 'number'
+                ? { x: event.x, y: event.y }
+                : undefined,
+        };
         return true;
+    };
+
+    // ── Could a drop land here? ────────────────────────────────────────────────
+    // An edit whose drag ends ON something declares where (`Edit.targets`); each
+    // place is tried as a COMMIT — apply, then every constraint — without committing.
+    // What passes is what a release there would make, so the ports shown are exactly
+    // the ones that work: a node at its constraint's limit shows none.
+    /**
+     * @param {any} feature
+     * @param {import('../types').Edit} edit
+     * @param {number | null} index the row the drag started on
+     * @param {any} node the node it started on
+     * @param {any} [session] run against this session instead of the feature's
+     * @returns {string[] | null} the keys a release could land on; null when the
+     *   edit declares no targets
+     */
+    const reachableKeys = (feature, edit, index, node, session) => {
+        if (typeof edit.targets !== 'function') return null;
+        const table = targetTableOf(feature, edit);
+        const probeCtx = /** @type {any} */ ({
+            scales, schemaSpec, tables, table, data: tables[table] || [],
+            nodeBox: nodeBoxRule(), nodePorts: nodePortsRule,
+            width: innerWidth, height: innerHeight,
+            node: node || null, edit, pointer: { x: 0, y: 0 },
+            // The row the drag started on, and the feature's own channel map: a
+            // rewire needs both to know which node holds its OTHER end.
+            index, datum: index != null ? tableOf(feature)[index] : undefined,
+            markChannels: feature.channels || {},
+        });
+        /** @type {string[]} */
+        const keys = [];
+        const places = edit.targets(probeCtx);
+        // No places to try (a chart with no ports): nothing to light, nothing ruled out.
+        if (!places) return null;
+        for (const t of places) {
+            const trial = computeEdit(feature, edit, { x: t.x, y: t.y, node }, index, false, session);
+            if (trial !== null) keys.push(t.key);
+        }
+        return keys;
+    };
+
+    // Can a link START from this port? Asked by the state pass for lit ports only,
+    // and cached until the data changes (any table array is replaced on a commit).
+    /** @type {Map<string, boolean>} */
+    const availCache = new Map();
+    /** @type {any[]} */
+    let availSig = [];
+    /** @param {any} feature @param {any} node @returns {boolean} */
+    const portAvailable = (feature, node) => {
+        const sig = Object.keys(tables).map((k) => tables[k]);
+        if (sig.length !== availSig.length || sig.some((t, i) => t !== availSig[i])) {
+            availCache.clear();
+            availSig = sig;
+        }
+        const key = `${feature.id}\u0000${node.index}\u0000${node.side}`;
+        const hit = availCache.get(key);
+        if (hit !== undefined) return hit;
+        let ok = false;
+        const session = {
+            ...((ui.session && ui.session[feature.id]) || {}),
+            fromIndex: node.index,
+            fromSide: node.side,
+            fromPoint: null,
+        };
+        for (const edit of activeEdits(feature)) {
+            const keys = reachableKeys(feature, edit, node.index, node, session);
+            if (keys && keys.length) { ok = true; break; }
+        }
+        availCache.set(key, ok);
+        return ok;
     };
 
     // Direct-pick edits: the gesture landed on a mark (event.node). Fan the
@@ -1522,7 +1821,9 @@ export function Elicit(spec) {
                 preview,
                 stage,
                 runEdit: runFeatureEdit,
-                previewEdit: previewFeatureEdit
+                previewEdit: previewFeatureEdit,
+                /** @param {import('../types').Edit} edit @param {number | null} at @param {any} [node] */
+                reachable: (edit, at, node) => reachableKeys(feature, edit, at, node !== undefined ? node : event.node),
             };
             if (driver.onEvent(dctx)) changed = true;
         }
@@ -1565,16 +1866,28 @@ export function Elicit(spec) {
         // update() directly and return — a second render path beside shouldRender.)
         if (event.type === 'pointerover' || event.type === 'pointerout') {
             const node = event.node;
+            // The NODE rides along with the row: a feature that draws several
+            // handles for one row (a port per edge, a vertex per point) must light
+            // the one under the pointer, not the first it emitted.
             const next = event.type === 'pointerover' && node && node.index != null
-                ? { featureId: node.featureId, index: node.index }
+                ? { featureId: node.featureId, index: node.index, node }
                 : null;
             /** @param {any} a @param {any} b */
             const same = (a, b) => (!a && !b)
-                || !!(a && b && a.featureId === b.featureId && a.index === b.index);
-            if (!same(ui.hover, next)) {
+                || !!(a && b && a.featureId === b.featureId && a.index === b.index
+                    && handleKey(a.node) === handleKey(b.node));
+            // A LEAVE clears the hover only if it is from the node hovered now. When
+            // a handle appears under a still pointer (a link's end, lit by hovering
+            // the link), the browser may report entering the handle before leaving
+            // the link body; clearing on that stale leave hid the handle again.
+            const stale = event.type === 'pointerout' && ui.hover && node
+                && !same(ui.hover, { featureId: node.featureId, index: node.index, node });
+            if (!stale && !same(ui.hover, next)) {
                 ui.hover = next;
                 const h = effects.hovered;
                 if (h && h.enabled !== false && (h.outline || elementEffectOf(h))) shouldRender = true;
+                // A port shows on hover whatever the `hovered` effect says.
+                if (sceneHasOnHover) shouldRender = true;
             }
             if (shouldRender) update();
             return;

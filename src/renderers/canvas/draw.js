@@ -86,10 +86,12 @@ function paint(ctx, s, path) {
         ctx.globalAlpha = op * (s.strokeOpacity != null ? s.strokeOpacity : 1);
         ctx.strokeStyle = s.stroke;
         ctx.lineWidth = s.strokeWidth != null ? s.strokeWidth : 1;
+        ctx.lineCap = s.strokeLinecap || 'butt';
         setDash(ctx, s.strokeDasharray);
         path ? ctx.stroke(path) : ctx.stroke();
     }
     ctx.globalAlpha = 1;
+    ctx.lineCap = 'butt';
     ctx.setLineDash([]);
 }
 

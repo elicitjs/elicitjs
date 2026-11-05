@@ -147,6 +147,12 @@ import { warn } from '../core/dev.js';
 // nothing; see the origin defaults below.)
 const FRAME_KEYS = ['x', 'y', 'size'];
 
+// `ports` says where links meet the GLYPH as a network node, so it goes on ONE
+// feature, never trickling to every part (each part would grow its own set of
+// ports). In box mode that is the box, whose circle is the glyph's extent; in plain
+// mode, the first part that declares the box it draws.
+const GLYPH_KEYS = ['ports'];
+
 // Counts composite CALLS, so every glyph gets its own paint group. See the
 // `glyph` key below and `paintOrder` in core/scene.js.
 let glyphSeq = 0;
@@ -398,7 +404,14 @@ export function composite(options = {}) {
     const trickle = {};
     for (const [key, spec] of Object.entries(groupChannels)) {
         if (boxed && FRAME_KEYS.includes(key)) continue;
+        if (GLYPH_KEYS.includes(key)) continue;
         trickle[key] = spec;
+    }
+    if (!boxed && groupChannels.ports) {
+        // The glyph's SHAPE, not its label: a `node()`'s dot, not the name above it.
+        const boxed = parts.filter((/** @type {any} */ p) => typeof p.nodeBox === 'function');
+        const host = boxed.find((/** @type {any} */ p) => !p.labelBox) || boxed[0] || parts[0];
+        if (host) (host.channels || (host.channels = {})).ports = groupChannels.ports;
     }
 
     const wrapped = parts.map((/** @type {any} */ part, /** @type {number} */ i) => {
@@ -473,6 +486,10 @@ export function composite(options = {}) {
             ...part,
             channels: closed,
             build,
+            // A part placed in LOCAL units has no box in scene pixels without its
+            // frame, so it cannot stand for a node; a plain part keeps its own.
+            nodeBox: framed.length ? undefined : part.nodeBox,
+            labelBox: part.labelBox,
             // One glyph paints as one OBJECT: the engine orders this group's nodes
             // by ROW rather than by part, so a later row covers an earlier one
             // whole instead of every part's row 1 sitting under every part's row 0
@@ -515,6 +532,7 @@ export function composite(options = {}) {
         if (!spec || frameSpecOf(spec)) continue;
         boxChannels[key] = spec;
     }
+    if (groupChannels.ports) boxChannels.ports = groupChannels.ports;
 
     // Whether the box is something you can GRAB. A hit node is set up only when an
     // edit names one of the box's own columns; otherwise the node is left for the
@@ -537,6 +555,16 @@ export function composite(options = {}) {
         table,
         discreteScale,
         ...positionalKeys(boxChannels),
+        /**
+         * The glyph as a network NODE: its box, the circle a part of local size 1
+         * fills. Links dock to it and a `ports` channel on the composite sits on it.
+         * @param {any} row @param {number} index @param {any[]} rows
+         * @param {import('../types').ScaleMap} scales @param {number} width @param {number} height
+         */
+        nodeBox: (row, index, rows, scales, width, height) => {
+            const b = frameBox(scales, groupChannels, row, index, rows, width, height);
+            return { cx: b.cx, cy: b.cy, hw: b.r, hh: b.r, round: true };
+        },
         /**
          * @param {any[]} currentData
          * @param {import('../types').ScaleMap} scales

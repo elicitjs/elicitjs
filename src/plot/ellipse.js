@@ -54,6 +54,24 @@ export function ellipse(options = {}) {
         ...positionalKeys(channels),
 
         /**
+         * The ellipse as a network node: its radii, met on the curve. A tilted
+         * ellipse keeps its unrotated box.
+         * @param {any} d @param {number} i @param {any[]} rows
+         * @param {import('../types').ScaleMap} scales @param {number} width @param {number} height
+         * @returns {import('../types').NodeBox}
+         */
+        nodeBox: (d, i, rows, scales, width, height) => {
+            const size = encodeChannel(scales, channels, 'size', d, 5, i, rows);
+            return {
+                cx: encodeChannel(scales, channels, 'x', d, width / 2, i, rows),
+                cy: encodeChannel(scales, channels, 'y', d, height / 2, i, rows),
+                hw: Math.max(0, +encodeChannel(scales, channels, 'rx', d, size, i, rows) || 0),
+                hh: Math.max(0, +encodeChannel(scales, channels, 'ry', d, size, i, rows) || 0),
+                round: true,
+            };
+        },
+
+        /**
          * @param {any[]} currentData
          * @param {import('../types').ScaleMap} scales
          * @param {number} width

@@ -208,7 +208,7 @@ export function nearestMarkOnAxis(marks, px, py, threshold, axis, series) {
 // How far outside a thin mark's outline still counts as "on" it, in px. A stroked
 // line or path has no area, so a bare containment test would be unhittable; this is
 // the grab tolerance the SVG hit-tester effectively grants via the stroke width.
-const HIT_TOLERANCE = 4;
+export const HIT_TOLERANCE = 4;
 
 // Minimum grabbable thickness for a rect, in px. A bar whose value collapses to the
 // baseline has height 0 (or width 0, horizontal) — no area to hit under DIRECT pick,

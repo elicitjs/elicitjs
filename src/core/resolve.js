@@ -157,11 +157,11 @@ export function resolveScales(features, tables, spec, dims) {
       if (frameSpecOf(chSpec)) continue;
 
       // A channel the mark reads RAW (`Mark.rawChannels`) resolves no scale by
-      // construction, so there is nothing here to build. `link`'s `nodeWidth` is
-      // the case that forced this: it names a column of the NODE table, and this
-      // pass can only see the mark's own table — so a perfectly well-declared
-      // field looked undeclared and the chart opened with a warning telling the
-      // author to declare what they already had.
+      // construction, so there is nothing here to build. A channel naming a column
+      // of ANOTHER table forced this (`link` once read node sizes off the node
+      // rows): this pass can only see the mark's own table, so a perfectly
+      // well-declared field looked undeclared and the chart opened with a warning
+      // telling the author to declare what they already had.
       if (rawChannels.has(ch)) continue;
 
       // A derived channel (`{ fn }`) is computed per datum in VISUAL space —

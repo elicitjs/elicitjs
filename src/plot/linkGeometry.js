@@ -50,34 +50,17 @@
 // B→A separate instead of drawing on top of each other.
 
 import { sampleQuadratic, sampleCubic } from './hitpath.js';
+import { routeOrthogonal, SIDE_NORMALS, LINK_SIDES } from './linkRouter.js';
 
 // How many segments a rounded corner is sampled into. A corner spans a few px, so
 // it needs nothing like a whole Bézier's resolution — but it goes through the same
 // sampler, because two Bézier samplers is one too many.
 const CORNER_SAMPLES = 6;
 
-// The shortest leg a routed connector leaves a node by, in px. Long enough that the
-// turn reads as deliberate rather than as a kink on the edge.
-const MIN_STUB = 16;
-
-// How far along its edge an anchor may slide when `bow` fans a parallel pair apart,
-// as a fraction of that edge. Beyond this the connector leaves from a corner and
-// stops reading as square-on.
-const MAX_SLIDE = 0.4;
-
-/** The four edges of a node box, and the sides an author may name. */
-export const LINK_SIDES = ['top', 'right', 'bottom', 'left'];
-
-/** @type {Record<string, { x: number, y: number }>} outward normal per side */
-const SIDE_NORMALS = {
-    top: { x: 0, y: -1 },
-    right: { x: 1, y: 0 },
-    bottom: { x: 0, y: 1 },
-    left: { x: -1, y: 0 },
-};
-
-/** @type {Record<string, string>} */
-const OPPOSITE = { top: 'bottom', bottom: 'top', left: 'right', right: 'left' };
+// The sides an author may name live with the router that chooses among them; they
+// are re-exported here because this is the module a mark imports its link
+// vocabulary from.
+export { LINK_SIDES };
 
 /**
  * @typedef {object} LinkShape
@@ -114,8 +97,17 @@ const OPPOSITE = { top: 'bottom', bottom: 'top', left: 'right', right: 'left' };
  * @property {LinkBox} [target] the target node's box
  * @property {number} [sourceGap] clearance from the source edge, in px
  * @property {number} [targetGap] clearance from the target edge, in px
- * @property {string} [sourceSide] a named edge, or 'auto'
- * @property {string} [targetSide] a named edge, or 'auto'
+ * @property {string | null} [sourceSide] a named edge, or null/'auto' to slide — sugar for `sourcePort.side`
+ * @property {string | null} [targetSide] a named edge, or null/'auto' to slide
+ * @property {import('./linkRouter.js').LinkPort} [sourcePort] where the route leaves the source box
+ * @property {import('./linkRouter.js').LinkPort} [targetPort] where it enters the target box
+ * @property {{ x: number, y: number }} [sourceNormal] a pinned source edge's outward normal, for a curved kind's tangent
+ * @property {{ x: number, y: number }} [targetNormal] a pinned target edge's outward normal
+ * @property {LinkBox[]} [obstacles] every node box in the chart, for a routed kind to avoid
+ * @property {string} [loopOut] the edge a self-loop leaves by (`loopSides`)
+ * @property {string} [loopIn] the edge a self-loop returns by
+ * @property {number} [nest] how many loops sit inside this one on its edge
+ * @property {import('./linkRouter.js').RoutingGrid} [grid] the chart's routing grid, for detours
  */
 
 /**
@@ -257,9 +249,10 @@ function arcShape(seg, bow) {
  * collapsing to a line.
  * @param {LinkSegment} seg
  * @param {number} bow
+ * @param {LinkShapeOptions} [opts] `sourceNormal`/`targetNormal` for a pinned end
  * @returns {LinkShape}
  */
-function bezierShape(seg, bow) {
+function bezierShape(seg, bow, opts = {}) {
     const dx = seg.x2 - seg.x1;
     const dy = seg.y2 - seg.y1;
     const horizontal = Math.abs(dx) >= Math.abs(dy);
@@ -267,12 +260,27 @@ function bezierShape(seg, bow) {
     // the classic look; `bow` stretches it, so a fanned pair of siblings reads as
     // two distinct curves rather than one thick one.
     const reach = (horizontal ? Math.abs(dx) : Math.abs(dy)) * (0.5 + Math.abs(bow));
-    const c1 = horizontal
-        ? [seg.x1 + Math.sign(dx || 1) * reach, seg.y1]
-        : [seg.x1, seg.y1 + Math.sign(dy || 1) * reach];
-    const c2 = horizontal
-        ? [seg.x2 - Math.sign(dx || 1) * reach, seg.y2]
-        : [seg.x2, seg.y2 - Math.sign(dy || 1) * reach];
+    // A PINNED end leaves perpendicular to its edge — the curve honours the side
+    // the way an elbow does. A sliding end keeps the dominant-axis tangent.
+    const nA = opts.sourceNormal;
+    const nB = opts.targetNormal;
+    // A pinned edge that faces AWAY from the other end would throw the curve out by
+    // the full reach and back — a loop. It leaves square-on but turns tightly instead.
+    const chord = Math.hypot(dx, dy);
+    const armOf = (/** @type {{ x: number, y: number }} */ n, /** @type {number} */ toward) =>
+        (toward < 0 ? Math.min(reach, Math.max(20, chord * 0.2)) : reach);
+    const armA = nA ? armOf(nA, nA.x * dx + nA.y * dy) : reach;
+    const armB = nB ? armOf(nB, -(nB.x * dx + nB.y * dy)) : reach;
+    const c1 = nA
+        ? [seg.x1 + nA.x * armA, seg.y1 + nA.y * armA]
+        : horizontal
+            ? [seg.x1 + Math.sign(dx || 1) * reach, seg.y1]
+            : [seg.x1, seg.y1 + Math.sign(dy || 1) * reach];
+    const c2 = nB
+        ? [seg.x2 + nB.x * armB, seg.y2 + nB.y * armB]
+        : horizontal
+            ? [seg.x2 - Math.sign(dx || 1) * reach, seg.y2]
+            : [seg.x2, seg.y2 - Math.sign(dy || 1) * reach];
     const p1 = /** @type {[number, number]} */ ([seg.x1, seg.y1]);
     const p2 = /** @type {[number, number]} */ ([seg.x2, seg.y2]);
     const cc1 = /** @type {[number, number]} */ (c1);
@@ -292,67 +300,141 @@ function bezierShape(seg, bow) {
     };
 }
 
+/** How far past a loop's apex its label's centre sits, in px — half a 12px label plus a little air. */
+const LOOP_LABEL_GAP = 12;
+
 /**
- * A self-loop: a cubic that leaves a node and comes back to it. Reached when a
- * row's source and target name the SAME node, whatever curve the spec asked for —
- * there is no sensible straight line between a point and itself, and the
- * alternative (drawing nothing) is what made a self-reference silently invisible.
+ * A self-loop: a link that leaves a node and comes back to it. Reached when a row's
+ * source and target name the SAME node, whatever curve the spec asked for — there is
+ * no sensible line between a node and itself, and the alternative (drawing nothing)
+ * is what made a self-reference silently invisible.
  *
- * `seg` degenerates to a single point here, so the loop is built about it.
- * @param {LinkSegment} seg
+ * With a box (`opts.source`, and the edges `opts.loopOut`/`opts.loopIn` from
+ * `loopSides`) the loop docks on the node, as every other link does:
+ *
+ *   one edge     a teardrop off that edge, out at one end of it and back at the other,
+ *                so its two end handles stay apart and the arrowhead reads
+ *   two edges    an elbow around the node at `radius`, out of one edge and into the
+ *                other — what a node with an `out` on the right and an `in` on the
+ *                left has to draw
+ *
+ * Each `nest` pushes it a further 60% of `radius` out, so loops sharing an edge stay
+ * apart. With no box it falls back to a teardrop above the node's centre, its sign
+ * following the bow so a pair separates.
+ * @param {LinkSegment} seg the node centre (`x1`/`y1`)
  * @param {number} bow
  * @param {number} radius how far the loop reaches from the node, in px
+ * @param {LinkShapeOptions} [opts]
  * @returns {LinkShape}
  */
-function loopShape(seg, bow, radius) {
-    const x = seg.x1;
-    const y = seg.y1;
-    // Sign follows the bow so two self-loops on one node separate like any other
-    // parallel pair; magnitude is the loop's reach.
-    const dir = bow < 0 ? -1 : 1;
-    const w = radius * 0.9;
-    const h = radius * 1.8 * dir;
-    const c1 = /** @type {[number, number]} */ ([x - w, y - h]);
-    const c2 = /** @type {[number, number]} */ ([x + w, y - h]);
-    const p = /** @type {[number, number]} */ ([x, y]);
+function loopShape(seg, bow, radius, opts = {}) {
+    const box = opts.source;
+    const R = radius * (1 + 0.6 * (opts.nest || 0));
+    if (!box || !opts.loopOut) {
+        const x = seg.x1;
+        const y = seg.y1;
+        const dir = bow < 0 ? -1 : 1;
+        const w = R * 0.9;
+        const h = R * 1.8 * dir;
+        const c1 = /** @type {[number, number]} */ ([x - w, y - h]);
+        const c2 = /** @type {[number, number]} */ ([x + w, y - h]);
+        const p = /** @type {[number, number]} */ ([x, y]);
+        return {
+            d: `M${x},${y}C${c1[0]},${c1[1]} ${c2[0]},${c2[1]} ${x},${y}`,
+            hit: sampleCubic(p, c1, c2, p),
+            start: { x, y },
+            end: { x, y },
+            mid: { x, y: y - h * 0.75 },
+            tangentIn: unit(c1[0] - x, c1[1] - y),
+            tangentOut: unit(x - c2[0], y - c2[1]),
+        };
+    }
+    const out = opts.loopOut;
+    const back = opts.loopIn || out;
+    const gapA = opts.sourceGap || 0;
+    const gapB = opts.targetGap || 0;
+    const nA = SIDE_NORMALS[out];
+    const nB = SIDE_NORMALS[back];
+
+    if (out === back) {
+        // A teardrop: out at one end of a short span along the edge, back at the
+        // other, travelling clockwise. The span stays inside the edge on a small node.
+        const n = nA;
+        const t = { x: -n.y, y: n.x };
+        const edgeHalf = n.x ? box.hh : box.hw;
+        const h = Math.min(R * 0.35, edgeHalf * 0.8);
+        const mx = box.cx + n.x * box.hw;
+        const my = box.cy + n.y * box.hh;
+        const a = /** @type {[number, number]} */ ([mx - t.x * h + n.x * gapA, my - t.y * h + n.y * gapA]);
+        const b = /** @type {[number, number]} */ ([mx + t.x * h + n.x * gapB, my + t.y * h + n.y * gapB]);
+        const c1 = /** @type {[number, number]} */ ([mx + n.x * R * 1.8 - t.x * R * 0.9, my + n.y * R * 1.8 - t.y * R * 0.9]);
+        const c2 = /** @type {[number, number]} */ ([mx + n.x * R * 1.8 + t.x * R * 0.9, my + n.y * R * 1.8 + t.y * R * 0.9]);
+        return {
+            d: `M${a[0]},${a[1]}C${c1[0]},${c1[1]} ${c2[0]},${c2[1]} ${b[0]},${b[1]}`,
+            hit: sampleCubic(a, c1, c2, b),
+            start: { x: a[0], y: a[1] },
+            end: { x: b[0], y: b[1] },
+            // The label sits just past the loop's apex (1.35 R out), not on it: a
+            // teardrop is narrower than most labels, and a plate on its apex hides it.
+            mid: { x: mx + n.x * (R * 1.35 + LOOP_LABEL_GAP), y: my + n.y * (R * 1.35 + LOOP_LABEL_GAP) },
+            tangentIn: unit(c1[0] - a[0], c1[1] - a[1]),
+            tangentOut: unit(b[0] - c2[0], b[1] - c2[1]),
+        };
+    }
+
+    // Two edges: walk the box's outline, `R` out, from one edge to the other. Each
+    // step clockwise passes one corner; of the two directions take the shorter, and
+    // between opposite edges the one over the top (or, top↔bottom, round the right).
+    const i = LINK_SIDES.indexOf(out);
+    const j = LINK_SIDES.indexOf(back);
+    const cw = (j - i + 4) % 4;
+    const passes = (/** @type {number} */ dir) => {
+        const seen = [];
+        for (let k = i; k !== j; k = (k + dir + 4) % 4) seen.push(LINK_SIDES[(k + dir + 4) % 4]);
+        return seen;
+    };
+    let dir = cw < 2 ? 1 : cw > 2 ? -1 : 0;
+    if (!dir) {
+        const viaCw = passes(1);
+        dir = viaCw.includes('top') || (!passes(-1).includes('top') && viaCw.includes('right')) ? 1 : -1;
+    }
+    const L = box.cx - box.hw - R;
+    const Rx = box.cx + box.hw + R;
+    const T = box.cy - box.hh - R;
+    const B = box.cy + box.hh + R;
+    /** @type {Record<string, [number, number]>} the corner clockwise AFTER each side */
+    const cornerAfter = { top: [Rx, T], right: [Rx, B], bottom: [L, B], left: [L, T] };
+    const ax = box.cx + nA.x * box.hw;
+    const ay = box.cy + nA.y * box.hh;
+    const bx = box.cx + nB.x * box.hw;
+    const by = box.cy + nB.y * box.hh;
+    /** @type {[number, number][]} */
+    const pts = [[ax + nA.x * gapA, ay + nA.y * gapA], [ax + nA.x * R, ay + nA.y * R]];
+    for (let k = i; k !== j; k = (k + dir + 4) % 4) {
+        const side = dir > 0 ? LINK_SIDES[k] : LINK_SIDES[(k + 3) % 4];
+        pts.push(cornerAfter[side]);
+    }
+    pts.push([bx + nB.x * R, by + nB.y * R], [bx + nB.x * gapB, by + nB.y * gapB]);
+    const points = roundCorners(pts, Number(opts.cornerRadius) || R * 0.4);
+    const first = pts[0];
+    const last = pts[pts.length - 1];
     return {
-        d: `M${x},${y}C${c1[0]},${c1[1]} ${c2[0]},${c2[1]} ${x},${y}`,
-        hit: sampleCubic(p, c1, c2, p),
-        start: { x, y },
-        end: { x, y },
-        mid: { x, y: y - h * 0.75 },
-        // Out of the node toward the first control point, back in from the second.
-        tangentIn: unit(c1[0] - x, c1[1] - y),
-        tangentOut: unit(x - c2[0], y - c2[1]),
+        points,
+        curve: 'linear',
+        start: { x: first[0], y: first[1] },
+        end: { x: last[0], y: last[1] },
+        mid: polylineMid(points),
+        tangentIn: nA,
+        tangentOut: { x: -nB.x || 0, y: -nB.y || 0 },
     };
 }
 
 // ── The routed connector ────────────────────────────────────────────────────
-
-/**
- * Drop coincident points, then interior vertices that don't actually turn. Both
- * matter before rounding: a corner routine handed a straight-through vertex would
- * round a corner that isn't there, and one handed a zero-length leg divides by it.
- * @param {[number, number][]} points
- * @returns {[number, number][]}
- */
-function simplify(points) {
-    /** @type {[number, number][]} */
-    const out = [];
-    for (const p of points) {
-        const last = out[out.length - 1];
-        if (last && Math.abs(last[0] - p[0]) < 0.01 && Math.abs(last[1] - p[1]) < 0.01) continue;
-        out.push(p);
-    }
-    for (let i = out.length - 2; i >= 1; i--) {
-        const a = out[i - 1];
-        const v = out[i];
-        const b = out[i + 1];
-        const cross = (v[0] - a[0]) * (b[1] - a[1]) - (v[1] - a[1]) * (b[0] - a[0]);
-        if (Math.abs(cross) < 0.01) out.splice(i, 1);
-    }
-    return out;
-}
+//
+// Where the route GOES is linkRouter.js's question — candidate sides scored, a
+// straight snap for near-aligned boxes, a grid search around other nodes. This
+// row only turns the router's polyline into a shape: rounded corners, a label
+// position, and axis-aligned tangents at the two edges it chose.
 
 /**
  * Replace each interior vertex with a quadratic through it — the rounded elbow.
@@ -421,135 +503,31 @@ function polylineMid(points) {
 }
 
 /**
- * Which edge of `from` faces `to`. The test is the true SEPARATION on each axis —
- * the centre delta less both half-extents — not the raw delta, because two wide
- * notes stacked with a small vertical offset are separated vertically and
- * overlapping horizontally, and it is the separated axis you want to route along.
- * With neither axis separated (the boxes overlap both ways) the larger delta wins.
- *
- * Symmetric by construction: `facingSide(B, A)` is the opposite of `facingSide(A, B)`,
- * which is what makes two `'auto'` ends agree on one axis without consulting
- * each other.
- * @param {LinkBox} from @param {LinkBox} to
- * @returns {string}
+ * A port from the options: the explicit `sourcePort`/`targetPort`, or the older
+ * side-only spelling with the midpoint offset.
+ * @param {import('./linkRouter.js').LinkPort | undefined} port
+ * @param {string | null | undefined} side
+ * @returns {import('./linkRouter.js').LinkPort}
  */
-function facingSide(from, to) {
-    const dx = to.cx - from.cx;
-    const dy = to.cy - from.cy;
-    const gapX = Math.abs(dx) - (from.hw + to.hw);
-    const gapY = Math.abs(dy) - (from.hh + to.hh);
-    if (gapX >= gapY) return dx > 0 ? 'right' : 'left';
-    return dy > 0 ? 'bottom' : 'top';
-}
-
-/**
- * Where a connector meets a box: the edge's midpoint, pushed OUT by `gap`, then slid
- * along the edge by `slide` (a fraction of that edge, the same signed `bow` every
- * other kind bends by). Sliding is what fans a parallel pair apart here — an
- * orthogonal route can't bow, so siblings would otherwise draw on top of each other.
- * @param {LinkBox} box @param {string} side @param {number} gap @param {number} slide
- * @returns {{ x: number, y: number }}
- */
-function anchorOn(box, side, gap, slide) {
-    const n = SIDE_NORMALS[side];
-    const half = n.x ? box.hh : box.hw;
-    const t = Math.max(-MAX_SLIDE, Math.min(MAX_SLIDE, slide)) * half * 2;
-    return {
-        x: box.cx + n.x * (box.hw + gap) + -n.y * t,
-        y: box.cy + n.y * (box.hh + gap) + n.x * t,
-    };
-}
-
-/**
- * Is `to` on the outward side of `from` along `n`?
- * @param {{x:number,y:number}} from @param {{x:number,y:number}} to @param {{x:number,y:number}} n
- */
-function ahead(from, to, n) {
-    return (to.x - from.x) * n.x + (to.y - from.y) * n.y > 0;
-}
-
-/**
- * Join the two stub ends with axis-aligned legs. Four cases, decided by how the two
- * side NORMALS relate — not by where the nodes are, which the sides already encode:
- *
- *   opposite, with room     a Z, jogging halfway between the stubs
- *   opposite, without room  a C, detouring past both boxes on the other axis
- *   the same side           a C on that axis, out past the further stub
- *   perpendicular           an L, at whichever of the two corners lies ahead of both
- *
- * `'auto'` sides only ever produce the first two. The other two become reachable the
- * moment a spec pins a side, so all four ship together.
- * @param {{x:number,y:number}} p0 @param {{x:number,y:number}} p1
- * @param {{x:number,y:number}} p3 @param {{x:number,y:number}} p4
- * @param {{x:number,y:number}} nA @param {{x:number,y:number}} nB
- * @param {LinkBox} A @param {LinkBox} B @param {number} stub
- * @returns {[number, number][]}
- */
-function joinOrthogonal(p0, p1, p3, p4, nA, nB, A, B, stub) {
-    /** @type {[number, number]} */
-    const a0 = [p0.x, p0.y];
-    /** @type {[number, number]} */
-    const a1 = [p1.x, p1.y];
-    /** @type {[number, number]} */
-    const a3 = [p3.x, p3.y];
-    /** @type {[number, number]} */
-    const a4 = [p4.x, p4.y];
-
-    // Facing each other (or away): one axis of travel, so either a Z between the
-    // stubs or, when the target sits BEHIND the source, a detour around both.
-    if (nA.x === -nB.x && nA.y === -nB.y) {
-        if (ahead(p1, p3, nA)) {
-            if (nA.x) {
-                const xm = (p1.x + p3.x) / 2;
-                return [a0, a1, [xm, p1.y], [xm, p3.y], a3, a4];
-            }
-            const ym = (p1.y + p3.y) / 2;
-            return [a0, a1, [p1.x, ym], [p3.x, ym], a3, a4];
-        }
-        if (nA.x) {
-            const up = Math.min(A.cy - A.hh, B.cy - B.hh) - stub;
-            const down = Math.max(A.cy + A.hh, B.cy + B.hh) + stub;
-            const cost = (/** @type {number} */ y) => Math.abs(y - p1.y) + Math.abs(y - p3.y);
-            const y = cost(up) <= cost(down) ? up : down;
-            return [a0, a1, [p1.x, y], [p3.x, y], a3, a4];
-        }
-        const left = Math.min(A.cx - A.hw, B.cx - B.hw) - stub;
-        const right = Math.max(A.cx + A.hw, B.cx + B.hw) + stub;
-        const cost = (/** @type {number} */ x) => Math.abs(x - p1.x) + Math.abs(x - p3.x);
-        const x = cost(left) <= cost(right) ? left : right;
-        return [a0, a1, [x, p1.y], [x, p3.y], a3, a4];
-    }
-
-    // Both leaving by the same side: out past whichever stub reaches further, across,
-    // and back in.
-    if (nA.x === nB.x && nA.y === nB.y) {
-        if (nA.x) {
-            const x = nA.x > 0 ? Math.max(p1.x, p3.x) : Math.min(p1.x, p3.x);
-            return [a0, a1, [x, p1.y], [x, p3.y], a3, a4];
-        }
-        const y = nA.y > 0 ? Math.max(p1.y, p3.y) : Math.min(p1.y, p3.y);
-        return [a0, a1, [p1.x, y], [p3.x, y], a3, a4];
-    }
-
-    // Perpendicular: two candidate corners. The natural one continues along A's axis
-    // first; it is wrong when it would double back, and the other order always works.
-    const natural = nA.x ? { x: p3.x, y: p1.y } : { x: p1.x, y: p3.y };
-    const into = { x: -nB.x, y: -nB.y };
-    if (ahead(p1, natural, nA) && ahead(natural, p3, into)) {
-        return [a0, a1, [natural.x, natural.y], a3, a4];
-    }
-    const other = nA.x ? { x: p1.x, y: p3.y } : { x: p3.x, y: p1.y };
-    return [a0, a1, [other.x, other.y], a3, a4];
+function portOf(port, side) {
+    const norm = (/** @type {any} */ s) => (s && s !== 'auto' ? String(s) : null);
+    if (port) return { side: norm(port.side), offset: +port.offset || 0 };
+    return { side: norm(side), offset: 0 };
 }
 
 /**
  * The box-anchored orthogonal connector: leaves each node PERPENDICULAR to one of
- * its edges, and picks which edges from where the two nodes actually sit.
+ * its edges, and picks which edges from where the two nodes actually sit — and
+ * from what else sits between them.
  *
  * This is the one shape that needs more than two points to work from. Anchoring on
  * an edge means insetting along that edge's NORMAL rather than along the chord, and
  * it has to keep routing when two boxes overlap — the case a chord inset reports as
  * "nothing sensible to draw". Hence `anchors: 'box'` on its row.
+ *
+ * `bow` is the reciprocal-pair separation every kind takes: here it slides the
+ * two ports in OPPOSITE directions along their edges, on top of whatever offset
+ * the ports declare, so a pair of siblings splays rather than translating together.
  * @param {LinkSegment} seg the two node CENTRES
  * @param {number} bow
  * @param {LinkShapeOptions} opts
@@ -558,41 +536,33 @@ function joinOrthogonal(p0, p1, p3, p4, nA, nB, A, B, stub) {
 function orthogonalShape(seg, bow, opts) {
     const A = opts.source || { cx: seg.x1, cy: seg.y1, hw: 0, hh: 0 };
     const B = opts.target || { cx: seg.x2, cy: seg.y2, hw: 0, hh: 0 };
-    // Concentric boxes have no side facing anything. Draw nothing rather than
-    // guessing, exactly as a chord shape does with a zero-length segment.
-    if (A.cx === B.cx && A.cy === B.cy) return null;
+    const sourcePort = portOf(opts.sourcePort, opts.sourceSide);
+    const targetPort = portOf(opts.targetPort, opts.targetSide);
+    const route = routeOrthogonal({
+        source: { box: A, port: { side: sourcePort.side, offset: sourcePort.offset + bow } },
+        target: { box: B, port: { side: targetPort.side, offset: targetPort.offset - bow } },
+        sourceGap: opts.sourceGap || 0,
+        targetGap: opts.targetGap || 0,
+        obstacles: opts.obstacles,
+        grid: opts.grid,
+    });
+    if (!route) return null;
 
-    const sideA = opts.sourceSide && opts.sourceSide !== 'auto' ? opts.sourceSide : facingSide(A, B);
-    const sideB = opts.targetSide && opts.targetSide !== 'auto' ? opts.targetSide : facingSide(B, A);
-    const nA = SIDE_NORMALS[sideA];
-    const nB = SIDE_NORMALS[sideB];
-
-    const gapA = opts.sourceGap || 0;
-    const gapB = opts.targetGap || 0;
-    const stub = Math.max(MIN_STUB, gapA, gapB);
-
-    // The bow slides the two anchors in OPPOSITE directions along their edges, so a
-    // pair of siblings splays rather than translating sideways together.
-    const p0 = anchorOn(A, sideA, gapA, bow);
-    const p4 = anchorOn(B, sideB, gapB, -bow);
-    const p1 = { x: p0.x + nA.x * stub, y: p0.y + nA.y * stub };
-    const p3 = { x: p4.x + nB.x * stub, y: p4.y + nB.y * stub };
-
-    const points = roundCorners(
-        simplify(joinOrthogonal(p0, p1, p3, p4, nA, nB, A, B, stub)),
-        Number(opts.cornerRadius) || 0
-    );
-
+    const points = roundCorners(route.points, Number(opts.cornerRadius) || 0);
+    const first = route.points[0];
+    const last = route.points[route.points.length - 1];
+    const nA = SIDE_NORMALS[route.sourceSide];
+    const nB = SIDE_NORMALS[route.targetSide];
     return {
         points,
         curve: 'linear',
-        start: p0,
-        end: p4,
+        start: { x: first[0], y: first[1] },
+        end: { x: last[0], y: last[1] },
         mid: polylineMid(points),
         // Travel leaves the source along its outward normal and arrives at the
         // target against the target's, so both arrowheads cap the edge square-on.
         tangentIn: nA,
-        tangentOut: { x: -nB.x, y: -nB.y },
+        tangentOut: { x: -nB.x || 0, y: -nB.y || 0 },
     };
 }
 
@@ -613,9 +583,9 @@ export const LINK_SHAPES = {
     stepAfter: { anchors: 'chord', build: stepShape('stepAfter') },
     orthogonal: { anchors: 'box', build: orthogonalShape },
     arc: { anchors: 'chord', build: (seg, bow) => arcShape(seg, bow) },
-    bezier: { anchors: 'chord', build: (seg, bow) => bezierShape(seg, bow) },
-    smooth: { anchors: 'chord', build: (seg, bow) => bezierShape(seg, bow) },
-    loop: { anchors: 'chord', build: (seg, bow, opts) => loopShape(seg, bow, opts.loopRadius || 0) },
+    bezier: { anchors: 'chord', build: (seg, bow, opts) => bezierShape(seg, bow, opts) },
+    smooth: { anchors: 'chord', build: (seg, bow, opts) => bezierShape(seg, bow, opts) },
+    loop: { anchors: 'chord', build: (seg, bow, opts) => loopShape(seg, bow, opts.loopRadius || 0, opts) },
 };
 
 /** The kinds an author may name, for the dev warning on an unknown one. */

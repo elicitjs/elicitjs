@@ -123,6 +123,10 @@ export interface TableSpec {
   // Links only: does an ordered pair of this table's `ref` columns mean a
   // DIRECTION? See TableSchema.directed — the flag is tri-state on purpose.
   directed?: boolean;
+  // Links only: may one pair be joined by more than one link? See TableSchema.multi.
+  multi?: boolean;
+  // Links only: may a link join a node to itself? See TableSchema.selfLoops.
+  selfLoops?: boolean;
 }
 
 // `ElicitSpec.schema` as an author may write it. A bare field map is a single-table
@@ -136,9 +140,10 @@ export type SchemaInput =
 // not a manipulable geometry: there are no anchor points to drag.
 //   line                            straight
 //   step | stepBefore | stepAfter   elbow off the chord between two POINTS
-//   orthogonal                      elbow docked to each node's BOX, leaving it
-//                                   perpendicular to an edge chosen from where the
-//                                   two nodes sit (see `nodeWidth`/`nodeHeight`)
+//   orthogonal                      elbow docked to each node's BOX (the box the
+//                                   mark drawing the nodes declares, `Mark.nodeBox`),
+//                                   leaving it perpendicular to an edge and detouring
+//                                   around other nodes
 //   arc                             quadratic bow, signed by `curvature`
 //   bezier | smooth                 cubic with axis-aligned tangents
 //   loop                            implicit when source === target
@@ -146,10 +151,39 @@ export type LinkCurve =
   | 'line' | 'step' | 'stepBefore' | 'stepAfter' | 'orthogonal'
   | 'arc' | 'bezier' | 'smooth' | 'loop';
 
-// Which edge of a node a routed connector leaves by. `auto` derives it from the two
-// nodes' relative position. PRESENTATION, not data: stated on the mark or derived
-// with `{ fn }`, and a column only if the spec explicitly points it at a field.
+// Which edge of a node a link end meets. `auto` (or null) SLIDES: the end docks where
+// the line toward the other node leaves the box. A side PINS it at that edge's
+// midpoint. Stated on the mark, derived with `{ fn }`, or a column when the link's
+// `sourceSide` / `targetSide` channel names a field — the column a connect or
+// rewire gesture then writes.
 export type LinkSide = 'auto' | 'top' | 'right' | 'bottom' | 'left';
+
+// The sides of a node a link may use, as a `ports` channel value. `true` is all
+// four, both ways; a side or a list of sides is those sides, both ways; `{ out,
+// in }` splits them on a directed links table — the sides a link may LEAVE from
+// and ENTER by. `false` (or an empty list) is no ports on that row.
+export type PortSides =
+  | boolean
+  | 'top' | 'right' | 'bottom' | 'left'
+  | Array<'top' | 'right' | 'bottom' | 'left'>
+  | { out?: Array<'top' | 'right' | 'bottom' | 'left'>; in?: Array<'top' | 'right' | 'bottom' | 'left'> };
+
+// A node's rectangle in scene pixels: its centre and half-extents.
+export interface NodeBox {
+  cx: number;
+  cy: number;
+  hw: number;
+  hh: number;
+  // An ellipse of radii `hw`/`hh` (a dot, an ellipse, a glyph's head) rather than a
+  // rectangle: a straight or curved link with an unpinned end meets it on the curve.
+  // Sides and ports still sit at the four edge midpoints, which an ellipse shares
+  // with its bounding box.
+  round?: boolean;
+}
+
+// The node table's box rule, as the engine hands it to `link` and the network edits:
+// the box of one node ROW, from the mark that draws the nodes (`Mark.nodeBox`).
+export type NodeBoxRule = (row: Datum, index: number, rows: Datum[]) => NodeBox | null;
 
 // Which ends of a link carry an arrowhead. `auto` means "the target end iff the
 // links table declares `directed: true`", which is how a schema-level statement
@@ -173,6 +207,16 @@ export interface TableSchema {
   //              existed, and the reason `arrow: 'auto'` resolves to none.
   // Read it through `isDirected(spec)` rather than reaching for the table.
   directed?: boolean;
+  // Links only. May a GESTURE join one pair with a second link (a multigraph)?
+  // Unstated means no: `connect` and `rewire` refuse a pair that already has a link
+  // (and, with `directed: false`, its mirror). Rows that already hold a parallel
+  // pair still draw, fanned apart; only an explicit `false` reports them.
+  multi?: boolean;
+  // Links only. May a GESTURE join a node to itself? Unstated means no, since a
+  // drop back on the node you dragged from is usually a slip. A loop already in the
+  // data still draws; only an explicit `false` reports it. Read both through
+  // `linkRulesOf(spec)`.
+  selfLoops?: boolean;
 }
 
 // The canonical schema. `core/schema.js` is the only module that builds one, and
@@ -310,6 +354,19 @@ export interface EditContext {
   // The edit being dispatched, so a `when` predicate can arbitrate against the
   // edit's own knobs (when.near reads its `threshold`). Purely informational.
   edit?: Edit;
+  // Is this a PREVIEW (the ghost drawn each drag tick) rather than a commit? An
+  // edit may return a half-made row for a preview that it must never commit —
+  // `edit.network.connect` proposes a link toward the pointer before a target is
+  // under it, and returns undefined for the same gesture on dragend.
+  preview?: boolean;
+  // The node table's box rule (see `Mark.nodeBox`), for an edit that tests the
+  // pointer against a node's edges (connect, rewire). Null when no mark declares one.
+  nodeBox?: NodeBoxRule | null;
+  // For an edit that writes a table its own mark doesn't draw (`connect` writes a
+  // link row from a node's ports): the channel map of the mark that DRAWS that
+  // table. Its channels name the columns the edit writes, so a column is named in
+  // exactly one place — the link's channel map.
+  targetChannels?: Record<string, any> | null;
   // The table this edit WRITES (its name), the whole dataset keyed by table name,
   // and the canonical schema — for an edit that looks across tables (a rewire
   // resolves a node id while writing a link row). Read-only by convention.
@@ -460,6 +517,12 @@ export interface Edit {
   // shared `mintDatum` core. Absent on non-creating edits.
   defaults?: Record<string, any>;
   apply: (ctx: EditContext) => any;
+  // The places a drop could land, for an edit whose drag ends ON something (a
+  // connect or rewire ends on a port). The engine probes each with a trial commit,
+  // constraints included, and shows only the `onHover` handles whose `key` a release
+  // would actually accept — so a port nobody can use is never drawn.
+  // Null means there is nothing to probe (no ports declared): no drop is ruled out.
+  targets?: (ctx: EditContext) => Array<{ x: number; y: number; key: string }> | null;
   // Driver-specific knobs (edgeInset, resize, move, …) PASS THROUGH makeEdit onto
   // the descriptor, where the edit's driver reads them (see edgeInsetOf in
   // edit/pick.js). That passthrough is the one sanctioned way a driver — built-in
@@ -809,6 +872,10 @@ export interface Channels extends StyleChannels {
   lineAnchor?: ChannelSpec;   // vertical: 'top' | 'middle' | 'bottom'
   dx?: ChannelSpec;           // horizontal pixel offset
   dy?: ChannelSpec;           // vertical pixel offset
+  // Where links may meet this node (`PortSides`), on a mark drawing a network's
+  // node table. Read raw. Carries `edit.network.connect()` as its edit; the engine
+  // draws the ports on the mark's own box (`Mark.nodeBox`).
+  ports?: ChannelSpec;
   // A mark's ROTATION IN PLACE, in math degrees (0° = +x, CCW, y-up). Scaled when
   // a scale is declared so rotate() is an exact inverse; else raw. Marks that emit
   // geometry (point/rect/tick/text/curve/ellipse) stamp it on FeatureNode.angle;
@@ -971,21 +1038,22 @@ export interface LinkOptions extends MarkOptions, HandleOptions {
   targetInset?: number;
   // How far a self-loop reaches from its node, in px.
   loopRadius?: number;
-  // The node RECTANGLE a `curve: 'orthogonal'` connector docks to, in px. A
-  // constant here, a column on the node table (`channels: { nodeWidth: { field:
-  // 'w' } }`), or derived (`{ fn: d => noteBox(d.label).width }` for an auto-sized
-  // sticker). With neither stated the connector falls back to a small square about
-  // the node's position, so a bare `orthogonal` still leaves each node square-on.
-  nodeWidth?: number;
-  nodeHeight?: number;
-  // Corner rounding for the routed connector, in px. Default 0 (square corners).
+  // Corner rounding for the routed connector, in px. Default 8; 0 is square.
   // The corner is sampled into the same polyline, so a rounded link stays
   // grabbable and canvas-drawable.
   cornerRadius?: number;
-  // Which edge each end leaves by. Default 'auto' — chosen from where the two
-  // nodes sit. Also readable per row as a channel, like `curve` and `arrow`.
+  // Which edge each end meets. Default 'auto': the end slides along the box. A
+  // channel naming a field (`channels: { sourceSide: { field: 'fromSide' } }`)
+  // reads it per row, and is the column a connect or rewire gesture writes.
   sourceSide?: LinkSide;
   targetSide?: LinkSide;
+  // Where along that edge the connector meets it, as a signed fraction of the
+  // edge from its midpoint (-0.4..0.4). Positive runs clockwise around the box:
+  // rightward along the top, downward along the right, leftward along the
+  // bottom, upward along the left. Default 0, the midpoint — links sharing a
+  // side share their first leg. Read per row like a side, and never written.
+  sourceOffset?: number;
+  targetOffset?: number;
   // A plate behind `channels.text`, so a label sitting on its own connector stays
   // readable. Off by default. `true` takes the theme's backdrop (white when the
   // theme leaves it transparent); a colour string sets it outright.
@@ -1020,24 +1088,22 @@ export interface StickerOptions extends MarkOptions {
   format?: Format;
 }
 
-// `edit.network.connect` — drag from one node to another to create a link.
-// `source`/`target` here name the link table's two `ref` COLUMNS — the network
-// vocabulary — so the descriptor-level `target` (a write destination) is omitted.
+// `edit.network.connect` — drag from a port to another node to create a link. Put
+// it on a node mark's `ports` channel. The columns it writes are the ones the
+// `link` mark's `source` / `target` / `sourceSide` / `targetSide` channels name.
+// The descriptor-level `target` (a write destination) is omitted: the link table
+// is always the destination.
 export interface NetworkConnectOptions extends Omit<CreateOptions, 'target'> {
-  // Endpoint columns, when they aren't the link table's two `ref`s in order.
-  source?: string;
-  target?: string;
-  // How near the pointer must come to a node for the drag to land on it.
+  // How near the pointer must come to a node for the drag to land on it. Whether a
+  // second link between one pair, or a link from a node to itself, may be made is
+  // the links table's statement (`multi`, `selfLoops`), not an option here.
   threshold?: number;
-  // Allow a link from a node to itself. Off by default: meaningless in an
-  // argument map, meaningful in a flowchart, so it is a choice rather than a rule.
-  selfLoops?: boolean;
 }
 
-// `edit.network.rewire` / `edit.network.reverse`.
+// `edit.network.rewire` / `edit.network.reverse`. Both go on a `link` mark and write
+// the columns its channels name. `rewire` takes `channels: ['source']` or
+// `['target']` to move one end only.
 export interface NetworkEndpointOptions extends Omit<EditOptions, 'target'> {
-  source?: string;
-  target?: string;
   threshold?: number;
 }
 
@@ -1446,6 +1512,18 @@ export interface MarkBuildContext {
   // Which table THIS mark is drawing, already resolved (an explicit `table`, else
   // the one filling the mark's `tableRole`).
   table: string;
+  // Present only in a GHOST build of a proposal: where the pointer is, so a mark
+  // can draw a proposal's free end there — a link being drawn with no target yet.
+  // Absent in every committed build, which is how a mark knows a row whose
+  // reference resolves to nothing is a half-made proposal and not bad data.
+  ghost?: { pointer?: { x: number; y: number } };
+  // The node table's box rule (see `Mark.nodeBox`), or null when no mark drawing
+  // the nodes declares one. What `link` docks to and routes around.
+  nodeBox?: NodeBoxRule | null;
+  // The node table's ports rule: which edges of one node row a link may leave or
+  // enter by (from a node mark's `ports` channel), or null when no node has ports.
+  // An end on a node with ports meets it at a port.
+  nodePorts?: ((row: Datum, index: number, rows: Datum[]) => Record<string, 'out' | 'in' | 'both'> | null) | null;
 }
 
 export interface Mark {
@@ -1492,11 +1570,34 @@ export interface Mark {
   discreteScale?: 'band' | 'point';
   /**
    * Channels the mark resolves ITSELF, with no scale — `resolveScales` skips them.
-   * For a channel naming a column of a table this pass cannot see (`link`'s
-   * `nodeWidth` reads the NODE table), resolution would otherwise report a
-   * well-declared field as undeclared.
+   * For a channel naming a column of a table this pass cannot see, or a literal
+   * the mark interprets itself (`link`'s `sourceSide`, a node's `ports`),
+   * resolution would otherwise build a scale nothing reads.
    */
   rawChannels?: string[];
+  /**
+   * The rectangle this mark draws for one ROW, in scene pixels — a pure function of
+   * the row, never of built nodes. Declared by a mark that can draw a NODE (`point`
+   * its radius, `rect` its extent, and so a `sticker`'s body). The engine hands the
+   * rule of the mark drawing a network's nodes to `link`, to the `ports` a node
+   * mark carries, and to the network edits, so a link end, a port and a drop target
+   * cannot disagree about where an edge is.
+   */
+  /**
+   * This mark's box is a LABEL's (`text`): it can be a node on its own (an emoji),
+   * but beside a shape over the same rows — a `node()`'s dot, a glyph's body — the
+   * shape is the node. The engine and `composite` pick a box from a mark without
+   * this flag first.
+   */
+  labelBox?: boolean;
+  nodeBox?(
+    row: Datum,
+    index: number,
+    rows: Datum[],
+    scales: ScaleMap,
+    width: number,
+    height: number
+  ): NodeBox | null;
   /** Value field names the edit/constraint layer reads back, derived from channels. */
   xKey?: string;
   yKey?: string;
@@ -1636,6 +1737,7 @@ export interface FeatureNode {
   fill?: string;
   stroke?: string;
   strokeDasharray?: string;
+  strokeLinecap?: "butt" | "round" | "square";
   strokeWidth?: number;
   opacity?: number;
   pointerEvents?: string;
@@ -1742,6 +1844,19 @@ export interface FeatureNode {
   bandAxis?: 'x' | 'y';
   channel?: string;
   cursor?: string;
+  // A port's edge (`plot/port.js`), read by `edit.network.connect` as the side the
+  // drag started on, and which way a link may use it: 'out', 'in' or 'both'.
+  side?: string;
+  portRole?: 'out' | 'in' | 'both';
+  // Paint above every other node, and take pointer events only while lit. A
+  // link's end handle sits on a node's edge, so it must draw over the node — and,
+  // hidden, must not swallow a press meant for the port beneath it.
+  raise?: boolean;
+  // Painted only while its row is LIT — hovered, grabbed or selected in any feature
+  // over the same table, or named by the feature's own session. The engine's state
+  // pass hides an unlit node with `effectStyle.opacity = 0`; it stays in the scene
+  // with its pointer events, so it can be hovered into view.
+  onHover?: boolean;
   // The per-datum LOCAL scales this node was encoded through, stamped by
   // plot/composite.js on every node a framed part emits. The engine overlays them on
   // the global map when resolving an edit's channels, so a gesture inverts through
@@ -1834,6 +1949,14 @@ export interface Session {
   // edit owns both axes of one datum, and a field sits on exactly one of them —
   // and `startPx` is the grab pixel on that field's own axis (axisOf the channel).
   move?: { index: number, anchors: Record<string, { startPx: number, startValue: any }> } | null;
+  // connect driver (edit.network.connect / rewire): the row the drag began on, the
+  // port side it began at (null on a body), the press point — a release back on the
+  // starting node is a loop only once the pointer has left it — and the drop keys
+  // the engine's trial commits found reachable.
+  fromIndex?: number | null;
+  fromSide?: string | null;
+  fromPoint?: { x: number, y: number } | null;
+  targets?: string[] | null;
 }
 
 

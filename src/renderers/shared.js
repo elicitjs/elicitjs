@@ -41,6 +41,7 @@ export const STYLE_FIELDS = [
     { field: 'stroke', svgAttr: 'stroke', base: null },
     { field: 'strokeWidth', svgAttr: 'stroke-width', base: null },
     { field: 'strokeDasharray', svgAttr: 'stroke-dasharray', base: null },
+    { field: 'strokeLinecap', svgAttr: 'stroke-linecap', base: null },
     { field: 'opacity', svgAttr: 'opacity', base: null },
     { field: 'fillOpacity', svgAttr: 'fill-opacity', base: null },
     { field: 'strokeOpacity', svgAttr: 'stroke-opacity', base: null }

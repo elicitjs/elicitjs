@@ -33,13 +33,16 @@
 // edit with `guide: true` draw the `select` effect (snap ring + mark highlight)
 // without guide.js keeping its own list of which picks do that.
 // where ctx = { feature, event, edits, marks, data, scales, session, preview,
-//               stage, runEdit, previewEdit }:
+//               stage, runEdit, previewEdit, reachable }:
 //   edits       the feature's edits this driver wants (already filtered)
 //   session     per-feature transient state: { get(), set(patch), clear() }
 //   preview     the feature's uncommitted proposal: { get(), clear() }
 //   stage       the chart's stage cursor: { get(), set(n), next() }
 //   runEdit     (edit, index) => boolean — apply + invariants + COMMIT
 //   previewEdit (edit, index) => boolean — the same, parked as an uncommitted preview
+//   reachable   (edit, index, node?) => string[] | null — the drop keys a release
+//               could land on (`Edit.targets`, each tried as a commit), or null for
+//               an edit that declares none
 
 import { planeDriver } from './plane.js';
 import { nearestDriver } from './nearest.js';
@@ -87,6 +90,7 @@ import { connectDriver } from './connect.js';
  * @property {DriverStage} stage
  * @property {(edit: import('../../types').Edit, index: number | null) => boolean} runEdit
  * @property {(edit: import('../../types').Edit, index: number | null) => boolean} previewEdit
+ * @property {(edit: import('../../types').Edit, index: number | null, node?: any) => string[] | null} [reachable]
  *
  * @typedef {Object} Driver
  * @property {string} name

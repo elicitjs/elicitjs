@@ -762,13 +762,43 @@ export type LinkShapeOptions = {
      */
     targetGap?: number | undefined;
     /**
-     * a named edge, or 'auto'
+     * a named edge, or null/'auto' to slide — sugar for `sourcePort.side`
      */
-    sourceSide?: string | undefined;
+    sourceSide?: string | null | undefined;
     /**
-     * a named edge, or 'auto'
+     * a named edge, or null/'auto' to slide
      */
-    targetSide?: string | undefined;
+    targetSide?: string | null | undefined;
+    /**
+     * where the route leaves the source box
+     */
+    sourcePort?: import("../plot/linkRouter.js").LinkPort | undefined;
+    /**
+     * where it enters the target box
+     */
+    targetPort?: import("../plot/linkRouter.js").LinkPort | undefined;
+    /**
+     * a pinned source edge's outward normal, for a curved kind's tangent
+     */
+    sourceNormal?: {
+        x: number;
+        y: number;
+    } | undefined;
+    /**
+     * a pinned target edge's outward normal
+     */
+    targetNormal?: {
+        x: number;
+        y: number;
+    } | undefined;
+    /**
+     * every node box in the chart, for a routed kind to avoid
+     */
+    obstacles?: LinkBox[] | undefined;
+    /**
+     * the chart's routing grid, for detours
+     */
+    grid?: import("../plot/linkRouter.js").RoutingGrid | undefined;
 };
 /**
  * The shapes, keyed by kind. `smooth` is an alias of `bezier`; `loop` is not
@@ -1435,6 +1465,7 @@ export type DriverContext = {
     stage: DriverStage;
     runEdit: (edit: import("../types.js").Edit, index: number | null) => boolean;
     previewEdit: (edit: import("../types.js").Edit, index: number | null) => boolean;
+    reachable?: ((edit: import("../types.js").Edit, index: number | null, node?: any) => string[] | null) | undefined;
 };
 export type Driver = {
     name: string;
