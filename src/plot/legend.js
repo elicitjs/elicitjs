@@ -300,34 +300,38 @@ export function legend(options = {}) {
             const { form, values, labelW, fontSize } = readScale(scale, thm);
             const titleText = legendTitle(title, field, scale);
             const titlePad = titleText ? fontSize + 4 : 0;
+            // The title is part of EVERY form's band, not just the swatches'.
+            const titleW = titleText ? measureText(titleText, { fontSize: fontSize + 1, fontWeight: 600 }) + 2 : 0;
+            /** @param {{ width: number, height: number }} box */
+            const withTitle = (box) => ({ width: Math.max(box.width, titleW), height: box.height });
 
             if (form === 'graduated') {
                 // Nested circles: the band is as wide as the biggest one, and as tall
                 // as the stack. Radii come from the scale, so a wider size range
                 // reserves more room without a second constant to keep in step.
                 const radii = graduatedRadii(scale, values);
-                if (!radii.length) return { width: labelW, height: fontSize + titlePad };
+                if (!radii.length) return withTitle({ width: labelW, height: fontSize + titlePad });
                 const rMax = radii[radii.length - 1].r;
                 const stack = radii.reduce((h, g) => h + 2 * g.r + gap, 0);
-                if (vertical) return { width: 2 * rMax + 6 + labelW, height: stack + titlePad };
-                return { width: radii.reduce((w, g) => w + 2 * g.r + 6 + labelW + gap, 0), height: 2 * rMax + fontSize + titlePad };
+                if (vertical) return withTitle({ width: 2 * rMax + 6 + labelW, height: stack + titlePad });
+                return withTitle({ width: radii.reduce((w, g) => w + 2 * g.r + 6 + labelW + gap, 0), height: 2 * rMax + fontSize + titlePad });
             }
             if (form === 'fan') {
                 // Measured from the actual spoke/label extents, not a square box —
                 // the sweep decides how much room a fan needs.
                 const fan = fanLayout(scale, values, labelW, fontSize);
-                return { width: fan.width, height: fan.height + titlePad };
+                return withTitle({ width: fan.width, height: fan.height + titlePad });
             }
             if (form === 'weights') {
                 const stack = values.reduce((h, v) => {
                     const w = Number(typeof scale.encode === 'function' ? scale.encode(v) : scale(v));
                     return h + Math.max(Number.isFinite(w) ? w : 0, fontSize) + gap;
                 }, 0);
-                return { width: 2 * SPOKE + 6 + labelW, height: stack + titlePad };
+                return withTitle({ width: 2 * SPOKE + 6 + labelW, height: stack + titlePad });
             }
             if (form === 'ramp') {
-                if (vertical) return { width: rampThickness + 6 + labelW, height: rampLength + titlePad };
-                return { width: rampLength, height: rampThickness + 6 + fontSize + titlePad };
+                if (vertical) return withTitle({ width: rampThickness + 6 + labelW, height: rampLength + titlePad });
+                return withTitle({ width: rampLength, height: rampThickness + 6 + fontSize + titlePad });
             }
             // A domain-editable legend reserves room for the per-category "×" and
             // the trailing "+". Measured here as well as drawn, or the affordances
@@ -335,9 +339,6 @@ export function legend(options = {}) {
             const n = (values.length || 1) + (domainEditable ? 1 : 0);
             const removeW = domainEditable ? fontSize + 6 : 0;
             const box = swatchBox(channel, scale, values, swatchSize);
-            // The title is part of the band: a long one used to be clipped at the
-            // width the swatches alone reserved.
-            const titleW = titleText ? measureText(titleText, { fontSize: fontSize + 1, fontWeight: 600 }) + 2 : 0;
             if (vertical) {
                 return { width: Math.max(box + 4 + labelW + removeW, titleW), height: n * (box + gap) + titlePad };
             }

@@ -43,10 +43,12 @@ export function tip(options = {}) {
         type: 'tip',
         tracksPointer: true,
         build: (_rows, _scales, _w, _h, ctx) => {
-            const hit = ctx.ui && ctx.ui.hit;
             const pointer = ctx.ui && ctx.ui.pointer;
+            const hits = (ctx.ui && ctx.ui.hits) || (ctx.ui && ctx.ui.hit ? [ctx.ui.hit] : []);
+            // A tip bound to a mark reads that mark's own row under the pointer,
+            // even when an inert label or another mark is drawn over it.
+            const hit = mark != null ? hits.find((/** @type {any} */ h) => h.featureId === mark) : hits[0];
             if (!hit || !pointer) return [];
-            if (mark != null && hit.featureId !== mark) return [];
             const feature = (ctx.features || []).find((/** @type {any} */ f) => f.id === hit.featureId);
             const row = hit.node.data != null ? hit.node.data
                 : (feature && hit.index != null ? (ctx.tableOf(feature) || [])[hit.index] : null);

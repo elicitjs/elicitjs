@@ -534,13 +534,13 @@ export function Elicit(spec) {
     // than being painted by the renderer straight off d3.drag — that split is why
     // `grabbed` used to honour `filter` and silently ignore the rest of its vocabulary
     // (and never drew an outline at all).
-    /** @type {{ session: Record<string, any>, preview: Record<string, { table: string, rows: any[], pointer?: { x: number, y: number } }> | null, selection: Set<string>, hover: { featureId: string, index: number, node?: any } | null, grab: { featureId: string, index: number } | null, pointer: { x: number, y: number } | null, hit: { featureId: string, index: number, node: any } | null }} */
+    /** @type {{ session: Record<string, any>, preview: Record<string, { table: string, rows: any[], pointer?: { x: number, y: number } }> | null, selection: Set<string>, hover: { featureId: string, index: number, node?: any } | null, grab: { featureId: string, index: number } | null, pointer: { x: number, y: number } | null, hit: { featureId: string, index: number, node: any } | null, hits: { featureId: string, index: number, node: any }[] }} */
     // `pointer` is where the pointer is over the plot (scene coordinates), and
     // `hit` the row under it whether or not it is editable — recorded only when
     // a guide reads them (`tracksPointer`), and never dispatched: a tip or a
     // crosshair is STATE a guide draws, so no mark becomes pointer-active to
     // show one and dispatch does not change.
-    const ui = { session: {}, preview: null, selection: new Set(), hover: null, grab: null, pointer: null, hit: null };
+    const ui = { session: {}, preview: null, selection: new Set(), hover: null, grab: null, pointer: null, hit: null, hits: [] };
     // Does the last built scene carry any `onHover` node (a port)? Then a hover
     // change must re-render even when the `hovered` effect paints nothing.
     let sceneHasOnHover = false;
@@ -1102,12 +1102,19 @@ export function Elicit(spec) {
         // The row under the pointer, for the guides that read it — resolved from
         // the scene just built, so a tip over a locked or context row works too.
         if (tracksPointer && ui.pointer) {
-            let hit = null;
-            for (let i = features.length - 1; i >= 0 && !hit; i--) {
-                hit = hitTestAny(featureNodes[features[i].id] || [], ui.pointer.x, ui.pointer.y);
+            // One hit per feature, topmost first — so a tip bound to a mark finds
+            // its own row under an inert label drawn over it, and an unbound tip
+            // takes the topmost.
+            /** @type {{ featureId: string, index: number, node: any }[]} */
+            const hits = [];
+            for (let i = features.length - 1; i >= 0; i--) {
+                const hit = hitTestAny(featureNodes[features[i].id] || [], ui.pointer.x, ui.pointer.y);
+                if (hit) hits.push({ featureId: hit.featureId, index: hit.index, node: hit });
             }
-            ui.hit = hit ? { featureId: hit.featureId, index: hit.index, node: hit } : null;
+            ui.hits = hits;
+            ui.hit = hits[0] || null;
         } else {
+            ui.hits = [];
             ui.hit = null;
         }
 

@@ -106,3 +106,22 @@ describe('tip layering and options', () => {
         expect(guideTexts(el).some((t) => /v: 42\.1$/.test(t))).toBe(true);
     });
 });
+
+describe('a bound tip under an inert label', () => {
+    it('still finds its own mark\'s row', async () => {
+        const el = Elicit({
+            width: 300, height: 200, axes: false, margins: { top: 10, right: 10, bottom: 10, left: 10 },
+            schema: { k: { type: 'categorical', domain: ['a', 'b'] }, v: { type: 'quantitative', domain: [0, 100] } },
+            data: [{ k: 'a', v: 40 }, { k: 'b', v: 80 }],
+            marks: [
+                plot.barY({ tip: ['v'], channels: { x: { field: 'k' }, y: { field: 'v' } } }),
+                plot.text({ fontSize: 40, channels: { x: { field: 'k' }, y: { value: 100 }, text: { field: 'k' } } }),
+            ],
+        });
+        document.body.appendChild(el);
+        await tick();
+        // Over the label's anchor, which sits on bar b.
+        el.emit({ type: 'pointermove', x: 210, y: 100 });
+        expect(guideTexts(el).some((t) => /v: 80/.test(t))).toBe(true);
+    });
+});
