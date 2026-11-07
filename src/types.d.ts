@@ -1953,6 +1953,10 @@ export interface FeatureNode {
   // of — so without this a slice BODY is unclickable under the canvas renderer
   // (SVG hit-tests the filled shape in the DOM and never needed it).
   sector?: { cx: number; cy: number; r0: number; r1: number; a0: number; a1: number };
+  // A geo region's shape in lon/lat (geoPolygon), for pointer reads through the projection.
+  geoShape?: any;
+  // The row behind each vertex of a path (line, area), so a pointer read names the nearest row.
+  pointRows?: number[];
   // A filled path whose `points` is its outline polygon (a shape mark): the pick
   // layer tests containment, and `cx`/`cy` is its centre.
   polygon?: boolean;

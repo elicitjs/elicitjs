@@ -141,3 +141,21 @@ describe('a tip over a line or an area', () => {
         expect(guideTexts(el).some((t) => /x: 1/.test(t) && /y: 50/.test(t))).toBe(true);
     });
 });
+
+describe('a tip over a geo region', () => {
+    it('finds the region through the projection', async () => {
+        const square = (x0, y0, s) => ({ type: 'Polygon', coordinates: [[[x0, y0], [x0, y0 + s], [x0 + s, y0 + s], [x0 + s, y0], [x0, y0]]] });
+        const regions = [{ name: 'west', geometry: square(-10, -5, 10) }, { name: 'east', geometry: square(0, -5, 10) }];
+        const el = Elicit({
+            width: 300, height: 200, margins: { top: 0, right: 0, bottom: 0, left: 0 },
+            projection: { type: 'mercator', domain: { type: 'FeatureCollection', features: regions.map((r) => ({ type: 'Feature', geometry: r.geometry, properties: {} })) } },
+            schema: { name: { type: 'categorical' }, geometry: { type: 'categorical' } },
+            data: regions,
+            marks: [plot.geoPolygon({ tip: ['name'], channels: { geometry: { field: 'geometry', scale: null } } })],
+        });
+        document.body.appendChild(el);
+        await tick();
+        el.emit({ type: 'pointermove', x: 225, y: 100 });
+        expect(guideTexts(el).some((t) => /name: east/.test(t))).toBe(true);
+    });
+});

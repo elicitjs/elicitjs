@@ -339,6 +339,10 @@ export function geoPolygon(options = {}) {
                     ...style,
                     data: d,
                     index: i,
+                    // The region in lon/lat, so a pointer read (a tip) can test
+                    // containment through the projection — a `d` string alone
+                    // gives the pick layer nothing to measure.
+                    geoShape: geometry,
                 });
             });
             return nodes;
