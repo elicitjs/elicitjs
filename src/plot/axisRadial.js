@@ -130,7 +130,7 @@ export function axisRadial(options = {}) {
                     out.push({ type: 'text', x: cx + 3, y: cy - r - 2, text: format(v), textAnchor: 'start', fill: labelFill, fontSize, ...bg });
                 }
                 if (title) {
-                    out.push({ type: 'text', x: cx, y: cy - height / 2 + fontSize, text: title, textAnchor: 'middle', fill: '#0f172a', fontSize: fontSize + 1, ...bg });
+                    out.push({ type: 'text', x: cx, y: cy - height / 2 + fontSize, text: title, textAnchor: 'middle', fill: labelFill, fontSize: fontSize + 1, ...bg });
                 }
                 return out;
             }

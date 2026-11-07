@@ -617,6 +617,8 @@ export function seriesFieldOf(channels = {}) {
     return (channels.series && channels.series.field)
         || (channels.fill && channels.fill.field)
         || (channels.stroke && channels.stroke.field)
+        // A line dashed by category is one line per category too.
+        || (channels.strokeDash && channels.strokeDash.field)
         || null;
 }
 

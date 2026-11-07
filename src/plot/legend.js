@@ -678,7 +678,7 @@ function swatchNode({ channel, x, y, size, encoded, stroke, ink, interactive }) 
     }
     if (channel === 'strokeDash') {
         // A dash pattern is shown as a short stroked segment in the legend ink.
-        return { type: 'line', x1: x, x2: x + size * 1.6, y1: y + size / 2, y2: y + size / 2, stroke: ink, strokeWidth: 2, strokeDasharray: String(encoded), ...base };
+        return { type: 'line', x1: x, x2: x + size, y1: y + size / 2, y2: y + size / 2, stroke: ink, strokeWidth: 2, strokeDasharray: String(encoded), ...base };
     }
     return { type: 'rect', x, y, width: size, height: size, fill: encoded, stroke, strokeWidth: 1, ...base };
 }

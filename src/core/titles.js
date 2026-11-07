@@ -2,8 +2,9 @@
 // titles.js — a chart's TITLE, SUBTITLE and CAPTION: chrome that reserves layout
 // space exactly as a legend does (core/legends.js reserveLegends), so a titled
 // chart keeps its declared width and height and the plot shrinks to make room.
-// The bands sit OUTSIDE the legend bands: author margin, then the title block,
-// then any top legend, then the plot; the caption mirrors that at the bottom.
+// The bands are the OUTERMOST: plot, then the author's margin (where an axis
+// draws), then any legend, then the title block at the top edge; the caption
+// mirrors that at the bottom edge.
 //
 // Drawn as background text nodes (pointer-transparent) in the theme's title
 // tokens; left-aligned with the plot, the Observable Plot convention.
@@ -48,8 +49,8 @@ export function reserveTitles(spec, theme) {
 
 /**
  * The text nodes, in the plot's coordinate frame (the scene is translated by the
- * effective margins). The title block sits just below the author's top margin;
- * the caption just above the author's bottom margin.
+ * effective margins). The title block hangs from the chart's top edge; the
+ * caption sits at its bottom edge.
  * @param {{ title?: string, subtitle?: string, caption?: string }} spec
  * @param {any} theme
  * @param {{ innerWidth: number, outerHeight: number, effectiveMargins: { top: number, bottom: number, left: number, right: number }, authorMargins: { top: number, bottom: number } }} layout
@@ -59,7 +60,8 @@ export function titleNodes(spec, theme, { innerWidth, outerHeight, effectiveMarg
     /** @type {import('../types').FeatureNode[]} */
     const nodes = [];
     const chrome = { background: true, pointerEvents: 'none', textAnchor: 'start' };
-    let y = authorMargins.top - effectiveMargins.top; // the title block's top, in scene y
+    void authorMargins;
+    let y = 2 - effectiveMargins.top; // the chart's top edge, in scene y
     if (spec.title) {
         const t = tokens(theme, 'title');
         y += t.fontSize;
@@ -73,7 +75,7 @@ export function titleNodes(spec, theme, { innerWidth, outerHeight, effectiveMarg
     }
     if (spec.caption) {
         const t = tokens(theme, 'caption');
-        const cy = outerHeight - authorMargins.bottom - effectiveMargins.top - t.fontSize * 0.4;
+        const cy = outerHeight - effectiveMargins.top - t.fontSize * 0.4;
         nodes.push({ type: 'text', x: 0, y: cy, text: String(spec.caption), fill: t.fill, fontSize: t.fontSize, fontWeight: t.fontWeight, ...chrome });
     }
     void innerWidth;

@@ -36,6 +36,11 @@ describe('titles', () => {
         expect(texts).toContain('Source: survey');
         const title = [...titled.querySelectorAll('text')].find((t) => t.textContent === 'Sales');
         expect(title.getAttribute('font-weight')).toBe('600');
+        // The caption sits at the chart's bottom edge, below the author's margin (where an axis draws).
+        const caption = [...titled.querySelectorAll('text')].find((t) => t.textContent === 'Source: survey');
+        const top = +m[2];
+        const plotBottom = 200 - top - 10; // outer height − effective top − author bottom margin... (scene y of the margin's end)
+        expect(+caption.getAttribute('y')).toBeGreaterThan(plotBottom);
     });
     it('do not warn as unknown spec keys', async () => {
         const { setWarnings: sw } = await import('../src/index.js');

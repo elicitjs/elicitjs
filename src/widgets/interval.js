@@ -1,8 +1,8 @@
 // @ts-check
 // interval.js — uncertainty interval (mean + lo/hi caps) as a composite glyph.
-// Plain-chart twin: composite of an inert whisker + point + ticks, with a coupled
-// mean edit (drag the centre, the whole interval translates) and a dataset
-// constraint that keeps the mean between the caps.
+// Plain-chart twin: composite of an inert whisker + point + ticks, each handle a
+// plain move(), coupled by DECLARED constraints — follow (the interval travels
+// with its mean), ordering (lo ≤ mean ≤ hi), clamp, and symmetric on request.
 
 import { composite, point, ruleY, tick } from '../plot/index.js';
 import { move } from '../edit/index.js';

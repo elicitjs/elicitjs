@@ -833,28 +833,26 @@ export function Elicit(spec) {
         // not on the pixel dims — so one provisional resolve gives the domains, we
         // reserve the bands, inflate the author margins, and recompute the inner
         // rect before the real resolve below. No feedback loop, so no iteration.
-        // Titles reserve their bands first (outside any legend band), so a title
-        // never costs the plot its declared size and a top legend stacks below it.
+        // Titles are the OUTERMOST bands — plot, then the author's margin (where
+        // an axis draws), then any legend, then the title block / caption at the
+        // very edge — so a title never costs the plot its declared size and never
+        // collides with an axis or a legend.
         const titleBands = reserveTitles(spec, theme);
-        const titledMargins = {
-            ...authorMargins,
-            top: authorMargins.top + titleBands.top,
-            bottom: authorMargins.bottom + titleBands.bottom,
-        };
-        effectiveMargins = { ...titledMargins };
+        effectiveMargins = { ...authorMargins };
         recomputeInner();
+        let legendBands = { top: 0, right: 0, bottom: 0, left: 0 };
         if (hasLegends) {
             const provisional = resolveScales(features, tables, liveSpec, dims);
             /** @type {any} */ (provisional).theme = theme; // measure reads legend font tokens
-            const bands = reserveLegends(features, provisional, titledMargins, 8, dims);
-            effectiveMargins = {
-                top: titledMargins.top + bands.top,
-                right: titledMargins.right + bands.right,
-                bottom: titledMargins.bottom + bands.bottom,
-                left: titledMargins.left + bands.left,
-            };
-            recomputeInner();
+            legendBands = reserveLegends(features, provisional, authorMargins, 8, dims);
         }
+        effectiveMargins = {
+            top: authorMargins.top + legendBands.top + titleBands.top,
+            right: authorMargins.right + legendBands.right,
+            bottom: authorMargins.bottom + legendBands.bottom + titleBands.bottom,
+            left: authorMargins.left + legendBands.left,
+        };
+        recomputeInner();
 
         // Re-resolve global scales so inferred domains follow the live data, and
         // an edited schema domain (edit.axis.*) reshapes every axis/grid/mark.
