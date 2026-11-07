@@ -76,7 +76,8 @@ function buildArea(options) {
         handles = hasAnyEdit(opts),
         handleSize,
         handleColor,
-        connect = 'domain'
+        connect = 'domain',
+        gradient,
     } = opts;
 
     const { xKey, yKey } = positionalKeys(declaredChannels);
@@ -208,6 +209,7 @@ function buildArea(options) {
                 if (d && defined.length >= 2) {
                     nodes.push({
                         type: 'path',
+                        ...(gradient ? { fillGradient: gradient } : {}),
                         d,
                         points,
                         curve: seriesCurve,

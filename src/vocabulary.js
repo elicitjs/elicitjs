@@ -49,8 +49,8 @@ export const GUIDE_UNIVERSAL_OPTIONS = ['id'];
  *  @type {Record<string, string[]>} */
 export const MARK_OPTIONS = {
     arc: ['outerRadius', 'innerRadius', 'padAngle', 'arc', 'start', 'end', 'handles', 'handleSize', 'handleColor'],
-    area: ['orientation', 'curve', 'handles', 'handleSize', 'handleColor', 'connect'],
-    bar: ['orientation', 'stack', 'handles', 'handleSize', 'handleColor'],
+    area: ['orientation', 'curve', 'handles', 'handleSize', 'handleColor', 'connect', 'gradient'],
+    bar: ['orientation', 'stack', 'handles', 'handleSize', 'handleColor', 'gradient'],
     composite: ['parts', 'discreteScale'],
     curve: ['orientation', 'length'],
     dotStack: ['orientation', 'gap', 'ghost', 'label'],
@@ -76,7 +76,7 @@ export const MARK_OPTIONS = {
     node: ['dy', 'shape', 'format'],
     point: ['shape'],
     shape: ['path'],
-    rect: ['orientation', 'width', 'height', 'rx'],
+    rect: ['orientation', 'width', 'height', 'rx', 'gradient'],
     rule: ['orientation', 'discreteScale'],
     sticker: ['padding', 'radius', 'maxWidth', 'minWidth', 'minHeight', 'lineHeight', 'fontFamily', 'format'],
     text: ['orientation', 'format', 'wrap', 'lineHeight'],

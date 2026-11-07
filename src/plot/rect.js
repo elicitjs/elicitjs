@@ -104,7 +104,7 @@ function buildRect(options) {
     // `orientation` only FORCES one axis to baseline→value (rectY: the y axis).
     const forcedValueAxis = opts.orientation === 'vertical' ? 'y'
         : opts.orientation === 'horizontal' ? 'x' : null;
-    const { channels = {}, id, edits, width: widthOpt, height: heightOpt, rx: rxOpt } = opts;
+    const { channels = {}, id, edits, width: widthOpt, height: heightOpt, rx: rxOpt, gradient } = opts;
     // `width` / `height` / `rx` are CHANNELS (resolved through encodeChannel below),
     // and this is their constant SHORTHAND — the same relationship `fill: 'red'` has
     // to `fill: { value: 'red' }`. They are listed in `allow` rather than in the
@@ -178,6 +178,7 @@ function buildRect(options) {
 
                 return {
                     type: 'rect',
+                    ...(gradient ? { fillGradient: gradient } : {}),
                     x: xExt.lo,
                     y: yExt.lo,
                     width: xExt.hi - xExt.lo,

@@ -16,6 +16,7 @@ import { resolveEffects, stateEffectNodes, outlineNodes, effectStyleFor, element
 import { resolveTheme } from './theme.js';
 import { autoAxes } from './axes.js';
 import { reserveLegends, legendsFromChannels } from './legends.js';
+import { reserveTitles, titleNodes } from './titles.js';
 import {
     validateTables, inferMeasureOfDomain,
     normalizeSchema, denormalizeSchema, normalizeData, isBareForm, enforceRefs, isDirected,
@@ -825,17 +826,25 @@ export function Elicit(spec) {
         // not on the pixel dims — so one provisional resolve gives the domains, we
         // reserve the bands, inflate the author margins, and recompute the inner
         // rect before the real resolve below. No feedback loop, so no iteration.
+        // Titles reserve their bands first (outside any legend band), so a title
+        // never costs the plot its declared size and a top legend stacks below it.
+        const titleBands = reserveTitles(spec, theme);
+        const titledMargins = {
+            ...authorMargins,
+            top: authorMargins.top + titleBands.top,
+            bottom: authorMargins.bottom + titleBands.bottom,
+        };
+        effectiveMargins = { ...titledMargins };
+        recomputeInner();
         if (hasLegends) {
-            effectiveMargins = { ...authorMargins };
-            recomputeInner();
             const provisional = resolveScales(features, tables, liveSpec, dims);
             /** @type {any} */ (provisional).theme = theme; // measure reads legend font tokens
-            const bands = reserveLegends(features, provisional, authorMargins, 8, dims);
+            const bands = reserveLegends(features, provisional, titledMargins, 8, dims);
             effectiveMargins = {
-                top: authorMargins.top + bands.top,
-                right: authorMargins.right + bands.right,
-                bottom: authorMargins.bottom + bands.bottom,
-                left: authorMargins.left + bands.left,
+                top: titledMargins.top + bands.top,
+                right: titledMargins.right + bands.right,
+                bottom: titledMargins.bottom + bands.bottom,
+                left: titledMargins.left + bands.left,
             };
             recomputeInner();
         }
@@ -999,6 +1008,11 @@ export function Elicit(spec) {
         });
 
         paintOrder(built).forEach((/** @type {any} */ node) => scene.add(node));
+        // The chart's title block and caption, as background chrome.
+        if (spec.title || spec.subtitle || spec.caption) {
+            titleNodes(spec, theme, { innerWidth, outerHeight: curH, effectiveMargins, authorMargins })
+                .forEach((/** @type {any} */ node) => scene.add(node));
+        }
 
         // Ghost-preview pass. For each feature carrying an uncommitted proposal, build
         // it from the PROPOSED rows and add only the nodes that DIFFER from committed —

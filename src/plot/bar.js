@@ -114,6 +114,9 @@ function buildBar(options) {
         handles = true,
         handleSize,
         handleColor,
+        // A gradient fill ({ stops, direction }), stamped on each bar's rect as
+        // `fillGradient` for the renderers' <defs> / createLinearGradient.
+        gradient,
     } = opts;
 
     // Channel-native: read the x/y field from the channels, falling back to the
@@ -234,6 +237,7 @@ function buildBar(options) {
                     }
                     return {
                         type: 'rect',
+                        ...(gradient ? { fillGradient: gradient } : {}),
                         x: lo,
                         y: bandStart,
                         width: hi - lo,
@@ -271,6 +275,7 @@ function buildBar(options) {
                 }
                 return {
                     type: 'rect',
+                    ...(gradient ? { fillGradient: gradient } : {}),
                     x: bandStart,
                     y: lo,
                     width: thickness,

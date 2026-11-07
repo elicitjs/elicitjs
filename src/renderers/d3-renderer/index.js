@@ -231,6 +231,42 @@ export class D3Renderer {
     }
   }
 
+  /**
+   * The id of the <linearGradient> for a gradient spec, created in the svg's
+   * <defs> on first use. Keyed by the spec's JSON, so every bar sharing one
+   * gradient shares one element; prefixed per renderer instance so two charts on
+   * a page never collide.
+   * @param {{ stops: [number, string][], direction?: 'vertical' | 'horizontal' }} spec
+   * @returns {string}
+   */
+  _gradientId(spec) {
+    if (!this._gradients) {
+      this._gradients = new Map();
+      this._gradPrefix = `eg${Math.random().toString(36).slice(2, 8)}`;
+    }
+    const key = JSON.stringify(spec);
+    const hit = this._gradients.get(key);
+    if (hit) return hit;
+    const id = `${this._gradPrefix}-${this._gradients.size}`;
+    this._gradients.set(key, id);
+    const svg = this._sceneG ? d3.select(this._sceneG.node().ownerSVGElement) : null;
+    if (svg) {
+      /** @type {any} */
+      let defs = svg.select("defs");
+      if (defs.empty()) defs = /** @type {any} */ (svg).insert("defs", ":first-child");
+      const horizontal = spec.direction === "horizontal";
+      const g = defs.append("linearGradient")
+        .attr("id", id)
+        .attr("gradientUnits", "objectBoundingBox")
+        .attr("x1", 0).attr("y1", horizontal ? 0 : 1)
+        .attr("x2", horizontal ? 1 : 0).attr("y2", 0);
+      for (const [offset, color] of spec.stops || []) {
+        g.append("stop").attr("offset", `${Math.round(offset * 100)}%`).attr("stop-color", color);
+      }
+    }
+    return id;
+  }
+
   // -- setup ---------------------------------------------------------------
 
   /**
@@ -854,6 +890,11 @@ export class D3Renderer {
         d[field] != null ? d[field] : def,
       );
     }
+    // A GRADIENT fill (a mark's `gradient` option): one <linearGradient> per
+    // distinct spec in the svg's <defs>, referenced by url(). An effect restyle
+    // still wins, since it is a CSS property over this attribute.
+    sel.filter((/** @type {any} */ d) => !!(d && d.fillGradient))
+      .attr("fill", (/** @type {any} */ d) => `url(#${this._gradientId(d.fillGradient)})`);
     // Mark a probe ghost-preview node so a test (and a stylesheet) can find it. The
     // single place every mark shape's paint flows through, so one line covers all.
     sel.attr("data-ghost", (/** @type {any} */ d) => (d.ghost ? "" : null));
@@ -983,6 +1024,7 @@ export class D3Renderer {
       .attr("font-size", (/** @type {any} */ d) =>
         d.fontSize != null ? d.fontSize : this._themeFontSize(),
       )
+      .attr("font-weight", (/** @type {any} */ d) => (d.fontWeight != null ? d.fontWeight : null))
       // Math degrees on the node; _angleTransform converts to SVG rotate.
       .attr("transform", (/** @type {any} */ d) => this._angleTransform(d));
 

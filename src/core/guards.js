@@ -561,6 +561,8 @@ export const SPEC_KEYS = [
     'scales', 'projection',
     // Presentation
     'theme', 'effects',
+    // Chart chrome that reserves layout space like a legend (core/titles.js)
+    'title', 'subtitle', 'caption',
     // Multi-stage elicitation
     'stage', 'stageLabels',
     // View options — runtime, not part of a serializable spec
@@ -590,7 +592,6 @@ export const MISTAKEN_SPEC_KEYS = {
     x: 'there is no chart-level `x`. Scale config is `scales: { x: {...} }`; a field\'s domain is the schema\'s.',
     y: 'there is no chart-level `y`. Scale config is `scales: { y: {...} }`; a field\'s domain is the schema\'s.',
     type: 'a chart has no `type` — what it draws is its `marks`. A FIELD\'s type belongs on the schema; the DATASET\'s shape is the schema\'s `structure`.',
-    title: 'there is no chart-level `title`. Draw one with a `text` mark, or a widget\'s `question`.',
     container: 'Elicit returns the chart element — append it yourself: `container.appendChild(Elicit(spec))`.',
     el: 'Elicit returns the chart element; it does not take one.',
 };

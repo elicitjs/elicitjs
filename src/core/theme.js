@@ -68,6 +68,12 @@ export const DEFAULT_THEME = {
     // historical geom-text fallback (10).
     font: { family: null, size: 10, labelSize: 12, titleSize: 13 },
 
+    // Chart titles (spec.title / subtitle / caption — core/titles.js). A null fill
+    // takes the axis label ink, so a dark theme's titles follow its labels.
+    title: { fill: null, fontSize: 16, fontWeight: 600 },
+    subtitle: { fill: null, fontSize: 12, fontWeight: 'normal' },
+    caption: { fill: null, fontSize: 11, fontWeight: 'normal' },
+
     // Chart chrome. Axis spine/ticks (stroke), tick labels + title (labelFill), the
     // edit handle on a draggable axis (handle). Grid lines are separate.
     axis: { stroke: '#6b7280', labelFill: '#374151', fontSize: 10, handle: '#2563eb' },

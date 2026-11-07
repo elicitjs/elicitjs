@@ -141,6 +141,34 @@ function ellipse(ctx, node, defaults) {
 }
 
 /** @param {CanvasRenderingContext2D} ctx @param {any} node @param {Record<string,any>} defaults */
+/**
+ * A node's gradient fill as a canvas gradient over its box — the canvas twin of
+ * the SVG renderer's objectBoundingBox <linearGradient>.
+ * @param {CanvasRenderingContext2D} ctx @param {any} node
+ * @param {{ x: number, y: number, width: number, height: number }} box
+ * @returns {CanvasGradient | null}
+ */
+function gradientOf(ctx, node, box) {
+    const spec = node.fillGradient;
+    if (!spec || !spec.stops) return null;
+    const horizontal = spec.direction === 'horizontal';
+    const g = horizontal
+        ? ctx.createLinearGradient(box.x, box.y, box.x + box.width, box.y)
+        : ctx.createLinearGradient(box.x, box.y + box.height, box.x, box.y);
+    for (const [offset, color] of spec.stops) g.addColorStop(Math.max(0, Math.min(1, offset)), color);
+    return g;
+}
+
+/** The bounding box of a path node's outline points. @param {any} node */
+function pointsBox(node) {
+    const pts = (node.points || []).filter((/** @type {any} */ p) => p && Number.isFinite(p[0]) && Number.isFinite(p[1]));
+    if (!pts.length) return null;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [px, py] of pts) { x0 = Math.min(x0, px); y0 = Math.min(y0, py); x1 = Math.max(x1, px); y1 = Math.max(y1, py); }
+    return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+}
+
+/** @param {CanvasRenderingContext2D} ctx @param {any} node @param {Record<string,any>} defaults */
 function rect(ctx, node, defaults) {
     withAngle(ctx, node, () => {
         const h = Math.max(0, node.height);
@@ -156,7 +184,10 @@ function rect(ctx, node, defaults) {
         } else {
             ctx.rect(node.x, node.y, node.width, h);
         }
-        paint(ctx, styleOf(node, defaults));
+        const s = styleOf(node, defaults);
+        const g = gradientOf(ctx, node, { x: node.x, y: node.y, width: node.width, height: h });
+        if (g && !(node.effectStyle && node.effectStyle.fill != null)) s.fill = g;
+        paint(ctx, s);
     });
 }
 
@@ -181,7 +212,11 @@ function path(ctx, node, defaults) {
         p = new Path2D();
         lineGenerator(node.curve).context(/** @type {any} */(p))(node.points || []);
     }
-    paint(ctx, styleOf(node, defaults), p);
+    const s = styleOf(node, defaults);
+    const box = node.fillGradient ? pointsBox(node) : null;
+    const g = box ? gradientOf(ctx, node, box) : null;
+    if (g && !(node.effectStyle && node.effectStyle.fill != null)) s.fill = g;
+    paint(ctx, s, p);
 }
 
 /**
@@ -194,7 +229,7 @@ function text(ctx, node, defaults, anchorDefault) {
         const s = styleOf(node, defaults);
         const family = (activeFont && activeFont.family) || 'sans-serif';
         const size = node.fontSize != null ? node.fontSize : ((activeFont && activeFont.size) || 10);
-        ctx.font = `${size}px ${family}`;
+        ctx.font = `${node.fontWeight != null ? node.fontWeight + ' ' : ''}${size}px ${family}`;
         ctx.textAlign = ALIGN[node.textAnchor || anchorDefault] || 'start';
         ctx.textBaseline = BASELINE[node.dominantBaseline] || 'alphabetic';
 

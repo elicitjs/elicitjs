@@ -1818,6 +1818,7 @@ export interface FeatureNode {
   // and an editText write working unchanged.
   text?: string;
   fontSize?: number;
+  fontWeight?: string | number;
   textAnchor?: string;
   // Text mark: vertical anchor ('top'|'middle'|'bottom') and the SVG
   // dominant-baseline the mark derived from it; `editText` opts the node into
@@ -1955,6 +1956,9 @@ export interface FeatureNode {
   // A filled path whose `points` is its outline polygon (a shape mark): the pick
   // layer tests containment, and `cx`/`cy` is its centre.
   polygon?: boolean;
+  // A gradient fill (a mark's `gradient` option), painted by the renderers as a
+  // <linearGradient> / createLinearGradient over the node's own box.
+  fillGradient?: GradientSpec;
   [key: string]: any;
 }
 
@@ -2070,6 +2074,10 @@ export interface Theme {
   // a non-null family is emitted on the root svg / used by the canvas renderer.
   font: { family: string | null; size: number; labelSize: number; titleSize: number };
   // Chart chrome.
+  // Chart titles (spec.title / subtitle / caption). A null fill takes the axis label ink.
+  title: { fill: string | null; fontSize: number; fontWeight: string | number };
+  subtitle: { fill: string | null; fontSize: number; fontWeight: string | number };
+  caption: { fill: string | null; fontSize: number; fontWeight: string | number };
   axis: { stroke: string; labelFill: string; fontSize: number; handle: string };
   grid: { stroke: string; strokeWidth: number };
   // Annotation guides (guides/*) plus edit-guide part tokens (edit/guide.js).
@@ -2295,6 +2303,11 @@ export interface ElicitSpec {
   // Optional labels for stages (index -> name). Surfaced via getStageLabel() and
   // the second argument of on('stage', (index, label) => …).
   stageLabels?: (string | null)[];
+  /** Chart chrome above the plot (and below it, for the caption). Each reserves
+   *  its band of layout space, like a legend, so the chart keeps its declared size. */
+  title?: string;
+  subtitle?: string;
+  caption?: string;
   // NO index signature. The spec's key set is CLOSED: an unknown key is a typo
   // that would otherwise draw a wrong chart in silence, and `warnUnknownSpecKeys`
   // (core/elicit.js) reports it at run time. Closing it here is the compile-time
@@ -2554,6 +2567,8 @@ export interface ArcOptions extends MarkOptions, HandleOptions {
 }
 export interface AreaOptions extends MarkOptions, HandleOptions {
   orientation?: Orientation;
+  /** A gradient fill: stops as [offset 0–1, colour], along the vertical (default) or horizontal. */
+  gradient?: GradientSpec;
   /** d3 curve interpolation name ('linear', 'monotoneX', 'step', …). */
   curve?: string;
   /** How points connect with no `order` channel: by the domain axis, or in array order. */
@@ -2561,6 +2576,7 @@ export interface AreaOptions extends MarkOptions, HandleOptions {
 }
 export interface BarOptions extends MarkOptions, HandleOptions {
   orientation?: Orientation;
+  gradient?: GradientSpec;
   /** Stack the bars sharing a band on each other's cumulative total. */
   stack?: boolean;
 }
@@ -2624,6 +2640,11 @@ export interface NodeOptions extends MarkOptions {
   shape?: 'circle' | 'square';
   format?: Format;
 }
+/** A gradient paint: colour stops along one direction of the mark's own box. */
+export interface GradientSpec {
+  stops: [number, string][];
+  direction?: 'vertical' | 'horizontal';
+}
 export interface PointOptions extends MarkOptions {
   shape?: 'circle' | 'square';
 }
@@ -2639,6 +2660,7 @@ export interface ShapeOptions extends MarkOptions {
 }
 export interface RectOptions extends MarkOptions {
   orientation?: Orientation;
+  gradient?: GradientSpec;
   /** A fixed pixel extent centred on the x/y anchor (else band / value / span). */
   width?: number | ChannelFn;
   height?: number | ChannelFn;
