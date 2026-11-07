@@ -78,6 +78,7 @@ import type {
   FollowOptions,
   SymmetricOptions,
   PointOptions,
+  ShapeOptions,
   ProbabilityTokensOptions,
   PromptGuideOptions,
   ProximityGuideOptions,
@@ -148,6 +149,8 @@ export const plot: {
   // Point / token
   point(options?: PointOptions): Mark;
   ellipse(options?: EllipseOptions): Mark;
+  /** One path per row: a pictogram, a d3 symbol, any SVG path, with every x/y mark's behaviour. */
+  shape(options?: ShapeOptions): Mark;
   dotStack(options?: DotStackOptions): Mark;
   dotStackX(options?: DotStackOptions): Mark;
   dotStackY(options?: DotStackOptions): Mark;

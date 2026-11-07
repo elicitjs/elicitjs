@@ -60,6 +60,8 @@ export function distanceToMark(mark, px, py) {
         return segDist(p.x, p.y, mark.x1, mark.y1, mark.x2, mark.y2);
     }
     if (mark.type === 'path') {
+        // A filled SHAPE (plot/shape.js): inside its outline polygon is distance 0.
+        if (mark.polygon && pointInPolygon(mark.points || [], p.x, p.y)) return 0;
         // Distance to the polyline: the min over its consecutive segments, so a
         // click anywhere ALONG a connected line (not just at a vertex) is "on" it.
         // A path bakes any rotation into its own points, so `p` is the raw pointer
@@ -102,6 +104,21 @@ function unrotate(mark, px, py) {
     const cos = Math.cos(rad);
     const sin = Math.sin(rad);
     return { x: c.cx + dx * cos + dy * sin, y: c.cy - dx * sin + dy * cos };
+}
+
+/**
+ * Is a point inside a polygon (ray casting, even-odd)?
+ * @param {[number, number][]} pts
+ * @param {number} px @param {number} py
+ * @returns {boolean}
+ */
+export function pointInPolygon(pts, px, py) {
+    let inside = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const [xi, yi] = pts[i], [xj, yj] = pts[j];
+        if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
 }
 
 /**
@@ -376,6 +393,10 @@ function containsPoint(mark, px, py) {
         const theta = Math.atan2(-(py - cy), px - cx) * 180 / Math.PI;
         const from = ((((theta - a0) * dir) % 360) + 360) % 360;
         return from <= Math.abs(sweep);
+    }
+    if (mark.type === 'path' && mark.polygon) {
+        // A filled shape: anywhere inside its outline, or within the tolerance of it.
+        return distanceToMark(mark, px, py) <= HIT_TOLERANCE;
     }
     if (mark.type === 'line' || mark.type === 'path') {
         const half = (mark.strokeWidth || 1) / 2;

@@ -75,6 +75,7 @@ export const MARK_OPTIONS = {
     needle: ['length', 'handles', 'handleSize', 'handleColor', 'baseWidth'],
     node: ['dy', 'shape', 'format'],
     point: ['shape'],
+    shape: ['path'],
     rect: ['orientation', 'width', 'height', 'rx'],
     rule: ['orientation', 'discreteScale'],
     sticker: ['padding', 'radius', 'maxWidth', 'minWidth', 'minHeight', 'lineHeight', 'fontFamily', 'format'],

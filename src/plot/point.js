@@ -28,6 +28,7 @@
 
 import { encodeChannel, encodeAngle, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon} from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
+import { warn } from '../core/dev.js';
 
 /**
  * @param {any} [options]
@@ -85,6 +86,13 @@ export function point(options = {}) {
                 // shape) — the same category->encoding path, rendered as text. `size`
                 // still sets its px extent so a glyph point and a circle point match.
                 const glyph = resolveSymbol(scales, channels, d, i, currentData);
+                if (glyph !== undefined && /^\s*[Mm]/.test(glyph)) {
+                    warn(
+                        'point:symbol:path',
+                        'point(): a `symbol` resolved to an SVG path, which this mark draws as TEXT. ' +
+                        'Use plot.shape() for path symbols.'
+                    );
+                }
                 if (glyph !== undefined) {
                     return symbolNode(glyph, cx, cy, size, {
                         ...style,

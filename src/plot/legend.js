@@ -43,6 +43,7 @@ import { warnUnknownElementOptions, resolveHandles, elementEdits } from './mark.
 import { warn } from '../core/dev.js';
 import { scaleKey } from '../core/scales.js';
 import { measureText } from '../core/measure.js';
+import { unitShape, placeShape, DEFAULT_SHAPES } from './shapes.js';
 
 /**
  * `legend`'s own option vocabulary, on top of the universal chart-element options
@@ -651,6 +652,14 @@ function buildWeights(nodes, o) {
 function swatchNode({ channel, x, y, size, encoded, stroke, ink, interactive }) {
     const base = interactive ? {} : { background: true, pointerEvents: 'none' };
     if (channel === 'symbol') {
+        // A SHAPE identity (a name, or an SVG path — what plot/shape.js draws) is
+        // keyed as a small path chip; a text glyph (point's symbols) as text.
+        const unit = typeof encoded === 'string' && (/^\s*[Mm]/.test(encoded) || DEFAULT_SHAPES.includes(encoded.toLowerCase()))
+            ? unitShape(encoded) : null;
+        if (unit) {
+            const { d, points } = placeShape(unit, x + size / 2, y + size / 2, size / 2);
+            return { type: 'path', d, points, polygon: true, cx: x + size / 2, cy: y + size / 2, fill: ink, stroke, strokeWidth: 1, ...base };
+        }
         return {
             type: 'text', x: x + size / 2, y: y + size / 2, text: String(encoded),
             fontSize: size, textAnchor: 'middle', dominantBaseline: 'central', ...base,

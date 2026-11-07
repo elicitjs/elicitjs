@@ -23,6 +23,9 @@ export { waffle, waffleX, waffleY } from './waffle.js';
 
 // ── Point / token ───────────────────────────────────────────────────────────
 export { point } from './point.js';
+// One path per row — a pictogram, a d3 symbol, any SVG path — with every
+// x/y mark's behaviour (edits, node box, ports).
+export { shape } from './shape.js';
 export { ellipse } from './ellipse.js';
 export { dotStack, dotStackX, dotStackY } from './dotStack.js';
 

@@ -1952,6 +1952,9 @@ export interface FeatureNode {
   // of — so without this a slice BODY is unclickable under the canvas renderer
   // (SVG hit-tests the filled shape in the DOM and never needed it).
   sector?: { cx: number; cy: number; r0: number; r1: number; a0: number; a1: number };
+  // A filled path whose `points` is its outline polygon (a shape mark): the pick
+  // layer tests containment, and `cx`/`cy` is its centre.
+  polygon?: boolean;
   [key: string]: any;
 }
 
@@ -2623,6 +2626,16 @@ export interface NodeOptions extends MarkOptions {
 }
 export interface PointOptions extends MarkOptions {
   shape?: 'circle' | 'square';
+}
+/** `plot.shape`: one path per row. */
+export interface ShapeOptions extends MarkOptions {
+  /**
+   * The shape when no `symbol` channel is declared: a name (circle, square,
+   * triangle, diamond, star, cross, wye), an SVG path string, or a function of
+   * the row returning one. Default 'circle'. A `symbol` channel's scale range
+   * may hold the same names or paths.
+   */
+  path?: string | ((d: Datum, i: number, data: Datum[]) => string);
 }
 export interface RectOptions extends MarkOptions {
   orientation?: Orientation;
