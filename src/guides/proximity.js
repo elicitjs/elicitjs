@@ -17,6 +17,7 @@ import { GUIDE_OPTIONS } from '../vocabulary.js';
 // against a feature whose edit doesn't own it.
 import { DEFAULT_CATCHMENT } from '../core/effects.js';
 import { warnUnknownGuideOptions } from './shared.js';
+import { warn } from '../core/dev.js';
 
 /**
  * `proximity`'s option vocabulary. Exported so one list drives the diagnostics,
@@ -34,18 +35,26 @@ export const PROXIMITY_OPTIONS = GUIDE_OPTIONS.proximity;
  * `DEFAULT_CATCHMENT`) — that sugar keeps its own spelling, documented on
  * `GuideSpec`, because it is a different surface; a `guides.*` factory should read
  * like its siblings. The mapping onto the catchment defaults stays internal.
- * @param {{ target: string, stroke?: string, strokeDasharray?: string, strokeWidth?: number, opacity?: number }} options
+ * @param {{ target?: string, stroke?: string, strokeDasharray?: string, strokeWidth?: number, opacity?: number }} [options]
  * @returns {import('../types').Guide}
  */
-export function proximity(options) {
+export function proximity(options = {}) {
     warnUnknownGuideOptions('proximity', options, PROXIMITY_OPTIONS);
     const { target, stroke, strokeDasharray, strokeWidth, opacity } = options;
+    if (target == null) {
+        warn(
+            'proximity:target',
+            'guides.proximity() needs `target`: the id of the mark whose proximity ' +
+            'catchment it draws (guides.proximity({ target: "line" }) beside ' +
+            'lineY({ id: "line", … })). Without one it draws nothing.'
+        );
+    }
 
     return {
         views: 'state',
         type: 'proximity',
         build: (_rows, _scales, _w, _h, ctx) => {
-            const info = ctx.ui && ctx.ui.session && ctx.ui.session[target];
+            const info = target != null && ctx.ui && ctx.ui.session ? ctx.ui.session[target] : null;
             if (!info || info.px == null || info.py == null || info.threshold == null) return [];
             const spec = {
                 ...DEFAULT_CATCHMENT,

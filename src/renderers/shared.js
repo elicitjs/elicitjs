@@ -5,31 +5,10 @@
 // attributes or canvas 2D calls. Keeping that vocabulary here is what lets a
 // second renderer stay a faithful sibling of the first: adding a style channel is
 // one row in STYLE_FIELDS and both renderers pick it up.
-import * as d3 from 'd3';
-
-// Curve name -> d3 curve factory for line-mark paths. Mirrors Observable Plot's
-// `curve` option; unknown names fall back to a straight polyline.
-/** @type {Record<string, any>} */
-export const CURVES = {
-    linear: d3.curveLinear,
-    catmullRom: d3.curveCatmullRom,
-    natural: d3.curveNatural,
-    step: d3.curveStep,
-    stepAfter: d3.curveStepAfter,
-    stepBefore: d3.curveStepBefore,
-    basis: d3.curveBasis,
-    cardinal: d3.curveCardinal,
-    monotoneX: d3.curveMonotoneX,
-    monotoneY: d3.curveMonotoneY
-};
-
-/**
- * @param {string} [name]
- * @returns {any}
- */
-export function resolveCurve(name) {
-    return (name && CURVES[name]) || d3.curveLinear;
-}
+// The curve vocabulary and the path generators live in core/curves.js (marks
+// build area paths with them too); re-exported here so a renderer keeps one
+// import for its paint vocabulary.
+export { CURVES, resolveCurve, lineGenerator, areaGenerator, definedPoint } from '../core/curves.js';
 
 // The standard paint surface: the style channels every mark may set, with the SVG
 // attribute name and base default for the DOM renderer. A canvas renderer reads

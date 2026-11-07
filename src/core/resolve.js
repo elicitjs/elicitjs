@@ -19,7 +19,7 @@
 // and the axis must span all three. Reading one field's domain and discarding the
 // rest is what forced charts to hand-write a chart-level y domain.
 
-import { createScale, adoptScale, scaleKey } from "./scales.js";
+import { createScale, adoptScale, scaleKey, bandwidthOf } from "./scales.js";
 import {
   normalizeChannels,
   inferMeasureType,
@@ -258,6 +258,11 @@ export function resolveScales(features, tables, spec, dims) {
   /** @type {Record<string, number>} */
   const seenPerChannel = {};
   for (const bucket of Object.keys(acc)) {
+    const a = acc[bucket];
+    // A constant-only channel (`stroke: 'white'` on a halo line) resolves no
+    // scale (see below), so it must not take a palette slot either — counting it
+    // handed the NEXT encoding on the channel the second scheme family.
+    if (!a.fields.length && !a.values.some((v) => v != null)) continue;
     const ch = bucketChannel[bucket] || bucket;
     bucketIndex[bucket] = seenPerChannel[ch] || 0;
     seenPerChannel[ch] = bucketIndex[bucket] + 1;
@@ -327,9 +332,18 @@ export function resolveScales(features, tables, spec, dims) {
     // Range precedence: an explicit `range` array wins; then a named `scheme`
     // (colour channels only — resolves to a palette / sampled ramp); then the
     // channel's built-in default. `reverse` flips whichever of those landed.
+    const fromScheme = schemeRange(opt.scheme, type, domain.length);
+    if (opt.scheme && !fromScheme) {
+      warnOnce(
+        `scheme:${opt.scheme}`,
+        `channel "${channel}" names colour scheme "${opt.scheme}", which is not one this ` +
+          `library knows, so the channel's default range is used instead. Scheme names ` +
+          `are d3's, lower-case: blues, viridis, turbo, rdbu, tableau10, …`,
+      );
+    }
     let range =
       opt.range ||
-      schemeRange(opt.scheme, type, domain.length) ||
+      fromScheme ||
       channelRange(channel, type, dims, spec.theme, {
         // Colour is chosen by what the data IS (ordered vs unordered), by which
         // encoding this is on the channel, and by how many categories it has.
@@ -348,6 +362,7 @@ export function resolveScales(features, tables, spec, dims) {
           range: opt.range ? undefined : range,
           positional,
           domain,
+          declared: declaredDomains.length > 0,
         })
       : createScale({ ...opt, type, domain }, range);
 
@@ -408,6 +423,27 @@ export function resolveScales(features, tables, spec, dims) {
         counter.countAxis === "x" ? [0, span] : [dims.height, dims.height - span],
       );
       if (derived) scales.count = derived;
+    }
+  }
+
+  // A counting mark whose grid is WIDTH-limited (square cells that fit its band)
+  // draws a block shorter than the count scale's range, so the count axis read
+  // wrong against it. The mark declares `countLayout` — the grid length it will
+  // draw for a given band width and block length — and the count scale's range is
+  // fitted to that once the band scale is known. The mark caches the answer, so
+  // its cells and the axis come from one layout.
+  const laid = features.find((f) => f && f.countAxis && typeof f.countLayout === "function");
+  const count = /** @type {any} */ (scales).count;
+  if (laid && count && typeof count.range === "function") {
+    const band = laid.countAxis === "x" ? scales.y : scales.x;
+    const thickness = bandwidthOf(band, 20);
+    const r = count.range();
+    const blockLen = Math.abs(r[1] - r[0]);
+    const dom = count.domain();
+    const domainSpan = Math.abs(Number(dom[dom.length - 1]) - Number(dom[0])) || 1;
+    const span = laid.countLayout({ thickness, blockLen, domainSpan });
+    if (Number.isFinite(span) && span > 0 && Math.abs(span - blockLen) > 0.5) {
+      count.range(laid.countAxis === "x" ? [0, span] : [dims.height, dims.height - span]);
     }
   }
 

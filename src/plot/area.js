@@ -1,7 +1,8 @@
 // @ts-check
 import { isBand, baselineOf } from '../core/scales.js';
 import { claimEdge } from '../edit/shared.js';
-import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel, orderFieldOf, resolveValueAxis } from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel, resolveValueAxis, orderSeries, seriesKeyOf } from './mark.js';
+import { areaGenerator } from '../core/curves.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
 // area: a filled path under a series (the distributional sibling of line). Same
@@ -115,7 +116,7 @@ function buildArea(options) {
             /** @type {Map<any, { d: any, i: number }[]>} */
             const groups = new Map();
             currentData.forEach((d, i) => {
-                const key = seriesField != null ? d[seriesField] : SINGLE;
+                const key = seriesField != null ? seriesKeyOf(d[seriesField]) : SINGLE;
                 let bucket = groups.get(key);
                 if (!bucket) { bucket = []; groups.set(key, bucket); }
                 bucket.push({ d, i });
@@ -127,24 +128,21 @@ function buildArea(options) {
             // meaning per `handles` value, themed paint instead of the literal
             // 'steelblue' that used to be an area handle's fallback fill.
             const handleStyle = resolveHandles(scales, { handles, handleSize, handleColor });
-            const yBase = baselineOf(yScale);
-            const xBase = baselineOf(xScale);
+            const yBase = baselineOf(yScale, height);
+            const xBase = baselineOf(xScale, 0);
 
+            const domainAxis = valueAxis === 'y' ? 'x' : 'y';
             for (const [series, rows] of groups) {
                 const groupRows = rows || [];
-                const sorted = [...groupRows];
-                const orderField = orderFieldOf(channels);
-                if (orderField) {
-                    sorted.sort((a, b) => (a.d[orderField] < b.d[orderField] ? -1
-                        : a.d[orderField] > b.d[orderField] ? 1 : 0));
-                } else if (connect === 'domain') {
-                    const domainKey = valueAxis === 'y' ? xKey : yKey;
-                    sorted.sort((a, b) => {
-                        const av = a.d[domainKey], bv = b.d[domainKey];
-                        if (av instanceof Date && bv instanceof Date) return /** @type {any} */ (av) - /** @type {any} */ (bv);
-                        return av < bv ? -1 : av > bv ? 1 : 0;
-                    });
-                }
+                // Place the DOMAIN axis first and order by its pixel position — the
+                // same rule `line` follows (orderSeries), so an ordinal x orders by
+                // its declared domain and the band never crosses itself.
+                const placed = groupRows.map(({ d, i }) => ({
+                    d, i,
+                    cx: encodeChannel(scales, channels, 'x', d, width / 2, i, currentData),
+                    cy: encodeChannel(scales, channels, 'y', d, height / 2, i, currentData),
+                }));
+                const sorted = orderSeries(placed, connect, domainAxis, channels);
 
                 const areaInk = themeOf(scales).ink;
                 // One band spans a whole series, so its style resolves from the series'
@@ -161,37 +159,55 @@ function buildArea(options) {
                 // Span mode: the far edge is a second field, not the baseline. Both
                 // edges resolve through encodeChannel like any other channel, so the
                 // only difference from the baseline form is WHERE the path closes.
-                /** @type {[number, number][]} */
-                let top;
-                /** @type {[number, number][]} */
-                let bottom;
-                // Each sorted entry keeps its GLOBAL index `i`, so a derived ({ fn })
-                // channel gets the same (d, i, data) here as it would on any other
-                // mark — sorting into series must not change what fn sees.
+                // One SAMPLE per row: the domain position and the band's two edges in
+                // pixels. A row with no value gets a null edge, which breaks the
+                // band there (core/curves.js `defined`) instead of drawing through
+                // the baseline. Each sorted entry keeps its GLOBAL index `i`, so a
+                // derived ({ fn }) channel gets the same (d, i, data) here as it would
+                // on any other mark — sorting into series must not change what fn
+                // sees.
+                /** @type {any[]} */
+                let samples;
                 if (valueAxis === 'y') {
-                    const domainAt = (/** @type {any} */ d, /** @type {number} */ i) =>
-                        encodeChannel(scales, channels, 'x', d, width / 2, i, currentData);
-                    top = sorted.map(({ d, i }) => [domainAt(d, i), spanMode
-                        ? encodeChannel(scales, channels, 'y2', d, yBase, i, currentData)
-                        : encodeChannel(scales, channels, 'y', d, height / 2, i, currentData)]);
-                    bottom = [...sorted].reverse().map(({ d, i }) => [domainAt(d, i), spanMode
-                        ? encodeChannel(scales, channels, 'y1', d, yBase, i, currentData)
-                        : yBase]);
+                    samples = sorted.map(({ d, i, cx }) => ({
+                        x: cx,
+                        y1: spanMode
+                            ? encodeChannel(scales, channels, 'y2', d, null, i, currentData)
+                            : encodeChannel(scales, channels, 'y', d, null, i, currentData),
+                        y0: spanMode
+                            ? encodeChannel(scales, channels, 'y1', d, null, i, currentData)
+                            : yBase,
+                    }));
                 } else {
-                    const domainAt = (/** @type {any} */ d, /** @type {number} */ i) =>
-                        encodeChannel(scales, channels, 'y', d, height / 2, i, currentData);
-                    top = sorted.map(({ d, i }) => [spanMode
-                        ? encodeChannel(scales, channels, 'x2', d, xBase, i, currentData)
-                        : encodeChannel(scales, channels, 'x', d, width / 2, i, currentData), domainAt(d, i)]);
-                    bottom = [...sorted].reverse().map(({ d, i }) => [spanMode
-                        ? encodeChannel(scales, channels, 'x1', d, xBase, i, currentData)
-                        : xBase, domainAt(d, i)]);
+                    samples = sorted.map(({ d, i, cy }) => ({
+                        y: cy,
+                        x1: spanMode
+                            ? encodeChannel(scales, channels, 'x2', d, null, i, currentData)
+                            : encodeChannel(scales, channels, 'x', d, null, i, currentData),
+                        x0: spanMode
+                            ? encodeChannel(scales, channels, 'x1', d, null, i, currentData)
+                            : xBase,
+                    }));
                 }
-                const points = [...top, ...bottom];
+                // The path: top and bottom edges generated TOGETHER by d3.area, so one
+                // curve applies to both in the same direction (a closed polygon
+                // through d3.line curved the bottom edge backwards). `points` is the
+                // outline polygon the pick layer measures and the canvas can draw.
+                const d = areaGenerator(seriesCurve, valueAxis !== 'y')(samples);
+                const defined = samples.filter((s) => valueAxis === 'y'
+                    ? Number.isFinite(s.x) && Number.isFinite(s.y0) && Number.isFinite(s.y1)
+                    : Number.isFinite(s.y) && Number.isFinite(s.x0) && Number.isFinite(s.x1));
+                /** @type {[number, number][]} */
+                const points = valueAxis === 'y'
+                    ? [...defined.map((s) => /** @type {[number, number]} */ ([s.x, s.y1])),
+                       ...[...defined].reverse().map((s) => /** @type {[number, number]} */ ([s.x, s.y0]))]
+                    : [...defined.map((s) => /** @type {[number, number]} */ ([s.x1, s.y])),
+                       ...[...defined].reverse().map((s) => /** @type {[number, number]} */ ([s.x0, s.y]))];
 
-                if (points.length >= 2) {
+                if (d && defined.length >= 2) {
                     nodes.push({
                         type: 'path',
+                        d,
                         points,
                         curve: seriesCurve,
                         ...style,
@@ -224,7 +240,8 @@ function buildArea(options) {
                             const along = onY
                                 ? encodeChannel(scales, channels, 'x', d, width / 2, i, currentData)
                                 : encodeChannel(scales, channels, 'y', d, height / 2, i, currentData);
-                            const at = encodeChannel(scales, channels, ch, d, onY ? height / 2 : width / 2, i, currentData);
+                            const at = encodeChannel(scales, channels, ch, d, null, i, currentData);
+                            if (at == null) continue; // a missing value has no handle
                             nodes.push({
                                 type: 'circle',
                                 cx: onY ? along : at,

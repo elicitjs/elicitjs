@@ -26,6 +26,7 @@ import { GUIDE_OPTIONS } from '../vocabulary.js';
 // reader is being held to and the rule they are shown are then the same object.
 
 import { resolveGuideOptions, warnUnknownGuideOptions } from './shared.js';
+import { resolveFormat } from '../format.js';
 
 /**
  * `remaining`'s option vocabulary. Exported so one list drives the diagnostics,
@@ -105,8 +106,11 @@ export function remaining(options = {}) {
             }, 0);
             const left = target - used;
 
-            const fmt = typeof format === 'function'
-                ? format
+            // `format` is a function or a d3-format specifier ('.1f'), like every
+            // other `format` in the library (resolveFormat); the default rounds to
+            // two decimals.
+            const fmt = format != null
+                ? resolveFormat(format)
                 : (/** @type {number} */ v) => {
                     const rounded = Math.round(v * 100) / 100;
                     return String(rounded);
@@ -116,8 +120,14 @@ export function remaining(options = {}) {
             if (typeof label === 'function') {
                 text = String(label(left, used, target));
             } else if (unit) {
-                const n = Math.round(left);
-                text = `${fmt(left)} ${unit}${n === 1 ? '' : 's'} left`;
+                // `unit` is a noun, or a [singular, plural] pair for a noun that
+                // does not pluralise with an "s" ("50 %s left" was the default).
+                const shown = fmt(left);
+                const one = shown === '1' || shown === '1.0' || Math.abs(left - 1) < 1e-9;
+                const [singular, plural] = Array.isArray(unit)
+                    ? [unit[0], unit[1] != null ? unit[1] : unit[0]]
+                    : [unit, /^[%°]|^[^a-zA-Z]+$/.test(String(unit)) ? unit : `${unit}s`];
+                text = `${shown} ${one ? singular : plural} left`;
             } else {
                 text = `${fmt(left)} of ${fmt(target)} left`;
             }

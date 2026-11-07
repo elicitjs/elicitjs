@@ -58,7 +58,19 @@ function encodingsOf(features) {
             const chSpec = /** @type {any} */ (spec);
             if (!chSpec || chSpec.field == null) continue;
             if (chSpec.scale === null || raw.has(channel) || frameSpecOf(chSpec)) continue;
-            if (out.some((e) => e.channel === channel && e.field === chSpec.field)) continue;
+            const prior = out.find((e) => e.channel === channel && e.field === chSpec.field);
+            if (prior) {
+                // Two marks stating ONE encoding share its legend; a later mark's
+                // `legend` options merge into it (its edit, anchor, title), rather
+                // than being dropped because the first mark got there first.
+                if (chSpec.legend && typeof chSpec.legend === 'object') {
+                    const base = prior.spec.legend && typeof prior.spec.legend === 'object' ? prior.spec.legend : {};
+                    prior.spec = { ...prior.spec, legend: { ...base, ...chSpec.legend } };
+                } else if (chSpec.legend != null && prior.spec.legend == null) {
+                    prior.spec = { ...prior.spec, legend: chSpec.legend };
+                }
+                continue;
+            }
             out.push({
                 channel, field: chSpec.field,
                 table: f.table, tableRole: f.tableRole,
@@ -237,9 +249,11 @@ export function legendsFromChannels(features, legendsOpt) {
  * @param {import('../types').ScaleMap} scales
  * @param {Sides} authorMargins the author's declared margins (outer padding / axis room)
  * @param {number} [gap] pixels between the plot edge (and stacked legends) and a legend
+ * @param {{ width: number, height: number }} [dims] the plot's inner size, so a
+ *   horizontal legend can wrap its items into rows
  * @returns {Sides} band size to add to each side
  */
-export function reserveLegends(features, scales, authorMargins, gap = 8) {
+export function reserveLegends(features, scales, authorMargins, gap = 8, dims = undefined) {
     /** @type {Sides} */
     const bands = { top: 0, right: 0, bottom: 0, left: 0 };
     const legends = (features || []).filter((f) => f && f.isLegend && typeof f.measure === 'function');
@@ -264,7 +278,7 @@ export function reserveLegends(features, scales, authorMargins, gap = 8) {
         // reserves would not be the legend it draws.
         const scale = /** @type {any} */ (scales)[scaleKey(lg.channel, lg.field)]
             || /** @type {any} */ (scales)[lg.channel];
-        const box = scale ? lg.measure(scales) : null;
+        const box = scale ? lg.measure(scales, dims) : null;
         if (!box) { lg._place.offset = 0; lg._place.size = 0; continue; }
         // A vertical legend reserves its WIDTH on the side; a horizontal one its HEIGHT.
         const across = lg.orient === 'vertical' ? box.width : box.height;

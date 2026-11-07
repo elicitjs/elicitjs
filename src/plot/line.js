@@ -1,6 +1,6 @@
 // @ts-check
 import { isBand } from '../core/scales.js';
-import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel, orderFieldOf, resolveValueAxis } from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel, orderFieldOf, resolveValueAxis, orderSeries, seriesKeyOf } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
 // line: a connected-path mark over an ordered set of points. It is deliberately
@@ -98,21 +98,26 @@ function buildLine(options, defaultConnect = 'domain') {
 
             // Per-datum pixel positions + series key, keeping the GLOBAL datum
             // index so edits address the right datum after grouping/sorting.
+            // A row with no VALUE has no position: its coordinate is null, which
+            // breaks the path there (core/curves.js) and draws no handle. The domain
+            // axis keeps the centre fallback, so a value-only row still sits on it.
             const placed = currentData.map((d, i) => ({
                 d,
                 i,
-                cx: encodeChannel(scales, channels, 'x', d, width / 2, i, currentData),
-                cy: encodeChannel(scales, channels, 'y', d, height / 2, i, currentData),
+                cx: encodeChannel(scales, channels, 'x', d, valueAxis === 'x' ? null : width / 2, i, currentData),
+                cy: encodeChannel(scales, channels, 'y', d, valueAxis === 'y' ? null : height / 2, i, currentData),
                 series: seriesField ? d[seriesField] : SINGLE
             }));
 
             // Group into series (first-seen order), preserving each group's
-            // original data order so `order: 'sequence'` connects as drawn.
+            // original data order so `order: 'sequence'` connects as drawn. Grouped
+            // by KEY (a Date by its time), tagged with the group's first raw value.
             /** @type {Map<any, typeof placed>} */
             const groups = new Map();
             for (const p of placed) {
-                const g = groups.get(p.series);
-                if (g) g.push(p); else groups.set(p.series, [p]);
+                const k = seriesKeyOf(p.series);
+                const g = groups.get(k);
+                if (g) { g.push(p); p.series = g[0].series; } else groups.set(k, [p]);
             }
 
             // Default ink from the theme (steelblue unless the theme's `ink` or a
@@ -123,7 +128,7 @@ function buildLine(options, defaultConnect = 'domain') {
             // One connector path per series, its points ordered per `order`.
             for (const group of groups.values()) {
                 if (group.length < 2) continue; // nothing to connect
-                const pts = orderPoints(group, connect, domainAxis, channels);
+                const pts = orderSeries(group, connect, domainAxis, channels);
                 const style = resolveStyle(scales, channels, group[0].d, lineDefaults, group[0].i, currentData);
                 // One path per SERIES, so a channel-bound curve resolves once per
                 // series against that series' first row — the same rule a line's
@@ -150,6 +155,7 @@ function buildLine(options, defaultConnect = 'domain') {
                 { fill: lineDefaults.stroke });
                 placed.forEach(({ d, i, cx, cy, series }) => {
                 if (!handleStyle.grabbable) return;
+                if (cx == null || cy == null) return; // a missing value has no handle
                 const style = resolveStyle(scales, channels, d, {
                     fill: handleStyle.fill,
                     stroke: handleStyle.stroke,
@@ -180,30 +186,6 @@ function buildLine(options, defaultConnect = 'domain') {
             return nodes;
         }
     };
-}
-
-/**
- * Order one series' points for its connecting path. An `order` CHANNEL wins — it
- * names the column to sort by — otherwise the `connect` mode decides.
- * @param {any[]} group
- * @param {string} connect 'domain' | 'sequence'
- * @param {'x' | 'y'} domainAxis
- * @param {Record<string, any>} channels
- * @returns {any[]}
- */
-function orderPoints(group, connect, domainAxis, channels) {
-    const field = orderFieldOf(channels);
-    if (field) {
-        return [...group].sort((a, b) => {
-            const av = a.d[field], bv = b.d[field];
-            return av < bv ? -1 : av > bv ? 1 : 0;
-        });
-    }
-    if (connect === 'domain') {
-        const key = domainAxis === 'x' ? 'cx' : 'cy';
-        return [...group].sort((a, b) => a[key] - b[key]);
-    }
-    return group;
 }
 
 /**

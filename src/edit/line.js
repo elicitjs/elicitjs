@@ -10,7 +10,7 @@
 //   sweep     — you-draw-it: repaint each point the pointer crosses (drag)
 
 import { warn } from '../core/dev.js';
-import { makeEdit, schemaDefaults, nextSeriesKey, lastFreeSeries, numOf, invertChannel, mintDatum } from './shared.js';
+import { makeEdit, schemaDefaults, nextSeriesKey, lastFreeSeries, seriesKeyOf, numOf, invertChannel, mintDatum } from './shared.js';
 import { nearestSeries, nearestMark, nearestMarkOnAxis, resolveThreshold } from './pick.js';
 import { resolveSamples } from '../core/samples.js';
 import { move } from './basic.js';
@@ -266,7 +266,7 @@ export function draw(options = {}) {
             const data = ctx.data.slice();
             for (const pos of targets) {
                 const idx = data.findIndex((row) =>
-                    (!sField || row[sField] === seriesVal) && numOf(row[dCh.field]) === numOf(pos));
+                    (!sField || seriesKeyOf(row[sField]) === seriesKeyOf(seriesVal)) && numOf(row[dCh.field]) === numOf(pos));
                 const datum = { ...schemaDefaults(ctx.schema), ...(idx >= 0 ? data[idx] : {}) };
                 if (sField) datum[sField] = seriesVal;
                 datum[dCh.field] = pos;

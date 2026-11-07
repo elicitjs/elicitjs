@@ -6,7 +6,7 @@
 // (context, nodes).
 import * as d3 from 'd3';
 import { markCenter } from '../../edit/shared.js';
-import { STYLE_FIELDS, resolveCurve, partitionScene } from '../shared.js';
+import { STYLE_FIELDS, resolveCurve, lineGenerator, partitionScene } from '../shared.js';
 
 // The active theme's font tokens for this paint pass. Set once at the top of
 // paintScene (synchronous, single-threaded — so a module-level slot is safe) and
@@ -179,7 +179,7 @@ function path(ctx, node, defaults) {
         // d3 shape generators accept any object with the canvas path methods; Path2D
         // qualifies, so the SAME curve factory that SVG feeds `d3.line()` draws here.
         p = new Path2D();
-        d3.line().curve(resolveCurve(node.curve)).context(/** @type {any} */(p))(node.points || []);
+        lineGenerator(node.curve).context(/** @type {any} */(p))(node.points || []);
     }
     paint(ctx, styleOf(node, defaults), p);
 }
@@ -203,7 +203,11 @@ function text(ctx, node, defaults, anchorDefault) {
         // the node's own y — the anchor means the same thing at any line count.
         const lines = Array.isArray(node.lines) ? node.lines : [String(node.text)];
         const step = node.lineHeight != null ? node.lineHeight : Math.round(size * 1.35);
-        const first = node.y - ((lines.length - 1) * step) / 2;
+        // `lineAnchor` places the block about the anchor (top hangs, bottom
+        // stacks, else centred) — the same rule the SVG renderer applies.
+        const first = node.lineAnchor === 'top' ? node.y
+            : node.lineAnchor === 'bottom' ? node.y - (lines.length - 1) * step
+                : node.y - ((lines.length - 1) * step) / 2;
 
         const op = s.opacity != null ? s.opacity : 1;
         if (s.fill && s.fill !== 'none') {

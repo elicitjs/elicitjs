@@ -19,7 +19,9 @@ import { resolveGuideOptions, warnUnknownGuideOptions } from './shared.js';
 export const REGION_OPTIONS = GUIDE_OPTIONS.region;
 
 /**
- * @param {{ x?: any, y?: any, fill?: any, opacity?: any }} [options]
+ * @param {{ x?: any, y?: any, fill?: any, opacity?: any, stroke?: any, label?: any }} [options]
+ *   `stroke` outlines the band; `label` names it (drawn at the band's top-left,
+ *   in the plot's label ink).
  * @returns {import('../types').Guide}
  */
 export function region(options = {}) {
@@ -31,27 +33,42 @@ export function region(options = {}) {
             const { scales, width, height } = ctx;
             // Fill/opacity default to the theme's region tokens; an option still wins.
             const rt = (ctx.theme && ctx.theme.guide && ctx.theme.guide.region) || {};
-            const { x, y, fill = rt.fill || '#64748b', opacity = rt.opacity != null ? rt.opacity : 0.1 } = resolveGuideOptions(options, ctx);
+            const {
+                x, y, fill = rt.fill || '#64748b', opacity = rt.opacity != null ? rt.opacity : 0.1,
+                stroke, label,
+            } = resolveGuideOptions(options, ctx);
+            const labelFill = (ctx.theme && ctx.theme.guide && ctx.theme.guide.rule && ctx.theme.guide.rule.labelFill)
+                || (ctx.theme && ctx.theme.label) || '#374151';
+            const fontSize = (ctx.theme && ctx.theme.guide && ctx.theme.guide.rule && ctx.theme.guide.rule.fontSize) || 11;
 
             /** @type {import('../types').FeatureNode[]} */
             const nodes = [];
+            /** @param {number} bx @param {number} by @param {number} bw @param {number} bh */
+            const band = (bx, by, bw, bh) => {
+                nodes.push({
+                    type: 'rect', x: bx, y: by, width: bw, height: bh,
+                    fill, opacity, pointerEvents: 'none', guide: true,
+                    ...(stroke != null ? { stroke, strokeWidth: 1 } : {}),
+                });
+                if (label != null && label !== '') {
+                    nodes.push({
+                        type: 'text', x: bx + 4, y: by + fontSize + 2, text: String(label),
+                        fill: labelFill, fontSize, textAnchor: 'start',
+                        pointerEvents: 'none', guide: true,
+                    });
+                }
+            };
 
             if (Array.isArray(y) && scales.y) {
                 const a = scales.y.encode(y[0]);
                 const b = scales.y.encode(y[1]);
-                nodes.push({
-                    type: 'rect', x: 0, y: Math.min(a, b), width, height: Math.abs(b - a),
-                    fill, opacity, pointerEvents: 'none', guide: true
-                });
+                band(0, Math.min(a, b), width, Math.abs(b - a));
             }
 
             if (Array.isArray(x) && scales.x) {
                 const a = scales.x.encode(x[0]);
                 const b = scales.x.encode(x[1]);
-                nodes.push({
-                    type: 'rect', x: Math.min(a, b), y: 0, width: Math.abs(b - a), height,
-                    fill, opacity, pointerEvents: 'none', guide: true
-                });
+                band(Math.min(a, b), 0, Math.abs(b - a), height);
             }
 
             return nodes;

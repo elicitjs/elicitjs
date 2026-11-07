@@ -42,6 +42,7 @@ import { tickData } from './axis.js';
 import { warnUnknownElementOptions, resolveHandles, elementEdits } from './mark.js';
 import { warn } from '../core/dev.js';
 import { scaleKey } from '../core/scales.js';
+import { measureText } from '../core/measure.js';
 
 /**
  * `legend`'s own option vocabulary, on top of the universal chart-element options
@@ -149,9 +150,12 @@ function legendTitle(title, field, scale) {
  * @returns {number}
  */
 function estimateLabelWidth(values, format, fontSize) {
+    // Measured (core/measure.js: canvas-backed, with a per-glyph estimate when
+    // there is no document). A character-count estimate clipped "AAPL" and
+    // over-reserved for "iii".
     let max = 0;
-    for (const v of values) max = Math.max(max, String(format(v)).length);
-    return Math.ceil(max * fontSize * 0.6);
+    for (const v of values) max = Math.max(max, measureText(String(format(v)), { fontSize }));
+    return Math.ceil(max);
 }
 
 /**
@@ -284,9 +288,11 @@ export function legend(options = {}) {
          * to shrink the plot. `across` (width for a vertical legend, height for a
          * horizontal one) is what it reserves on the side.
          * @param {import('../types').ScaleMap} scales
+         * @param {{ width: number, height: number }} [dims] the plot's inner size, so a
+         *   horizontal legend can wrap
          * @returns {{ width: number, height: number } | null}
          */
-        measure(scales) {
+        measure(scales, dims) {
             const scale = scaleOf(scales);
             if (!scale || typeof scale.domain !== 'function') return null;
             const thm = themeOf(scales);
@@ -328,11 +334,19 @@ export function legend(options = {}) {
             const n = (values.length || 1) + (domainEditable ? 1 : 0);
             const removeW = domainEditable ? fontSize + 6 : 0;
             const box = swatchBox(channel, scale, values, swatchSize);
+            // The title is part of the band: a long one used to be clipped at the
+            // width the swatches alone reserved.
+            const titleW = titleText ? measureText(titleText, { fontSize: fontSize + 1, fontWeight: 600 }) + 2 : 0;
             if (vertical) {
-                return { width: box + 4 + labelW + removeW, height: n * (box + gap) + titlePad };
+                return { width: Math.max(box + 4 + labelW + removeW, titleW), height: n * (box + gap) + titlePad };
             }
             const itemW = box + 4 + labelW + removeW + gap;
-            return { width: n * itemW, height: box + gap + titlePad };
+            // A horizontal legend WRAPS into rows when its items overrun the plot
+            // width (`dims`, from the reservation pass); build() lays them out the
+            // same way.
+            const perRow = dims && dims.width > 0 ? Math.max(1, Math.floor(dims.width / itemW)) : n;
+            const rows = Math.ceil(n / perRow);
+            return { width: Math.max(Math.min(n, perRow) * itemW, titleW), height: rows * (box + gap) + titlePad };
         },
 
         /**
@@ -460,7 +474,7 @@ export function legend(options = {}) {
                     ...shared, rampLength, rampThickness, handleColor, handleSize, handleStroke,
                 });
             } else {
-                buildSwatches(nodes, { ...shared, domain, swatchSize: swatchBox(channel, scale, domain, swatchSize), gap, labelW });
+                buildSwatches(nodes, { ...shared, domain, swatchSize: swatchBox(channel, scale, domain, swatchSize), gap, labelW, plotWidth: width });
             }
             return nodes;
         },
@@ -702,9 +716,12 @@ function buildSwatches(nodes, o) {
     // Vertical: stack down. Horizontal: flow right, one item = chip + label (+ ×).
     const itemPitch = swatchSize + 4 + o.labelW + removeW + gap;
     const stepY = swatchSize + gap;
+    // A horizontal row WRAPS when its items overrun the plot width — the same
+    // rule measure() reserved rows by.
+    const perRow = !vertical && o.plotWidth > 0 ? Math.max(1, Math.floor(o.plotWidth / itemPitch)) : Infinity;
     const posOf = (/** @type {number} */ i) => ({
-        sx: vertical ? cx0 : cx0 + i * itemPitch,
-        sy: vertical ? cy0 + i * stepY : cy0,
+        sx: vertical ? cx0 : cx0 + (i % perRow) * itemPitch,
+        sy: vertical ? cy0 + i * stepY : cy0 + Math.floor(i / perRow) * stepY,
     });
 
     domain.forEach((/** @type {any} */ value, /** @type {number} */ i) => {

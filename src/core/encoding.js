@@ -144,12 +144,13 @@ export function schemeRange(scheme, type, count) {
     if (CATEGORICAL_SCHEMES[key]) return [...CATEGORICAL_SCHEMES[key]];
     const interp = RAMP_SCHEMES[key];
     if (!interp) return null;
-    // A continuous colour channel wants a ramp for createScale; a discrete one wants
-    // one swatch per category. A diverging scale needs the ramp's MIDPOINT too —
-    // that's the colour its pivot takes, and on a Brewer diverging scheme it's the
-    // neutral the two hues meet at.
-    if (type === 'diverging') return [interp(0), interp(0.5), interp(1)];
-    if (type === 'sequential') return [interp(0), interp(1)];
+    // A continuous colour channel wants a RAMP for createScale: a dense sample of
+    // the interpolator, which createScale joins piecewise. Two end stops lost
+    // everything a scheme is made of — viridis came out purple→yellow through
+    // brown, turbo black→red. Nine stops keep every hue, and an odd count keeps
+    // the midpoint colour a diverging scheme's pivot takes (the neutral the two
+    // hues meet at). A discrete channel wants one swatch per category.
+    if (type === 'diverging' || type === 'sequential') return d3.quantize(interp, 9);
     const n = Math.max(2, count || 2);
     const discrete = DISCRETE_RAMP_SCHEMES[key];
     if (discrete) {

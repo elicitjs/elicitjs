@@ -59,6 +59,27 @@ import { warn } from '../core/dev.js';
 import { encodeChannel, categoryOf, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, resolveValueAxis, orientationOf } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
+/**
+ * The grid a waffle lays `totalCells` cells out in: `multiple` cells across the
+ * band (the largest whose SQUARE cells still fit, unless pinned), `rows` along
+ * the count axis, and the uniform `cellSize` pitch — the smaller of the per-column
+ * band width and the per-row block length, so the grid fits `thickness x blockLen`.
+ * Pure, so the resolver and build() compute the same grid from the same inputs.
+ * @param {{ totalCells: number, thickness: number, blockLen: number, multiple?: number }} o
+ * @returns {{ totalCells: number, multiple: number, rows: number, cellSize: number }}
+ */
+export function waffleLayout({ totalCells, thickness, blockLen, multiple: multipleOption }) {
+    let multiple = /** @type {number} */ (multipleOption);
+    if (!(multiple >= 1)) {
+        const fit = Math.sqrt((totalCells * thickness) / blockLen);
+        multiple = Number.isFinite(fit) && fit >= 1 ? Math.floor(fit) : 1;
+    }
+    multiple = Math.max(1, Math.min(totalCells, Math.round(multiple)));
+    const rows = Math.ceil(totalCells / multiple);
+    const cellSize = Math.min(thickness / multiple, blockLen / rows);
+    return { totalCells, multiple, rows, cellSize };
+}
+
 /** @param {any} scale @returns {[number, number]} */
 function domainExtent(scale) {
     const d = scale && scale.domainConfig;
@@ -115,6 +136,8 @@ function buildWaffle(options) {
     const orientation = orientationOf(resolveValueAxis(channels, null, { orientation: orientationOption, single: 'other' }));
     const vertical = orientation !== 'horizontal';
 
+    /** @type {{ totalCells: number, multiple: number, rows: number, cellSize: number } | null} */
+    let layoutHint = null;
     return {
         ...markCommon(opts),
         type: 'waffle',
@@ -125,6 +148,20 @@ function buildWaffle(options) {
         // a declared 'y' here with a block drawn horizontally put every cell off the
         // side of the frame, and nothing warned.
         countAxis: vertical ? 'y' : 'x',
+        // The count scale's RANGE is this grid's drawn length, which the resolver
+        // asks for once the band scale is known (core/resolve.js): a width-limited
+        // grid (square cells that fit the band) is shorter than the block the scale
+        // spanned, and the count axis read wrong against it. The resolver's answer
+        // is cached so build() lays the cells out exactly as the axis was ranged.
+        /**
+         * @param {{ thickness: number, blockLen: number, domainSpan: number }} o
+         * @returns {number} the grid's length along the count axis, px
+         */
+        countLayout: ({ thickness, blockLen, domainSpan }) => {
+            const totalCells = Math.max(1, Math.round(domainSpan / unit));
+            layoutHint = waffleLayout({ totalCells, thickness, blockLen, multiple: multipleOption });
+            return layoutHint.rows * layoutHint.cellSize;
+        },
         discreteScale: 'band',
         xKey,
         yKey,
@@ -215,20 +252,12 @@ function buildWaffle(options) {
                     );
                 }
                 const totalCells = Math.max(1, Math.round(exactCells));
-                let multiple = multipleOption;
-                if (!(multiple >= 1)) {
-                    const fit = Math.sqrt((totalCells * thickness) / blockLen);
-                    multiple = Number.isFinite(fit) && fit >= 1 ? Math.floor(fit) : 1;
-                }
-                multiple = Math.max(1, Math.min(totalCells, Math.round(multiple)));
-
-                // Uniform SQUARE cells that touch: the pitch is the smaller of the
-                // per-column band width and the per-row block height, so the whole
-                // grid fits inside `thickness x blockLen`. The grid is then centred
-                // across the band (its width may be < thickness — never more, as
-                // requested for the categorical case).
-                const rows = Math.ceil(totalCells / multiple);
-                const cellSize = Math.min(thickness / multiple, blockLen / rows);
+                // The grid: the resolver's layout when it fitted the count scale to
+                // this grid (see `countLayout` below), else computed here.
+                const layout = layoutHint && layoutHint.totalCells === totalCells
+                    ? layoutHint
+                    : waffleLayout({ totalCells, thickness, blockLen, multiple: multipleOption });
+                const { multiple, rows, cellSize } = layout;
                 const bandInset = (thickness - multiple * cellSize) / 2;
                 const drawSize = Math.max(0.5, cellSize - gap);
 

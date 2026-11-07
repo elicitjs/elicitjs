@@ -47,6 +47,7 @@
 
 import { encodeChannel, resolveStyle, normalizeMarkOptions, markDefaults, resolveHandles, markCommon} from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
+import { warn } from '../core/dev.js';
 import { arcSpan, arcPath, polarToXY } from './polar.js';
 import { isBand, bandwidthOf } from '../core/scales.js';
 import { groupByPosition, stackLayout, stackDescriptor } from './stack.js';
@@ -199,7 +200,20 @@ export function arc(options = {}) {
                     });
                 const total = mags.reduce((/** @type {number} */ a, /** @type {number} */ b) => a + b, 0);
                 const nSlices = members.length;
-                const usable = total > 0 ? span - pad * nSlices : 0;
+                // The span is SIGNED: `start: 90, end: -270` walks clockwise, and
+                // padding is taken out of it in its own direction. Subtracting an
+                // unsigned pad from a negative span drove `usable` further negative
+                // and every slice was skipped as empty.
+                const dir = Math.sign(span) || 1;
+                const usable = total > 0 ? span - dir * pad * nSlices : 0;
+                if (total > 0 && dir * usable <= 0) {
+                    warn(
+                        'arc:span',
+                        `arc(): the angular span from ${spanStart}° to ${spanEnd}° leaves no room ` +
+                        `once ${nSlices} slices of padAngle ${pad}° are taken out, so nothing is ` +
+                        `drawn. Widen the span or reduce padAngle.`
+                    );
+                }
 
                 // How a pointer becomes a position along THIS donut's stack: an angle
                 // about its own centre, over its own span. Pure data — edit/stack.js
@@ -212,7 +226,7 @@ export function arc(options = {}) {
                 // the interior boundaries a handle sits on, within this donut.
                 /** @type {Record<number, number>} */
                 const edgeAngle = {};
-                let cursor = spanStart + pad / 2;
+                let cursor = spanStart + dir * pad / 2;
 
                 members.forEach((/** @type {number} */ gi, /** @type {number} */ local) => {
                     const d = currentData[gi];
@@ -220,10 +234,10 @@ export function arc(options = {}) {
                     const sweep = usable * share;
                     const a0 = cursor;
                     const a1 = cursor + sweep;
-                    cursor = a1 + pad;
+                    cursor = a1 + dir * pad;
                     edgeAngle[local] = a1;
 
-                    if (sweep <= 0) return;
+                    if (dir * sweep <= 0) return;
 
                     const style = resolveStyle(scales, channels, d,
                         markDefaults(scales, 'arc', { fill: '#4f46e5', stroke: '#fff', strokeWidth: 1 }), gi, currentData);

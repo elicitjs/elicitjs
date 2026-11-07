@@ -3,7 +3,7 @@ import * as d3 from "d3";
 import { DEFAULT_EFFECTS, ELEMENT_EFFECT_PROPS } from "../../core/effects.js";
 import { markCenter } from "../../edit/shared.js";
 import { rectHitBox, MIN_GRAB } from "../../edit/pick.js";
-import { resolveCurve, STYLE_FIELDS, partitionScene } from "../shared.js";
+import { resolveCurve, lineGenerator, STYLE_FIELDS, partitionScene } from "../shared.js";
 
 // A camelCase effect property -> its CSS property name (strokeWidth ->
 // stroke-width). Effects are applied as CSS PROPERTIES rather than SVG
@@ -142,6 +142,7 @@ export class D3Renderer {
       ofType(background, "text"),
       ofType(background, "rect"),
       ofType(background, "circle"),
+      background,
     );
 
     this._drawGuideRegions(layers.guideBack, guideRegions);
@@ -942,9 +943,13 @@ export class D3Renderer {
       }
       const size = d.fontSize != null ? d.fontSize : 12;
       const step = d.lineHeight != null ? d.lineHeight : Math.round(size * 1.35);
-      // Centre the block on the node's own y: the anchor means the same thing
-      // whether one line or five are painted at it.
-      const first = (-(lines.length - 1) * step) / 2;
+      // Where the block sits about the node's own y follows `lineAnchor`: `top`
+      // hangs it below the anchor, `bottom` stacks it above, else it is centred
+      // (the anchor means the same thing whether one line or five are painted).
+      // Matches the box plot/text.js's nodeBox reports.
+      const first = d.lineAnchor === "top" ? 0
+        : d.lineAnchor === "bottom" ? -(lines.length - 1) * step
+        : (-(lines.length - 1) * step) / 2;
       node.text(null);
       node
         .selectAll("tspan")
@@ -981,7 +986,7 @@ export class D3Renderer {
    * @param {any[]} [bgRects]
    * @param {any[]} [bgCircles]
    */
-  _drawBackground(bgLayer, bgImages, bgPaths, bgLines, bgTexts, bgRects = [], bgCircles = []) {
+  _drawBackground(bgLayer, bgImages, bgPaths, bgLines, bgTexts, bgRects = [], bgCircles = [], /** @type {any[]} */ bgAll = []) {
     const imgSel = bgLayer
       .selectAll("image")
       .data(bgImages, (/** @type {any} */ d) => d.key)
@@ -1050,7 +1055,7 @@ export class D3Renderer {
       .style("pointer-events", "none")
       .attr("d", (/** @type {any} */ d) => {
         if (d.d) return d.d;
-        return d3.line().curve(resolveCurve(d.curve))(d.points || []);
+        return lineGenerator(d.curve)(d.points || []);
       });
     this._applyStyle(pathSel, {
       fill: "none",
@@ -1058,6 +1063,22 @@ export class D3Renderer {
       strokeWidth: 1,
       opacity: 1,
     });
+
+    // Type joins append in call order, which put every line under every path
+    // and every text over every rect whatever the scene said. Restore scene
+    // order among the non-image background nodes (images stay the floor), the
+    // same way _drawGuideFront does for its layer.
+    const order = new Map(
+      bgAll.map((/** @type {any} */ n, /** @type {number} */ i) => [n, i]),
+    );
+    bgLayer
+      .selectAll("rect.bg-rect, circle.bg-circle, line, text, path.bg-path")
+      .filter((/** @type {any} */ d) => order.has(d))
+      .sort(
+        (/** @type {any} */ a, /** @type {any} */ b) =>
+          /** @type {number} */ (order.get(a)) -
+          /** @type {number} */ (order.get(b)),
+      );
   }
 
   /**
@@ -1129,7 +1150,7 @@ export class D3Renderer {
       .style("pointer-events", "none")
       .attr("d", (/** @type {any} */ d) => {
         if (d.d) return d.d;
-        return d3.line().curve(resolveCurve(d.curve))(d.points || []);
+        return lineGenerator(d.curve)(d.points || []);
       });
     this._applyStyle(pathSel, {
       fill: "none",
@@ -1234,7 +1255,7 @@ export class D3Renderer {
       .attr("class", "effect")
       .style("pointer-events", "none")
       .attr("d", (/** @type {any} */ d) =>
-        d.d ? d.d : d3.line().curve(resolveCurve(d.curve))(d.points || []),
+        d.d ? d.d : lineGenerator(d.curve)(d.points || []),
       );
     this._applyStyle(pathSel, effectPaint);
 
@@ -1475,7 +1496,7 @@ export class D3Renderer {
       )
       .attr("d", (/** @type {any} */ d) => {
         if (d.d) return d.d;
-        return d3.line().curve(resolveCurve(d.curve))(d.points || []);
+        return lineGenerator(d.curve)(d.points || []);
       });
     this._applyStyle(sel, {
       fill: "none",

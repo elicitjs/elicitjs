@@ -773,7 +773,7 @@ export function Elicit(spec) {
             recomputeInner();
             const provisional = resolveScales(features, tables, liveSpec, dims);
             /** @type {any} */ (provisional).theme = theme; // measure reads legend font tokens
-            const bands = reserveLegends(features, provisional, authorMargins);
+            const bands = reserveLegends(features, provisional, authorMargins, 8, dims);
             effectiveMargins = {
                 top: authorMargins.top + bands.top,
                 right: authorMargins.right + bands.right,

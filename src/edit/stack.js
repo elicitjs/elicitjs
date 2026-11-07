@@ -76,13 +76,16 @@ const INVERTERS = {
     // start, not far past the end.
     angular: (geometry, ctx, win) => {
         const { cx, cy, spanStart, spanEnd, pad } = geometry;
-        const usable = (spanEnd - spanStart) - pad * win.n;
-        if (!Number.isFinite(usable) || usable === 0 || !(win.total > 0)) return undefined;
-        const dir = Math.sign(usable) || 1;
+        // Signed, exactly as plot/arc.js lays it out: padding comes out of the span
+        // in the span's own direction.
+        const span = spanEnd - spanStart;
+        const dir = Math.sign(span) || 1;
+        const usable = span - dir * pad * win.n;
+        if (!Number.isFinite(usable) || dir * usable <= 0 || !(win.total > 0)) return undefined;
         // Leading edge of the window: the start angle of slice `local`. Stable
         // through a drag, because every edit here holds the cumulative total BEFORE
         // the window fixed, so it re-derives identically each tick.
-        const base = spanStart + pad / 2 + win.local * pad + usable * (win.lo / win.total);
+        const base = spanStart + dir * pad / 2 + dir * win.local * pad + usable * (win.lo / win.total);
         const theta = pointerDegrees(ctx.pointer, { cx, cy });
         const raw = (((theta - base) * dir % 360) + 360) % 360;   // [0, 360)
         const windowDeg = Math.abs(usable) * ((win.hi - win.lo) / win.total);

@@ -22,6 +22,7 @@
 // Marks, edits, axes and the pick layer read `kind`. Adding a scale type means
 // adding a case HERE and nowhere else.
 import * as d3 from 'd3';
+import { warn } from './dev.js';
 
 /**
  * The key a NON-POSITIONAL scale lives under in the ScaleMap.
@@ -120,17 +121,44 @@ function stamp(scale, type) {
  * range — pixels are ours to know, palettes and radii are the author's. A colour
  * scale keeps whatever range/interpolator it was built with.
  * @param {any} scale a d3 scale (or any callable with .domain/.range)
- * @param {{ range?: any[], positional?: boolean, domain?: any[] }} [opts]
+ * @param {{ range?: any[], positional?: boolean, domain?: any[], declared?: boolean }} [opts]
+ *   `declared`: the domain came from the SCHEMA (not inferred from data)
  * @returns {import('../types').Scale}
  */
-export function adoptScale(scale, { range, positional, domain } = {}) {
-    // The schema owns the domain; apply it unless the author's scale already
-    // declares one (an adopted scale with an explicit domain is deliberate).
-    if (domain && typeof scale.domain === 'function' && !scale.domain().length) {
-        scale.domain(domain);
+export function adoptScale(scale, { range, positional, domain, declared } = {}) {
+    // The schema owns the domain. A DECLARED domain is applied outright — a d3
+    // continuous scale is born with [0, 1], so "the instance already has a domain"
+    // told nothing, and every adopted colour scale mapped the data onto [0, 1]. An
+    // inferred domain only fills an empty one (band/point/ordinal instances start
+    // empty), leaving an author's explicit domain alone.
+    if (domain && typeof scale.domain === 'function') {
+        const own = scale.domain();
+        if (declared) {
+            if (own.length && !sameDomain(own, domain)) {
+                warn(
+                    'scale:domain:overridden',
+                    `an adopted scale instance declares domain [${own.join(', ')}], but the ` +
+                    `schema declares [${domain.join(', ')}]; the schema's wins. The schema owns ` +
+                    `the domain — build the instance without one, or declare the same.`
+                );
+            }
+            scale.domain(domain);
+        } else if (!own.length) {
+            scale.domain(domain);
+        }
     }
     if (range && positional && typeof scale.range === 'function') scale.range(range);
     return stamp(scale);
+}
+
+/** @param {any[]} a @param {any[]} b @returns {boolean} */
+function sameDomain(a, b) {
+    if (a.length !== b.length) return false;
+    return a.every((v, i) => {
+        const w = b[i];
+        if (v instanceof Date || w instanceof Date) return +v === +w;
+        return v === w;
+    });
 }
 
 /**
@@ -180,7 +208,10 @@ export function createScale(spec, range) {
         // colour is not something a gesture can invert.
         const [lo, hi] = [Math.min(...spec.domain), Math.max(...spec.domain)];
         const t = d3.scaleLinear().domain([lo, hi]).range([0, 1]).clamp(true);
-        const ramp = d3.interpolateRgb(range[0], range[1]);
+        // EVERY stop of the range, joined piecewise — a named scheme arrives as a
+        // dense sample and an author's 3-stop `range` means three colours, not the
+        // outer two.
+        const ramp = d3.piecewise(d3.interpolateRgb, range);
         scale = (/** @type {any} */ value) => ramp(t(value));
         scale.domain = () => spec.domain;
         scale.range = () => range;
@@ -207,8 +238,10 @@ export function createScale(spec, range) {
         // Callable with the d3-scale shape downstream expects, and NO invert() — so
         // it sniffs as 'discrete'/non-invertible, exactly like `sequential`: a colour
         // is not something a gesture can drive backwards.
+        // Every stop, joined piecewise; a bare two-colour range gets a neutral
+        // middle so the pivot has a colour of its own.
         const stops = range.length >= 3
-            ? [range[0], range[1], range[range.length - 1]]
+            ? range
             : [range[0], '#f7f7f7', range[range.length - 1]];
         const ramp = d3.piecewise(d3.interpolateRgb, stops);
         scale = (/** @type {any} */ value) => ramp(t(value));
@@ -231,6 +264,19 @@ export function createScale(spec, range) {
             .exponent(spec.exponent != null ? spec.exponent : (type === 'sqrt' ? 0.5 : 1));
     } else {
         scale = d3.scaleLinear().domain(spec.domain).range(range);
+    }
+
+    // A continuous scale given a COLOUR range longer than its domain (a named
+    // scheme on `scale: 'linear'`, or a multi-stop `range`) would use only the
+    // first stops — d3 pairs domain and range elementwise. Spread the domain
+    // evenly over every stop instead, so the whole ramp is used.
+    if (typeof scale.domain === 'function' && typeof scale.interpolate === 'function'
+        && Array.isArray(range) && range.length > spec.domain.length && typeof range[0] === 'string'
+        && spec.domain.length === 2) {
+        const [lo, hi] = spec.domain.map(Number);
+        const n = range.length;
+        scale.domain(d3.range(n).map((/** @type {number} */ i) => lo + ((hi - lo) * i) / (n - 1)));
+        scale.interpolate(d3.interpolateRgb);
     }
 
     // Continuous-scale refinements, ignored by the discrete scales that lack them.
@@ -331,12 +377,16 @@ export function positionOnScale(scale, value, fallback) {
         const p = scale(value);
         return p == null ? fallback : p;
     }
-    // Temporal: coerce the value to a Date so string/epoch data still positions.
-    if (scale.temporal) return scale(toDate(value));
     // A row missing this field yields scale(undefined) -> NaN, and an SVG attribute
     // of NaN is dropped by the browser, so the mark VANISHES with no error. The band
     // and point branches above already null-check; this one didn't.
     if (value == null) return fallback;
+    // Temporal: coerce the value to a Date so string/epoch data still positions —
+    // and an unparseable one is a missing value, not a NaN coordinate.
+    if (scale.temporal) {
+        const p = scale(toDate(value));
+        return typeof p === 'number' && !Number.isFinite(p) ? fallback : p;
+    }
     const p = scale(value);
     // Only a NUMERIC result can be a broken coordinate. This helper also carries
     // non-positional channels (fill returns "steelblue"), so anything non-numeric
@@ -467,10 +517,14 @@ export function invertOnScale(scale, pixel) {
 /**
  * Pixel baseline (value origin) of a value scale — where a bar starts from.
  * Uses 0 when in the domain, clamped into the range so bars never escape it.
+ * With no scale on that axis (a `{ fn }`-only value channel resolves none) the
+ * caller's fallback stands in, rather than a crash in `range()`.
  * @param {any} valueScale
+ * @param {number} [fallback]
  * @returns {number}
  */
-export function baselineOf(valueScale) {
+export function baselineOf(valueScale, fallback = 0) {
+    if (!valueScale || typeof valueScale.range !== 'function') return fallback;
     const [lo, hi] = rangeExtent(valueScale);
     const zero = valueScale(0);
     return Math.max(lo, Math.min(hi, zero));

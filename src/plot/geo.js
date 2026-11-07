@@ -12,7 +12,7 @@
 //   geoLine     — coordinate lists / MultiLineString paths + vertex handles
 //   geoRect     — geographic AABB (west/south/east/north)
 
-import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, resolveHandles, markCommon, rawChannel, orderFieldOf} from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, resolveHandles, markCommon, rawChannel, orderFieldOf, seriesKeyOf } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 import { textNodeAt } from './text.js';
 import { resolveFormat } from '../format.js';
@@ -254,6 +254,8 @@ export function geoPoint(options = {}) {
         ...markCommon(opts),
         type: 'geoPoint',
         channels,
+        // Coordinates are read raw (projected, never scaled).
+        rawChannels: ['lon', 'lat'],
         supportsGeo: true,
         lonKey,
         latKey,
@@ -272,8 +274,11 @@ export function geoPoint(options = {}) {
             const nodes = [];
             const geoDefaults = markDefaults(scales, 'geoPoint', { fill: themeOf(scales).ink });
             currentData.forEach((d, i) => {
-                const lon = channels.lon ? (d[lonKey]) : d.lon;
-                const lat = channels.lat ? (d[latKey]) : d.lat;
+                // A coordinate is a VALUE read raw: a field, a `{ fn }`, or a
+                // `{ value }` / `{ datum }` constant — `fieldOf` saw only the field,
+                // so `lat: { datum: 49 }` projected nothing.
+                const lon = rawChannel(channels, 'lon', d, d[lonKey], i, currentData);
+                const lat = rawChannel(channels, 'lat', d, d[latKey], i, currentData);
                 const pt = projectPoint(projection, lon, lat);
                 if (!pt) return;
                 const style = resolveStyle(scales, channels, d, geoDefaults, i, currentData);
@@ -344,9 +349,10 @@ export function geoPolygon(options = {}) {
 /**
  * Order a series' rows for connection: by the `order` CHANNEL's column when one is
  * given, else array order as drawn (a geo trail's natural default).
- * @param {{ d: any, i: number, x: number, y: number }[]} group
+ * @template {{ d: any }} P
+ * @param {P[]} group
  * @param {Record<string, any>} channels
- * @returns {{ d: any, i: number, x: number, y: number }[]}
+ * @returns {P[]}
  */
 function orderRows(group, channels) {
     const field = orderFieldOf(channels);
@@ -407,7 +413,7 @@ export function geoLine(options = {}) {
             type: 'geoLine',
             channels,
             // Read raw (no scale), like `line`'s / `area`'s / `link`'s.
-            rawChannels: ['curve', 'series', 'order'],
+            rawChannels: ['curve', 'series', 'order', 'lon', 'lat'],
             supportsGeo: true,
             lonKey,
             latKey,
@@ -425,19 +431,23 @@ export function geoLine(options = {}) {
                 const projection = projectionOf(scales);
                 if (!projection) return [];
 
-                /** @type {{ d: any, i: number, x: number, y: number, series: any }[]} */
+                /** @type {{ d: any, i: number, x: number, y: number, lon: any, lat: any, series: any }[]} */
                 const placed = [];
                 currentData.forEach((d, i) => {
-                    const pt = projectPoint(projection, d[lonKey], d[latKey]);
+                    const lon = rawChannel(channels, 'lon', d, d[lonKey], i, currentData);
+                    const lat = rawChannel(channels, 'lat', d, d[latKey], i, currentData);
+                    const pt = projectPoint(projection, lon, lat);
                     if (!pt) return;
-                    placed.push({ d, i, x: pt.x, y: pt.y, series: seriesField ? d[seriesField] : SINGLE });
+                    placed.push({ d, i, x: pt.x, y: pt.y, lon, lat, series: seriesField ? d[seriesField] : SINGLE });
                 });
 
+                // Grouped by KEY (a Date by its time), tagged with the first raw value.
                 /** @type {Map<any, any[]>} */
                 const groups = new Map();
                 for (const p of placed) {
-                    const g = groups.get(p.series);
-                    if (g) g.push(p); else groups.set(p.series, [p]);
+                    const k = seriesKeyOf(p.series);
+                    const g = groups.get(k);
+                    if (g) { g.push(p); p.series = g[0].series; } else groups.set(k, [p]);
                 }
 
                 /** @type {import('../types').FeatureNode[]} */
@@ -454,8 +464,24 @@ export function geoLine(options = {}) {
                     // per series against its first row — as `line` and `area` do.
                     const seriesCurve = String(
                         rawChannel(channels, 'curve', group[0].d, curve, group[0].i, currentData));
+                    if (seriesCurve !== 'linear') {
+                        warn(
+                            'geoLine:curve',
+                            'geoLine: a trail follows the projection (great circles, clipped at the ' +
+                            'antimeridian), so `curve` does not apply to it and is ignored.'
+                        );
+                    }
+                    // The trail is a GEOGRAPHIC line: d3-geo resamples it along great
+                    // circles and clips it at the antimeridian, the same path the
+                    // per-row form takes. Joining projected points in pixel space drew
+                    // straight screen segments, which is wrong anywhere off a planar
+                    // projection. `points` (the projected vertices) stay for the pick
+                    // layer and the canvas.
+                    const geometry = { type: 'LineString', coordinates: pts.map((p) => [p.lon, p.lat]) };
+                    const pathD = projection.path(geometry);
                     nodes.push({
                         type: 'path',
+                        ...(pathD ? { d: pathD } : {}),
                         points: pts.map((p) => /** @type {[number, number]} */ ([p.x, p.y])),
                         curve: seriesCurve,
                         ...style,
@@ -588,6 +614,7 @@ export function geoText(options = {}) {
         ...markCommon(opts),
         type: 'geoText',
         channels,
+        rawChannels: ['lon', 'lat'],
         supportsGeo: true,
         lonKey,
         latKey,
@@ -603,7 +630,9 @@ export function geoText(options = {}) {
             /** @type {import('../types').FeatureNode[]} */
             const nodes = [];
             currentData.forEach((d, i) => {
-                const pt = projectPoint(projection, d[lonKey], d[latKey]);
+                const lon = rawChannel(channels, 'lon', d, d[lonKey], i, currentData);
+                const lat = rawChannel(channels, 'lat', d, d[latKey], i, currentData);
+                const pt = projectPoint(projection, lon, lat);
                 if (!pt) return;
                 nodes.push(textNodeAt(scales, channels, d, i, pt.x, pt.y, { format, data: currentData }));
             });

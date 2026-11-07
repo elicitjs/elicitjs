@@ -131,7 +131,8 @@ export function callChannelFn(spec, channel, datum, index, data, fallback) {
     if (datum == null) return fallback;
     try {
         const out = spec.fn(datum, index, data);
-        return out == null ? fallback : out;
+        // A NaN is a missing value, not a coordinate: treat it like null.
+        return out == null || (typeof out === 'number' && Number.isNaN(out)) ? fallback : out;
     } catch (err) {
         warn(`fn:${channel}`, `fn on channel "${channel}" threw: ` +
             `${err instanceof Error ? err.message : err}; using the fallback.`);
@@ -592,6 +593,48 @@ export function seriesFieldOf(channels = {}) {
         || (channels.fill && channels.fill.field)
         || (channels.stroke && channels.stroke.field)
         || null;
+}
+
+/**
+ * A series value as a grouping KEY — a Date groups by its time, so two rows that
+ * hold equal-valued but distinct Date objects fall in ONE series rather than one
+ * per row (a Map keyed by object identity split them). Every mark that groups
+ * rows into series, and every edit that compares a row's series to a node's,
+ * goes through this.
+ * @param {any} v
+ * @returns {any}
+ */
+export function seriesKeyOf(v) {
+    return v instanceof Date ? v.getTime() : v;
+}
+
+/**
+ * Order one series' placed points for its connecting path. An `order` CHANNEL
+ * wins — it names the column to sort by — otherwise the `connect` mode decides:
+ * `domain` sorts by the domain axis's PIXEL position (so an ordinal axis orders
+ * by its declared domain, not alphabetically — `area` used to sort the raw
+ * value and crossed itself on a categorical x), `sequence` keeps data order.
+ * Shared by `line` and `area` so the two agree on the path a series takes.
+ * @template {{ d: any, cx: number | null, cy: number | null }} P
+ * @param {P[]} group placed rows, with the domain axis encoded into cx / cy
+ * @param {string} connect 'domain' | 'sequence'
+ * @param {'x' | 'y'} domainAxis
+ * @param {Record<string, any>} channels
+ * @returns {P[]}
+ */
+export function orderSeries(group, connect, domainAxis, channels) {
+    const field = orderFieldOf(channels);
+    if (field) {
+        return [...group].sort((a, b) => {
+            const av = a.d[field], bv = b.d[field];
+            return av < bv ? -1 : av > bv ? 1 : 0;
+        });
+    }
+    if (connect === 'domain') {
+        const key = domainAxis === 'x' ? 'cx' : 'cy';
+        return [...group].sort((a, b) => Number(a[key]) - Number(b[key]));
+    }
+    return group;
 }
 
 /**
