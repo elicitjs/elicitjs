@@ -1970,6 +1970,9 @@ export interface Session {
   lastDomain?: any;
   lastX?: number | null;
   lastY?: number | null;
+  // sweep driver: the EDGE (a handle's `channel`, y1/y2) a band sweep locked
+  // onto at dragstart, so each tick paints that edge alone.
+  channel?: string | null;
   // brush driver: the dragstart-locked grab zone (+ which field an edge zone
   // targets), forced to 'canonicalize' for the one-time dragend cleanup tick.
   zone?: 'edgeA' | 'edgeB' | 'body' | 'canonicalize' | 'corner' | 'edgeX' | 'edgeY' | 'edge' | null;

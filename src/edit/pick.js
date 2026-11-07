@@ -180,6 +180,30 @@ export function nearestSeries(marks, px, py, threshold, options = {}) {
 }
 
 /**
+ * The nearest datum-bearing NODE in 2-D, within `threshold` — the node itself,
+ * not its row, for a caller that needs what the node is tagged with (which EDGE
+ * of a band a handle belongs to). `nearestMark` answers with the row index, and
+ * a band's two handles share one row.
+ * @param {any[]} marks
+ * @param {number} px
+ * @param {number} py
+ * @param {number} threshold
+ * @param {any} [series] restrict to marks with this `series` key
+ * @returns {any | null}
+ */
+export function nearestNode(marks, px, py, threshold, series) {
+    let best = null;
+    let bestDist = Infinity;
+    (marks || []).forEach((mark) => {
+        if (mark.index == null || mark.locked) return;
+        if (series !== undefined && mark.series !== series) return;
+        const d = distanceToMark(mark, px, py);
+        if (d < bestDist) { bestDist = d; best = mark; }
+    });
+    return best != null && bestDist <= threshold ? best : null;
+}
+
+/**
  * The nearest mark measured ALONG ONE AXIS only (the you-draw-it sweep target):
  * distance is |px - cx| on 'x' or |py - cy| on 'y', so the pointer's position on
  * the other axis is ignored and a horizontal sweep always selects the point in
@@ -192,15 +216,19 @@ export function nearestSeries(marks, px, py, threshold, options = {}) {
  * @param {number} threshold
  * @param {'x' | 'y'} axis
  * @param {any} [series] restrict to marks with this `series` key (series-locked sweep)
+ * @param {(mark: any) => boolean} [accept] a further filter — a band sweep locked
+ *   to one EDGE passes only that edge's handles, since both edges of a row share
+ *   the domain coordinate this measures
  * @returns {number | null}
  */
-export function nearestMarkOnAxis(marks, px, py, threshold, axis, series) {
+export function nearestMarkOnAxis(marks, px, py, threshold, axis, series, accept) {
     let best = null;
     let bestDist = Infinity;
     (marks || []).forEach((mark, i) => {
         if (mark.locked) return;        // a read-only row is not a target (spec.lock)
         if (series !== undefined && mark.series !== series) return;
         if (mark.index == null) return; // datum-bearing marks only (skip a line's path)
+        if (accept && !accept(mark)) return;
         const c = markCenter(mark);
         if (!c) return;
         const center = axis === 'x' ? c.cx : c.cy;
