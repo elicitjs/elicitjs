@@ -957,6 +957,12 @@ export interface Channels extends StyleChannels {
 // the data's, declared once on the schema.
 export interface MarkOptions {
   channels?: Channels;
+  /**
+   * A tooltip for this mark's rows: `true` (every column), the columns to show,
+   * or a function of the row. Desugars to `guides.tip({ mark })` — a guide, so it
+   * never makes the mark pointer-active and cannot block a gesture.
+   */
+  tip?: boolean | string[] | ((row: Datum, ctx: any) => string | string[]);
   // Constant shorthands — e.g. `fill: 'steelblue'`, `strokeWidth: 2`, `size: 9`.
   // A FUNCTION shorthand (`fill: d => d.x > 50 ? 'red' : 'blue'`) desugars to a
   // derived channel (`{ fn }`), computed per datum in visual space (read-only).
@@ -1294,6 +1300,11 @@ export interface CompositeOptions {
 export interface Guide {
   /** Always 'state' — that is what makes it a guide rather than a mark. */
   views: 'state';
+  /**
+   * Reads the pointer (`ui.pointer` / `ui.hit`). The engine then records pointer
+   * movement and re-renders on it; a chart with no such guide never does.
+   */
+  tracksPointer?: boolean;
   /**
    * Emit the nodes. Same five arguments every feature's `build` takes, so the
    * three kinds are one contract: the primary table's rows, the resolved scales,
@@ -2401,6 +2412,8 @@ export interface RenderContext {
   // route all gestures as plane events (no node) rather than hit-testing marks.
   planeOnTop?: boolean;
   planeCursor?: string;
+  /** A guide reads the pointer: the renderer reports pointermove / pointerleave from its root. */
+  tracksPointer?: boolean;
   responsive?: 'fixed' | 'scale' | 'reflow';
   overflow?: 'hidden' | 'visible';
   // See ElicitSpec.focusOutline. Renderers that focus mark nodes honour this;
@@ -2764,7 +2777,35 @@ export interface PromptGuideOptions { id?: string; y?: number }
 export interface OptionRingsGuideOptions { id?: string; labelOffset?: number; radius?: number }
 export interface CellGridGuideOptions { id?: string; pad?: number }
 export interface SliderTrackGuideOptions { id?: string; format?: Format }
-export interface CrosshairGuideOptions { id?: string; x?: string; y?: string }
+export interface QuadrantsGuideOptions { id?: string; x?: string; y?: string }
+/** `guides.tip`: the row under the pointer, drawn as a box of its values. */
+export interface TipGuideOptions {
+  id?: string;
+  /** Only rows of this mark (its `id`); default: whichever mark is under the pointer. */
+  mark?: string;
+  /** The columns to show, or a function of the row returning a string or lines. Default: every column. */
+  text?: string[] | ((row: Datum, ctx: any) => string | string[]);
+  /** Beside the pointer (default) or at the mark's centre. */
+  anchor?: 'pointer' | 'mark';
+  dx?: number;
+  dy?: number;
+  fill?: string;
+  stroke?: string;
+  fontSize?: number;
+  /** How a number prints: a d3 format specifier or a function. */
+  format?: string | ((v: any) => string);
+}
+/** `guides.crosshair`: rules that follow the pointer, with the axis value read out at the plot edge. */
+export interface CrosshairGuideOptions {
+  id?: string;
+  x?: boolean;
+  y?: boolean;
+  readout?: boolean;
+  stroke?: string;
+  strokeDash?: string;
+  fontSize?: number;
+  format?: string | ((v: any) => string);
+}
 
 // ── Widgets ────────────────────────────────────────────────────────────────
 export interface LikertOptions extends WidgetOptions { options?: string[]; value?: any }

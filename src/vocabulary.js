@@ -23,7 +23,7 @@
 /** Options EVERY mark accepts, whatever it draws. (`constraints` is deliberately
  *  absent: a constraint is a DATASET invariant and belongs on the spec.)
  *  @type {string[]} */
-export const MARK_UNIVERSAL_OPTIONS = ['channels', 'id', 'edits', 'table'];
+export const MARK_UNIVERSAL_OPTIONS = ['channels', 'id', 'edits', 'table', 'tip'];
 
 /** Top-level constant shorthands every mark desugars into channels
  *  (`fill: 'red'` -> `channels.fill = { value: 'red' }`). `size` and the text
@@ -118,7 +118,10 @@ export const GUIDE_OPTIONS = {
     optionRings: ['labelOffset', 'radius'],
     cellGrid: ['pad'],
     sliderTrack: ['format'],
-    crosshair: ['x', 'y'],
+    quadrants: ['x', 'y'],
+    // Pointer-following guides (guides/tip.js, guides/crosshair.js).
+    tip: ['mark', 'text', 'anchor', 'dx', 'dy', 'fill', 'stroke', 'fontSize', 'format'],
+    crosshair: ['x', 'y', 'readout', 'stroke', 'strokeDash', 'fontSize', 'format'],
     custom: [],
 };
 

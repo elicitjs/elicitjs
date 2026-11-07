@@ -282,6 +282,29 @@ export function hitTest(marks, px, py) {
 }
 
 /**
+ * The node under the pointer, EDITABLE OR NOT — what a tooltip or a readout
+ * asks, as opposed to `hitTest`, which asks what a gesture may grab. Chrome
+ * (guides, background, effects) is still skipped, as is a node that opted out
+ * of the pointer for its own reasons (`pointerEvents: 'none'` set by a mark);
+ * the engine's transparency stamp for an inert mark is `pointerEvents` too, so
+ * the test reads the mark's own flag, `inert`, instead.
+ * @param {any[]} marks
+ * @param {number} px
+ * @param {number} py
+ * @returns {any | null}
+ */
+export function hitTestAny(marks, px, py) {
+    const list = marks || [];
+    for (let i = list.length - 1; i >= 0; i--) {
+        const mark = list[i];
+        if (!mark || mark.guide || mark.background || mark.effect || mark.hit) continue;
+        if (mark.index == null && mark.data == null) continue;
+        if (containsPoint(mark, px, py)) return mark;
+    }
+    return null;
+}
+
+/**
  * @param {any} mark @param {number} px @param {number} py @returns {boolean}
  */
 function containsPoint(mark, px, py) {

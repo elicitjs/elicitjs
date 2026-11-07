@@ -183,16 +183,17 @@ export function prompt(text, options = {}) {
 }
 
 /**
- * The crosshair frame of a correlation plot: axes through the centre and a
+ * The quadrant frame of a correlation plot: axes through the centre and a
  * high/low label on each of the four ends (the layout of the line+cone task).
  * The side labels stack onto two lines so a long variable name fits the margin
- * instead of running off the SVG.
+ * instead of running off the SVG. (It was called `crosshair`; that word now
+ * names the pointer-following rules in guides/crosshair.js.)
  * @param {{ x?: string, y?: string }} [labels]
  */
-export function crosshair(labels = {}) {
+export function quadrants(labels = {}) {
     const { x = 'x', y = 'y' } = labels;
     // Its own keyword, not `custom`: this guide appears in a spec by name.
-    return typed('crosshair', custom((/** @type {any} */ ctx) => {
+    return typed('quadrants', custom((/** @type {any} */ ctx) => {
         const { width, height } = ctx;
         const tw = widgetTheme(ctx);
         const cx = width / 2, cy = height / 2;

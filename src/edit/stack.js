@@ -278,7 +278,9 @@ export function edge(options = {}) {
     const { when: userWhen, ...rest } = options;
     return makeEdit({
         type: 'stack.edge',
-        inverts: true,
+        // Not `inverts`: this edit runs the pointer back through the STACK its
+        // mark stamped (`node.stack`), not through a channel's scale, so it names
+        // no channel and the channel guards have nothing to check.
         gesture: 'drag',
         pick: 'direct',
         scope: 'stack',

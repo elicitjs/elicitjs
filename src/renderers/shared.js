@@ -86,3 +86,31 @@ export function partitionScene(children) {
     }
     return { background, guideRegions, marks, guideFront, effects };
 }
+
+/**
+ * Throttle a handler to one call per animation frame, keeping the LAST
+ * arguments. For pointer tracking: a pointermove fires far more often than a
+ * frame can paint, and every one would re-render the chart.
+ * @template {(...args: any[]) => void} F
+ * @param {F} fn
+ * @returns {F}
+ */
+export function frameThrottle(fn) {
+    /** @type {any[] | null} */
+    let pending = null;
+    let scheduled = false;
+    const raf = typeof requestAnimationFrame === 'function'
+        ? requestAnimationFrame
+        : (/** @type {() => void} */ cb) => setTimeout(cb, 16);
+    return /** @type {F} */ (/** @type {any} */ ((/** @type {any[]} */ ...args) => {
+        pending = args;
+        if (scheduled) return;
+        scheduled = true;
+        raf(() => {
+            scheduled = false;
+            const a = pending;
+            pending = null;
+            if (a) fn(...a);
+        });
+    }));
+}

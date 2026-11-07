@@ -39,4 +39,10 @@ export { custom } from './custom.js';
 // which is how every built-in widget uses them — see widgets/likert.js), so they
 // belong in this namespace. They used to sit in `authoring.*`, which put five
 // spec keywords in the kit you build vocabulary FROM.
-export { optionRings, cellGrid, sliderTrack, prompt, crosshair } from '../widgets/theme.js';
+export { optionRings, cellGrid, sliderTrack, prompt, quadrants } from '../widgets/theme.js';
+
+// Pointer-following guides. Both view the engine's pointer state (`ui.pointer`,
+// `ui.hit`) and write nothing — a tip and a crosshair that can never block a
+// gesture. A mark's `tip: true` shorthand desugars into `tip({ mark })`.
+export { tip } from './tip.js';
+export { crosshair } from './crosshair.js';

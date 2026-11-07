@@ -26,6 +26,8 @@ import type {
   CountOptions,
   CreateOptions,
   CrosshairGuideOptions,
+  QuadrantsGuideOptions,
+  TipGuideOptions,
   CurveOptions,
   DeepPartial,
   DotStackOptions,
@@ -366,8 +368,12 @@ export const guides: {
   cellGrid(options?: CellGridGuideOptions): Guide;
   /** A slider's track. */
   sliderTrack(options?: SliderTrackGuideOptions): Guide;
-  /** The crosshair frame of a correlation plot. */
-  crosshair(labels?: CrosshairGuideOptions): Guide;
+  /** The quadrant frame of a correlation plot (axes through the centre, high/low labels). */
+  quadrants(labels?: QuadrantsGuideOptions): Guide;
+  /** The row under the pointer, drawn as a box of its values. */
+  tip(options?: TipGuideOptions): Guide;
+  /** Rules that follow the pointer, with the axis value read out at the plot edge. */
+  crosshair(options?: CrosshairGuideOptions): Guide;
 };
 
 /**

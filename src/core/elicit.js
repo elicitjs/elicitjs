@@ -5,11 +5,12 @@ import { createProjection } from './projection.js';
 import { resolveLock, lockConstraint, isNodeLocked } from './lock.js';
 import { collectEdits, resolveChannels, warnMisplacedEdits } from '../edit/route.js';
 import { markCenter, nudgeTarget } from '../edit/shared.js';
-import { hitTest } from '../edit/pick.js';
+import { hitTest, hitTestAny } from '../edit/pick.js';
 import { encodeChannel, rawChannel } from '../plot/mark.js';
 import { portFeature, portRolesOf, portKey } from '../plot/port.js';
 import { drivers, driverFor, needsPlaneOnTop } from '../edit/drivers/index.js';
 import { autoEditGuides } from '../edit/guide.js';
+import { tip as tipGuide } from '../guides/tip.js';
 import { D3Renderer } from '../renderers/d3-renderer/index.js';
 import { resolveEffects, stateEffectNodes, outlineNodes, effectStyleFor, elementEffectOf } from './effects.js';
 import { resolveTheme } from './theme.js';
@@ -449,7 +450,16 @@ export function Elicit(spec) {
     // Auto-guides: an edit declared `guide: true` self-draws its guide (constraint
     // bounds + nearest snap ring) without the caller repeating the feature id in a
     // top-level guides list (see edit/guide.js).
-    const allGuides = [...autoEditGuides(features), ...guides];
+    // A mark's `tip` shorthand is a tip GUIDE bound to that mark — desugared once,
+    // here, the way `ports` becomes a port feature. The guide path is what makes
+    // a tooltip harmless: it reads state and makes nothing pointer-active.
+    const tipGuides = features
+        .filter((f) => f && f.views !== 'scale' && f.tip != null && f.tip !== false)
+        .map((f) => tipGuide({ mark: f.id, ...(f.tip === true ? {} : { text: f.tip }) }));
+    const allGuides = [...autoEditGuides(features), ...guides, ...tipGuides];
+    // Does any guide read the pointer? Then the renderers report pointer movement
+    // and the engine re-renders on it; otherwise a chart never pays for that.
+    const tracksPointer = allGuides.some((g) => g && g.tracksPointer);
 
     // Multi-stage elicitation: edits carrying a numeric `stage` are active only in
     // that stage (null = always). This is a uniform descriptor filter applied to
@@ -512,8 +522,13 @@ export function Elicit(spec) {
     // than being painted by the renderer straight off d3.drag — that split is why
     // `grabbed` used to honour `filter` and silently ignore the rest of its vocabulary
     // (and never drew an outline at all).
-    /** @type {{ session: Record<string, any>, preview: Record<string, { table: string, rows: any[], pointer?: { x: number, y: number } }> | null, selection: Set<string>, hover: { featureId: string, index: number, node?: any } | null, grab: { featureId: string, index: number } | null }} */
-    const ui = { session: {}, preview: null, selection: new Set(), hover: null, grab: null };
+    /** @type {{ session: Record<string, any>, preview: Record<string, { table: string, rows: any[], pointer?: { x: number, y: number } }> | null, selection: Set<string>, hover: { featureId: string, index: number, node?: any } | null, grab: { featureId: string, index: number } | null, pointer: { x: number, y: number } | null, hit: { featureId: string, index: number, node: any } | null }} */
+    // `pointer` is where the pointer is over the plot (scene coordinates), and
+    // `hit` the row under it whether or not it is editable — recorded only when
+    // a guide reads them (`tracksPointer`), and never dispatched: a tip or a
+    // crosshair is STATE a guide draws, so no mark becomes pointer-active to
+    // show one and dispatch does not change.
+    const ui = { session: {}, preview: null, selection: new Set(), hover: null, grab: null, pointer: null, hit: null };
     // Does the last built scene carry any `onHover` node (a port)? Then a hover
     // change must re-render even when the `hovered` effect paints nothing.
     let sceneHasOnHover = false;
@@ -1055,6 +1070,18 @@ export function Elicit(spec) {
 
         // Build guides last so they can read the freshly-updated data. Guides are
         // purely visual (non-interactive) annotations.
+        // The row under the pointer, for the guides that read it — resolved from
+        // the scene just built, so a tip over a locked or context row works too.
+        if (tracksPointer && ui.pointer) {
+            let hit = null;
+            for (let i = features.length - 1; i >= 0 && !hit; i--) {
+                hit = hitTestAny(featureNodes[features[i].id] || [], ui.pointer.x, ui.pointer.y);
+            }
+            ui.hit = hit ? { featureId: hit.featureId, index: hit.index, node: hit } : null;
+        } else {
+            ui.hit = null;
+        }
+
         const guideCtx = {
             scales,
             // The primary table's rows — what a chart-level guide means by "the data".
@@ -1260,6 +1287,7 @@ export function Elicit(spec) {
             spec,
             planeOnTop,
             planeCursor,
+            tracksPointer,
             responsive: mode,
             overflow,
             focusOutline,
@@ -2003,6 +2031,16 @@ export function Elicit(spec) {
         // Hover is interaction STATE, like grab below: record it and let the one
         // render decision at the end draw the `hovered` effect. (It used to call
         // update() directly and return — a second render path beside shouldRender.)
+        // Pointer POSITION, for the guides that follow it (a tip, a crosshair).
+        // State only: recorded, rendered when a guide reads it, never dispatched.
+        if (event.type === 'pointermove' || event.type === 'pointerleave') {
+            const next = event.type === 'pointermove' ? { x: event.x, y: event.y } : null;
+            const same = (!next && !ui.pointer) || !!(next && ui.pointer && next.x === ui.pointer.x && next.y === ui.pointer.y);
+            ui.pointer = next;
+            if (tracksPointer && !same) update();
+            return;
+        }
+
         if (event.type === 'pointerover' || event.type === 'pointerout') {
             const node = event.node;
             // The NODE rides along with the row: a feature that draws several

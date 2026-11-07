@@ -36,7 +36,7 @@
 import { composite, trend, trendBand } from '../plot/index.js';
 import { trend as editTrend } from '../edit/index.js';
 import { clamp } from '../constraints/index.js';
-import { crosshair, prompt } from './theme.js';
+import { quadrants, prompt } from './theme.js';
 
 // The frame the prompt and the two-line axis labels need, as a minimum. The inner
 // plot is squared off inside whatever is left.
@@ -114,7 +114,7 @@ export function lineCone(opts = {}) {
         ],
         onChange,
         axes: false,
-        guides: [prompt(question || '', { y: -32 }), crosshair({ x, y })],
+        guides: [prompt(question || '', { y: -32 }), quadrants({ x, y })],
         marks: [
             composite({
                 id: 'lineCone',

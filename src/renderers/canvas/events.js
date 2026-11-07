@@ -12,6 +12,7 @@
 //   hover / hoverout         — plane, plane-on-top only (mirrors the D3 plane gestures)
 // Keyboard nudge and the text-edit `commit` are deliberately not wired yet.
 import { hitTest } from '../../edit/pick.js';
+import { frameThrottle } from '../shared.js';
 
 // Movement (px) before a press becomes a drag. `direct` matches d3.drag's
 // clickDistance(4): a press that stays within it is a click, not a drag. `plane`
@@ -116,9 +117,17 @@ export function bindCanvasEvents(canvas, getCtx) {
         try { canvas.setPointerCapture(e.pointerId); } catch { /* not fatal */ }
     });
 
+    // Pointer POSITION for the guides that follow it (tip, crosshair): reported
+    // whatever sits under the pointer, one report per frame, only when a guide
+    // asks (`tracksPointer`). State, never a gesture.
+    const track = frameThrottle((/** @type {any} */ e, /** @type {number} */ x, /** @type {number} */ y) => {
+        getCtx().onEvent({ type: 'pointermove', x, y, rawEvent: e });
+    });
+
     canvas.addEventListener('pointermove', (e) => {
         const ctx = getCtx();
         const [x, y] = toInner(e);
+        if (ctx.tracksPointer) track(e, x, y);
 
         // No button held while a gesture is open: the release was never delivered
         // (let go outside the browser window, or the window lost focus). Without
@@ -178,6 +187,10 @@ export function bindCanvasEvents(canvas, getCtx) {
     });
 
     canvas.addEventListener('pointerleave', (e) => {
+        {
+            const ctx = getCtx();
+            if (ctx.tracksPointer) ctx.onEvent({ type: 'pointerleave', rawEvent: e });
+        }
         if (!gesture) {
             const ctx = getCtx();
             if (ctx.planeOnTop) ctx.onEvent({ type: 'hoverout', rawEvent: e });

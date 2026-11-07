@@ -3,7 +3,7 @@ import * as d3 from "d3";
 import { DEFAULT_EFFECTS, ELEMENT_EFFECT_PROPS } from "../../core/effects.js";
 import { markCenter } from "../../edit/shared.js";
 import { rectHitBox, MIN_GRAB } from "../../edit/pick.js";
-import { resolveCurve, lineGenerator, STYLE_FIELDS, partitionScene } from "../shared.js";
+import { resolveCurve, lineGenerator, STYLE_FIELDS, partitionScene, frameThrottle } from "../shared.js";
 
 // A camelCase effect property -> its CSS property name (strokeWidth ->
 // stroke-width). Effects are applied as CSS PROPERTIES rather than SVG
@@ -94,6 +94,7 @@ export class D3Renderer {
     const pointer = (event) => d3.pointer(event, g.node());
 
     this._bindPlaneGestures(plane, pointer, onEvent, planeOnTop);
+    this._bindPointerTracking(d3.select(container).select("svg"), pointer, onEvent, !!context.tracksPointer);
 
     const drag = this._makeDrag(onEvent);
     // Hover rides along with drag: the same nodes, so anything you can grab
@@ -497,6 +498,30 @@ export class D3Renderer {
       .on("pointerleave", (/** @type {any} */ event) => {
         if (!this._planeGesture) onEvent({ type: "hoverout", rawEvent: event });
       });
+  }
+
+  /**
+   * Report the pointer's POSITION over the chart, from the svg root, whatever
+   * sits under it — for the guides that follow it (a tip, a crosshair). Bound
+   * only when a guide asks (`tracksPointer`), throttled to one report per frame,
+   * and never a gesture: the engine records it as state and dispatches nothing.
+   * @param {any} svg
+   * @param {(event: any) => [number, number]} pointer
+   * @param {(e: any) => void} onEvent
+   * @param {boolean} tracks
+   */
+  _bindPointerTracking(svg, pointer, onEvent, tracks) {
+    if (!tracks) {
+      svg.on("pointermove.track", null).on("pointerleave.track", null);
+      return;
+    }
+    const report = frameThrottle((/** @type {any} */ event) => {
+      const [px, py] = pointer(event);
+      onEvent({ type: "pointermove", x: px, y: py, rawEvent: event });
+    });
+    svg
+      .on("pointermove.track", (/** @type {any} */ event) => report(event))
+      .on("pointerleave.track", (/** @type {any} */ event) => onEvent({ type: "pointerleave", rawEvent: event }));
   }
 
   /**
