@@ -207,3 +207,21 @@ describe('spacing beside a clamp', () => {
         expect(Math.max(...ats)).toBeLessThanOrEqual(100);
     });
 });
+
+describe('clamp with no bounds over a column another mark draws', () => {
+    it('falls back to the schema domain', async () => {
+        const el = Elicit({
+            width: 300, height: 200,
+            schema: { k: { type: 'categorical', domain: ['a'] }, lo: { type: 'quantitative', domain: [0, 10] }, mean: { type: 'quantitative', domain: [0, 10] }, hi: { type: 'quantitative', domain: [0, 10] } },
+            data: [{ k: 'a', lo: 3, mean: 5, hi: 7 }],
+            constraints: [constraints.follow({ field: ['lo', 'hi'], lead: 'mean' }), constraints.clamp({ field: ['lo', 'mean', 'hi'] })],
+            marks: [plot.point({ channels: { x: { field: 'k' }, y: { field: 'mean', edit: edit.move({ name: 'm' }) } } })],
+        });
+        document.body.appendChild(el);
+        await tick();
+        el.control('m', 0).set(9);
+        const r = el.getData()[0];
+        expect(r.hi).toBeLessThanOrEqual(10);
+        expect(r.lo).toBeCloseTo(7, 6);
+    });
+});

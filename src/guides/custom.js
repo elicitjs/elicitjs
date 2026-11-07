@@ -21,15 +21,21 @@
 
 /**
  * @param {(ctx: any) => import('../types').FeatureNode[]} build
+ * @param {{ tracksPointer?: boolean }} [options] `tracksPointer`: the builder
+ *   reads `ui.pointer` / `ui.hit`, so the chart re-renders as the pointer moves
  * @returns {import('../types').Guide}
  */
-export function custom(build) {
+export function custom(build, options = {}) {
     return {
         views: 'state',
         type: 'custom',
+        ...(options && options.tracksPointer ? { tracksPointer: true } : {}),
         build: (_rows, _scales, _w, _h, ctx) => (build(ctx) || []).map((node) => ({
             pointerEvents: 'none',
             ...node,
+            // The author's word is `strokeDash`; the scene's is `strokeDasharray`.
+            ...(/** @type {any} */ (node).strokeDash != null && node.strokeDasharray == null
+                ? { strokeDasharray: /** @type {any} */ (node).strokeDash } : {}),
             guide: true
         }))
     };

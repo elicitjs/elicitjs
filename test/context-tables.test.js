@@ -86,3 +86,15 @@ describe('context tables', () => {
         expect(el.querySelectorAll('path.mark-line').length).toBe(2);
     });
 });
+
+describe('context sugar beside a table with a column named like a field option', () => {
+    it('reads `key` and `domain` columns as columns', async () => {
+        const { normalizeSchema } = await import('../src/core/schema.js');
+        const spec = normalizeSchema({
+            data: { key: { type: 'categorical' }, domain: { type: 'quantitative' } },
+            ref: { context: true, fields: { v: { type: 'quantitative' } } },
+        });
+        expect(Object.keys(spec.tables.data.fields)).toEqual(['key', 'domain']);
+        expect(spec.tables.ref.context).toBe(true);
+    });
+});

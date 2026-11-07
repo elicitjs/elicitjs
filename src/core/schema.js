@@ -106,6 +106,12 @@ const RESERVED_FIELD = 'fields';
  */
 function looksLikeFieldSchema(v) {
     if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+    // A field MAP's values are all FieldSchema objects; a FieldSchema always holds
+    // a primitive or an array (its `type` string, a `domain` list, `key: true`).
+    // Testing for the key NAMES misread a table with a column called `key` or
+    // `domain` as one field.
+    const values = Object.values(v);
+    if (values.length && values.every((x) => x && typeof x === 'object' && !Array.isArray(x))) return false;
     return typeof v.type === 'string'
         || 'domain' in v || 'default' in v || 'key' in v || 'open' in v;
 }

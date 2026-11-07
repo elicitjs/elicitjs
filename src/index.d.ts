@@ -371,7 +371,7 @@ export const guides: {
   proximity(options?: ProximityGuideOptions): Guide;
   /** The escape hatch: arbitrary read-only nodes from the live context. Named to
    *  match `edit.custom` / `constraints.custom`. */
-  custom(build: (ctx: any) => import('./types.js').FeatureNode[]): Guide;
+  custom(build: (ctx: any) => import('./types.js').FeatureNode[], options?: { tracksPointer?: boolean }): Guide;
   /** A question prompt above an instrument. */
   prompt(text: string, options?: PromptGuideOptions): Guide;
   /** The option rings of a Likert-style scale. */

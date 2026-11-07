@@ -72,3 +72,28 @@ describe('plane gesture falls back to the direct mark under the pointer', () => 
         expect(el.getData().map((d) => d.y)).toEqual([50, 50, 50]);
     });
 });
+
+describe('a press on a direct mark beside an ungated sweep', () => {
+    it('grabs the mark; a press elsewhere sweeps', async () => {
+        const el = Elicit({
+            width: 300, height: 200, margins: { top: 10, right: 10, bottom: 10, left: 10 },
+            schema: { x: { type: 'categorical', domain: ['A', 'B', 'C'] }, y: { type: 'quantitative', domain: [0, 100] } },
+            data: [{ x: 'A', y: 50 }, { x: 'B', y: 50 }, { x: 'C', y: 50 }],
+            axes: false,
+            marks: [
+                plot.lineY({ channels: { x: { field: 'x' }, y: { field: 'y', edit: edit.line.sweep() } } }),
+                plot.barY({ channels: { x: { field: 'x' }, y: { field: 'y', edit: edit.move() } } }),
+            ],
+        });
+        document.body.appendChild(el);
+        await tick();
+        const { x, y } = barTop(el, 2);
+        el.emit({ type: 'dragstart', x, y });
+        el.emit({ type: 'drag', x: x + 40, y: y - 40 });
+        el.emit({ type: 'dragend', x: x + 40, y: y - 40 });
+        const rows = el.getData();
+        expect(rows[2].y).toBeGreaterThan(50);
+        expect(rows[0].y).toBe(50);
+        expect(rows[1].y).toBe(50);
+    });
+});

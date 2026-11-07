@@ -402,8 +402,12 @@ now asks each plane edit's `when` BEFORE handing the gesture to its driver
 (`livePlaneEdits`, arbitrated on dragstart/click/hover and latched for the stroke so a
 modifier released mid-drag never strands a driver without its dragend), and when none
 accepts, `hitTest`s the pointer and re-routes the event as a direct one
-(`fallbackHit`, latched per stroke). Nothing in a driver changed. Don't make a
-driver consult `when` itself, and don't drop the latch.
+(`fallbackHit`, latched per stroke). Before either, a press that lands ON a mark
+whose direct edit ACCEPTS it (its `when` passes) grabs that mark, exactly as it
+would with the plane down — the author put a handle there to be dragged — so a
+sweep or brush elsewhere on the chart no longer makes every direct handle beside
+it unreachable. Nothing in a driver changed. Don't make a driver consult `when`
+itself, and don't drop the latch.
 
 **An element's edit is a DIRECT edit claimed by capability, never a raised plane.**
 `edit.axis.scale` is `pick: 'direct'` and the axisDrag driver `wants` it by type (the

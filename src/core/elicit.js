@@ -45,7 +45,7 @@ function applyGhostStyle(node, ghost) {
     node.opacity = base * (g.opacity != null ? g.opacity : 0.45);
     if (g.fill != null) node.fill = g.fill;
     if (g.stroke != null) node.stroke = g.stroke;
-    if (g.strokeDasharray != null) node.strokeDasharray = g.strokeDasharray;
+    if (g.strokeDash != null) node.strokeDasharray = g.strokeDash;
 }
 
 
@@ -2034,6 +2034,8 @@ export function Elicit(spec) {
     // the node it pressed, so leaving the mark mid-drag does not lose it.
     /** @type {any} */
     let planeGrab = null;
+    // Is the current stroke a direct grab the plane gesture was re-routed to?
+    let directStroke = false;
     /** @param {number} x @param {number} y @returns {any | null} */
     const hitAny = (x, y) => {
         for (let i = features.length - 1; i >= 0; i--) {
@@ -2163,6 +2165,28 @@ export function Elicit(spec) {
         // renderer reported on the node itself.
         /** @type {Map<string, import('../types').Edit[]> | null} */
         let planeLive = null;
+        // A press that lands ON a mark carrying a direct edit grabs that mark, as
+        // it does with the plane down: the author put a handle there to be
+        // dragged. Only a press elsewhere is the plane edits'. Without this, a
+        // sweep or brush anywhere on the chart made every direct handle beside
+        // it unreachable for the whole stage.
+        if (!event.node && event.x != null && (event.type === 'dragstart' || event.type === 'click' || event.type === 'dblclick')) {
+            const hit = hitAny(event.x, event.y);
+            // ...provided one of that mark's direct edits ACCEPTS the gesture: a
+            // `move({ when: when.noShift })` under a Shift press declines, and the
+            // press stays the plane's (a Shift-gated sweep).
+            const owner = hit ? features.find((f) => f.id === hit.featureId) : null;
+            const accepts = owner && activeEdits(owner).some((e) => e.pick === 'direct'
+                && arbitrates(owner, e, { ...event, node: hit }));
+            if (hit && accepts) {
+                if (event.type === 'dragstart') { planeGrab = hit; directStroke = true; }
+                event = { ...event, node: hit };
+            }
+        } else if (!event.node && directStroke && (event.type === 'drag' || event.type === 'dragend')) {
+            const hit = planeGrab;
+            if (event.type === 'dragend') { planeGrab = null; directStroke = false; }
+            if (hit) event = { ...event, node: hit };
+        }
         if (!event.node && event.x != null) {
             planeLive = new Map(features.map(f => [f.id, livePlaneEdits(f, event)]));
             let any = false;

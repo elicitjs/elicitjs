@@ -229,7 +229,14 @@ export function applyConstraint(constraint, newData, oldData, context) {
   const fields = Array.isArray(c.field) ? c.field : (field != null ? [field] : []);
   /** @type {Record<string, number[] | undefined>} */
   const domains = {};
-  for (const f of fields) domains[f] = domainOfField(f, context.scales, context.markChannels);
+  // A column's declared range: the scale's when the dispatching mark encodes it,
+  // else the SCHEMA's. Reading only the dispatching mark's channels left a field
+  // another mark draws unbounded (a clamp over lo/mean/hi from the line that only
+  // draws the mean let a sweep write lo past the domain).
+  for (const f of fields) {
+    domains[f] = domainOfField(f, context.scales, context.markChannels)
+      || (context.schema && context.schema[f] && Array.isArray(context.schema[f].domain) ? context.schema[f].domain : undefined);
+  }
   /** @type {import('../types').ConstraintContext} */
   const ctx = {
     data: newData,
