@@ -70,6 +70,22 @@ the schema doesn't declare. NAMES go in `table:`; ROLES go in `tableRole` and
 not rows. A `composite` stamps its table onto its box and every part, because it
 desugars into features that each resolve their own.
 
+**A CONTEXT table is drawn, never elicited.** `{ context: true, fields }` on a schema
+table (any number, beside the structure's own; a top-level schema map that holds one
+is read as a map of tables, so `schema: { data: {…}, history: { context: true, fields
+} }` needs no `structure`) declares reference rows — observed history behind a
+forecast, a basemap of points. Marks point at it with `table: 'history'`, its values
+widen the inferred scale domains like any other table's, and that is ALL it does:
+every row is locked by construction (`isLockedIn` returns always-true for it, so the
+lock invariant and the pointer-transparent `locked` stamp both apply), an edit
+declared over it warns (`<mark>:context:edits`), `getData()`/`onChange`/`getSchema()`
+leave it out (`elicitedTables`, and `isBareForm` counts only elicited tables, so a
+one-table chart with context stays a bare array), `setData` keeps the context rows a
+reseed does not name, and undo never touches it. Before this, reference data was
+either `lock`ed rows that still came back as the answer, or `guides.custom` nodes
+that said nothing about what they were. Don't add a per-mark `data` for it, and
+don't let a context table fill a structural role.
+
 **The reason structures were affordable is that a mark, an edit and a constraint
 each still see ONE array.** The engine hands `tableOf(feature)` wherever it used to
 hand the single dataset, so no mark's `build()`, no edit's `apply()` and no
@@ -303,6 +319,20 @@ a mark's own stroke. Hover has two sources — a proximity driver's session and 
 renderer's per-node `pointerover` — and both feed the ONE `hovered` effect, so "this
 is the mark you are about to touch" reads identically either way.
 
+**The POINTER is state a guide may read; it never makes a mark pointer-active.**
+A tooltip and a crosshair are statements about where the pointer is, so they are
+GUIDES (`guides.tip`, `guides.crosshair`; a mark's `tip: true | fields | fn`
+shorthand desugars into `tip({ mark })` where features are flattened, the `ports`
+precedent). The renderers report `pointermove`/`pointerleave` from their ROOT, one
+report per frame, only when a guide declares `tracksPointer`; the engine records
+`ui.pointer`, resolves `ui.hit` by its own hit test over EVERY datum-bearing node
+(`hitTestAny` — editable or not, so a locked or context row gets a tip) before the
+guides build, and re-renders. Nothing is dispatched, no transaction opens, and no
+node's `editable`/`pointerEvents` changes, which is the whole point: a tooltip can
+never block elicitation, and the same code serves canvas. `guides.quadrants` is the
+old centre-frame guide that used to be called `crosshair`. Don't bind hover
+listeners to inert nodes to show a tip, and don't put a tip on a mark's own nodes.
+
 **The ENGINE's state pass decides an effect; a renderer only applies it.** Both halves
 come out of the one loop in `update()`: the outline overlay, and the restyle, stamped
 on the mark's own node as `node.effectStyle` (merged across states by `effectStyleFor`,
@@ -322,6 +352,30 @@ the transform, and every overlay shape is kept concentric with its source so
 (`edit/pick.js`) brings the pointer into the mark's frame through `markCenter` before
 any axis-aligned test, so what is outlined and what a drag grabs cannot drift apart.
 
+**Chart TITLES reserve layout space like a legend; `strokeDash` is one word; a
+gradient is a node's paint.** `spec.title`/`subtitle`/`caption` go through
+`core/titles.js`: bands outside the legend bands, added to `effectiveMargins` in
+`update()` exactly as `reserveLegends` adds its own, so a titled chart keeps its
+declared size and the plot shrinks; text nodes are background chrome in the theme's
+`title`/`subtitle`/`caption` tokens (a null fill takes the axis label ink). The dash
+pattern is the style channel `strokeDash` (a constant, or a field through an ordinal
+scale onto `DEFAULT_DASHES`), swept by `resolveStyle` onto the scene field
+`strokeDasharray` — the author's word and the paint vocabulary's are different on
+purpose, and `rule({ strokeDasharray })` and the guides' spelling are gone. A
+`gradient: { stops, direction }` on area/bar/rect is stamped as `node.fillGradient`
+and painted by the renderers (`<linearGradient>` in defs, `createLinearGradient` on
+canvas); an effect restyle still wins. A missing value (null/NaN) BREAKS a line or
+band and draws no handle (`core/curves.js`, `defined`); there is no option for it.
+
+**`plot.shape` is a point that draws a PATH.** One path per row from a `symbol`
+channel (an ordinal scale onto shape NAMES — d3's circle/square/triangle/diamond/
+star/cross/wye — or SVG path strings) or a `path` option; `plot/shapes.js` keeps a
+shape in UNIT form and `placeShape` bakes size, angle and position into the `d`
+(a path node carries no `angle`, the needle rule) with an outline `points` polygon
+(`polygon: true`) the pick layer tests on both renderers and a `cx`/`cy` the
+universal edits pivot on. It declares `nodeBox`, so it is a network node. `point`
+keeps drawing its `symbol` as TEXT and warns when one resolves to a path.
+
 **One handle contract.** `resolveHandles` (`plot/mark.js`) is where a handle's radius,
 paint and visibility come from: `HANDLE_DEFAULTS.size`, `theme.handle`/`theme.handleStroke`,
 and `handles: true | false | 'hit'` — drawn+grabbable / neither / invisible-but-grabbable.
@@ -339,6 +393,32 @@ draws — so the line the author sees IS the mapping, not a redrawing of it.
 **Edits are descriptors, not closures with hidden state.** An edit is `{ type, gesture, channels, when, pick, scope, threshold, into, constrain, guide, apply }` built via `makeEdit` (`src/edit/shared.js`). `apply(ctx)` is pure given `ctx` — it returns a datum (direct edit), a full array (whole-dataset edit), or `undefined` (no-op). Never mutate `ctx.data` in place.
 
 **Multi-event lifecycles are drivers, not engine branches.** If you're adding an interaction mode that needs `hover`/`dragstart`/`drag`/`dragend` state (like `nearest`, `sweep`, `draw`), write a new file in `src/edit/drivers/` implementing `{ name, wants(edit), onEvent(ctx) }` and register it in `drivers/index.js`. **Never** add a new `if (pick === '...')` branch inside `core/elicit.js`'s dispatch — that's the god-module pattern the drivers refactor eliminated. The engine must stay ignorant of specific modes. A driver is not the same thing as a raised plane: it may claim a **direct**-pick edit by CAPABILITY (`wants: e => e.type === 'slide' && e.mode === 'relative'`), and then `runDrivers` hands it `ctx.index` — the datum the gesture landed on — so it skips target selection and `needsPlaneOnTop` stays false. That is what lets a lifecycle edit sit on a glyph part beside the other direct edits; a relative `slide` needs a dragstart ANCHOR, not a target search, and conflating the two once forced every jump-free drag onto the plane.
+
+**A plane gesture no plane edit ACCEPTS falls back to the mark under the pointer.**
+With the plane raised, every press arrives as a plane gesture — including one that
+landed on a mark whose direct edit should have it (`move({ when: when.shift })`
+beside a sweep gated `when.noShift`; `geo.dragVertex` beside `geo.draw`). The engine
+now asks each plane edit's `when` BEFORE handing the gesture to its driver
+(`livePlaneEdits`, arbitrated on dragstart/click/hover and latched for the stroke so a
+modifier released mid-drag never strands a driver without its dragend), and when none
+accepts, `hitTest`s the pointer and re-routes the event as a direct one
+(`fallbackHit`, latched per stroke). Nothing in a driver changed. Don't make a
+driver consult `when` itself, and don't drop the latch.
+
+**An element's edit is a DIRECT edit claimed by capability, never a raised plane.**
+`edit.axis.scale` is `pick: 'direct'` and the axisDrag driver `wants` it by type (the
+relative-slide precedent); the handle nodes the axis draws are what the press lands
+on, so the plane stays down and an editable axis no longer silences every mark drag
+on the chart. The D3 renderer LOWERS the plane when the mode flips back (a stage
+advancing past its last plane-pick edit) — it used to raise and never lower, and
+stage-1 handles sat unreachable under it. A wheel has no press, so `edit.axis.zoom`
+is a plain `pick: 'plane'` edit on `gesture: 'wheel'`: the plane driver runs it, the
+plane is never raised, the renderers report the wheel (and prevent the page scroll)
+only when an active edit listens (`RenderContext.hasWheel`), and ticks coalesce into
+one undo entry by a short timer. Zoom WRITES THE DOMAIN through `commitDomainEdit` —
+a domain describes the data — and `el.setDomain(field, domain | null)` is its
+external twin (`null` restores the declared domain, kept as `seedSchema`). Don't add
+a zoom that bypasses the domain commit, and don't make it a view transform.
 
 **Two edits on one mark must read different COMPONENTS of the gesture.** A drag fans to every direct edit on the touched feature, which is intended (that's how a brow's height and tilt, or an eye's `rx` and `ry`, come off one gesture). It only works if they read orthogonal things: `slide({ axis: 'x' })` beside `slide({ axis: 'y' })`, or a positional `move({ channels: ['y'] })` beside an x-slide. Two edits reading the same component fight, and the loser is whichever applies first. Note the corollary for `rotate`: its sensitivity is the pointer's DISTANCE TO THE PIVOT, so on a glyph part — where you grab the thing at its own centre — a few pixels swing the pointer most of a half-turn and pin the value to a domain end. `rotate` is for a needle or a dial you grab at arm's length; a tilt you grab on top of is a `slide`, even though the channel is an `angle`.
 
@@ -609,6 +689,29 @@ exactly the edits that change how many categories exist.
 
 **Constraints are pure data invariants, and `spec.constraints` is the ONLY place they are declared.** A constraint (`constraints.custom`, `defineConstraint` in `src/constraints/define.js`) receives `{ data, oldData, activeIndex, active, field, value, domain }` — never pixels, never a scale used as geometry. It may *gate* a proposal (`false`) or *repair* it (return the corrected rows). It holds for every edit from every mark over those rows.
 
+A constraint sees the SCHEMA and the LOCK, and a one-column rule repairs every cell
+the proposal changed. `applyConstraint` hands `schema` (the table's field map) and
+`locked` (the lock predicate, or null) beside `data`/`oldData`; `changedCells(ctx)`
+lists every `(row, field)` of `ctx.fields` that differs from the committed rows, and
+`snap`/`clamp` iterate it. Both exist because the gallery study caught `snap` turning
+a Date into epoch milliseconds (no measure in sight), `clamp` clamping only the
+dragged row while `ordering` had pushed its neighbour past the bound, and
+`monotonic` pushing a locked row that the lock then put back, leaving the run
+broken. `monotonic` and `spacing` now cap the DRAGGED value so the chain fits the
+wall (a locked neighbour, the domain) instead of pushing past it. A rule that reads
+only `ctx.value` is the old, active-row-only shape; a new built-in reads the cells.
+
+**Coupled columns are DECLARED: `follow` and `symmetric`.** A mean-with-interval
+glyph used to need a custom edit that moved three columns at once
+(`widgets.interval`'s `moveInterval`), which meant the widget was the only chart that
+could do it. `constraints.follow({ field: ['lo','hi'], lead: 'mean' })` moves the
+listed columns by the delta the lead moved (diffed against the committed row, the way
+`ordering` learns which handle was grabbed — no rule is ever told), and
+`constraints.symmetric({ field: ['lo','hi'], about: 'mean' })` mirrors one end's drag
+about the centre. With `ordering` they couple ANY glyph built from ordinary `move()`
+handles, in the order `follow, symmetric, ordering, clamp`. Share `movedFields`
+(`constraints/shared.js`) rather than diffing by hand.
+
 A mark used to accept `constraints` as sugar, which the engine promoted to the dataset. That option is GONE, and its removal is the point: the sugar was a lie the spec could not see through. Written inside a mark it *reads* as scoped to that mark and never was, so `dotStack({ constraints: [count({ max: 20 })] })` beside a second mark silently capped the whole dataset, and a rule on one part of a glyph gated a drag on every other part with nothing in the spec saying so. A rule about the DATA is not a property of any one view of it. The correction lives in `MISTAKEN_OPTIONS` (`plot/mark.js`), so writing one on a mark now says exactly that. Chart elements never accepted one either — an element draws a SCALE, not rows.
 
 Don't scope a constraint to a feature, and don't re-add the promotion path. If a constraint's *guide* only makes sense for certain mark shapes (e.g. `maintainSum`'s cap-tick needs a band axis), guard the guide function, not the constraint itself.
@@ -618,9 +721,17 @@ Don't scope a constraint to a feature, and don't re-add the promotion path. If a
 axis element is `axisRadial`), and COUNT (`count`, whose unit is the MARK's own
 cell or token). `axisOf` must stay a static channel→axis map: making it mark-aware
 to accommodate one mark's orientation is the special case the engine avoids
-everywhere else. `radius` is deliberately NOT minted — nothing needs a radial scale
-yet (`innerRadius`/`outerRadius` are px options), and a keyword with no consumer is
-one the grammar cannot justify.
+everywhere else. `radius` IS minted — the polar family's second axis, a RADIAL
+POSITION (where a slice's rim sits: a rose plot encodes a field there) — and its
+RANGE is pixels the MARK owns. So the mark declares `Mark.radiusRange = { inner,
+outer }` (its `innerRadius`/`outerRadius` options), `resolveScales` accumulates the
+hint per bucket exactly as it does `countAxis`, and `channelRange` resolves it
+through ONE rule, `radiusExtent` (`core/encoding.js`), which `arc.build` also fits
+its ring with — so the scale's range and the drawn ring cannot disagree.
+`visualForChannel`/`pointerForChannel` read it as distance from the centre, which
+is what makes `radius: { field, edit: move() }` work through the universal edits
+with no edit code of its own. Not legendable (it is keyed by `axisRadial({
+channel: 'radius' })`, rings), and `axisOf` stayed a static map.
 
 **BUCKETING and ORIENTATION are separate questions, which is what keeps `axisOf`
 static.** A `count` channel gets its own bucket — "how many cells" and "how far up
@@ -1012,3 +1123,23 @@ aimed at the row before it.
   ISN'T, and the page still renders, so no gate but `verify:browser` sees it.
 - A `fn:`-style warn key that collides with another module's namespace (`resolve.js`
   and `mark.js` shared `fn:<channel>` and silenced each other).
+- Reference rows as `lock`ed answer rows or `guides.custom` nodes. A context table
+  (`context: true`) says what they are and keeps them out of `getData()`.
+- A constraint that repairs only the active row's one cell (`snap`/`clamp` did), or
+  a push that carries a neighbour past a wall the lock or the domain will enforce.
+- A custom edit that moves several columns of a glyph at once. `follow` + `symmetric`
+  + `ordering` declare it.
+- A driver that re-tests `when`, or a plane dispatch that hands a gesture to a driver
+  whose edits all declined it. Arbitration is the engine's, once, per stroke.
+- An element edit under a named pick that raises the plane (`pick: 'axisDrag'` did).
+- A zoom that is a view transform or bypasses `commitDomainEdit`; a `setDomain` that
+  does not go through it.
+- A tooltip that binds hover to inert nodes or sits on a mark's own nodes; a pointer
+  report that dispatches. `ui.pointer`/`ui.hit` + a guide.
+- A chart title drawn as a text mark in the margin, or a title that changes the
+  chart's size. `core/titles.js` reserves a band.
+- `strokeDasharray` as an author-facing option, or a second dash vocabulary.
+- A sweep that runs every edit on a band each tick. The driver locks an EDGE.
+- `radius` as a px option on a channel, or a radius range the resolver and the mark
+  compute separately. `Mark.radiusRange` + `radiusExtent`.
+- A shape mark that keeps `angle` on its node, or emits `d` without `points`.

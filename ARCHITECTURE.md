@@ -99,6 +99,10 @@ ElicitJS is layered for extensibility:
 
    **Locked rows (`lock`).** Some rows are *given* rather than elicited — the record so far, the points already measured, last quarter's actuals. `lock: "seed"` fixes the rows the chart was seeded with while leaving every row an edit *adds* free; `lock: (d) => d.year <= 1990` locks rows by what they are. A lock is a property of the data, so it sits on the spec beside `data` and `schema`, and it has two halves, both automatic: a **dataset invariant** run last on every commit (so it outranks every other repair — a gesture that spans locked and free rows keeps its changes to the free ones and snaps the locked ones back; deleting a locked row is rejected), and a **pointer** policy (a locked row's marks aren't grabbable, show no editable cursor, and are skipped by proximity picking — so `nearest` / `sweep` / `draw` never target one). That last part is what makes a you-draw-it chart work: because the seeded line is invisible to picking, a drag beside it doesn't grab a frozen line, it starts drawing. `setData` re-seeds the chart, so it re-takes a `"seed"` lock. See the Locked rows docs page (`/editing/lock` in elicitjs-docs).
 
+   **Context tables.** Reference data that is drawn but never elicited — observed history behind a forecast, a basemap of points — is a table flagged `context: true` in the schema (`schema: { data: {…}, history: { context: true, fields: {…} } }`, any number beside the structure's own). Marks point at it with `table: 'history'`; its values widen the inferred scale domains; every row is locked by construction; and it is left out of `getData()`, `onChange`, `getSchema()` and undo. A one-table chart with a context table still reports a bare array.
+
+   **Domains are editable from outside.** `el.setDomain(field, domain | null)` goes through the same domain commit a handle drag (`edit.axis.scale`) or the wheel (`edit.axis.zoom`) takes — undoable, notified, reflowed — and `null` restores the domain declared at `Elicit()`.
+
 2. **Abstract scene graph (`src/core/scene.js`)** — a flat, layout-calculated collection of abstract nodes (`circle`, `rect`, `line`, `path`, `text`, `image`), independent of the DOM or any renderer.
 
 3. **Marks (`elicit.plot.*`)** — pure data-to-geometry factories on a shared foundation (`src/plot/mark.js`): every mark resolves its channels through `encodeChannel` and the standard style surface (`fill`, `stroke`, `strokeWidth`, `opacity`, …) the same way. Marks compose across scale types and orientations.
@@ -158,6 +162,12 @@ ElicitJS is layered for extensibility:
 10. **Renderer (`elicit.D3Renderer`)** — draws the scene graph to SVG via D3, binding drag/click. Swappable for Canvas/WebGL/etc.
 
 ---
+
+**Plane arbitration and the direct fallback.** With the plane raised, every press is a plane gesture. The engine asks each plane edit's `when` before its driver sees the gesture (arbitrated once per stroke), and when no plane edit accepts it, hit-tests the pointer and re-routes the event as a direct one — so a `move({ when: when.shift })` beside a Shift-gated sweep, or a vertex drag beside a geo draw, is reachable. Element edits (`edit.axis.scale`) are direct edits claimed by their driver by capability, so an editable axis never raises the plane; the renderer lowers the plane when the mode flips back.
+
+**Pointer state.** A tooltip (`guides.tip`, or a mark's `tip:` shorthand) and a crosshair (`guides.crosshair`) are guides that read `ui.pointer` / `ui.hit`, which the engine records from the renderers' root `pointermove` (one report per frame, only when a guide asks). Nothing is dispatched and no node becomes pointer-active, so a tip can never block a gesture.
+
+**Chart titles.** `spec.title` / `subtitle` / `caption` reserve bands of layout space outside the legend bands (`core/titles.js`), the way legends do, so the chart keeps its declared size.
 
 ## Chart API surface
 
