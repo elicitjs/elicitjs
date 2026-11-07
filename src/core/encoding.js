@@ -151,6 +151,10 @@ export function schemeRange(scheme, type, count) {
     // the midpoint colour a diverging scheme's pivot takes (the neutral the two
     // hues meet at). A discrete channel wants one swatch per category.
     if (type === 'diverging' || type === 'sequential') return d3.quantize(interp, 9);
+    // A continuous scale TYPE on a colour channel (`scale: { type: 'log', scheme }`)
+    // is a ramp too: hand createScale the dense sample, which it spreads over the
+    // domain in the scale's own space.
+    if (['linear', 'log', 'pow', 'sqrt', 'symlog', 'time', 'utc'].includes(String(type))) return d3.quantize(interp, 9);
     const n = Math.max(2, count || 2);
     const discrete = DISCRETE_RAMP_SCHEMES[key];
     if (discrete) {

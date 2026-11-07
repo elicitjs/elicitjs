@@ -75,3 +75,15 @@ describe('gradient', () => {
         expect(el.querySelector('path.mark-line').getAttribute('fill')).toMatch(/^url\(#/);
     });
 });
+
+describe('a long caption', () => {
+    it('wraps to the chart width and reserves a band per line', async () => {
+        const short = chart({ caption: 'Short.' });
+        const long = chart({ caption: 'A much longer caption that will not fit on one line of a three hundred pixel wide chart, so it wraps.' });
+        await tick();
+        const node = [...long.querySelectorAll('text')].find((t) => /much longer/.test(t.textContent));
+        expect(node.querySelectorAll('tspan').length).toBeGreaterThan(1);
+        const top = (el) => +el.querySelector('rect.plane').getAttribute('height');
+        expect(top(long)).toBeLessThan(top(short));
+    });
+});

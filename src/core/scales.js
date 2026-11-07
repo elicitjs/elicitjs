@@ -259,9 +259,11 @@ export function createScale(spec, range) {
     if (typeof scale.domain === 'function' && typeof scale.interpolate === 'function'
         && Array.isArray(range) && range.length > spec.domain.length && typeof range[0] === 'string'
         && spec.domain.length === 2) {
-        const [lo, hi] = spec.domain.map(Number);
+        // Evenly in the scale's OWN space (log, sqrt, symlog, time), so a log
+        // colour scale spreads its stops by decade rather than bunching them.
+        const unit = scale.copy().range([0, 1]);
         const n = range.length;
-        scale.domain(d3.range(n).map((/** @type {number} */ i) => lo + ((hi - lo) * i) / (n - 1)));
+        scale.domain(d3.range(n).map((/** @type {number} */ i) => unit.invert(i / (n - 1))));
         scale.interpolate(d3.interpolateRgb);
     }
 

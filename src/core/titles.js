@@ -7,7 +7,9 @@
 // mirrors that at the bottom edge.
 //
 // Drawn as background text nodes (pointer-transparent) in the theme's title
-// tokens; left-aligned with the plot, the Observable Plot convention.
+// tokens; left-aligned with the plot, the Observable Plot convention, and wrapped
+// to the chart's width.
+import { wrapText } from './measure.js';
 
 /**
  * The resolved tokens of one title part, with the axis label ink as the fallback
@@ -35,16 +37,30 @@ function tokens(theme, part) {
  * layout is untouched.
  * @param {{ title?: string, subtitle?: string, caption?: string }} spec
  * @param {any} theme
+ * @param {number} [maxWidth] the width the text may use; 0 for one line
  * @returns {{ top: number, bottom: number }}
  */
-export function reserveTitles(spec, theme) {
+export function reserveTitles(spec, theme, maxWidth = 0) {
+    /** @param {'title' | 'subtitle' | 'caption'} part */
+    const lineCount = (part) => linesOf(spec[part], tokens(theme, part), maxWidth).length;
     let top = 0;
-    if (spec.title) top += tokens(theme, 'title').fontSize * 1.3;
-    if (spec.subtitle) top += tokens(theme, 'subtitle').fontSize * 1.4;
+    if (spec.title) top += tokens(theme, 'title').fontSize * 1.3 * lineCount('title');
+    if (spec.subtitle) top += tokens(theme, 'subtitle').fontSize * 1.4 * lineCount('subtitle');
     if (top) top += 6; // breathing room above the plot (or its top legend)
     let bottom = 0;
-    if (spec.caption) bottom = tokens(theme, 'caption').fontSize * 1.4 + 6;
+    if (spec.caption) bottom = tokens(theme, 'caption').fontSize * 1.4 * lineCount('caption') + 6;
     return { top, bottom };
+}
+
+/**
+ * A title part's lines, wrapped to the width it may use (the chart's width
+ * from the plot's left edge); one line when no width is known.
+ * @param {any} text @param {{ fontSize: number, fontWeight: any }} t @param {number} maxWidth
+ * @returns {string[]}
+ */
+function linesOf(text, t, maxWidth) {
+    if (text == null || text === '') return [];
+    return wrapText(String(text), { maxWidth: maxWidth > 0 ? maxWidth : 0, fontSize: t.fontSize, fontWeight: t.fontWeight });
 }
 
 /**
@@ -53,31 +69,32 @@ export function reserveTitles(spec, theme) {
  * caption sits at its bottom edge.
  * @param {{ title?: string, subtitle?: string, caption?: string }} spec
  * @param {any} theme
- * @param {{ innerWidth: number, outerHeight: number, effectiveMargins: { top: number, bottom: number, left: number, right: number }, authorMargins: { top: number, bottom: number } }} layout
+ * @param {{ innerWidth: number, outerHeight: number, effectiveMargins: { top: number, bottom: number, left: number, right: number }, authorMargins: { top: number, bottom: number }, maxWidth?: number }} layout
  * @returns {import('../types').FeatureNode[]}
  */
-export function titleNodes(spec, theme, { innerWidth, outerHeight, effectiveMargins, authorMargins }) {
+export function titleNodes(spec, theme, { innerWidth, outerHeight, effectiveMargins, authorMargins, maxWidth = 0 }) {
     /** @type {import('../types').FeatureNode[]} */
     const nodes = [];
-    const chrome = { background: true, pointerEvents: 'none', textAnchor: 'start' };
-    void authorMargins;
+    const chrome = { background: true, pointerEvents: 'none', textAnchor: 'start', lineAnchor: 'top' };
+    void authorMargins; void innerWidth;
     let y = 2 - effectiveMargins.top; // the chart's top edge, in scene y
-    if (spec.title) {
-        const t = tokens(theme, 'title');
-        y += t.fontSize;
-        nodes.push({ type: 'text', x: 0, y, text: String(spec.title), fill: t.fill, fontSize: t.fontSize, fontWeight: t.fontWeight, ...chrome });
-        y += t.fontSize * 0.3;
-    }
-    if (spec.subtitle) {
-        const t = tokens(theme, 'subtitle');
-        y += t.fontSize;
-        nodes.push({ type: 'text', x: 0, y, text: String(spec.subtitle), fill: t.fill, fontSize: t.fontSize, fontWeight: t.fontWeight, ...chrome });
-    }
+    /** @param {'title' | 'subtitle' | 'caption'} part @param {number} top @param {number} step */
+    const block = (part, top, step) => {
+        const t = tokens(theme, part);
+        const lines = linesOf(spec[part], t, maxWidth);
+        nodes.push({
+            type: 'text', x: 0, y: top + t.fontSize * 0.8, text: String(spec[part]),
+            ...(lines.length > 1 ? { lines, lineHeight: Math.round(t.fontSize * step) } : {}),
+            fill: t.fill, fontSize: t.fontSize, fontWeight: t.fontWeight, ...chrome,
+        });
+        return lines.length * t.fontSize * step;
+    };
+    if (spec.title) y += block('title', y, 1.3);
+    if (spec.subtitle) y += block('subtitle', y, 1.4);
     if (spec.caption) {
         const t = tokens(theme, 'caption');
-        const cy = outerHeight - effectiveMargins.top - t.fontSize * 0.4;
-        nodes.push({ type: 'text', x: 0, y: cy, text: String(spec.caption), fill: t.fill, fontSize: t.fontSize, fontWeight: t.fontWeight, ...chrome });
+        const h = linesOf(spec.caption, t, maxWidth).length * t.fontSize * 1.4;
+        block('caption', outerHeight - effectiveMargins.top - h - 2, 1.4);
     }
-    void innerWidth;
     return nodes;
 }

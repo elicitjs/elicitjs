@@ -172,7 +172,7 @@ function buildLine(options, defaultConnect = 'domain') {
                 if (cx == null || cy == null) return; // a missing value has no handle
                 const paint = resolveStyle(scales, channels, d, lineDefaults, i, currentData);
                 const style = {
-                    fill: handleStyle.visible ? (handleColor || inkOf(paint.stroke) || handleStyle.fill) : handleStyle.fill,
+                    fill: handleStyle.visible ? (handleColor || (channels.fill ? inkOf(paint.fill) : null) || inkOf(paint.stroke) || handleStyle.fill) : handleStyle.fill,
                     stroke: handleStyle.stroke,
                     strokeWidth: handleStyle.strokeWidth,
                 };

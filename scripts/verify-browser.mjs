@@ -4362,7 +4362,7 @@ async function main() {
 
         // The wheel zooms the DOMAIN about the pointer, without scrolling the page.
         console.log('\nWheel zoom (/editing/zoom)');
-        await open('/editing/zoom', '#wheel svg path.mark-line');
+        await open('/editing/zoom', '#wheel svg circle.mark');
         const zEl = '#wheel .chart > div';
         const zBefore = await page.$eval(zEl, (e) => e.getSchema());
         const zc = await boxCentre(page.locator('#wheel svg rect.plane').first());
@@ -4371,7 +4371,7 @@ async function main() {
         await page.mouse.wheel(0, -240);
         await page.waitForTimeout(250);
         const zAfter = await page.$eval(zEl, (e) => e.getSchema());
-        const span = (s) => { const d = s.month ? s.month.domain : Object.values(s)[0].domain; return Number(d[1]) - Number(d[0]); };
+        const span = (s) => { const d = s.x.domain; return Number(d[1]) - Number(d[0]); };
         check('zoom: a wheel-up narrows the domain', span(zAfter) < span(zBefore), `${span(zBefore)} -> ${span(zAfter)}`);
         check('zoom: the page did not scroll', (await page.evaluate(() => window.scrollY)) === scrollBefore);
 

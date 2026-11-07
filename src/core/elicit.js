@@ -839,7 +839,9 @@ export function Elicit(spec) {
         // an axis draws), then any legend, then the title block / caption at the
         // very edge — so a title never costs the plot its declared size and never
         // collides with an axis or a legend.
-        const titleBands = reserveTitles(spec, theme);
+        // Titles wrap to the chart width from the plot's left edge.
+        const titleWidth = Math.max(0, curW - authorMargins.left - 4);
+        const titleBands = reserveTitles(spec, theme, titleWidth);
         effectiveMargins = { ...authorMargins };
         recomputeInner();
         let legendBands = { top: 0, right: 0, bottom: 0, left: 0 };
@@ -1030,7 +1032,7 @@ export function Elicit(spec) {
         paintOrder(built).forEach((/** @type {any} */ node) => scene.add(node));
         // The chart's title block and caption, as background chrome.
         if (spec.title || spec.subtitle || spec.caption) {
-            titleNodes(spec, theme, { innerWidth, outerHeight: curH, effectiveMargins, authorMargins })
+            titleNodes(spec, theme, { innerWidth, outerHeight: curH, effectiveMargins, authorMargins, maxWidth: Math.max(0, curW - effectiveMargins.left - 4) })
                 .forEach((/** @type {any} */ node) => scene.add(node));
         }
 

@@ -201,3 +201,12 @@ describe('missing values on dot-like marks', () => {
         expect(fills.every((f) => f && f !== 'none')).toBe(true);
     });
 });
+
+describe('a named scheme on a log colour scale', () => {
+    it('keeps the interior colours, spread by decade', () => {
+        const range = schemeRange('viridis', 'log', 2);
+        expect(range.length).toBe(9);
+        const s = createScale({ channel: 'fill', type: 'log', domain: [1, 1e4] }, range);
+        expect(d3.color(s(100)).formatHex()).toBe(d3.color(d3.interpolateViridis(0.5)).formatHex());
+    });
+});
