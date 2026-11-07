@@ -22,6 +22,7 @@ import { positionOnScale, isDiscrete } from '../core/scales.js';
 import { DEFAULT_PALETTE } from '../core/encoding.js';
 import { encodeChannel, warnUnknownElementOptions, themeOf } from './mark.js';
 import { tickData } from './axis.js';
+import { warn } from '../core/dev.js';
 import {
     arcSpan,
     arcSpine,
@@ -105,6 +106,34 @@ export function axisRadial(options = {}) {
         build: (currentData, scales, width, height) => {
             const scale = scales[channel];
             if (!scale) return [];
+
+            // A RADIUS axis: concentric rings at the scale's ticks, labelled up the
+            // vertical spoke — the key for a rose plot's radial position.
+            if (channel === 'radius') {
+                const thm = themeOf(scales);
+                const labelFill = labelFillOpt ?? thm.axis.labelFill;
+                const stroke = strokeOpt ?? thm.axis.stroke;
+                const fontSize = fontSizeOpt ?? thm.axis.fontSize;
+                if (radiusOpt != null) {
+                    warn('axisRadial:radius:ignored', 'axisRadial({ channel: "radius" }) draws rings at the radius scale\'s own extent; its `radius` option is ignored.');
+                }
+                const bg = { background: true, pointerEvents: 'none' };
+                const { values, format } = tickData(scale, { ticks, tickValues, tickFormat });
+                const cx = encodeChannel(scales, channels, 'x', currentData[0], width / 2, 0, currentData);
+                const cy = encodeChannel(scales, channels, 'y', currentData[0], height / 2, 0, currentData);
+                /** @type {import('../types').FeatureNode[]} */
+                const out = [];
+                for (const v of values) {
+                    const r = Number(typeof scale.encode === 'function' ? scale.encode(v) : scale(v));
+                    if (!Number.isFinite(r) || r <= 0) continue;
+                    out.push({ type: 'circle', cx, cy, r, fill: 'none', stroke, strokeWidth: 1, opacity: 0.6, ...bg });
+                    out.push({ type: 'text', x: cx + 3, y: cy - r - 2, text: format(v), textAnchor: 'start', fill: labelFill, fontSize, ...bg });
+                }
+                if (title) {
+                    out.push({ type: 'text', x: cx, y: cy - height / 2 + fontSize, text: title, textAnchor: 'middle', fill: '#0f172a', fontSize: fontSize + 1, ...bg });
+                }
+                return out;
+            }
 
             // Resolve chrome from the theme (option overrides > theme.axis tokens).
             const thm = themeOf(scales);

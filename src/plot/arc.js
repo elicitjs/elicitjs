@@ -110,6 +110,11 @@ export function arc(options = {}) {
         // the key misreported the encoding and its reserved layout space moved the
         // pie out from under its own boundary handles.
         rawChannels: ['theta'],
+        // The px extent of a `radius` channel's scale: this ring's inner and outer
+        // radius, resolved by the one rule build() also fits the ring with
+        // (core/encoding.js radiusExtent), so a slice's rim lands where the scale
+        // says its value is.
+        radiusRange: { inner: innerRadius, outer: outerOpt != null ? outerOpt : null },
         edits: markEdits,
         // When `x`/`y` carry a categorical field, each category is a SLOT that holds
         // one donut, so a discrete position axis wants a band (an interval to fit the
@@ -178,9 +183,17 @@ export function arc(options = {}) {
                 const cx = encodeChannel(scales, channels, 'x', rep, width / 2, repIndex, currentData);
                 const cy = encodeChannel(scales, channels, 'y', rep, height / 2, repIndex, currentData);
                 // Outer radius: explicit px > per-donut `size` field > fit default.
+                // With a `radius` channel each SLICE takes its own outer radius from
+                // the radius scale (a rose); `outer` is then the ring's extent.
                 const outer = outerOpt != null
                     ? outerOpt
-                    : (channels.size ? encodeChannel(scales, channels, 'size', rep, fitR, repIndex, currentData) : fitR);
+                    : (channels.size && !channels.radius ? encodeChannel(scales, channels, 'size', rep, fitR, repIndex, currentData) : fitR);
+                if (channels.radius && channels.size) {
+                    warn('arc:radius:size', 'arc(): both `size` and `radius` are bound; `radius` (per slice) wins and `size` is ignored.');
+                }
+                if (channels.radius && (bucketList.length > 1 || bandX || bandY)) {
+                    warn('arc:radius:slots', 'arc(): a `radius` channel on a gridded arc (x/y bound) uses the single-ring extent for every slot.');
+                }
                 // innerRadius in (0,1] is a RATIO of outer (so a data-driven radius
                 // keeps its ring proportional); >1 is absolute px, clamped inside.
                 const innerR = innerRadius > 0 && innerRadius <= 1
@@ -241,7 +254,11 @@ export function arc(options = {}) {
 
                     const style = resolveStyle(scales, channels, d,
                         markDefaults(scales, 'arc', { fill: '#4f46e5', stroke: '#fff', strokeWidth: 1 }), gi, currentData);
-                    const pathD = arcPath(cx, cy, outer, a0, a1, { innerRadius: innerR });
+                    // The slice's own rim: through the radius scale when bound.
+                    const sliceOuter = channels.radius
+                        ? Math.max(innerR, Number(encodeChannel(scales, channels, 'radius', d, outer, gi, currentData)))
+                        : outer;
+                    const pathD = arcPath(cx, cy, sliceOuter, a0, a1, { innerRadius: innerR });
                     if (!pathD) return;
 
                     nodes.push({
@@ -271,7 +288,7 @@ export function arc(options = {}) {
                         // clickable and only its rim handles could be grabbed. SVG
                         // hit-tests the filled shape in the DOM and never needed this;
                         // edit/pick.js reads `sector` so both renderers agree.
-                        sector: { cx, cy, r0: innerR, r1: outer, a0, a1 },
+                        sector: { cx, cy, r0: innerR, r1: sliceOuter, a0, a1 },
                     });
                 });
 

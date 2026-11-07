@@ -190,9 +190,11 @@ export const DEFAULT_DASHES = ['', '4 2', '1 2', '6 3 1 3', '8 4'];
 // axis. One channel used to mean both, so `axisRadial` drew a polar axis for a
 // scale that six marks were using as a rotation.
 //
-// `radius` is deliberately absent: nothing needs a radial SCALE yet
-// (`innerRadius`/`outerRadius` are px options), and a keyword with no consumer is
-// one the grammar cannot justify.
+// `radius` is the polar family's second axis — a RADIAL POSITION, the distance
+// from the centre a slice's rim sits at (a rose / radial plot encodes a field
+// there). Its RANGE is pixels the MARK owns (`innerRadius`/`outerRadius`), so the
+// mark declares them (`Mark.radiusRange`) and the resolver accumulates the hint
+// per bucket exactly as it does `countAxis` — the map stays static.
 // `count` is the third family: an axis whose unit is the MARK's own cell or token.
 // A waffle's cell is worth `unit` of the field; a dotStack's token is one row. It
 // gets its own bucket so it never unions with a y domain — a countable block and a
@@ -203,20 +205,21 @@ export const DEFAULT_DASHES = ['', '4 2', '1 2', '6 3 1 3', '8 4'];
 // are separate questions, which is why this map can stay static: the mark declares
 // `Mark.countAxis`, the resolver accumulates it per bucket exactly as it does
 // `discreteScale`, and `channelRange` reads it. `axisOf` never becomes mark-aware.
-/** @type {Record<string, 'x' | 'y' | 'theta' | 'count'>} */
+/** @type {Record<string, 'x' | 'y' | 'theta' | 'radius' | 'count'>} */
 const AXIS_OF = {
     x: 'x', x1: 'x', x2: 'x',
     y: 'y', y1: 'y', y2: 'y',
     theta: 'theta', theta2: 'theta',
+    radius: 'radius',
     count: 'count',
 };
 
 /**
- * The positional axis a channel shares its scale with ('x', 'y', 'theta' or
- * 'count'), or undefined for a non-positional channel (fill, size, opacity,
- * angle, ...).
+ * The positional axis a channel shares its scale with ('x', 'y', 'theta',
+ * 'radius' or 'count'), or undefined for a non-positional channel (fill, size,
+ * opacity, angle, ...).
  * @param {string} channelName
- * @returns {'x' | 'y' | 'theta' | 'count' | undefined}
+ * @returns {'x' | 'y' | 'theta' | 'radius' | 'count' | undefined}
  */
 export function axisOf(channelName) {
     return AXIS_OF[channelName];
@@ -470,12 +473,30 @@ function colorRange(type, theme, opts = {}) {
 }
 
 /**
+ * The pixel extent of a polar mark's ring: `outer` as declared (px), else fitted
+ * to the plot (0.4 of its smaller side, the single-donut default); `inner` in
+ * (0, 1] is a RATIO of outer, above 1 absolute px (clamped inside). ONE rule,
+ * read by `channelRange` for the `radius` scale and by `arc` for the ring it
+ * draws, so the scale's range and the drawn ring cannot disagree.
+ * @param {{ inner?: number | null, outer?: number | null } | null | undefined} hint
+ * @param {{ width: number, height: number }} dims
+ * @returns {{ inner: number, outer: number }}
+ */
+export function radiusExtent(hint, dims) {
+    const outer = hint && hint.outer != null ? hint.outer : 0.4 * Math.min(dims.width, dims.height);
+    const innerOpt = hint && hint.inner != null ? hint.inner : 0;
+    const inner = innerOpt > 0 && innerOpt <= 1 ? innerOpt * outer : Math.min(innerOpt, outer * 0.95);
+    return { inner, outer };
+}
+
+/**
  * The default visual output range for a channel: pixels for x/y, a radius
  * interval for size, a palette/ramp for colour, [0,1] for opacity.
  * @param {string} channelName
  * @param {import('../types').ScaleType} type
  * @param {{ width: number, height: number }} dims
  * @param {any} [theme] the resolved theme (supplies default palette/ramp/diverging)
+ * @param {{ countAxis?: 'x' | 'y', radiusRange?: { inner?: number | null, outer?: number | null } | null, measure?: any, index?: number, count?: number }} [opts]
  * @param {{ measure?: import('../types').MeasureType, index?: number, count?: number,
  *   countAxis?: 'x' | 'y' }} [opts]
  *   what the data IS, which encoding this is among those sharing the channel, and
@@ -507,6 +528,10 @@ export function channelRange(channelName, type, dims, theme, opts = {}) {
         // The mark declares it (`Mark.countAxis`), the resolver accumulates it, and
         // it arrives here as `opts.countAxis`. Same shape as `discretePref`.
         case 'count': return opts.countAxis === 'x' ? [0, dims.width] : [dims.height, 0];
+        // A RADIAL position: pixels from the centre, between the mark's inner and
+        // outer radius (declared by the mark — `Mark.radiusRange` — and resolved
+        // here by the same rule the mark fits its ring with).
+        case 'radius': { const r = radiusExtent(opts.radiusRange, dims); return [r.inner, r.outer]; }
     }
     // Family-based ranges: any opacity/colour channel gets the same output range
     // as its base channel, so fillOpacity/strokeOpacity and fill/stroke behave
@@ -589,7 +614,9 @@ export function visualForChannel(channelName, pointer, center) {
     const axis = axisOf(channelName);
     if (axis === 'x') return pointer.x;
     if (axis === 'y') return pointer.y;
-    if (channelName === 'size') { // radius = distance from centre -> a resize gesture
+    // A radius — `size` (a mark's own extent) or `radius` (a polar position) — is
+    // the pointer's distance from the centre.
+    if (channelName === 'size' || axis === 'radius') {
         return center ? Math.hypot(pointer.x - center.cx, pointer.y - center.cy) : undefined;
     }
     // Both angular channels invert the same way — a bearing about a centre.
@@ -621,7 +648,7 @@ export function pointerForChannel(channelName, visual, center = null) {
     if (axis === 'x') return { x: visual, y: center ? center.cy : 0 };
     if (axis === 'y') return { x: center ? center.cx : 0, y: visual };
     if (!center) return undefined; // radial channels need a pivot
-    if (channelName === 'size') { // radius along +x from the centre
+    if (channelName === 'size' || axis === 'radius') { // radius along +x from the centre
         return { x: center.cx + visual, y: center.cy };
     }
     // Both angular channels: a point on a unit-ish circle at `visual` degrees.

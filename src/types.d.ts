@@ -935,6 +935,8 @@ export interface Channels extends StyleChannels {
   // normalizes the magnitudes itself, so a pie neither implies a radial axis nor
   // mints a fan key for shares that are not bearings.
   theta?: ChannelSpec;
+  /** The polar RADIAL position: how far from the centre a slice's rim sits (a rose plot). Its range is the mark's inner/outer radius. */
+  radius?: ChannelSpec;
   // Span partner for `theta`, on the same axis (as x2 is to x).
   theta2?: ChannelSpec;
   // A COUNT — a quantity measured in the MARK's own units: a waffle's cell (worth
@@ -1704,6 +1706,10 @@ export interface Mark {
    *  before any build runs, and a declaration that disagreed with what the mark
    *  then drew put every cell off the side of the frame. */
   countAxis?: 'x' | 'y';
+  /** The px extent of a `radius` channel's scale — this polar mark's inner and
+   *  outer radius (null outer = fit to the plot). Accumulated per bucket like
+   *  `countAxis`, resolved by `radiusExtent` (core/encoding.js). */
+  radiusRange?: { inner?: number | null; outer?: number | null };
   /** Pixels per token, for a mark whose count is DERIVED rather than encoded
    *  (`dotStack`: one row is one token, so there is no column). The resolver
    *  synthesises a linear count scale from it, which is exact because the pitch is

@@ -828,7 +828,7 @@ const MISTAKEN_OPTIONS = {
 function positionalCorrections() {
     /** @type {Record<string, string>} */
     const out = {};
-    for (const ch of ['x', 'y', 'x1', 'x2', 'y1', 'y2', 'lon', 'lat']) {
+    for (const ch of ['x', 'y', 'x1', 'x2', 'y1', 'y2', 'theta', 'radius', 'lon', 'lat']) {
         out[ch] = `positional channels are not top-level shorthands (only style names like ` +
             `fill/stroke/size are). For a constant in the field's own units, write ` +
             `channels: { ${ch}: { datum: … } } — it goes THROUGH the scale, so it lands where ` +

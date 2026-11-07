@@ -91,7 +91,7 @@ export function resolveScales(features, tables, spec, dims) {
   // find its declaration once two tables share an axis), any explicit data type or
   // scale option, the mark's preferred discrete scale, and the flat list of values
   // across all marks (for inference).
-  /** @type {Record<string, { fields: string[], fieldRefs: { table: string, field: string }[], schemas: any[], undeclared: string[], measure?: any, scaleOpt?: any, discretePref?: any, countAxis?: any, values: any[] }>} */
+  /** @type {Record<string, { fields: string[], fieldRefs: { table: string, field: string }[], schemas: any[], undeclared: string[], measure?: any, scaleOpt?: any, discretePref?: any, countAxis?: any, radiusRange?: any, values: any[] }>} */
   const acc = {};
 
   /** @param {string} ch */
@@ -208,6 +208,9 @@ export function resolveScales(features, tables, spec, dims) {
       // `discretePref`: a per-mark hint accumulated onto the bucket, read when the
       // scale is built. `axisOf` stays a static map because of this.
       if (a.countAxis == null && feature.countAxis) a.countAxis = feature.countAxis;
+      // The px extent of a RADIUS axis: declared by the polar mark (its inner /
+      // outer radius), accumulated here the same way, read by channelRange.
+      if (a.radiusRange == null && feature.radiusRange) a.radiusRange = feature.radiusRange;
 
       if (chSpec.field != null) {
         if (!a.fields.includes(chSpec.field)) a.fields.push(chSpec.field);
@@ -352,6 +355,7 @@ export function resolveScales(features, tables, spec, dims) {
         count: domain.length,
         // Which way a count axis runs — declared by the mark, accumulated above.
         countAxis: a.countAxis,
+        radiusRange: a.radiusRange,
       });
     if (opt.reverse && Array.isArray(range)) range = [...range].reverse();
 
