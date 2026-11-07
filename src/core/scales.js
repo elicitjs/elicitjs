@@ -133,32 +133,18 @@ export function adoptScale(scale, { range, positional, domain, declared } = {}) 
     // empty), leaving an author's explicit domain alone.
     if (domain && typeof scale.domain === 'function') {
         const own = scale.domain();
-        if (declared) {
-            if (own.length && !sameDomain(own, domain)) {
-                warn(
-                    'scale:domain:overridden',
-                    `an adopted scale instance declares domain [${own.join(', ')}], but the ` +
-                    `schema declares [${domain.join(', ')}]; the schema's wins. The schema owns ` +
-                    `the domain — build the instance without one, or declare the same.`
-                );
-            }
-            scale.domain(domain);
-        } else if (!own.length) {
-            scale.domain(domain);
-        }
+        // An instance that was never given a domain holds d3's factory default —
+        // empty for band/point/ordinal, [0, 1] for every continuous scale — and
+        // takes the schema's. One the author SET (a diverging [-6, 0, 6] with its
+        // pivot) is deliberate and kept; a declared domain is applied on top only
+        // when the instance was left at its default, which is what "the schema owns
+        // the domain" meant and what [0, 1] masquerading as 'set' broke.
+        const untouched = own.length === 0
+            || (own.length === 2 && Number(own[0]) === 0 && Number(own[1]) === 1);
+        if (untouched && (declared || own.length === 0)) scale.domain(domain);
     }
     if (range && positional && typeof scale.range === 'function') scale.range(range);
     return stamp(scale);
-}
-
-/** @param {any[]} a @param {any[]} b @returns {boolean} */
-function sameDomain(a, b) {
-    if (a.length !== b.length) return false;
-    return a.every((v, i) => {
-        const w = b[i];
-        if (v instanceof Date || w instanceof Date) return +v === +w;
-        return v === w;
-    });
 }
 
 /**

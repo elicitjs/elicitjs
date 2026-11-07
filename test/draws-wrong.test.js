@@ -41,9 +41,11 @@ describe('adoptScale', () => {
         const s = adoptScale(d3.scaleLinear(), { domain: [0, 100], declared: true });
         expect(s.domain()).toEqual([0, 100]);
     });
-    it('fills only an empty domain when the domain was inferred', () => {
+    it('keeps a domain the author set, even a declared one disagrees with', () => {
         const s = adoptScale(d3.scaleLinear().domain([5, 6]), { domain: [0, 100], declared: false });
         expect(s.domain()).toEqual([5, 6]);
+        const div = adoptScale(d3.scaleLinear().domain([-6, 0, 6]), { domain: [-6, 6], declared: true });
+        expect(div.domain()).toEqual([-6, 0, 6]);
     });
 });
 

@@ -126,10 +126,10 @@ async function main() {
             '/marks/symbol', '/marks/face', '/marks/text', '/marks/line', '/marks/composite',
             '/marks/dotstack', '/marks/waffle', '/marks/needle',
             '/marks/axis-radial', '/marks/arc', '/marks/geo', '/marks/network', '/marks/trend', '/marks/axes',
-            '/marks/legend', '/marks/sticker',
+            '/marks/legend', '/marks/sticker', '/marks/shape',
             '/editing', '/editing/gestures', '/editing/sweep', '/editing/selection', '/editing/lock',
             '/editing/existence', '/editing/probe', '/editing/stages', '/editing/axis',
-            '/editing/external-controls',
+            '/editing/external-controls', '/editing/zoom',
             '/editing/history', '/widgets', '/scales', '/schema', '/constraints',
             '/effects', '/guides', '/theming', '/playground',
         ];
