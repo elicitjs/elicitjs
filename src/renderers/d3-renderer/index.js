@@ -214,6 +214,17 @@ export class D3Renderer {
         layers.effects.raise();
       }
       plane.style("cursor", planeCursor || "pointer");
+    } else {
+      // The mode flips BACK too — a stage advances past the last plane-pick edit —
+      // and the plane must drop under the marks again or every direct edit the
+      // new stage armed sits unreachable beneath it. The per-node pointer-events
+      // are re-stated by every mark join on each render, so only the plane's
+      // position is stale. Same "skip the DOM move when it already holds" rule as
+      // above: `lower()` is an unconditional insertBefore.
+      const planeNode = plane.node();
+      const parent = planeNode && planeNode.parentNode;
+      if (parent && parent.firstElementChild !== planeNode) plane.lower();
+      plane.style("cursor", null);
     }
   }
 

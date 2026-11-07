@@ -720,6 +720,48 @@ function contradictsType(value, type) {
 }
 
 /**
+ * Bring a value a gesture produced (a typed string, a snapped number) into the
+ * form a field's declared MEASURE stores. A quantitative column takes a number
+ * (a numeric string is parsed; an empty one is null), a temporal column a Date
+ * (kept, or parsed from a number or string), and a discrete column takes the
+ * value as given — any value can be a category key. Returns `undefined` for a
+ * value the measure cannot hold (letters in a number column), so the caller can
+ * refuse the write rather than store it.
+ *
+ * This is the one coercion site. It exists because `editText` on a quantitative
+ * field stored the typed STRING, and nothing downstream warned — a bar chart
+ * whose numbers were "250" still drew.
+ * @param {any} value
+ * @param {import('../types').FieldSchema | undefined} field
+ * @returns {any} the stored form, or `undefined` to refuse
+ */
+export function coerceToType(value, field) {
+    const type = field && field.type;
+    if (type === 'quantitative') {
+        if (value == null) return null;
+        if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+        if (typeof value === 'string') {
+            if (value.trim() === '') return null;
+            const n = Number(value);
+            return Number.isFinite(n) ? n : undefined;
+        }
+        if (value instanceof Date) return value.getTime();
+        return undefined;
+    }
+    if (type === 'temporal') {
+        if (value == null) return null;
+        if (value instanceof Date) return Number.isNaN(value.getTime()) ? undefined : value;
+        if (typeof value === 'number' || typeof value === 'string') {
+            if (typeof value === 'string' && value.trim() === '') return null;
+            const d = new Date(value);
+            return Number.isNaN(d.getTime()) ? undefined : d;
+        }
+        return undefined;
+    }
+    return value;
+}
+
+/**
  * Is a value outside a declared domain? A continuous domain is [min, max]; a
  * discrete one is the allowed value list.
  * @param {any} value

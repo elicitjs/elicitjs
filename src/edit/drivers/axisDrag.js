@@ -9,6 +9,11 @@
 // edit each tick so the domain rescales live. The edit itself (edit.axis.scale)
 // turns the locked snapshot + the pointer into the new domain — the driver owns only
 // target selection and the multi-event lifecycle, never the domain math.
+//
+// It is claimed by CAPABILITY (`type: 'axis.scale'`), the way the relative slide
+// is, so the gesture arrives through the DIRECT path: the press landed on a handle
+// node the axis drew, and the plane stays down. Under its old pick name the plane
+// was raised chart-wide for one axis handle, and every mark drag went dead.
 
 import { pickThreshold } from '../pick.js';
 
@@ -57,22 +62,13 @@ function lockFrom(handle) {
 export const axisDragDriver = {
     name: 'axisDrag',
     sessionKeys: ['axis', 'grabEnd', 'anchorPixel', 'anchorValue', 'grabPixel', 'grabValue', 'pxPerUnit', 'cursor'],
+    wants: (e) => e.type === 'axis.scale',
     onEvent({ event, edits, marks, session, runEdit }) {
         const edit = edits[0];
         const threshold = pickThreshold(edit, HANDLE_THRESHOLD);
         let changed = false;
 
-        if (event.type === 'hover') {
-            // Show the resize cursor only when a handle is under the pointer; only
-            // re-render when that state flips (the plane reads session.cursor).
-            const hit = nearestHandle(marks, event.x, event.y, threshold);
-            const cursor = hit ? (hit.axis === 'x' ? 'ew-resize' : 'ns-resize') : null;
-            const cur = session.get();
-            if ((cur && cur.cursor) !== cursor) { session.set({ cursor }); changed = true; }
-        } else if (event.type === 'hoverout') {
-            session.clear();
-            changed = true;
-        } else if (event.type === 'dragstart') {
+        if (event.type === 'dragstart') {
             // Lock onto the grabbed handle for the whole gesture (or nothing, if the
             // press didn't start on a handle — then the axis drag is a no-op).
             const hit = nearestHandle(marks, event.x, event.y, threshold);

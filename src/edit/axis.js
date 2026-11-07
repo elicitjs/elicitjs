@@ -15,6 +15,7 @@
 // per the scale's kind, emits the handle / label / add / remove affordance nodes.
 
 import { makeEdit, numOf } from './shared.js';
+import { warn } from '../core/dev.js';
 
 /**
  * The schema fields whose domain a domain edit writes: an explicit `field` (when the
@@ -48,16 +49,28 @@ function domainsFor(fields, domain) {
  *   grow — the pixels-per-unit is held constant and the chart RESIZES instead, so
  *     the data keeps its scale (a `resize` hint rides along in the result).
  *
- * @param {{ field?: string, mode?: 'rescale' | 'grow' }} [options]
+ * @param {{ field?: string, mode?: 'rescale' | 'grow', pick?: string, [k: string]: any }} [options]
  * @returns {import('../types').Edit}
  */
 export function scale(options = {}) {
     const { field, mode = 'rescale', ...rest } = options;
     const MIN_PX = 6; // guard: never divide by a near-zero anchor→pointer distance
+    // The axisDrag driver claims this edit by CAPABILITY (its type), so it runs its
+    // dragstart lock from the handle node the press landed on and the plane is
+    // never raised — an axis you can rescale no longer silences every mark drag on
+    // the chart. Under any other pick the edit would reach a driver by name too.
+    if (rest.pick != null && rest.pick !== 'direct') {
+        warn(
+            'axis.scale:pick',
+            `edit.axis.scale() is served by the axis-drag driver from its own handles, ` +
+            `so { pick: "${rest.pick}" } is ignored (direct pick).`
+        );
+        delete rest.pick;
+    }
     return makeEdit({
         type: 'axis.scale',
         gesture: 'drag',
-        pick: 'axisDrag',
+        pick: 'direct',
         scope: 'axis',
         target: 'domain',
         // The rest of the caller's options — `name` (so el.control() can drive it),

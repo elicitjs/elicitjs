@@ -373,6 +373,10 @@ export interface EditContext {
   table?: string;
   tables?: Record<string, Datum[]>;
   schemaSpec?: SchemaSpec;
+  // Which rows of the table this edit writes are read-only under `spec.lock`
+  // (null when none are), so an edit choosing a row to extend can skip one the
+  // lock would revert.
+  locked?: ((row: Datum, i: number) => boolean) | null;
 }
 
 export interface ResolvedChannel {
@@ -395,10 +399,22 @@ export interface ConstraintContext {
   fields: string[];
   value?: any;
   domain?: number[];
+  // The declared data range of EVERY field in `fields`, keyed by field — `domain`
+  // is the entry for `field`. A rule over several columns (clamp over a pushed
+  // neighbour) reads the bound of the column it is repairing.
+  domains?: Record<string, number[] | undefined>;
   // Which table these rows are, and the rest of the dataset, for a rule that spans
   // tables. Pure data, like everything else here.
   table?: string;
   tables?: Record<string, Datum[]>;
+  // The table's field schema (type, domain, open, …), so a rule can honour a
+  // column's measure: snap keeps a temporal value a Date, a coercing rule knows
+  // a quantitative column takes a number.
+  schema?: Record<string, FieldSchema>;
+  // Which rows are read-only under `spec.lock` (null when none are). A rule that
+  // pushes neighbours pivots around a locked row rather than writing it only to
+  // have the lock revert it.
+  locked?: ((row: Datum, i: number) => boolean) | null;
 }
 
 // What a constraint's `apply` may return: a value for the active datum's field, a

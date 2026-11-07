@@ -100,3 +100,15 @@ describe('driver exclusivity', () => {
         expect(seenSession).toMatchObject({ a: null, b: 2 });
     });
 });
+
+describe('axis.scale is claimed by capability', () => {
+    it('reaches the axisDrag driver as a DIRECT edit and never raises the plane', async () => {
+        const { driverFor, needsPlaneOnTop } = await import('../src/edit/drivers/index.js');
+        const e = edit.axis.scale();
+        expect(e.pick).toBe('direct');
+        expect(driverFor(e).name).toBe('axisDrag');
+        expect(needsPlaneOnTop([e])).toBe(false);
+        // A foreign pick is refused rather than reaching a second driver by name.
+        expect(edit.axis.scale({ pick: 'nearest' }).pick).toBe('direct');
+    });
+});

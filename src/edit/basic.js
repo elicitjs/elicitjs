@@ -17,6 +17,7 @@
 import { makeEdit, markCenter, resolveMarkNode, invertChannel, recenterSpan, mintDatum, linearInvert, channelDomain, discreteDomain, claimPick } from './shared.js';
 import { axisOf, pointerDegrees, unwrapDegrees } from '../core/encoding.js';
 import { warn } from '../core/dev.js';
+import { coerceToType } from '../core/schema.js';
 
 /**
  * move — position transform. Inversion: cartesian — invert the pointer
@@ -676,7 +677,14 @@ export function remove(options = {}) {
 function writeValue(ctx) {
     const ch = ctx.channels[0];
     if (!ch || !ch.field || ctx.value === undefined || !ctx.datum) return undefined;
-    return { ...ctx.datum, [ch.field]: ctx.value };
+    // The value arrives in whatever form the gesture produced — a typed STRING,
+    // for editText — and the column's declared measure says what it stores. A
+    // quantitative field takes the parsed number; a value the measure cannot
+    // hold (letters in a number column) refuses the write, so no edit can quietly
+    // turn a numeric column into strings that still draw.
+    const value = coerceToType(ctx.value, ctx.schema ? ctx.schema[ch.field] : undefined);
+    if (value === undefined) return undefined;
+    return { ...ctx.datum, [ch.field]: value };
 }
 
 /**

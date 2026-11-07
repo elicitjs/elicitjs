@@ -117,6 +117,58 @@ export function constraintOptions(type, options) {
 }
 
 /**
+ * Are two cell values the same? Dates compare by time, so a re-wrapped Date is
+ * not a change.
+ * @param {any} a @param {any} b @returns {boolean}
+ */
+function sameCell(a, b) {
+  if (a instanceof Date || b instanceof Date) {
+    return a instanceof Date && b instanceof Date && a.getTime() === b.getTime();
+  }
+  return Object.is(a, b);
+}
+
+/**
+ * The cells a proposal CHANGED, over the columns a rule is about: every
+ * `(row, field)` in `ctx.fields` whose value differs from `oldData` (every field
+ * of a row that has no counterpart, i.e. an appended one), always including the
+ * active datum's own `field`.
+ *
+ * This is what lets a one-column rule (snap, clamp) hold for the WHOLE proposal
+ * rather than the one cell the gesture touched: an `ordering` push moves a
+ * neighbouring column, a `monotonic` push moves other rows, a stack edge moves
+ * two rows at once — and a rule that only ever read `ctx.value` left all of those
+ * unsnapped and unclamped. A rule iterates these and returns the repaired rows.
+ * @param {import('../types').ConstraintContext} ctx
+ * @returns {{ i: number, field: string }[]}
+ */
+export function changedCells(ctx) {
+  const { data, oldData, activeIndex, field, fields } = ctx;
+  /** @type {{ i: number, field: string }[]} */
+  const cells = [];
+  const seen = new Set();
+  /** @param {number} i @param {string} f */
+  const push = (i, f) => {
+    const key = `${i}\u0000${f}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    cells.push({ i, field: f });
+  };
+  if (activeIndex != null && activeIndex >= 0 && activeIndex < data.length && field != null) {
+    push(activeIndex, field);
+  }
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i];
+    const before = oldData ? oldData[i] : undefined;
+    if (!row) continue;
+    for (const f of fields) {
+      if (!before || !sameCell(row[f], before[f])) push(i, f);
+    }
+  }
+  return cells;
+}
+
+/**
  * Normalize a constraint spec into the canonical descriptor. The mirror of
  * `makeEdit` (edit/shared.js).
  * @param {{ type: string, field?: string | string[], options?: Record<string, any>,
@@ -174,6 +226,10 @@ export function applyConstraint(constraint, newData, oldData, context) {
   const hasActive = activeIndex != null && activeIndex >= 0 && activeIndex < newData.length;
   const active = hasActive ? newData[activeIndex] : undefined;
 
+  const fields = Array.isArray(c.field) ? c.field : (field != null ? [field] : []);
+  /** @type {Record<string, number[] | undefined>} */
+  const domains = {};
+  for (const f of fields) domains[f] = domainOfField(f, context.scales, context.markChannels);
   /** @type {import('../types').ConstraintContext} */
   const ctx = {
     data: newData,
@@ -181,11 +237,14 @@ export function applyConstraint(constraint, newData, oldData, context) {
     activeIndex,
     active,
     field,
-    fields: Array.isArray(c.field) ? c.field : (field != null ? [field] : []),
+    fields,
     value: active && field != null ? active[field] : undefined,
-    domain: domainOfField(field, context.scales, context.markChannels),
+    domain: field != null ? domains[field] : undefined,
+    domains,
     table: context.table,
     tables: context.tables,
+    schema: context.schema,
+    locked: context.locked || null,
   };
 
   const result = c.apply(ctx);

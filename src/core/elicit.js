@@ -5,6 +5,7 @@ import { createProjection } from './projection.js';
 import { resolveLock, lockConstraint, isNodeLocked } from './lock.js';
 import { collectEdits, resolveChannels, warnMisplacedEdits } from '../edit/route.js';
 import { markCenter, nudgeTarget } from '../edit/shared.js';
+import { hitTest } from '../edit/pick.js';
 import { encodeChannel, rawChannel } from '../plot/mark.js';
 import { portFeature, portRolesOf, portKey } from '../plot/port.js';
 import { drivers, driverFor, needsPlaneOnTop } from '../edit/drivers/index.js';
@@ -1245,9 +1246,9 @@ export function Elicit(spec) {
      *   yet — that it must never commit; the flag is how it tells the two apart.
      * @param {any} [sessionOverride] a session to run against instead of the
      *   feature's own — a trial commit asking "could a drag from HERE land?"
-     * @returns {import('../types').EditResult | null}
+     * @returns {{ ctx: any, targetTable: string, currentData: any[], resolved: any[] }}
      */
-    const computeEdit = (feature, edit, event, index, preview = false, sessionOverride = undefined) => {
+    const editContext = (feature, edit, event, index, preview = false, sessionOverride = undefined) => {
         // WHERE the gesture landed and WHAT it writes are usually the same table, and
         // for every edit that existed before structures they are the same by
         // construction. They come apart for a cross-table edit — `edit.network.connect`
@@ -1311,6 +1312,10 @@ export function Elicit(spec) {
             // The whole canonical schema, for a cross-table edit that has to find
             // another table's key column (rewire reads the node table's key).
             schemaSpec,
+            // Which rows of the table this edit writes are read-only (spec.lock), so
+            // an edit that CHOOSES a row to extend (a draw continuing the last
+            // series) can skip one the lock would revert anyway.
+            locked: isLockedIn(targetTable),
             xKey: feature.xKey || 'x',
             yKey: feature.yKey || 'y',
             // The feature's series (grouping) field and its current scene nodes, so
@@ -1341,6 +1346,35 @@ export function Elicit(spec) {
             edit,
             preview,
         };
+        return { ctx, targetTable, currentData, resolved };
+    };
+
+    // Does this edit's `when` accept the gesture? Asked BEFORE a plane gesture is
+    // handed to the drivers, so an edit whose modifier is not held is not merely
+    // refused at commit time (computeEdit checks `when` too) but never consumes
+    // the gesture at all — which is what lets a direct edit beside a `when`-gated
+    // sweep receive the drag the sweep declined (see handleEvent's fallback).
+    /**
+     * @param {any} feature
+     * @param {import('../types').Edit} edit
+     * @param {any} event
+     * @returns {boolean}
+     */
+    const arbitrates = (feature, edit, event) =>
+        !edit.when || !!edit.when(editContext(feature, edit, event, null).ctx);
+
+    /**
+     * @param {any} feature
+     * @param {import('../types').Edit} edit
+     * @param {any} event
+     * @param {number | null} index
+     * @param {boolean} [preview]
+     * @param {any} [sessionOverride]
+     * @returns {import('../types').EditResult | null}
+     */
+    const computeEdit = (feature, edit, event, index, preview = false, sessionOverride = undefined) => {
+        const { ctx, targetTable, currentData, resolved } = editContext(feature, edit, event, index, preview, sessionOverride);
+        const markChannels = ctx.markChannels;
         if (edit.when && !edit.when(ctx)) return null; // arbitration
 
         const result = edit.apply(ctx);
@@ -1387,6 +1421,12 @@ export function Elicit(spec) {
                 // invariant that spans tables. Pure data, like everything else a
                 // constraint sees — still no pixels.
                 tables, table: forTable,
+                // The table's field schema, so a rule can honour a column's MEASURE
+                // (snap keeps a temporal value a Date), and which of its rows are
+                // read-only, so a rule that pushes neighbours (monotonic) pivots
+                // around a locked row instead of writing it and being reverted.
+                schema: (schemaSpec.tables[forTable] || schemaSpec.tables[schemaSpec.primary]).fields,
+                locked: isLockedIn(forTable),
             };
             let out = rows;
             const before = own ? currentData : (tables[forTable] || []);
@@ -1698,8 +1738,7 @@ export function Elicit(spec) {
      * @returns {boolean}
      */
     const dispatchDirectEdits = (feature, event) => {
-        const index = event.node ? event.node.index : undefined;
-        if (index == null) return false;
+        const index = event.node && event.node.index != null ? event.node.index : null;
         let changed = false;
         // A gesture normally fans to EVERY direct edit sharing its type (arbitrated
         // by each edit's `when`). An externally-driven event may ADDRESS one edit by
@@ -1717,9 +1756,13 @@ export function Elicit(spec) {
         // node under the pointer, so nothing is searched for and the plane stays
         // down. This is the driver registry doing its job, not a pick branch: the
         // engine asks `driverFor` and never names a mode.
+        // A node that carries NO row (an axis end-handle) can still start a
+        // lifecycle: its driver resolves what was grabbed from the pointer. Only a
+        // plain direct edit needs the datum, so only those are skipped without one.
         const lifecycle = direct.filter(e => driverFor(e));
         if (lifecycle.length && runDrivers(feature, event, lifecycle, index)) changed = true;
 
+        if (index == null) return changed;
         direct
             .filter(e => e.gesture === event.type && !driverFor(e))
             .forEach(edit => { if (runEdit(feature, edit, event, index)) changed = true; });
@@ -1837,8 +1880,60 @@ export function Elicit(spec) {
      * @param {any} event
      * @returns {boolean}
      */
-    const dispatchPlaneEdits = (feature, event) =>
-        runDrivers(feature, event, activeEdits(feature).filter(e => e.pick !== 'direct'), null);
+    /**
+     * @param {any} feature
+     * @param {any} event
+     * @param {import('../types').Edit[]} [live] the arbitrated plane edits (else resolved here)
+     * @returns {boolean}
+     */
+    const dispatchPlaneEdits = (feature, event, live) =>
+        runDrivers(feature, event, live !== undefined ? live : livePlaneEdits(feature, event), null);
+
+    // The plane edits of a feature that ACCEPT this gesture: those whose `when`
+    // passes. A stroke keeps the set its dragstart resolved (a modifier released
+    // mid-drag must not strand a driver without its dragend), so arbitration runs
+    // on dragstart / click / dblclick / hover and is reused for drag / dragend.
+    /** @type {Record<string, import('../types').Edit[]>} */
+    let strokeLive = {};
+    /**
+     * @param {any} feature
+     * @param {any} event
+     * @returns {import('../types').Edit[]}
+     */
+    const livePlaneEdits = (feature, event) => {
+        const plane = activeEdits(feature).filter(e => e.pick !== 'direct');
+        if (!plane.length) return plane;
+        if (event.type === 'drag' || event.type === 'dragend') return strokeLive[feature.id] || [];
+        const live = plane.filter(e => arbitrates(feature, e, event));
+        if (event.type === 'dragstart') strokeLive[feature.id] = live;
+        return live;
+    };
+
+    // With the plane on top, a press anywhere arrives as a plane gesture even when
+    // it landed on a mark whose DIRECT edit should have it — a `move({ when:
+    // when.shift })` beside a sweep gated `when.noShift`, or a vertex drag beside a
+    // geo draw. When no plane edit accepts the gesture, resolve the node under the
+    // pointer the way the renderer would have (pick.js's hitTest honours editable /
+    // locked / pointerEvents) and hand the event on as a direct one. A stroke latches
+    // the node it pressed, so leaving the mark mid-drag does not lose it.
+    /** @type {any} */
+    let planeGrab = null;
+    /** @param {number} x @param {number} y @returns {any | null} */
+    const hitAny = (x, y) => {
+        for (let i = features.length - 1; i >= 0; i--) {
+            const hit = hitTest(featureNodes[features[i].id] || [], x, y);
+            if (hit) return hit;
+        }
+        return null;
+    };
+    /** @param {any} event @returns {any | null} */
+    const fallbackHit = (event) => {
+        if (event.type === 'dragstart') { planeGrab = hitAny(event.x, event.y); return planeGrab; }
+        if (event.type === 'drag') return planeGrab;
+        if (event.type === 'dragend') { const g = planeGrab; planeGrab = null; return g; }
+        if (event.type === 'click' || event.type === 'dblclick') return hitAny(event.x, event.y);
+        return null;
+    };
 
     // 4. Event routing.
     //    - Events carrying a `node` are mark-scoped (change existing elements) and
@@ -1936,6 +2031,31 @@ export function Elicit(spec) {
         // close it below, so it can't absorb the next one.
         // dragstart always starts a fresh one, so a stroke whose dragend never
         // arrived can't leak its stale "before" into the next gesture.
+        // A plane gesture no plane edit accepts falls back to the mark under the
+        // pointer (see fallbackHit). Resolved here, before the grab state and the
+        // transaction, so the re-routed event is indistinguishable from one the
+        // renderer reported on the node itself.
+        /** @type {Map<string, import('../types').Edit[]> | null} */
+        let planeLive = null;
+        if (!event.node && event.x != null) {
+            planeLive = new Map(features.map(f => [f.id, livePlaneEdits(f, event)]));
+            let any = false;
+            for (const l of planeLive.values()) if (l.length) { any = true; break; }
+            if (!any) {
+                if (event.type === 'hover' || event.type === 'hoverout') {
+                    // Plane hover with nothing listening: report the mark under the
+                    // pointer as the renderer's own pointerover/out would, so the
+                    // `hovered` effect lights the direct mark the fallback would grab.
+                    const hit = event.type === 'hover' ? hitAny(event.x, event.y) : null;
+                    if (hit) { if (!ui.hover || ui.hover.node !== hit) handleEvent({ type: 'pointerover', node: hit }); }
+                    else if (ui.hover) handleEvent({ type: 'pointerout', node: ui.hover.node });
+                } else {
+                    const hit = fallbackHit(event);
+                    if (hit) event = { ...event, node: hit };
+                }
+            }
+        }
+
         if (event.type === 'dragstart') { endTxn(); beginTxn(); }
         else if (!txn) beginTxn();
 
@@ -1963,8 +2083,10 @@ export function Elicit(spec) {
         } else {
             // Plane gestures -> every feature's plane/nearest/sweep/draw edits.
             features.forEach(feature => {
-                if (dispatchPlaneEdits(feature, event)) shouldRender = true;
+                const live = planeLive ? planeLive.get(feature.id) : undefined;
+                if (dispatchPlaneEdits(feature, event, live)) shouldRender = true;
             });
+            if (event.type === 'dragend') strokeLive = {};
         }
 
         // Keep the transaction open only for the duration of a stroke. A nudge's
