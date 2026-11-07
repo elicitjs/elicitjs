@@ -50,8 +50,8 @@ export function tip(options = {}) {
             const hit = mark != null ? hits.find((/** @type {any} */ h) => h.featureId === mark) : hits[0];
             if (!hit || !pointer) return [];
             const feature = (ctx.features || []).find((/** @type {any} */ f) => f.id === hit.featureId);
-            const row = hit.node.data != null ? hit.node.data
-                : (feature && hit.index != null ? (ctx.tableOf(feature) || [])[hit.index] : null);
+            const row = feature && hit.index != null ? (ctx.tableOf(feature) || [])[hit.index]
+                : (hit.node.data != null ? hit.node.data : null);
             if (!row) return [];
 
             /** @type {string[]} */

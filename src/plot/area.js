@@ -1,7 +1,7 @@
 // @ts-check
 import { isBand, baselineOf } from '../core/scales.js';
 import { claimEdge } from '../edit/shared.js';
-import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel, resolveValueAxis, orderSeries, seriesKeyOf, hasAnyEdit } from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel, resolveValueAxis, orderSeries, seriesKeyOf, hasAnyEdit, inkOf } from './mark.js';
 import { areaGenerator } from '../core/curves.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
@@ -73,7 +73,7 @@ function buildArea(options) {
         edits: rawEdits,
         curve = 'linear',
         // Handles draw only when something can grab them (see `line`).
-        handles = hasAnyEdit(opts),
+        handles: handlesOpt,
         handleSize,
         handleColor,
         connect = 'domain',
@@ -91,7 +91,7 @@ function buildArea(options) {
     return {
         ...markCommon(opts),
         type: 'area',
-        handles,
+        handles: handlesOpt,
         channels,
         // Read raw (no scale), like `line`'s and `link`'s.
         rawChannels: ['curve', 'series', 'order'],
@@ -108,7 +108,12 @@ function buildArea(options) {
          * @param {number} height
          * @returns {import('../types').FeatureNode[]}
          */
-        build: (currentData, scales, width, height) => {
+        build(currentData, scales, width, height) {
+            // Handles draw only when something can grab them. Decided HERE, from the
+            // feature as the engine holds it — a composite merges its edits into a
+            // part after the factory ran, so a factory-time answer missed them.
+            const handles = handlesOpt !== undefined ? handlesOpt
+                : hasAnyEdit({ edits: this && this.edits, channels: (this && this.channels) || channels });
             const { x: xScale, y: yScale } = scales;
             // A declared y1/y2 pair IS the value (the band's two edges), so its axis
             // is the value axis — extent: 'value', where a tick's pair is its chord.
@@ -196,9 +201,11 @@ function buildArea(options) {
                 // through d3.line curved the bottom edge backwards). `points` is the
                 // outline polygon the pick layer measures and the canvas can draw.
                 const d = areaGenerator(seriesCurve, valueAxis !== 'y')(samples);
-                const defined = samples.filter((s) => valueAxis === 'y'
+                const definedIdx = samples.map((s, k) => (valueAxis === 'y'
                     ? Number.isFinite(s.x) && Number.isFinite(s.y0) && Number.isFinite(s.y1)
-                    : Number.isFinite(s.y) && Number.isFinite(s.x0) && Number.isFinite(s.x1));
+                    : Number.isFinite(s.y) && Number.isFinite(s.x0) && Number.isFinite(s.x1)) ? k : -1).filter((k) => k >= 0);
+                const defined = definedIdx.map((k) => samples[k]);
+                const rowsDefined = definedIdx.map((k) => sorted[k].i);
                 /** @type {[number, number][]} */
                 const points = valueAxis === 'y'
                     ? [...defined.map((s) => /** @type {[number, number]} */ ([s.x, s.y1])),
@@ -212,6 +219,11 @@ function buildArea(options) {
                         ...(gradient ? { fillGradient: gradient } : {}),
                         d,
                         points,
+                        // The outline is a POLYGON (a filled band), and each vertex's
+                        // row — top edge, then the bottom reversed — lets a tip over
+                        // the band name the nearest row.
+                        polygon: true,
+                        pointRows: [...rowsDefined, ...[...rowsDefined].reverse()],
                         curve: seriesCurve,
                         ...style,
                         strokeWidth: style.strokeWidth != null ? style.strokeWidth : 1,
@@ -238,7 +250,7 @@ function buildArea(options) {
                         const paint = resolveStyle(scales, channels, d, markDefaults(scales, 'area',
                             { fill: areaInk, stroke: areaInk }), i, currentData);
                         const hStyle = {
-                            fill: handleStyle.visible ? (handleColor || paint.stroke || paint.fill || handleStyle.fill) : handleStyle.fill,
+                            fill: handleStyle.visible ? (handleColor || inkOf(paint.stroke) || inkOf(paint.fill) || handleStyle.fill) : handleStyle.fill,
                             stroke: handleStyle.stroke,
                             strokeWidth: handleStyle.strokeWidth,
                         };

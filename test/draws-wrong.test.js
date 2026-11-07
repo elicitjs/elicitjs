@@ -171,3 +171,33 @@ describe('guides', () => {
         expect(() => guides.proximity()).not.toThrow();
     });
 });
+
+describe('missing values on dot-like marks', () => {
+    it('a tick or a dot with a null value draws nothing (no mid-axis fallback)', async () => {
+        const el = Elicit({
+            width: 300, height: 200, axes: false,
+            schema: { k: { type: 'categorical', domain: ['a', 'b'] }, v: { type: 'quantitative', domain: [0, 10] } },
+            data: [{ k: 'a', v: 4 }, { k: 'b', v: null }],
+            marks: [plot.tickY({ channels: { x: { field: 'k' }, y: { field: 'v' } } }), plot.point({ channels: { x: { field: 'k' }, y: { field: 'v' } } })],
+        });
+        document.body.appendChild(el);
+        await tick();
+        expect(el.querySelectorAll('line.mark-line, line').length).toBeGreaterThanOrEqual(1);
+        expect(el.querySelectorAll('circle.mark').length).toBe(1);
+        const ticks = [...el.querySelectorAll('line')].filter((l) => l.__data__ && l.__data__.index != null);
+        expect(ticks.length).toBe(1);
+    });
+    it('an area with stroke none still shows grabbable handles', async () => {
+        const el = Elicit({
+            width: 300, height: 200, axes: false,
+            schema: { x: { type: 'quantitative', domain: [0, 1] }, y: { type: 'quantitative', domain: [0, 10] } },
+            data: [{ x: 0, y: 2 }, { x: 1, y: 5 }],
+            marks: [plot.areaY({ stroke: 'none', fill: '#0a0', channels: { x: { field: 'x' }, y: { field: 'y', edit: edit.move() } } })],
+        });
+        document.body.appendChild(el);
+        await tick();
+        const fills = [...el.querySelectorAll('circle.mark')].map((c) => c.getAttribute('fill'));
+        expect(fills.length).toBe(2);
+        expect(fills.every((f) => f && f !== 'none')).toBe(true);
+    });
+});

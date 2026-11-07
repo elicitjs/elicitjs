@@ -1,6 +1,6 @@
 // @ts-check
 import { isBand, bandSpan } from '../core/scales.js';
-import { encodeChannel, categoryOf, encodeAngle, resolveStyle, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, resolveValueAxis } from './mark.js';
+import { encodeChannel, categoryOf, encodeAngle, resolveStyle, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, resolveValueAxis, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
 // tick: a thin line-segment mark (Observable Plot's tick). It marks a VALUE on
@@ -108,7 +108,19 @@ function buildTick(options) {
             // stroke/strokeWidth rather than a fill; stroke follows the theme ink.
             const tickDefaults = markDefaults(scales, 'tick', { stroke: themeOf(scales).ink, strokeWidth: 2 });
 
-            return currentData.map((d, i) => {
+            /** @type {any[]} */
+            const out = [];
+            currentData.forEach((d, i) => {
+                // A row with no value has no position: draw no tick (it used to sit
+                // at the middle of the axis).
+                if (missingValue(channels, valueAxis, d)) return;
+                const node = tickNode(d, i);
+                if (node) out.push(node);
+            });
+            return out;
+
+            /** @param {any} d @param {number} i */
+            function tickNode(d, i) {
                 const style = resolveStyle(scales, channels, d, tickDefaults, i, currentData);
 
                 const angle = encodeAngle(scales, channels, 'angle', d, 0, i, currentData);
@@ -148,7 +160,7 @@ function buildTick(options) {
                     cursor: 'ns-resize',
                     ...(angle ? { angle } : {}),
                 };
-            });
+            }
         }
     };
 }

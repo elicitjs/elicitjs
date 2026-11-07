@@ -1,6 +1,6 @@
 // @ts-check
 import { isBand } from '../core/scales.js';
-import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel, orderFieldOf, resolveValueAxis, orderSeries, seriesKeyOf, hasAnyEdit } from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel, orderFieldOf, resolveValueAxis, orderSeries, seriesKeyOf, hasAnyEdit, inkOf } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
 // line: a connected-path mark over an ordered set of points. It is deliberately
@@ -47,7 +47,7 @@ function buildLine(options, defaultConnect = 'domain') {
         // Handles draw only when something can grab them — an edit on a channel
         // or in `edits` — the rule bar and arc already follow. A plain recreation
         // used to need `handles: false` on every line to lose dots it never asked for.
-        handles = hasAnyEdit(opts),
+        handles: handlesOpt,
         handleSize,
         handleColor,
         connect = defaultConnect
@@ -61,7 +61,7 @@ function buildLine(options, defaultConnect = 'domain') {
         ...markCommon(opts),
         type: 'line',
         channels,
-        handles,
+        handles: handlesOpt,
         // `curve` is read raw (no scale), so it must be declared — same contract as
         // `link`, which resolves its own per-row `curve` the same way. It was a plain
         // option here and a raw channel there: one name, two tiers.
@@ -82,7 +82,12 @@ function buildLine(options, defaultConnect = 'domain') {
          * @param {number} height
          * @returns {import('../types').FeatureNode[]}
          */
-        build: (currentData, scales, width, height) => {
+        build(currentData, scales, width, height) {
+            // Handles draw only when something can grab them. Decided HERE, from the
+            // feature as the engine holds it — a composite merges its edits into a
+            // part after the factory ran, so a factory-time answer missed them.
+            const handles = handlesOpt !== undefined ? handlesOpt
+                : hasAnyEdit({ edits: this && this.edits, channels: (this && this.channels) || channels });
             const { x: xScale, y: yScale } = scales;
 
             // Which axis carries the value (the point's editable position)?
@@ -141,6 +146,9 @@ function buildLine(options, defaultConnect = 'domain') {
                 nodes.push({
                     type: 'path',
                     points: pts.map(p => /** @type {[number, number]} */([p.cx, p.cy])),
+                    // The row behind each vertex, so a tip (or a readout) over the
+                    // path can name the nearest one.
+                    pointRows: pts.map((p) => p.i),
                     curve: seriesCurve,
                     ...style,
                     // A stroked path reads as a line, never a filled blob.
@@ -164,7 +172,7 @@ function buildLine(options, defaultConnect = 'domain') {
                 if (cx == null || cy == null) return; // a missing value has no handle
                 const paint = resolveStyle(scales, channels, d, lineDefaults, i, currentData);
                 const style = {
-                    fill: handleStyle.visible ? (handleColor || paint.stroke || handleStyle.fill) : handleStyle.fill,
+                    fill: handleStyle.visible ? (handleColor || inkOf(paint.stroke) || handleStyle.fill) : handleStyle.fill,
                     stroke: handleStyle.stroke,
                     strokeWidth: handleStyle.strokeWidth,
                 };

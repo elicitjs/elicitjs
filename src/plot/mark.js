@@ -244,6 +244,31 @@ export function encodeChannel(scales, channels, channel, datum, fallback, index,
 export const HANDLE_DEFAULTS = { size: 5 };
 
 /**
+ * A paint value usable as a colour, or null for `none` / `transparent` / unset —
+ * so a handle that takes its series' colour never copies an invisible one.
+ * @param {any} v @returns {string | null}
+ */
+export function inkOf(v) {
+    if (v == null || v === '' || v === 'none' || v === 'transparent') return null;
+    return String(v);
+}
+
+/**
+ * Is this datum's value for a FIELD channel missing (null, undefined or NaN)? A
+ * row with no value has no position on that axis, so a mark draws nothing for it
+ * — the rule a line's gap and an area's break follow. A channel that is a
+ * constant, a `{ fn }`, or absent is never "missing".
+ * @param {Record<string, any>} channels @param {string} name @param {any} datum
+ * @returns {boolean}
+ */
+export function missingValue(channels, name, datum) {
+    const spec = channels && channels[name];
+    if (!spec || spec.field == null || !datum) return false;
+    const v = datum[spec.field];
+    return v == null || (typeof v === 'number' && Number.isNaN(v));
+}
+
+/**
  * Does a mark's option bag carry ANY edit — on a channel or in `edits`? The
  * default for `handles` on a line or area: a handle exists to be grabbed, so a
  * mark nothing can grab draws none (bar and arc already gate theirs on an edit).

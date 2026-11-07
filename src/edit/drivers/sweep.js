@@ -105,7 +105,13 @@ export const sweepDriver = {
             // the edge whose handle is nearest in 2-D.
             const s = nearestSeries(marks, event.x, event.y, threshold);
             const lock = s == null ? undefined : s;
-            const near = nearestNode(marks, event.x, event.y, threshold, lock);
+            // The nearest EDGE handle wins wherever the press lands — above the band
+            // or below it — so a band sweep always paints one edge. (A press outside
+            // the catchment used to run both edges' edits and collapse the band.)
+            const edged = (marks || []).filter((m) => m && m.channel != null);
+            const near = edged.length
+                ? nearestNode(edged, event.x, event.y, Infinity, lock)
+                : nearestNode(marks, event.x, event.y, threshold, lock);
             const edge = near && near.channel != null ? near.channel : null;
             const index = resolve(lock, edge);
             session.set({ px: event.x, py: event.y, threshold, hoverIndex: index, activeIndex: index, series: s, channel: edge, lastX: event.x, lastY: event.y });

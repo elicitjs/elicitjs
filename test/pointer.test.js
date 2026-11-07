@@ -125,3 +125,19 @@ describe('a bound tip under an inert label', () => {
         expect(guideTexts(el).some((t) => /v: 80/.test(t))).toBe(true);
     });
 });
+
+describe('a tip over a line or an area', () => {
+    it('names the row of the nearest vertex', async () => {
+        const el = Elicit({
+            width: 300, height: 200, axes: false, margins: { top: 10, right: 10, bottom: 10, left: 10 },
+            schema: { x: { type: 'quantitative', domain: [0, 2] }, y: { type: 'quantitative', domain: [0, 100] } },
+            data: [{ x: 0, y: 10 }, { x: 1, y: 50 }, { x: 2, y: 90 }],
+            marks: [plot.areaY({ tip: ['x', 'y'], channels: { x: { field: 'x' }, y: { field: 'y' } } })],
+        });
+        document.body.appendChild(el);
+        await tick();
+        // Inside the band near x = 1 (pixel 140), below the top edge.
+        el.emit({ type: 'pointermove', x: 140, y: 150 });
+        expect(guideTexts(el).some((t) => /x: 1/.test(t) && /y: 50/.test(t))).toBe(true);
+    });
+});

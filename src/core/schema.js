@@ -693,15 +693,6 @@ export function normalizeData(data, spec) {
         }
         tables[name] = rows;
     }
-    for (const name of Object.keys(spec.tables)) {
-        if (spec.tables[name].context && !tables[name].length) {
-            warn(
-                `data:context:empty:${name}`,
-                `context table "${name}" has no rows. A context table is drawn and never ` +
-                `elicited, so nothing can ever add one — seed it in \`data.${name}\`.`
-            );
-        }
-    }
     return tables;
 }
 
@@ -824,6 +815,8 @@ function schemaSource(schema) {
  */
 function contradictsType(value, type) {
     if (type === 'quantitative') {
+        // NaN is how a data file spells "missing" — it breaks a line like null.
+        if (typeof value === 'number' && Number.isNaN(value)) return false;
         return typeof value !== 'number' || !Number.isFinite(value);
     }
     if (type === 'temporal') {

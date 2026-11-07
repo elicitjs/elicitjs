@@ -92,3 +92,17 @@ describe('a fast sweep', () => {
         expect(ys[5]).toBeLessThan(60);
     });
 });
+
+describe('a band sweep that starts away from both edges', () => {
+    it('paints the nearest edge only', async () => {
+        const el = band();
+        await tick();
+        // Well above the band (hi = 70 → y = 60): start at value 95 (y = 10).
+        el.emit({ type: 'dragstart', x: 100, y: yOf(95) });
+        el.emit({ type: 'drag', x: 200, y: yOf(90) });
+        el.emit({ type: 'dragend', x: 200, y: yOf(90) });
+        const rows = el.getData();
+        expect(rows.every((r) => r.lo === 30)).toBe(true);
+        expect(rows[1].hi).toBeGreaterThan(80);
+    });
+});

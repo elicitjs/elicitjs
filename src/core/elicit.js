@@ -1124,7 +1124,21 @@ export function Elicit(spec) {
             const hits = [];
             for (let i = features.length - 1; i >= 0; i--) {
                 const hit = hitTestAny(featureNodes[features[i].id] || [], ui.pointer.x, ui.pointer.y);
-                if (hit) hits.push({ featureId: hit.featureId, index: hit.index, node: hit });
+                if (!hit) continue;
+                // A path (a line, an area band) has no row of its own: name the row of
+                // its nearest vertex.
+                let index = hit.index;
+                if (index == null && Array.isArray(hit.pointRows) && Array.isArray(hit.points)) {
+                    let best = Infinity;
+                    hit.points.forEach((/** @type {any} */ p, /** @type {number} */ k) => {
+                        if (!p) return;
+                        const ptr = /** @type {{ x: number, y: number }} */ (ui.pointer);
+                        const dd = Math.hypot(p[0] - ptr.x, p[1] - ptr.y);
+                        if (dd < best) { best = dd; index = hit.pointRows[k]; }
+                    });
+                }
+                if (index == null && hit.data == null) continue;
+                hits.push({ featureId: hit.featureId, index, node: hit });
             }
             ui.hits = hits;
             ui.hit = hits[0] || null;

@@ -60,6 +60,12 @@ function encodingsOf(features) {
             if (chSpec.scale === null || raw.has(channel) || frameSpecOf(chSpec)) continue;
             const prior = out.find((e) => e.channel === channel && e.field === chSpec.field);
             if (prior) {
+                // A mark that names no table draws the elicited one; prefer it over a
+                // mark that named another (a context table), so an editable legend
+                // writes the rows the chart elicits.
+                if (prior.table != null && f.table == null) {
+                    prior.table = f.table; prior.tableRole = f.tableRole; prior.feature = f;
+                }
                 // Two marks stating ONE encoding share its legend; a later mark's
                 // `legend` options merge into it (its edit, anchor, title), rather
                 // than being dropped because the first mark got there first.

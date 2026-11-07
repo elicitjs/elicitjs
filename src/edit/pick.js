@@ -343,7 +343,7 @@ export function hitTestAny(marks, px, py) {
     for (let i = list.length - 1; i >= 0; i--) {
         const mark = list[i];
         if (!mark || mark.guide || mark.background || mark.effect || mark.hit) continue;
-        if (mark.index == null && mark.data == null) continue;
+        if (mark.index == null && mark.data == null && !Array.isArray(mark.pointRows)) continue;
         if (containsPoint(mark, px, py)) return mark;
     }
     return null;
