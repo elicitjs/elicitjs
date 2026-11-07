@@ -1,12 +1,12 @@
 // @ts-check
 import { SceneGraph, paintOrder } from './scene.js';
 import { resolveScales } from './resolve.js';
-import { createProjection, invertPoint } from './projection.js';
-import * as d3 from 'd3';
+import { createProjection } from './projection.js';
+import { parsePath, flatten } from '../plot/shapes.js';
 import { resolveLock, lockConstraint, isNodeLocked } from './lock.js';
 import { collectEdits, resolveChannels, warnMisplacedEdits } from '../edit/route.js';
 import { markCenter, nudgeTarget } from '../edit/shared.js';
-import { hitTest, hitTestAny } from '../edit/pick.js';
+import { hitTest, hitTestAny, pointInPolygon } from '../edit/pick.js';
 import { encodeChannel, rawChannel } from '../plot/mark.js';
 import { portFeature, portRolesOf, portKey } from '../plot/port.js';
 import { drivers, driverFor, needsPlaneOnTop } from '../edit/drivers/index.js';
@@ -1127,16 +1127,24 @@ export function Elicit(spec) {
             const hits = [];
             for (let i = features.length - 1; i >= 0; i--) {
                 let hit = hitTestAny(featureNodes[features[i].id] || [], ui.pointer.x, ui.pointer.y);
-                // A geo region carries its shape in lon/lat: invert the pointer
-                // through the projection and test containment.
-                if (!hit && features[i].supportsGeo && /** @type {any} */ (scales).projection) {
-                    const ll = invertPoint(/** @type {any} */ (scales).projection, ui.pointer);
-                    if (ll) {
-                        const nodesHere = featureNodes[features[i].id] || [];
-                        for (let k = nodesHere.length - 1; k >= 0; k--) {
-                            const n = nodesHere[k];
-                            if (n && n.geoShape && d3.geoContains(n.geoShape, [ll.lon, ll.lat])) { hit = n; break; }
+                // A geo region is a projected `d` path: test the pointer against its
+                // rings in SCREEN space (even-odd over every ring, so holes and
+                // multipolygons count) — right under every projection, including an
+                // identity over pre-projected coordinates, where inverting to lon/lat
+                // would hand degrees-shaped pixels to a spherical test.
+                if (!hit && features[i].supportsGeo) {
+                    const nodesHere = featureNodes[features[i].id] || [];
+                    const ptr = /** @type {{ x: number, y: number }} */ (ui.pointer);
+                    for (let k = nodesHere.length - 1; k >= 0; k--) {
+                        const n = nodesHere[k];
+                        if (!n || !n.geoShape || typeof n.d !== 'string') continue;
+                        if (!n.geoRings) {
+                            const segs = parsePath(n.d);
+                            n.geoRings = segs ? flatten(segs) : [];
                         }
+                        let inside = false;
+                        for (const ring of n.geoRings) if (pointInPolygon(ring, ptr.x, ptr.y)) inside = !inside;
+                        if (inside) { hit = n; break; }
                     }
                 }
                 if (!hit) continue;

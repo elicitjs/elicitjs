@@ -159,3 +159,25 @@ describe('a tip over a geo region', () => {
         expect(guideTexts(el).some((t) => /name: east/.test(t))).toBe(true);
     });
 });
+
+describe('a tip over a geo region under an identity projection', () => {
+    it('tests the drawn path, not lon/lat', async () => {
+        const square = (x0, y0, s) => ({ type: 'Polygon', coordinates: [[[x0, y0], [x0 + s, y0], [x0 + s, y0 + s], [x0, y0 + s], [x0, y0]]] });
+        const regions = [{ name: 'left', geometry: square(0, 0, 100) }, { name: 'right', geometry: square(100, 0, 100) }];
+        const fc = { type: 'FeatureCollection', features: regions.map((r) => ({ type: 'Feature', geometry: r.geometry, properties: {} })) };
+        const el = Elicit({
+            width: 300, height: 200, margins: { top: 0, right: 0, bottom: 0, left: 0 },
+            projection: { type: 'identity', domain: fc },
+            schema: { name: { type: 'categorical' }, geometry: { type: 'categorical' } },
+            data: regions,
+            marks: [plot.geoPolygon({ tip: ['name'], channels: { geometry: { field: 'geometry', scale: null } } })],
+        });
+        document.body.appendChild(el);
+        await tick();
+        const right = [...el.querySelectorAll('path')].find((p) => p.__data__ && p.__data__.data && p.__data__.data.name === 'right');
+        const pts = right.__data__.d.match(/-?[\d.]+/g).map(Number);
+        const xs = pts.filter((_, i) => i % 2 === 0), ys = pts.filter((_, i) => i % 2 === 1);
+        el.emit({ type: 'pointermove', x: (Math.min(...xs) + Math.max(...xs)) / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2 });
+        expect(guideTexts(el).some((t) => /name: right/.test(t))).toBe(true);
+    });
+});

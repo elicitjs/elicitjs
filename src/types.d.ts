@@ -1955,6 +1955,8 @@ export interface FeatureNode {
   sector?: { cx: number; cy: number; r0: number; r1: number; a0: number; a1: number };
   // A geo region's shape in lon/lat (geoPolygon), for pointer reads through the projection.
   geoShape?: any;
+  // The geo region's projected rings, parsed from `d` on first pointer read.
+  geoRings?: [number, number][][];
   // The row behind each vertex of a path (line, area), so a pointer read names the nearest row.
   pointRows?: number[];
   // A filled path whose `points` is its outline polygon (a shape mark): the pick
