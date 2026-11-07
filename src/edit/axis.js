@@ -131,3 +131,90 @@ export function scale(options = {}) {
         }
     });
 }
+
+/**
+ * edit.axis.zoom — the wheel over the plot narrows or widens a positional
+ * axis's DOMAIN about the value under the pointer. Zoom is a schema change: a
+ * domain describes the data, so zooming writes the field's domain exactly as a
+ * handle drag (`edit.axis.scale`) does, and everything downstream — scales,
+ * axes, marks, guides — reflows from it. It goes through the same domain-commit
+ * path, so it is undoable (wheel ticks coalesce into one entry) and
+ * `el.setDomain(field, domain)` is its external twin.
+ *
+ * A wheel tick has no press and no lifecycle, so it is a plain PLANE edit
+ * (`pick: 'plane'`): the plane driver runs it on its gesture and the plane is
+ * never raised above the marks. Place it on an axis (`axes: { x: { edit:
+ * edit.axis.zoom() } }`), one per axis; gate one with a modifier for one-axis
+ * zoom (`when: when.shift`).
+ *
+ *   factor   how much one notch (100 px of wheel delta) scales the span (default 1.2)
+ *   limit    the widest the domain may zoom OUT to: 'declared' (the field's domain
+ *            as declared at Elicit(), the default), an explicit [lo, hi], or
+ *            false for no limit
+ *   minSpan  the narrowest span it may zoom IN to, in data units (default: none)
+ * @param {{ field?: string, factor?: number, limit?: 'declared' | any[] | false, minSpan?: number, [k: string]: any }} [options]
+ * @returns {import('../types').Edit}
+ */
+export function zoom(options = {}) {
+    const { field, factor = 1.2, limit = 'declared', minSpan, ...rest } = options;
+    if (rest.pick != null && rest.pick !== 'plane') {
+        warn(
+            'axis.zoom:pick',
+            `edit.axis.zoom() is a plane gesture (a wheel tick has no press), so ` +
+            `{ pick: "${rest.pick}" } is ignored.`
+        );
+        delete rest.pick;
+    }
+    return makeEdit({
+        type: 'axis.zoom',
+        gesture: 'wheel',
+        pick: 'plane',
+        scope: 'axis',
+        target: 'domain',
+        inverts: true,
+        ...rest,
+        apply: (/** @type {import('../types').EditContext} */ ctx) => {
+            const ch = ctx.channels[0];
+            if (!ch || !ch.scale || ch.scale.kind !== 'continuous' || !ch.scale.invertible) return undefined;
+            const fields = targetFields(ch.scale, field);
+            if (!fields.length) return undefined;
+            const axis = ch.name === 'y' ? 'y' : 'x';
+            const dom = typeof ch.scale.domain === 'function' ? ch.scale.domain() : null;
+            if (!dom || dom.length < 2) return undefined;
+            const temporal = dom[0] instanceof Date || dom[dom.length - 1] instanceof Date;
+            const lo = numOf(dom[0]);
+            const hi = numOf(dom[dom.length - 1]);
+            const delta = Number(ctx.deltaY) || 0;
+            if (!delta) return undefined;
+            // The value under the pointer stays put; the span scales about it.
+            const p = axis === 'x' ? ctx.pointer.x : ctx.pointer.y;
+            const anchor = numOf(ch.scale.invertValue(p));
+            if (!Number.isFinite(anchor)) return undefined;
+            const k = Math.pow(factor, delta / 100);
+            let nlo = anchor + (lo - anchor) * k;
+            let nhi = anchor + (hi - anchor) * k;
+            // Zoom-out ceiling: the declared domain (or an explicit one).
+            const ceiling = limit === 'declared'
+                ? (ctx.seedSchema && ctx.seedSchema[fields[0]] && ctx.seedSchema[fields[0]].domain) || null
+                : Array.isArray(limit) ? limit : null;
+            if (ceiling && ceiling.length >= 2) {
+                const clo = Math.min(numOf(ceiling[0]), numOf(ceiling[ceiling.length - 1]));
+                const chi = Math.max(numOf(ceiling[0]), numOf(ceiling[ceiling.length - 1]));
+                if (nhi - nlo >= chi - clo) { nlo = clo; nhi = chi; }
+                else {
+                    if (nlo < clo) { nhi += clo - nlo; nlo = clo; }
+                    if (nhi > chi) { nlo -= nhi - chi; nhi = chi; }
+                }
+            }
+            if (typeof minSpan === 'number' && minSpan > 0 && nhi - nlo < minSpan) {
+                const mid = (nlo + nhi) / 2;
+                nlo = mid - minSpan / 2;
+                nhi = mid + minSpan / 2;
+            }
+            if (!Number.isFinite(nlo) || !Number.isFinite(nhi) || nhi <= nlo) return undefined;
+            if (nlo === lo && nhi === hi) return undefined;
+            const domain = temporal ? [new Date(nlo), new Date(nhi)] : [nlo, nhi];
+            return { domains: domainsFor(fields, domain) };
+        }
+    });
+}

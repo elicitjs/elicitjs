@@ -163,6 +163,7 @@ export const EDIT_OPTIONS = {
     'line.sweep': ['mode'],
     'line.removeSeries': ['series'],
     'axis.scale': ['field', 'mode'],
+    'axis.zoom': ['field', 'factor', 'limit', 'minSpan'],
     'scale.addCategory': ['field', 'mode'],
     'scale.renameCategory': ['field', 'mode'],
     'scale.removeCategory': ['field', 'mode'],

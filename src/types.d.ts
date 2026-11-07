@@ -318,6 +318,9 @@ export interface EditContext {
   pointer: { x: number; y: number };
   node: any | null;
   event: any;
+  // A wheel gesture's travel in pixels, normalized by the renderer (edit.axis.zoom reads deltaY).
+  deltaX?: number;
+  deltaY?: number;
   // A gesture-supplied payload value, for edits whose input isn't a pixel: the
   // text mark's content-edit `commit` carries the typed string here. Undefined
   // for pointer-only gestures.
@@ -382,6 +385,9 @@ export interface EditContext {
   // resolves a node id while writing a link row). Read-only by convention.
   table?: string;
   tables?: Record<string, Datum[]>;
+  // The field schema of the table this edit writes AS DECLARED at Elicit(), before
+  // any domain edit reshaped it — the ceiling a zoom may widen back out to.
+  seedSchema?: Schema;
   schemaSpec?: SchemaSpec;
   // Which rows of the table this edit writes are read-only under `spec.lock`
   // (null when none are), so an edit choosing a row to extend can skip one the
@@ -2319,6 +2325,14 @@ export interface ElicitElement extends HTMLDivElement {
   // Replace the dataset and re-render. Bypasses constraints (trusted seed/reset).
   // Also clears the undo history: a reseed is a new starting point, not an edit.
   setData(data: Datum[] | Record<string, Datum[]>): void;
+  /**
+   * Set a field's DOMAIN from outside — the external twin of `edit.axis.zoom` /
+   * `edit.axis.scale`: a zoom button, a "reset view" control. Goes through the
+   * same domain commit as a gesture (undoable, notifies `change`). `null`
+   * restores the domain declared at `Elicit()`. Returns false (and warns) when
+   * the field is not declared.
+   */
+  setDomain(field: string, domain: any[] | null, options?: { table?: string }): boolean;
   // Step back / forward one GESTURE. A drag is one entry however many commits it
   // made along the way; a click or a typed commit is its own. Both restore the
   // dataset AND the schema (an axis edit reshapes a domain) and fire 'change'.
@@ -2412,6 +2426,8 @@ export interface RenderContext {
   // route all gestures as plane events (no node) rather than hit-testing marks.
   planeOnTop?: boolean;
   planeCursor?: string;
+  /** An active edit listens to the wheel: the renderer reports `wheel` from its root and prevents the page scroll. */
+  hasWheel?: boolean;
   /** A guide reads the pointer: the renderer reports pointermove / pointerleave from its root. */
   tracksPointer?: boolean;
   responsive?: 'fixed' | 'scale' | 'reflow';
@@ -2442,7 +2458,7 @@ export interface Renderer {
 // keyboard nudge, external controller) funnels into `handleEvent`. x/y are INNER
 // (margin-subtracted) pixels — the space an edit's `ctx.pointer` reads.
 export interface GestureEvent {
-  type: 'dragstart' | 'drag' | 'dragend' | 'click' | 'dblclick' | 'commit' | (string & {});
+  type: 'dragstart' | 'drag' | 'dragend' | 'click' | 'dblclick' | 'commit' | 'wheel' | 'pointermove' | 'pointerleave' | (string & {});
   // The scene node the gesture landed on. Present -> direct-pick dispatch to that
   // node's feature; absent -> plane dispatch fans to every feature.
   node?: any;
@@ -2646,6 +2662,17 @@ export interface AxisScaleOptions extends EditOptions {
   field?: string;
   /** 'rescale' (default) re-divides the axis in place; 'grow' resizes the chart. */
   mode?: 'rescale' | 'grow';
+}
+/** `edit.axis.zoom`: the wheel narrows or widens the axis's domain about the value under the pointer. */
+export interface AxisZoomOptions extends EditOptions {
+  /** The schema field whose domain the axis edits, when the channel carries more than one. */
+  field?: string;
+  /** How much one notch (100 px of wheel delta) scales the span. Default 1.2. */
+  factor?: number;
+  /** The widest the domain may zoom out to: the declared domain (default), an explicit [lo, hi], or false. */
+  limit?: 'declared' | any[] | false;
+  /** The narrowest span it may zoom in to, in data units. */
+  minSpan?: number;
 }
 export interface ScaleCategoriesOptions extends EditOptions {
   field?: string;

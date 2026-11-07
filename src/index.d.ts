@@ -13,6 +13,7 @@ import type {
   AxisOptions,
   AxisRadialOptions,
   AxisScaleOptions,
+  AxisZoomOptions,
   BarOptions,
   BrushRectOptions,
   BrushSpanOptions,
@@ -275,6 +276,8 @@ export const edit: {
   /** Axis-only: drags a positional RANGE, which only an axis has. */
   axis: {
     scale(options?: AxisScaleOptions): Edit;
+    /** The wheel narrows or widens the axis's domain about the value under the pointer. */
+    zoom(options?: AxisZoomOptions): Edit;
   };
   /** Turns a legend into an input; reads geometry only a legend stamps. */
   legend: {

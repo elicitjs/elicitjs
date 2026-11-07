@@ -172,6 +172,10 @@ export function Elicit(spec) {
     // single-table chart still sees the bare field map it always has.
     /** @type {import('../types').SchemaSpec} */
     const schemaSpec = normalizeSchema(structuredClone(spec.schema || {}));
+    // The schema AS DECLARED, kept apart from the live one a domain edit reshapes:
+    // the ceiling a zoom widens back out to, and what `setDomain(field, null)`
+    // restores.
+    const seedSchemaSpec = structuredClone(schemaSpec);
     // The PRIMARY table's field map, by identity — so the in-place domain writes
     // below (and undo's restore) keep the canonical spec consistent for free.
     /** @type {Record<string, import('../types').FieldSchema>} */
@@ -655,6 +659,8 @@ export function Elicit(spec) {
     // BEFORE it mutates `dataset`/`schema`, so "now" is still the pre-gesture state.
     const beginTxn = () => { if (!txn) txn = { recorded: false }; };
     const endTxn = () => { txn = null; };
+    /** @type {any} */
+    let wheelTimer = null;
 
     // Called by every commit path, BEFORE it mutates state. The first commit in a
     // transaction snapshots the (still pre-gesture) state and drops the redo stack —
@@ -870,6 +876,10 @@ export function Elicit(spec) {
         // above the marks and own the gesture. Computed per render because the
         // active edit set — and thus this flag — can change with the stage.
         const planeOnTop = features.some(feature => needsPlaneOnTop(activeEdits(feature)));
+        // Does an ACTIVE edit listen to the wheel (edit.axis.zoom)? Then the renderer
+        // reports it and keeps the page from scrolling; otherwise the chart never
+        // touches the wheel.
+        const hasWheel = features.some(feature => activeEdits(feature).some(e => e.gesture === 'wheel'));
         // Plane-on-top drivers (brushRect, nearest, …) may stash a cursor hint in
         // their per-feature session so the interaction plane can show edge/body
         // affordances without a second interaction system.
@@ -1288,6 +1298,7 @@ export function Elicit(spec) {
             planeOnTop,
             planeCursor,
             tracksPointer,
+            hasWheel,
             responsive: mode,
             overflow,
             focusOutline,
@@ -1356,6 +1367,9 @@ export function Elicit(spec) {
             pointer: { x: event.x, y: event.y },
             node: event.node || null,
             event: event.rawEvent,
+            // A wheel gesture's travel, normalized to pixels by the renderer.
+            deltaX: event.deltaX,
+            deltaY: event.deltaY,
             // A non-pixel gesture payload (the text mark's `commit` typed string).
             value: event.value,
             channels: resolved,
@@ -1381,6 +1395,9 @@ export function Elicit(spec) {
             // domain. Table-scoped, so a connect() mints a link row from the link
             // table's defaults rather than the node table's.
             schema: (schemaSpec.tables[targetTable] || schemaSpec.tables[schemaSpec.primary]).fields,
+            // The same table's schema as DECLARED, before any domain edit (a zoom's
+            // ceiling).
+            seedSchema: (seedSchemaSpec.tables[targetTable] || seedSchemaSpec.tables[seedSchemaSpec.primary]).fields,
             // The whole canonical schema, for a cross-table edit that has to find
             // another table's key column (rewire reads the node table's key).
             schemaSpec,
@@ -2138,7 +2155,13 @@ export function Elicit(spec) {
             }
         }
 
-        if (event.type === 'dragstart') { endTxn(); beginTxn(); }
+        // A wheel burst is one gesture for undo: each tick keeps the transaction
+        // open and re-arms a short timer that closes it once the wheel goes quiet.
+        if (event.type === 'wheel') {
+            if (!txn || wheelTimer == null) { endTxn(); beginTxn(); }
+            if (wheelTimer != null) clearTimeout(wheelTimer);
+            wheelTimer = setTimeout(() => { wheelTimer = null; endTxn(); }, 350);
+        } else if (event.type === 'dragstart') { endTxn(); beginTxn(); }
         else if (!txn) beginTxn();
 
         // Grab state rides the SAME bracket as the transaction — one stroke, one
@@ -2175,7 +2198,7 @@ export function Elicit(spec) {
         // synthetic drag is a complete gesture on its own, so it closes too —
         // otherwise it would stay open and swallow whatever gesture came next.
         if (event.type === 'dragend' || event.nudge
-            || (event.type !== 'dragstart' && event.type !== 'drag')) endTxn();
+            || (event.type !== 'dragstart' && event.type !== 'drag' && event.type !== 'wheel')) endTxn();
 
         if (shouldRender) {
             update();
@@ -2226,6 +2249,34 @@ export function Elicit(spec) {
         future = [];
         endTxn();
         update();
+    };
+
+    // Set a field's DOMAIN from outside: a zoom button, a "reset view" control. The
+    // external twin of edit.axis.zoom / edit.axis.scale, through the SAME domain
+    // commit a gesture takes (undoable, `change` notified, scales reflow). `null`
+    // restores the domain declared at Elicit().
+    el.setDomain = (/** @type {string} */ field, /** @type {any[] | null} */ domain, options = {}) => {
+        const table = options && options.table != null ? options.table : schemaSpec.primary;
+        const t = schemaSpec.tables[table];
+        if (!t || !t.fields[field]) {
+            warn(
+                `setDomain:field:${table}.${field}`,
+                `el.setDomain("${field}"): table "${table}" declares no field "${field}". ` +
+                `Declared fields: ${t ? Object.keys(t.fields).map((f) => `"${f}"`).join(', ') : 'none'}.`
+            );
+            return false;
+        }
+        const seed = seedSchemaSpec.tables[table] && seedSchemaSpec.tables[table].fields[field];
+        const next = domain == null ? (seed && seed.domain) : domain;
+        if (!Array.isArray(next)) {
+            warn(`setDomain:domain:${field}`, `el.setDomain("${field}"): no domain to set (none declared to restore).`);
+            return false;
+        }
+        endTxn();
+        commitDomainEdit({ domains: { [field]: structuredClone(next) } }, table);
+        endTxn();
+        update();
+        return true;
     };
 
     // ── Selection: read/drive the transient selection from outside ────────────

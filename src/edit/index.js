@@ -84,7 +84,7 @@ import { anchor, newSeries, draw, sweep, removeSeries } from './line.js';
 // capability), so they carry `scope: 'line'`.
 export const line = { anchor, newSeries, draw, sweep, removeSeries };
 
-import { scale as axisScale } from './axis.js';
+import { scale as axisScale, zoom as axisZoom } from './axis.js';
 import { categories as scaleCategories } from './scale.js';
 
 // Scale-scoped: reshape the DOMAIN of the scale a chart element draws (the schema),
@@ -97,7 +97,7 @@ export const scale = { categories: scaleCategories };
 // Axis-scoped: `scale` drags a positional RANGE, which only an axis has. Reshaping
 // a category LIST is a property of the scale, not of the chrome that draws it, so
 // that edit is `edit.scale.categories` and works on a legend too.
-export const axis = { scale: axisScale };
+export const axis = { scale: axisScale, zoom: axisZoom };
 
 import { category as legendCategory, value as legendValue } from './legend.js';
 

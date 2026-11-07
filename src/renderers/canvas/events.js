@@ -198,6 +198,17 @@ export function bindCanvasEvents(canvas, getCtx) {
         }
     });
 
+    // The wheel, as a gesture (edit.axis.zoom) — only when an active edit listens,
+    // and only then is the page scroll prevented.
+    canvas.addEventListener('wheel', (e) => {
+        const ctx = getCtx();
+        if (!ctx.hasWheel) return;
+        e.preventDefault();
+        const [x, y] = toInner(e);
+        const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
+        ctx.onEvent({ type: 'wheel', x, y, deltaX: (e.deltaX || 0) * unit, deltaY: (e.deltaY || 0) * unit, rawEvent: e });
+    }, { passive: false });
+
     canvas.addEventListener('click', (e) => {
         if (suppressClick) { suppressClick = false; return; }
         const ctx = getCtx();

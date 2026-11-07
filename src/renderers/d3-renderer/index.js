@@ -95,6 +95,7 @@ export class D3Renderer {
 
     this._bindPlaneGestures(plane, pointer, onEvent, planeOnTop);
     this._bindPointerTracking(d3.select(container).select("svg"), pointer, onEvent, !!context.tracksPointer);
+    this._bindWheel(d3.select(container).select("svg"), pointer, onEvent, !!context.hasWheel);
 
     const drag = this._makeDrag(onEvent);
     // Hover rides along with drag: the same nodes, so anything you can grab
@@ -522,6 +523,36 @@ export class D3Renderer {
     svg
       .on("pointermove.track", (/** @type {any} */ event) => report(event))
       .on("pointerleave.track", (/** @type {any} */ event) => onEvent({ type: "pointerleave", rawEvent: event }));
+  }
+
+  /**
+   * Report the wheel over the chart as a `wheel` gesture (edit.axis.zoom). Bound
+   * only when an active edit listens, and only then is the page scroll prevented.
+   * `deltaY` is normalized to pixels (a line-mode or page-mode wheel is scaled).
+   * @param {any} svg
+   * @param {(event: any) => [number, number]} pointer
+   * @param {(e: any) => void} onEvent
+   * @param {boolean} wants
+   */
+  _bindWheel(svg, pointer, onEvent, wants) {
+    const node = svg.node();
+    if (!node) return;
+    if (this._wheelHandler) {
+      node.removeEventListener("wheel", this._wheelHandler);
+      this._wheelHandler = null;
+    }
+    if (!wants) return;
+    this._wheelHandler = (/** @type {any} */ event) => {
+      event.preventDefault();
+      const [px, py] = pointer(event);
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 400 : 1;
+      onEvent({
+        type: "wheel", x: px, y: py,
+        deltaX: (event.deltaX || 0) * unit, deltaY: (event.deltaY || 0) * unit,
+        rawEvent: event,
+      });
+    };
+    node.addEventListener("wheel", this._wheelHandler, { passive: false });
   }
 
   /**
