@@ -16,7 +16,7 @@ import { nearestMark, nearestMarkOnAxis, nearestNode, nearestSeries, pickThresho
 /** @type {import('./index.js').Driver} */
 export const sweepDriver = {
     name: 'sweep',
-    sessionKeys: ['px', 'py', 'threshold', 'hoverIndex', 'activeIndex', 'series', 'channel'],
+    sessionKeys: ['px', 'py', 'threshold', 'hoverIndex', 'activeIndex', 'series', 'channel', 'lastX', 'lastY'],
     selects: true,
     onEvent({ event, edits, marks, session, runEdit }) {
         const threshold = pickThreshold(edits[0]);
@@ -45,9 +45,9 @@ export const sweepDriver = {
          * runs with the channels this driver sweeps (the engine warns when that
          * default was taken — see warnMissingEditChannels). An edit naming several
          * channels runs a view narrowed to the locked edge.
-         * @param {number} index @param {string | null} edge
+         * @param {number} index @param {string | null} edge @param {{ x: number, y: number }} [at]
          */
-        const paint = (index, edge) => {
+        const paint = (index, edge, at) => {
             let changed = false;
             for (const edit of edits) {
                 const own = edit.channels && edit.channels.length ? edit.channels : chans;
@@ -56,9 +56,39 @@ export const sweepDriver = {
                     if (!own.includes(edge)) continue;
                     if (own.length > 1) view = { ...edit, channels: [edge] };
                 }
-                if (runEdit(view, index)) changed = true;
+                if (runEdit(view, index, at)) changed = true;
             }
             return changed;
+        };
+
+        /**
+         * The rows a 1-D stroke PASSED between the previous pointer event and this
+         * one, each with the pointer interpolated to its column — so a fast swipe
+         * paints every column it crossed, not only the one under each event.
+         * @param {number} x0 @param {number} y0 @param {any} lockSeries @param {string | null} edge
+         * @returns {{ index: number, at: { x: number, y: number } }[]}
+         */
+        const crossed = (x0, y0, lockSeries, edge) => {
+            if (twoD) return [];
+            const a0 = axis === 'x' ? x0 : y0, a1 = axis === 'x' ? event.x : event.y;
+            const lo = Math.min(a0, a1), hi = Math.max(a0, a1);
+            if (hi - lo < 1) return [];
+            /** @type {{ index: number, at: { x: number, y: number }, c: number }[]} */
+            const out = [];
+            const seen = new Set();
+            for (const m of marks || []) {
+                if (!m || m.index == null || m.locked || seen.has(m.index)) continue;
+                if (lockSeries !== undefined && m.series !== lockSeries) continue;
+                if (edge != null && m.channel != null && m.channel !== edge) continue;
+                const c = axis === 'x' ? m.cx : m.cy;
+                if (c == null || c < lo || c > hi) continue;
+                const t = (c - a0) / ((a1 - a0) || 1);
+                const v0 = axis === 'x' ? y0 : x0, v1 = axis === 'x' ? event.y : event.x;
+                const v = v0 + (v1 - v0) * t;
+                seen.add(m.index);
+                out.push({ index: m.index, at: axis === 'x' ? { x: c, y: v } : { x: v, y: c }, c });
+            }
+            return out.sort((p, q) => (a1 >= a0 ? p.c - q.c : q.c - p.c));
         };
 
         let changed = false;
@@ -78,12 +108,12 @@ export const sweepDriver = {
             const near = nearestNode(marks, event.x, event.y, threshold, lock);
             const edge = near && near.channel != null ? near.channel : null;
             const index = resolve(lock, edge);
-            session.set({ px: event.x, py: event.y, threshold, hoverIndex: index, activeIndex: index, series: s, channel: edge });
+            session.set({ px: event.x, py: event.y, threshold, hoverIndex: index, activeIndex: index, series: s, channel: edge, lastX: event.x, lastY: event.y });
             if (index != null && paint(index, edge)) changed = true;
             changed = true;
         } else if (event.type === 'dragend') {
             const info = session.get();
-            if (info) { info.activeIndex = null; info.series = null; info.channel = null; }
+            if (info) { info.activeIndex = null; info.series = null; info.channel = null; info.lastX = null; info.lastY = null; }
             changed = true;
         } else if (event.type === 'drag') {
             // Paint: retarget within the locked series (and edge) each event, so one
@@ -91,8 +121,14 @@ export const sweepDriver = {
             const info = session.get();
             const lock = info && info.series != null ? info.series : undefined;
             const edge = info && info.channel != null ? info.channel : null;
+            // Every column crossed since the last event, then the one under the pointer.
+            if (info && info.lastX != null && info.lastY != null) {
+                for (const { index: i, at } of crossed(info.lastX, info.lastY, lock, edge)) {
+                    if (paint(i, edge, at)) changed = true;
+                }
+            }
             const index = resolve(lock, edge);
-            session.set({ px: event.x, py: event.y, threshold, hoverIndex: index, activeIndex: index });
+            session.set({ px: event.x, py: event.y, threshold, hoverIndex: index, activeIndex: index, lastX: event.x, lastY: event.y });
             if (index != null && paint(index, edge)) changed = true;
             changed = true;
         }

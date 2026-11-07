@@ -137,3 +137,23 @@ describe('false-positive warnings', () => {
         expect(seen.some((w) => /ring winding/.test(w))).toBe(false);
     });
 });
+
+describe('axis titles reserve their room', () => {
+    it('grows the left band so a rotated y title past wide labels stays inside the chart', async () => {
+        quiet();
+        const el = Elicit({
+            width: 300, height: 200, margins: { top: 10, right: 10, bottom: 30, left: 30 },
+            schema: { k: { type: 'categorical', domain: ['a'] }, v: { type: 'quantitative', domain: [0, 40000] } },
+            data: [{ k: 'a', v: 20000 }],
+            axes: { x: {}, y: { title: 'population' } },
+            marks: [plot.barY({ channels: { x: { field: 'k' }, y: { field: 'v' } } })],
+        });
+        document.body.appendChild(el);
+        await tick();
+        const m = el.querySelector('g.scene-container').getAttribute('transform').match(/translate\(([\d.]+),/);
+        expect(+m[1]).toBeGreaterThan(30);
+        const t = [...el.querySelectorAll('text')].find((n) => n.textContent === 'population');
+        expect(+t.getAttribute('x') + +m[1]).toBeGreaterThan(0);
+        expect(el.querySelector('svg').getAttribute('width')).toBe('300');
+    });
+});

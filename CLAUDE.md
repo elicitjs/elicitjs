@@ -353,7 +353,10 @@ the transform, and every overlay shape is kept concentric with its source so
 any axis-aligned test, so what is outlined and what a drag grabs cannot drift apart.
 
 **Chart TITLES reserve layout space like a legend; `strokeDash` is one word; a
-gradient is a node's paint.** `spec.title`/`subtitle`/`caption` go through
+gradient is a node's paint.** An AXIS title reserves the room it needs beyond
+the author's margin on its side (`Axis.measureTitle`, read in the same provisional
+pass as the legends), so a rotated y title past wide tick labels is never clipped.
+`spec.title`/`subtitle`/`caption` go through
 `core/titles.js`: bands outside the legend bands, added to `effectiveMargins` in
 `update()` exactly as `reserveLegends` adds its own, so a titled chart keeps its
 declared size and the plot shrinks; text nodes are background chrome in the theme's

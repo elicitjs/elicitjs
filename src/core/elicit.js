@@ -135,6 +135,8 @@ export function Elicit(spec) {
     // the feature set doesn't change — so the reservation step is skipped entirely
     // for the common no-legend chart.
     const hasLegends = features.some((f) => f && f.isLegend);
+    // Does an axis carry a title that may need room past the author's margin?
+    const hasAxisTitles = () => features.some((f) => f && f.isAxis && typeof f.measureTitle === 'function');
 
     // Working dims. In 'reflow' mode `curW` tracks the container's measured width
     // (height stays the given value); 'fixed'/'scale' keep the design dims. Marks
@@ -841,16 +843,29 @@ export function Elicit(spec) {
         effectiveMargins = { ...authorMargins };
         recomputeInner();
         let legendBands = { top: 0, right: 0, bottom: 0, left: 0 };
-        if (hasLegends) {
+        // An axis title reserves what it needs BEYOND the author's margin on its
+        // side (the axis draws inside that margin), so a rotated y title past wide
+        // tick labels is never clipped — the same rule a legend's band follows.
+        /** @type {Record<string, number>} */
+        const axisBands = { top: 0, right: 0, bottom: 0, left: 0 };
+        if (hasLegends || hasAxisTitles()) {
             const provisional = resolveScales(features, tables, liveSpec, dims);
             /** @type {any} */ (provisional).theme = theme; // measure reads legend font tokens
-            legendBands = reserveLegends(features, provisional, authorMargins, 8, dims);
+            if (hasLegends) legendBands = reserveLegends(features, provisional, authorMargins, 8, dims);
+            for (const f of features) {
+                if (!f || !f.isAxis || typeof f.measureTitle !== 'function') continue;
+                const side = f.anchor || (f.channel === 'y' ? 'left' : 'bottom');
+                if (!(side in axisBands)) continue;
+                const need = f.measureTitle(provisional) || 0;
+                const short = need - /** @type {any} */ (authorMargins)[side];
+                if (short > axisBands[side]) axisBands[side] = short;
+            }
         }
         effectiveMargins = {
-            top: authorMargins.top + legendBands.top + titleBands.top,
-            right: authorMargins.right + legendBands.right,
-            bottom: authorMargins.bottom + legendBands.bottom + titleBands.bottom,
-            left: authorMargins.left + legendBands.left,
+            top: authorMargins.top + axisBands.top + legendBands.top + titleBands.top,
+            right: authorMargins.right + axisBands.right + legendBands.right,
+            bottom: authorMargins.bottom + axisBands.bottom + legendBands.bottom + titleBands.bottom,
+            left: authorMargins.left + axisBands.left + legendBands.left,
         };
         recomputeInner();
 
@@ -1905,8 +1920,9 @@ export function Elicit(spec) {
         if (edits.length === 0) return false;
         const fid = feature.id;
 
-        /** @param {import('../types').Edit} edit @param {number | null} index */
-        const runFeatureEdit = (edit, index) => runEdit(feature, edit, event, index);
+        /** @param {import('../types').Edit} edit @param {number | null} index @param {{ x: number, y: number }} [at] a pointer to run at instead of the event's */
+        const runFeatureEdit = (edit, index, at) =>
+            runEdit(feature, edit, at ? { ...event, x: at.x, y: at.y } : event, index);
         /** @param {import('../types').Edit} edit @param {number | null} index */
         const previewFeatureEdit = (edit, index) => previewEdit(feature, edit, event, index);
 

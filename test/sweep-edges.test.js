@@ -70,3 +70,25 @@ describe('band sweep', () => {
         expect(rows[2].lo).toBe(30);
     });
 });
+
+describe('a fast sweep', () => {
+    it('paints every column it crossed between two pointer events', async () => {
+        const el = Elicit({
+            width: 320, height: 220, axes: false, margins: { top: 10, right: 10, bottom: 10, left: 10 },
+            schema: { x: { type: 'quantitative', domain: [0, 10] }, y: { type: 'quantitative', domain: [0, 100] } },
+            data: Array.from({ length: 11 }, (_, x) => ({ x, y: 20 })),
+            marks: [plot.lineY({ channels: { x: { field: 'x' }, y: { field: 'y', edit: edit.line.sweep() } } })],
+        });
+        document.body.appendChild(el);
+        await tick();
+        // One jump from column 0 to column 10 at value 80 (y = 200 - 160 = 40).
+        el.emit({ type: 'dragstart', x: 0, y: 160 });
+        el.emit({ type: 'drag', x: 300, y: 40 });
+        el.emit({ type: 'dragend', x: 300, y: 40 });
+        const ys = el.getData().map((d) => d.y);
+        expect(ys.every((v, i) => i === 0 || v > 20)).toBe(true);
+        expect(ys[10]).toBeCloseTo(80, 0);
+        expect(ys[5]).toBeGreaterThan(40);
+        expect(ys[5]).toBeLessThan(60);
+    });
+});

@@ -88,7 +88,7 @@ import { connectDriver } from './connect.js';
  * @property {DriverSession} session
  * @property {DriverPreview} preview
  * @property {DriverStage} stage
- * @property {(edit: import('../../types').Edit, index: number | null) => boolean} runEdit
+ * @property {(edit: import('../../types').Edit, index: number | null, at?: { x: number, y: number }) => boolean} runEdit
  * @property {(edit: import('../../types').Edit, index: number | null) => boolean} previewEdit
  * @property {(edit: import('../../types').Edit, index: number | null, node?: any) => string[] | null} [reachable]
  *

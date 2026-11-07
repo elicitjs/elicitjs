@@ -200,6 +200,29 @@ export function axis(options = {}) {
         // A paired grid, when `grid: true` — the engine reads this to auto-add a
         // matching grid mark alongside the axis (see elicit.js). Harmless otherwise.
         grid,
+        // The side this axis draws on, and how far past the plot edge its labels
+        // and title reach — so the engine can reserve that room the way it does a
+        // legend's, instead of a rotated y title falling outside a tight margin.
+        anchor,
+        /**
+         * @param {import('../types').ScaleMap} scales
+         * @returns {number} px from the plot edge to the title's far edge (0: no title)
+         */
+        measureTitle(scales) {
+            if (!title || transform) return 0;
+            const scale = scales[channel];
+            if (!scale) return 0;
+            const thm = themeOf(scales);
+            const fontSize = fontSizeOpt ?? thm.axis.fontSize;
+            if (isX) return tickSize + fontSize * 2.4 + fontSize * 0.6 + 2;
+            const { values, format } = tickData(scale, { ticks, tickValues, tickFormat });
+            let labelW = 0;
+            for (const v of values) labelW = Math.max(labelW, measureText(String(format(v)), { fontSize }));
+            const angle = titleAngle != null ? titleAngle : (anchor === 'left' ? 90 : -90);
+            const gap = angle ? fontSize * 0.9 : fontSize * 1.2;
+            const titleExtent = angle ? (fontSize + 1) * 0.7 : measureText(String(title), { fontSize: fontSize + 1 }) / 2;
+            return tickSize + 4 + labelW * 1.06 + gap + titleExtent + 2;
+        },
         /**
          * @param {any[]} _data
          * @param {import('../types').ScaleMap} scales
