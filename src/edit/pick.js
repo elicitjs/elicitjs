@@ -156,16 +156,19 @@ export function nearestMark(marks, px, py, threshold, series) {
  * @param {number} px
  * @param {number} py
  * @param {number} threshold
+ * @param {{ includeLocked?: boolean }} [options] `includeLocked`: an APPEND-only
+ *   edit (anchor) may extend a locked line — appending breaks no locked row — so
+ *   it asks for locked lines too; a sweep or draw, which rewrites rows, must not.
  * @returns {any | null}
  */
-export function nearestSeries(marks, px, py, threshold) {
+export function nearestSeries(marks, px, py, threshold, options = {}) {
     let bestSeries = null;
     let bestDist = Infinity;
     (marks || []).forEach((mark) => {
         if (mark.series === undefined) return;
         // A fully locked line is not there as far as a gesture is concerned, so a
         // drag beside it draws a new line instead of grabbing a frozen one.
-        if (mark.locked) return;
+        if (mark.locked && !options.includeLocked) return;
         // Prefer the drawn line (path); fall back to a handle's centre.
         let d;
         if (mark.type === 'path') d = distanceToMark(mark, px, py);
@@ -180,7 +183,9 @@ export function nearestSeries(marks, px, py, threshold) {
  * The nearest mark measured ALONG ONE AXIS only (the you-draw-it sweep target):
  * distance is |px - cx| on 'x' or |py - cy| on 'y', so the pointer's position on
  * the other axis is ignored and a horizontal sweep always selects the point in
- * the column it is over. Only handle nodes with a centre (circles) are eligible.
+ * the column it is over. Any datum-bearing node with a centre is eligible — a
+ * handle circle, or a bar's rect through `markCenter` — so a sweep paints bars
+ * and cells as well as line vertices.
  * @param {any[]} marks
  * @param {number} px
  * @param {number} py
@@ -195,8 +200,11 @@ export function nearestMarkOnAxis(marks, px, py, threshold, axis, series) {
     (marks || []).forEach((mark, i) => {
         if (mark.locked) return;        // a read-only row is not a target (spec.lock)
         if (series !== undefined && mark.series !== series) return;
-        const center = axis === 'x' ? mark.cx : mark.cy;
-        if (center == null) return; // not a point handle
+        if (mark.index == null) return; // datum-bearing marks only (skip a line's path)
+        const c = markCenter(mark);
+        if (!c) return;
+        const center = axis === 'x' ? c.cx : c.cy;
+        if (center == null) return;
         const d = Math.abs((axis === 'x' ? px : py) - center);
         // Return the datum index, not the array slot (see nearestMark): a line's
         // connecting path precedes its handles, so positions are offset by one.

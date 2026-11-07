@@ -58,6 +58,7 @@ function buildLine(options, defaultConnect = 'domain') {
         ...markCommon(opts),
         type: 'line',
         channels,
+        handles,
         // `curve` is read raw (no scale), so it must be declared — same contract as
         // `link`, which resolves its own per-row `curve` the same way. It was a plain
         // option here and a raw channel there: one name, two tiers.

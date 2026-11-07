@@ -88,6 +88,7 @@ function buildArea(options) {
     return {
         ...markCommon(opts),
         type: 'area',
+        handles,
         channels,
         // Read raw (no scale), like `line`'s and `link`'s.
         rawChannels: ['curve', 'series', 'order'],

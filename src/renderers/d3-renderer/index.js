@@ -680,11 +680,11 @@ export class D3Renderer {
     return (sel) => {
       sel
         .on("pointerenter", /** @type {any} */ (/** @type {any} */ _event, /** @type {any} */ d) => {
-          if (!enabled || !d || !d.editable) return;
+          if (!enabled || !d || !(d.editable || d.hoverable)) return;
           onEvent({ type: "pointerover", node: d });
         })
         .on("pointerleave", /** @type {any} */ (/** @type {any} */ _event, /** @type {any} */ d) => {
-          if (!enabled || !d || !d.editable) return;
+          if (!enabled || !d || !(d.editable || d.hoverable)) return;
           onEvent({ type: "pointerout", node: d });
         });
     };

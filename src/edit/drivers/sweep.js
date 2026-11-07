@@ -22,6 +22,11 @@ export const sweepDriver = {
         const valueName = chans[0] || 'y';
         /** @type {'x' | 'y'} */
         const axis = valueName === 'x' ? 'y' : 'x'; // sweep (domain) axis, 1D case
+        // An edit placed at MARK level names no channel, so its apply would resolve
+        // none and write nothing. Run it with the channels this driver sweeps (the
+        // engine warns when that default was taken — see warnMissingEditChannels).
+        /** @param {import('../../types').Edit} edit @param {number | null} index */
+        const run = (edit, index) => runEdit(edit.channels && edit.channels.length ? edit : { ...edit, channels: chans }, index);
 
         /** @param {any} lockSeries */
         const resolve = (lockSeries) => twoD
@@ -43,7 +48,7 @@ export const sweepDriver = {
             const index = resolve(s == null ? undefined : s);
             session.set({ px: event.x, py: event.y, threshold, hoverIndex: index, activeIndex: index, series: s });
             if (index != null) {
-                edits.forEach((edit) => { if (runEdit(edit, index)) changed = true; });
+                edits.forEach((edit) => { if (run(edit, index)) changed = true; });
             }
             changed = true;
         } else if (event.type === 'dragend') {
@@ -58,7 +63,7 @@ export const sweepDriver = {
             const index = resolve(lock);
             session.set({ px: event.x, py: event.y, threshold, hoverIndex: index, activeIndex: index });
             if (index != null) {
-                edits.forEach((edit) => { if (runEdit(edit, index)) changed = true; });
+                edits.forEach((edit) => { if (run(edit, index)) changed = true; });
             }
             changed = true;
         }

@@ -49,7 +49,9 @@ export function anchor(options = {}) {
             // 'new' (or 'nearest' found none within threshold — empty space).
             let seriesVal = null;
             if (into === 'nearest') {
-                seriesVal = nearestSeries(ctx.marks || [], ctx.pointer.x, ctx.pointer.y, threshold);
+                // Appending to a locked line breaks no locked row, so a given line
+                // may be extended; a sweep or draw, which rewrites rows, may not.
+                seriesVal = nearestSeries(ctx.marks || [], ctx.pointer.x, ctx.pointer.y, threshold, { includeLocked: true });
                 // Freehand line (connect: 'sequence'): no nearby line, but one already
                 // exists — extend THAT line (append in draw order) rather than spawning
                 // a new series, so a far click keeps a single path. Domain lines, and

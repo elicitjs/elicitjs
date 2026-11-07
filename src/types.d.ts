@@ -1837,6 +1837,9 @@ export interface FeatureNode {
   // Set by the engine when the node's feature has a direct-pick edit, so the
   // renderer shows an interactive cursor on it.
   editable?: boolean;
+  // Answers the pointer for HOVER only (a node mark whose edit lives on its
+  // ports): no cursor, no drag, never a hit-test target.
+  hoverable?: boolean;
   // Set by the engine when the node's row is READ-ONLY (ElicitSpec.lock): the node
   // is never `editable`, is pointer-transparent, and proximity picking skips it. A
   // line's connector path is locked when every row of its series is.

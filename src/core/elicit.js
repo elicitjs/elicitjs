@@ -26,7 +26,7 @@ import {
     markLabel, constraintLabel, describe,
     warnScaleRequirements, warnScopeMismatch, warnProjectionCartesianMix,
     warnDuplicatePlaneEdits, warnUnreachableLegendRow, warnConnectConflict,
-    warnCreateOnNonMark, warnCreateEmptyExtent, warnDeadEditChannels,
+    warnCreateOnNonMark, warnCreateEmptyExtent, warnDeadEditChannels, warnMissingEditChannels, warnHiddenHandles,
     warnUnknownSpecKeys, warnUnclaimedPick, warnUnknownEditOptions,
 } from './guards.js';
 
@@ -865,6 +865,8 @@ export function Elicit(spec) {
             warnCreateOnNonMark(feature, declaredEdits, scales);
             warnCreateEmptyExtent(feature, declaredEdits, liveSpec.schema);
             warnDeadEditChannels(feature, declaredEdits, scales);
+            warnMissingEditChannels(feature, declaredEdits);
+            warnHiddenHandles(feature, declaredEdits);
             warnConnectConflict(feature, declaredEdits);
             warnUnclaimedPick(feature, declaredEdits);
             warnUnknownEditOptions(feature, declaredEdits);
@@ -874,6 +876,11 @@ export function Elicit(spec) {
             // edits (nearest/sweep/draw) put the cursor on the plane instead, so
             // they don't mark nodes editable.
             const editable = activeEdits(feature).some(e => e.pick === 'direct');
+            // A node mark whose only edit lives on its PORTS (desugared into a
+            // sibling feature) carries no edit of its own, yet its ports show on
+            // HOVER of the host — so the host must still answer the pointer. Hoverable
+            // is not editable: no cursor, no drag, no hit-test target.
+            const portHosted = features.some((f) => f.portHost === feature);
 
             // An edit completed by TYPING (`inline`) makes this feature's nodes
             // typable — the renderer opens its inline editor on a double-click of a
@@ -916,6 +923,7 @@ export function Elicit(spec) {
                 const locked = isLocked && isNodeLocked(node, feature, currentData, isLocked);
                 if (locked) node.locked = true;
                 if (editable && !locked) node.editable = true;
+                else if (portHosted && !locked && node.pointerEvents == null) node.hoverable = true;
                 else if (node.pointerEvents == null) node.pointerEvents = 'none';
                 if (inlineEdit && !locked) {
                     node.editText = true;

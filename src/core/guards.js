@@ -14,7 +14,7 @@
 // see the header of core/dev.js. Never re-gate a guard on a bundler-specific global.
 
 import { axisOf } from './encoding.js';
-import { driverFor } from '../edit/drivers/index.js';
+import { driverFor, needsPlaneOnTop } from '../edit/drivers/index.js';
 import { UNVERIFIED } from '../edit/shared.js';
 import { warn, warningsEnabled } from './dev.js';
 
@@ -491,6 +491,50 @@ export function warnDeadEditChannels(feature, edits, scales) {
             `continuous, band or point scale.`
         );
     }
+}
+
+/**
+ * An INVERTING edit that resolves no channel writes nothing: `apply` runs the
+ * pointer back through each of `ctx.channels`, and there are none. That is what a
+ * mark-level `edits: [edit.line.sweep()]` or `edits: [move()]` is — the edit was
+ * never placed on a channel and names none itself — and it was dead in silence
+ * (the sweep driver quietly assumed `y`). Say which channel to name.
+ * @param {any} feature
+ * @param {import('../types').Edit[]} edits the COLLECTED edits (placement channels injected)
+ */
+export function warnMissingEditChannels(feature, edits) {
+    if (feature.supportsGeo) return; // geo edits invert through the projection
+    for (const e of edits) {
+        if (!e.inverts || isDatasetCreator(e)) continue;
+        if (e.channels && e.channels.length) continue;
+        warn(
+            `${markLabel(feature)}:nochannel:${e.type}`,
+            `${e.type}() on ${markLabel(feature)} names no channel, so it has nothing to write. ` +
+            `Put it on the channel it edits (\`y: { field, edit: ${e.type}() }\`) or pass ` +
+            `\`channels: ['y']\`.`
+        );
+    }
+}
+
+/**
+ * A line or area with `handles: false` emits no handle nodes, and a proximity
+ * edit (sweep, nearest, draw) resolves its target FROM those nodes — so the edit
+ * finds nothing and the chart reads as inert. `handles: 'hit'` is the spelling
+ * for invisible-but-targetable.
+ * @param {any} feature
+ * @param {import('../types').Edit[]} edits
+ */
+export function warnHiddenHandles(feature, edits) {
+    if (feature.handles !== false) return;
+    if (!needsPlaneOnTop(edits)) return;
+    const types = [...new Set(edits.filter((e) => e.pick !== 'direct' && e.pick !== 'plane').map((e) => e.type))];
+    if (!types.length) return;
+    warn(
+        `${markLabel(feature)}:handles:hidden`,
+        `${markLabel(feature)} has handles: false, but ${types.map((t) => `${t}()`).join(', ')} ` +
+        `resolves its target from the handles, so it has nothing to aim at. Use ` +
+        `handles: 'hit' to keep them targetable but invisible.`
+    );
 }
 
 /**
