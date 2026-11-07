@@ -187,13 +187,21 @@ export function zoom(options = {}) {
             // A Shift-wheel arrives as horizontal travel in most browsers.
             const delta = Number(ctx.deltaY) || Number(ctx.deltaX) || 0;
             if (!delta) return undefined;
-            // The value under the pointer stays put; the span scales about it.
+            // The value under the pointer stays put; the span scales about it — in
+            // the scale's own space (pixels), so a log or time axis zooms about the
+            // anchor too. Scaling data units drifted the anchor off-screen on a log
+            // axis within a few ticks.
             const p = axis === 'x' ? ctx.pointer.x : ctx.pointer.y;
-            const anchor = numOf(ch.scale.invertValue(p));
-            if (!Number.isFinite(anchor)) return undefined;
             const k = Math.pow(factor, delta / 100);
-            let nlo = anchor + (lo - anchor) * k;
-            let nhi = anchor + (hi - anchor) * k;
+            const r0 = Number(ch.scale.encode(dom[0]));
+            const r1 = Number(ch.scale.encode(dom[dom.length - 1]));
+            const sc = /** @type {any} */ (ch.scale);
+            const raw = typeof sc.invert === 'function' ? (/** @param {number} px */ (px) => numOf(sc.invert(px))) : null;
+            if (!raw || !Number.isFinite(r0) || !Number.isFinite(r1)) return undefined;
+            const a = raw(p + (r0 - p) * k);
+            const b = raw(p + (r1 - p) * k);
+            let nlo = Math.min(a, b);
+            let nhi = Math.max(a, b);
             // Zoom-out ceiling: the declared domain (or an explicit one).
             const ceiling = limit === 'declared'
                 ? (ctx.seedSchema && ctx.seedSchema[fields[0]] && ctx.seedSchema[fields[0]].domain) || null

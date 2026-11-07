@@ -29,6 +29,7 @@
 
 import { nearestMark, pickThreshold } from '../pick.js';
 import { axisOf } from '../../core/encoding.js';
+import { markCenter } from '../shared.js';
 
 const GRAB_THRESHOLD = 40;
 
@@ -55,8 +56,13 @@ export const moveDriver = {
                 : nearestMark(marks, event.x, event.y, pickThreshold(edits[0], GRAB_THRESHOLD));
             if (target == null) return false;
             const row = data[target];
-            /** @type {Record<string, { startPx: number, startValue: any }>} */
+            /** @type {Record<string, { startPx: number, startValue: any, radial?: boolean }>} */
             const anchors = {};
+            // A RADIAL channel (`radius`, `size`) moves with the pointer's distance
+            // from the mark's centre, not with its x — dragging a rose slice upward
+            // used to read as dragging it left.
+            const node = (marks || []).find((m) => m && m.index === target);
+            const centre = node ? markCenter(node) : null;
             for (const edit of edits) {
                 for (const name of edit.channels || []) {
                     const spec = feature.channels && feature.channels[name];
@@ -65,10 +71,12 @@ export const moveDriver = {
                     // Which pointer coordinate this field moves along is the
                     // CHANNEL's axis (axisOf, the one accessor) — a field on y must
                     // not follow pointer x.
-                    anchors[field] = {
-                        startPx: axisOf(name) === 'y' ? event.y : event.x,
-                        startValue: row[field]
-                    };
+                    const axis = axisOf(name);
+                    const radial = axis === 'radius' || name === 'size';
+                    if (radial && !centre) continue;
+                    anchors[field] = radial && centre
+                        ? { startPx: Math.hypot(event.x - centre.cx, event.y - centre.cy), startValue: row[field], radial: true }
+                        : { startPx: axis === 'y' ? event.y : event.x, startValue: row[field] };
                 }
             }
             if (!Object.keys(anchors).length) return false;

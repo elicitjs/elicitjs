@@ -86,3 +86,25 @@ describe('clip and a zoom-only axis', () => {
         expect(d[1] - d[0]).toBeLessThan(100);
     });
 });
+
+describe('zoom on a log axis', () => {
+    it('keeps the value under the pointer in view', async () => {
+        const el = Elicit({
+            width: 300, height: 200, margins: { top: 10, right: 10, bottom: 10, left: 10 },
+            schema: { x: { type: 'quantitative', domain: [100, 1e6] }, y: { type: 'quantitative', domain: [0, 10] } },
+            data: [{ x: 1000, y: 5 }],
+            scales: { x: { type: 'log' } },
+            axes: { x: { edit: edit.axis.zoom() }, y: {} },
+            marks: [plot.point({ channels: { x: { field: 'x' }, y: { field: 'y' } } })],
+        });
+        document.body.appendChild(el);
+        await tick();
+        // Pointer at x ≈ 11.5k on [100, 1e6] over 280 px: log10 position 0.515 → 144 px.
+        const px = 280 * (Math.log10(11500) - 2) / 4;
+        for (let i = 0; i < 4; i++) el.emit({ type: 'wheel', x: px, y: 90, deltaY: -100, rawEvent: {} });
+        const d = el.getSchema().x.domain;
+        expect(d[0]).toBeLessThan(11500);
+        expect(d[1]).toBeGreaterThan(11500);
+        expect(d[1] / d[0]).toBeLessThan(1e4);
+    });
+});

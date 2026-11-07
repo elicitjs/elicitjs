@@ -4275,6 +4275,125 @@ async function main() {
         check('network: the typed label lands in the link row',
             tiesTyped.ties[0].note === 'knew at school', JSON.stringify(tiesTyped.ties[0]));
 
+
+        // ---- gallery-findings features --------------------------------------
+        /** Drag from (x0,y0) to (x1,y1) in page coordinates. */
+        const dragPage = async (x0, y0, x1, y1, steps = 10) => {
+            await page.mouse.move(x0, y0);
+            await page.mouse.down();
+            await page.mouse.move(x1, y1, { steps });
+            await page.mouse.up();
+            await page.waitForTimeout(150);
+        };
+        /** Centre of a locator's box. */
+        const boxCentre = async (loc) => {
+            await loc.scrollIntoViewIfNeeded();
+            const b = await loc.boundingBox();
+            return { x: b.x + b.width / 2, y: b.y + b.height / 2, b };
+        };
+
+        // A band sweep paints ONE edge: the one whose handle was nearest at dragstart.
+        console.log('\nBand sweep, edge by edge (/editing/sweep)');
+        await open('/editing/sweep', '#band svg path.mark-line');
+        const bsEl = '#band .chart > div';
+        const bsBefore = await page.$eval(bsEl, (e) => e.getData());
+        const topHandles = page.locator('#band svg circle[data-channel="y2"]');
+        const t0 = await boxCentre(topHandles.nth(1));
+        const t3 = await boxCentre(topHandles.nth(4));
+        await dragPage(t0.x, t0.y, t3.x, t0.y - 30, 16);
+        const bsAfter = await page.$eval(bsEl, (e) => e.getData());
+        const hiMoved = bsAfter.filter((d, i) => Math.abs(d.hi - bsBefore[i].hi) > 0.5).length;
+        check('band sweep: dragging along the top edge repaints several highs', hiMoved >= 2, `${hiMoved} highs moved`);
+        check('band sweep: every low is untouched', bsAfter.every((d, i) => d.lo === bsBefore[i].lo),
+            bsAfter.map((d) => d.lo).join(','));
+
+        // A context table is drawn, read-only, and not part of the answer.
+        console.log('\nContext tables (/schema)');
+        await open('/schema', '#context svg path.mark-line');
+        const ctxEl = '#context .chart > div';
+        const ctxData = await page.$eval(ctxEl, (e) => e.getData());
+        check('context: getData() is the bare elicited array', Array.isArray(ctxData) && ctxData.length === 4,
+            JSON.stringify(ctxData).slice(0, 80));
+        check('context: getSchema() leaves the context table out',
+            await page.$eval(ctxEl, (e) => !('history' in e.getSchema()) && 'rate' in e.getSchema()));
+        check('context: both lines draw', (await page.locator('#context svg path.mark-line').count()) === 2);
+
+        // follow: dragging the mean carries the interval.
+        console.log('\nfollow (/constraints)');
+        await open('/constraints', '#follow svg circle.mark');
+        const flEl = '#follow .chart > div';
+        const flBefore = (await page.$eval(flEl, (e) => e.getData()))[0];
+        const meanDot = await boxCentre(page.locator('#follow svg circle.mark:not([data-hit])').first());
+        await dragPage(meanDot.x, meanDot.y, meanDot.x, meanDot.y - 30);
+        const flAfter = (await page.$eval(flEl, (e) => e.getData()))[0];
+        const dMean = flAfter.mean - flBefore.mean;
+        check('follow: the mean rose', dMean > 0.3, `${flBefore.mean} -> ${flAfter.mean}`);
+        check('follow: lo and hi moved by the same delta',
+            Math.abs((flAfter.lo - flBefore.lo) - dMean) < 1e-6 && Math.abs((flAfter.hi - flBefore.hi) - dMean) < 1e-6,
+            JSON.stringify(flAfter));
+
+        // A tip shows the row under the pointer and never blocks the drag beneath it.
+        console.log('\nTips (/guides)');
+        await open('/guides', '#tips svg rect.mark');
+        const tipBar = await boxCentre(page.locator('#tips svg rect.mark').nth(1));
+        await page.mouse.move(tipBar.x, tipBar.y + tipBar.b.height / 4);
+        await page.waitForTimeout(200);
+        const tipText = await page.locator('#tips svg .guide-front-layer text').allTextContents();
+        check('tip: hovering a bar shows its row', tipText.some((t) => /rain/.test(t)), tipText.join(' | '));
+        check('tip: its box paints above the marks',
+            (await page.locator('#tips svg .guide-front-layer rect.guide-rect').count()) === 1);
+        const tipEl = '#tips .chart > div';
+        const rainBefore = (await page.$eval(tipEl, (e) => e.getData()))[1].rain;
+        await dragPage(tipBar.x, tipBar.b.y + 2, tipBar.x, tipBar.b.y + 40);
+        const rainAfter = (await page.$eval(tipEl, (e) => e.getData()))[1].rain;
+        check('tip: a drag under the tip still edits', rainAfter < rainBefore, `${rainBefore} -> ${rainAfter}`);
+
+        // A rose's rim: radius is a polar position a move inverts.
+        console.log('\nRose plot rim (/marks/arc)');
+        await open('/marks/arc', '#radius svg path.mark-line');
+        const roseEl = '#radius .chart > div';
+        const roseBefore = (await page.$eval(roseEl, (e) => e.getData()))[5].speed;
+        const roseSvg = await boxCentre(page.locator('#radius svg').first());
+        const slice = await boxCentre(page.locator('#radius svg path.mark-line').nth(5));
+        const vx = slice.x - roseSvg.x, vy = slice.y - roseSvg.y, vl = Math.hypot(vx, vy) || 1;
+        await dragPage(slice.x, slice.y, slice.x + (vx / vl) * 40, slice.y + (vy / vl) * 40);
+        const roseAfter = (await page.$eval(roseEl, (e) => e.getData()))[5].speed;
+        check('rose: dragging a slice outward raises its value', roseAfter > roseBefore, `${roseBefore} -> ${roseAfter}`);
+
+        // The wheel zooms the DOMAIN about the pointer, without scrolling the page.
+        console.log('\nWheel zoom (/editing/zoom)');
+        await open('/editing/zoom', '#wheel svg path.mark-line');
+        const zEl = '#wheel .chart > div';
+        const zBefore = await page.$eval(zEl, (e) => e.getSchema());
+        const zc = await boxCentre(page.locator('#wheel svg rect.plane').first());
+        await page.mouse.move(zc.x, zc.y);
+        const scrollBefore = await page.evaluate(() => window.scrollY);
+        await page.mouse.wheel(0, -240);
+        await page.waitForTimeout(250);
+        const zAfter = await page.$eval(zEl, (e) => e.getSchema());
+        const span = (s) => { const d = s.month ? s.month.domain : Object.values(s)[0].domain; return Number(d[1]) - Number(d[0]); };
+        check('zoom: a wheel-up narrows the domain', span(zAfter) < span(zBefore), `${span(zBefore)} -> ${span(zAfter)}`);
+        check('zoom: the page did not scroll', (await page.evaluate(() => window.scrollY)) === scrollBefore);
+
+        // A shape is a mark: picked inside its body and moved by move().
+        console.log('\nShape mark (/marks/shape)');
+        await open('/marks/shape', '#named svg path.mark-line');
+        const shEl = '#named .chart > div';
+        const shBefore = await page.$eval(shEl, (e) => JSON.stringify(e.getData()));
+        const sh = await boxCentre(page.locator('#named svg path.mark-line').first());
+        await dragPage(sh.x, sh.y, sh.x + 30, sh.y - 20);
+        const shAfter = await page.$eval(shEl, (e) => JSON.stringify(e.getData()));
+        check('shape: dragging a shape by its body moves its row', shAfter !== shBefore);
+
+        // Titles reserve space: the chart keeps its declared size.
+        console.log('\nTitles (/theming)');
+        await open('/theming', '#titles svg');
+        const ttTexts = await page.locator('#titles svg text').allTextContents();
+        check('titles: the title, subtitle and caption draw',
+            ttTexts.includes('How will the vote split?') && ttTexts.some((t) => /percent/.test(t)), ttTexts.slice(0, 4).join(' | '));
+        check('titles: the chart keeps its declared height',
+            (await page.locator('#titles svg').first().getAttribute('height')) === '260');
+
         check('no page/console errors', errors.length === 0, errors.slice(0, 3).join(' | '));
     } finally {
         await browser.close();

@@ -156,7 +156,9 @@ function estimateLabelWidth(values, format, fontSize) {
     // over-reserved for "iii".
     let max = 0;
     for (const v of values) max = Math.max(max, measureText(String(format(v)), { fontSize }));
-    return Math.ceil(max);
+    // A small allowance: the page's own font is often a little wider than the
+    // measuring context's fallback family.
+    return Math.ceil(max * 1.06 + 2);
 }
 
 /**

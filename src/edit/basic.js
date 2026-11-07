@@ -72,10 +72,12 @@ export function move(options = {}) {
                 if (relative) {
                     const a = anchor && anchor[ch.field];
                     const axis = axisOf(ch.name);
-                    if (!a || !axis || !ch.scale || !ch.scale.invertible) continue;
+                    if (!a || !(axis || a.radial) || !ch.scale || !ch.scale.invertible) continue;
                     const from = ch.scale.encode(a.startValue);
                     if (typeof from !== 'number' || Number.isNaN(from)) continue;
-                    const moved = (axis === 'x' ? ctx.pointer.x : ctx.pointer.y) - a.startPx;
+                    const moved = a.radial
+                        ? (center ? Math.hypot(ctx.pointer.x - center.cx, ctx.pointer.y - center.cy) : a.startPx) - a.startPx
+                        : (axis === 'x' ? ctx.pointer.x : ctx.pointer.y) - a.startPx;
                     next[ch.field] = ch.scale.invertValue(from + moved);
                     continue;
                 }

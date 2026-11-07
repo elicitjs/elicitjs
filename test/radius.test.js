@@ -56,3 +56,23 @@ describe('radius channel', () => {
         expect(rings.length).toBeGreaterThan(1);
     });
 });
+
+describe('relative move on radius', () => {
+    it('follows the pointer\'s distance from the centre, whatever the direction', async () => {
+        const el = rose({ marks: [plot.arc({ outerRadius: 120, innerRadius: 20, channels: {
+            theta: { field: 'share' }, fill: { field: 'k' },
+            radius: { field: 'r', edit: edit.move({ mode: 'relative' }) },
+        } })] });
+        await tick();
+        const path = [...el.querySelectorAll('path.mark-line')][1];
+        const node = { ...path.__data__ };
+        const { cx, cy, a0, a1 } = node.sector;
+        const mid = ((a0 + a1) / 2) * Math.PI / 180;
+        const at = (r) => ({ x: cx + r * Math.cos(mid), y: cy - r * Math.sin(mid) });
+        const start = at(40), end = at(80);
+        el.emit({ type: 'dragstart', node, ...start });
+        el.emit({ type: 'drag', node, ...end });
+        el.emit({ type: 'dragend', node, ...end });
+        expect(el.getData()[1].r).toBeGreaterThan(40);
+    });
+});

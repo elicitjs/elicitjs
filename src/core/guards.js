@@ -183,8 +183,12 @@ export function warnDuplicatePlaneEdits(features, editsOf, tableOfEdit) {
         for (const e of editsOf(f)) {
             if (e.pick === 'direct') continue;
             // A domain or selection edit writes the schema or the pipeline state,
-            // never the rows, so it cannot double-apply a whole-dataset change.
+            // never the rows, so it cannot double-apply a whole-dataset change. An
+            // edit whose driver resolves ONE row to write (a sweep, a nearest pick, a
+            // brush) cannot either: each mark paints the row its own driver chose.
             if (e.target === 'domain' || e.target === 'selection') continue;
+            const d = driverFor(e);
+            if (d && d.selects) continue;
             const t = tableOfEdit(f, e);
             const list = byTable[t] || (byTable[t] = []);
             if (!list.includes(f)) list.push(f);
