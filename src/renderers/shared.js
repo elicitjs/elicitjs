@@ -78,7 +78,9 @@ export function partitionScene(children) {
             continue;
         }
         if (n.guide) {
-            if (n.type === 'rect') guideRegions.push(n);
+            // A guide rect is a shaded band behind the marks — unless it says
+            // `front` (a tip's box, a readout's backing), which belongs above them.
+            if (n.type === 'rect' && !n.front) guideRegions.push(n);
             else guideFront.push(n);
             continue;
         }

@@ -176,7 +176,9 @@ export function axis(options = {}) {
     const isX = channel === 'x'
         || (channel !== 'y' && (anchor === 'bottom' || anchor === 'top'));
     const edits = elementEdits(options, channel);
-    const editable = edits.length > 0;
+    // Handles and category affordances serve DIRECT edits (a handle drag, a
+    // rename); a plane edit (the wheel zoom) draws nothing to grab.
+    const editable = edits.some((e) => e.pick !== 'plane');
 
     return {
         id,

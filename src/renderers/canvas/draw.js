@@ -344,6 +344,9 @@ function paintGuideFront(ctx, n) {
         case 'text':
             text(ctx, n, { fill: 'black', opacity: 1 }, 'start');
             break;
+        case 'rect':
+            rect(ctx, n, { fill: 'none', stroke: 'none', strokeWidth: 1, opacity: 1 });
+            break;
         default:
             break;
     }
@@ -389,7 +392,7 @@ function paintEffect(ctx, n) {
  * order IS z-order on a canvas (last wins).
  * @param {CanvasRenderingContext2D} ctx
  * @param {any[]} children scene nodes
- * @param {{ images: Map<string, any>, requestRepaint: () => void, theme?: any }} io
+ * @param {{ images: Map<string, any>, requestRepaint: () => void, theme?: any, clip?: boolean, innerWidth?: number, innerHeight?: number }} io
  */
 export function paintScene(ctx, children, io) {
     // The theme's font tokens for this pass (read by text()); null family keeps the
@@ -415,8 +418,16 @@ export function paintScene(ctx, children, io) {
 
     guideRegions.forEach((n) => rect(ctx, n, { fill: 'none', stroke: 'none', strokeWidth: 1, opacity: 1 }));
 
-    // Ordinary marks in features/parts array order.
+    // Ordinary marks in features/parts array order — confined to the plot rect
+    // under `clip: true` (chrome and guides stay unclipped).
+    if (io.clip) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, Math.max(0, io.innerWidth || 0), Math.max(0, io.innerHeight || 0));
+        ctx.clip();
+    }
     marks.forEach((n) => paintMark(ctx, n));
+    if (io.clip) ctx.restore();
 
     // Rules, constraint ticks, guide labels — in scene order.
     guideFront.forEach((n) => paintGuideFront(ctx, n));

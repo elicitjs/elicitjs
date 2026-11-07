@@ -184,7 +184,8 @@ export function zoom(options = {}) {
             const temporal = dom[0] instanceof Date || dom[dom.length - 1] instanceof Date;
             const lo = numOf(dom[0]);
             const hi = numOf(dom[dom.length - 1]);
-            const delta = Number(ctx.deltaY) || 0;
+            // A Shift-wheel arrives as horizontal travel in most browsers.
+            const delta = Number(ctx.deltaY) || Number(ctx.deltaX) || 0;
             if (!delta) return undefined;
             // The value under the pointer stays put; the span scales about it.
             const p = axis === 'x' ? ctx.pointer.x : ctx.pointer.y;

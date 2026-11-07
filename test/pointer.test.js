@@ -89,3 +89,20 @@ describe('guides.crosshair', () => {
         expect(guides.crosshair().type).toBe('crosshair');
     });
 });
+
+describe('tip layering and options', () => {
+    it('draws its box above the marks and takes the object form with a format', async () => {
+        const el = Elicit({
+            width: 300, height: 200, axes: false, margins: { top: 10, right: 10, bottom: 10, left: 10 },
+            schema: { k: { type: 'categorical', domain: ['a'] }, v: { type: 'quantitative', domain: [0, 100] } },
+            data: [{ k: 'a', v: 42.1234 }],
+            marks: [plot.barY({ tip: { text: ['v'], format: '.1f' }, channels: { x: { field: 'k' }, y: { field: 'v' } } })],
+        });
+        document.body.appendChild(el);
+        await tick();
+        el.emit({ type: 'pointermove', x: 140, y: 150 });
+        expect(el.querySelectorAll('.guide-front-layer rect.guide-rect').length).toBe(1);
+        expect(el.querySelectorAll('.guide-back-layer rect, .guide-regions-layer rect').length).toBe(0);
+        expect(guideTexts(el).some((t) => /v: 42\.1$/.test(t))).toBe(true);
+    });
+});

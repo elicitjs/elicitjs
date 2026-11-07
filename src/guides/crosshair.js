@@ -47,7 +47,7 @@ export function crosshair(options = {}) {
             const label = (cx, cy, text, anchor) => {
                 const w = measureText(text, { fontSize }) + 6;
                 const lx = anchor === 'end' ? cx - w : anchor === 'middle' ? cx - w / 2 : cx;
-                nodes.push({ type: 'rect', x: lx, y: cy - fontSize, width: w, height: fontSize + 4, fill: bg, opacity: 0.85, pointerEvents: 'none', guide: true });
+                nodes.push({ type: 'rect', x: lx, y: cy - fontSize, width: w, height: fontSize + 4, fill: bg, opacity: 0.85, pointerEvents: 'none', guide: true, front: true });
                 nodes.push({ type: 'text', x: cx, y: cy, text, fill: labelFill, fontSize, textAnchor: anchor, pointerEvents: 'none', guide: true });
             };
             if (onX) {

@@ -73,6 +73,7 @@ export class D3Renderer {
       innerHeight,
       responsive,
       overflow,
+      clip: !!context.clip,
     });
 
     // Stashed for the text mark's content-edit overlay (_editText), which is
@@ -274,7 +275,7 @@ export class D3Renderer {
    * interaction plane, and the background layer (behind every mark). Idempotent
    * — on re-render it just returns the existing nodes.
    * @param {any} container
-   * @param {{ width: number, height: number, margins: any, innerWidth: number, innerHeight: number, responsive?: string, overflow?: string }} dims
+   * @param {{ width: number, height: number, margins: any, innerWidth: number, innerHeight: number, responsive?: string, overflow?: string, clip?: boolean }} dims
    * @returns {{ svg: any, g: any, plane: any }}
    */
   _ensureScene(
@@ -287,6 +288,7 @@ export class D3Renderer {
       innerHeight,
       responsive = "fixed",
       overflow = "hidden",
+      clip = false,
     },
   ) {
     /** @type {any} */
@@ -347,6 +349,21 @@ export class D3Renderer {
     // Let marks draw into the margin band (radial/gauge labels) when asked; the
     // default keeps the historical clip to the SVG viewport.
     svg.style("overflow", overflow === "visible" ? "visible" : null);
+    // `clip: true` confines the MARKS to the plot rect (a zoomed-in line would
+    // otherwise run across the axes into the margins); chrome and guides stay.
+    if (clip) {
+      let defs = svg.select("defs");
+      if (defs.empty()) defs = /** @type {any} */ (svg).insert("defs", ":first-child");
+      if (!this._clipId) this._clipId = `ec${Math.random().toString(36).slice(2, 8)}`;
+      let cp = defs.select(`#${this._clipId}`);
+      if (cp.empty()) cp = defs.append("clipPath").attr("id", this._clipId);
+      let r = cp.select("rect");
+      if (r.empty()) r = cp.append("rect");
+      r.attr("x", 0).attr("y", 0).attr("width", Math.max(0, innerWidth)).attr("height", Math.max(0, innerHeight));
+      svg.select(".scene-container").select("g.mark-layer").attr("clip-path", `url(#${this._clipId})`);
+    } else {
+      svg.select(".scene-container").select("g.mark-layer").attr("clip-path", null);
+    }
 
     const g = svg
       .select(".scene-container")
@@ -1213,6 +1230,16 @@ export class D3Renderer {
     const ofType = (t) =>
       nodes.filter((/** @type {any} */ n) => n.type === t);
 
+    // Boxes that sit ABOVE the marks (a tip's background, a readout's backing).
+    const rectSel = layer
+      .selectAll("rect.guide-rect")
+      .data(ofType("rect"))
+      .join("rect")
+      .attr("class", "guide-rect")
+      .style("pointer-events", "none");
+    this._geomRect(rectSel);
+    this._applyStyle(rectSel, { fill: "none", stroke: "none", strokeWidth: 1, opacity: 1 });
+
     const lineSel = layer
       .selectAll("line.guide-line")
       .data(ofType("line"))
@@ -1273,7 +1300,7 @@ export class D3Renderer {
     );
     layer
       .selectAll(
-        "line.guide-line, circle.guide-circle, path.guide-path, text.guide-label",
+        "rect.guide-rect, line.guide-line, circle.guide-circle, path.guide-path, text.guide-label",
       )
       .filter((/** @type {any} */ d) => order.has(d))
       .sort(

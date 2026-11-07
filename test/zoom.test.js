@@ -72,3 +72,17 @@ describe('el.setDomain', () => {
         expect(el.getSchema().x.domain).toEqual([20, 40]);
     });
 });
+
+describe('clip and a zoom-only axis', () => {
+    it('clip: true confines the mark layer, and a zoom-only axis draws no handles', async () => {
+        const { el } = chart({ clip: true });
+        await tick();
+        expect(el.querySelector('g.mark-layer').getAttribute('clip-path')).toMatch(/^url\(#/);
+        // The x axis carries only a zoom: no end-handles (the axis's circles) are drawn.
+        expect([...el.querySelectorAll('circle.mark')].filter((c) => c.__data__ && c.__data__.axisHandle).length).toBe(0);
+        // Shift-wheel arrives as deltaX.
+        el.emit({ type: 'wheel', x: 140, y: 90, deltaX: -100, deltaY: 0, rawEvent: {} });
+        const d = el.getSchema().x.domain;
+        expect(d[1] - d[0]).toBeLessThan(100);
+    });
+});

@@ -551,7 +551,7 @@ export function warnHiddenHandles(feature, edits) {
  */
 export const SPEC_KEYS = [
     // Frame
-    'width', 'height', 'margins', 'responsive', 'overflow', 'focusOutline',
+    'width', 'height', 'margins', 'responsive', 'overflow', 'focusOutline', 'clip',
     // The three kinds of feature: marks view DATA, elements view a SCALE, guides
     // view STATE. Plus the implicit layers that desugar into elements.
     'marks', 'elements', 'guides', 'axes', 'legends',

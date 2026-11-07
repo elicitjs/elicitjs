@@ -970,7 +970,7 @@ export interface MarkOptions {
    * or a function of the row. Desugars to `guides.tip({ mark })` — a guide, so it
    * never makes the mark pointer-active and cannot block a gesture.
    */
-  tip?: boolean | string[] | ((row: Datum, ctx: any) => string | string[]);
+  tip?: boolean | string[] | ((row: Datum, ctx: any) => string | string[]) | Omit<TipGuideOptions, 'mark'>;
   // Constant shorthands — e.g. `fill: 'steelblue'`, `strokeWidth: 2`, `size: 9`.
   // A FUNCTION shorthand (`fill: d => d.x > 50 ? 'red' : 'blue'`) desugars to a
   // derived channel (`{ fn }`), computed per datum in visual space (read-only).
@@ -1956,6 +1956,8 @@ export interface FeatureNode {
   // A filled path whose `points` is its outline polygon (a shape mark): the pick
   // layer tests containment, and `cx`/`cy` is its centre.
   polygon?: boolean;
+  // A guide rect that sits ABOVE the marks (a tip's box) rather than behind them.
+  front?: boolean;
   // A gradient fill (a mark's `gradient` option), painted by the renderers as a
   // <linearGradient> / createLinearGradient over the node's own box.
   fillGradient?: GradientSpec;
@@ -2308,6 +2310,9 @@ export interface ElicitSpec {
   title?: string;
   subtitle?: string;
   caption?: string;
+  /** Confine the marks to the plot rect (a zoomed-in line otherwise runs into the
+   *  margins). Chrome and guides are not clipped. Default false. */
+  clip?: boolean;
   // NO index signature. The spec's key set is CLOSED: an unknown key is a typo
   // that would otherwise draw a wrong chart in silence, and `warnUnknownSpecKeys`
   // (core/elicit.js) reports it at run time. Closing it here is the compile-time
@@ -2451,6 +2456,8 @@ export interface RenderContext {
   // route all gestures as plane events (no node) rather than hit-testing marks.
   planeOnTop?: boolean;
   planeCursor?: string;
+  /** Confine the marks to the plot rect. */
+  clip?: boolean;
   /** An active edit listens to the wheel: the renderer reports `wheel` from its root and prevents the page scroll. */
   hasWheel?: boolean;
   /** A guide reads the pointer: the renderer reports pointermove / pointerleave from its root. */

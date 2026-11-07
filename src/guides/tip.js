@@ -89,7 +89,7 @@ export function tip(options = {}) {
                 {
                     type: 'rect', x, y, width: boxW, height: boxH, rx: 3,
                     fill: inkFill, stroke: inkStroke, strokeWidth: 1, opacity: 0.96,
-                    pointerEvents: 'none', guide: true,
+                    pointerEvents: 'none', guide: true, front: true,
                 },
                 {
                     type: 'text', x: x + pad, y: y + pad + fontSize * 0.85,

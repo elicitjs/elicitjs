@@ -460,7 +460,14 @@ export function Elicit(spec) {
     // a tooltip harmless: it reads state and makes nothing pointer-active.
     const tipGuides = features
         .filter((f) => f && f.views !== 'scale' && f.tip != null && f.tip !== false)
-        .map((f) => tipGuide({ mark: f.id, ...(f.tip === true ? {} : { text: f.tip }) }));
+        .map((f) => tipGuide({
+            mark: f.id,
+            // `true` shows every column; a list or function says what; an object
+            // is the guide's own options (text, format, anchor, …).
+            ...(f.tip === true ? {}
+                : (Array.isArray(f.tip) || typeof f.tip === 'function') ? { text: f.tip }
+                    : f.tip),
+        }));
     const allGuides = [...autoEditGuides(features), ...guides, ...tipGuides];
     // Does any guide read the pointer? Then the renderers report pointer movement
     // and the engine re-renders on it; otherwise a chart never pays for that.
@@ -1313,6 +1320,7 @@ export function Elicit(spec) {
             planeCursor,
             tracksPointer,
             hasWheel,
+            clip: !!spec.clip,
             responsive: mode,
             overflow,
             focusOutline,
