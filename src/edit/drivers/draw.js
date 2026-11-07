@@ -8,12 +8,14 @@
 // lines and draws new ones.
 
 import { nearestSeries, pickThreshold } from '../pick.js';
-import { nextSeriesKey } from '../shared.js';
 
 /** @type {import('./index.js').Driver} */
 export const drawDriver = {
     name: 'draw',
-    sessionKeys: ['mode', 'drawSeries', 'lastDomain', 'lastX', 'lastY', 'px', 'py'],
+    // `drawIndex` is geo draw's (edit/geo.js): the row whose coordinate list this
+    // stroke is authoring. It is cleared with the rest, or the NEXT stroke keeps
+    // appending to the row the last one made.
+    sessionKeys: ['mode', 'drawSeries', 'drawContinue', 'drawIndex', 'lastDomain', 'lastX', 'lastY', 'px', 'py'],
     onEvent({ feature, event, edits, marks, data, session, runEdit }) {
         const threshold = pickThreshold(edits[0]);
         let changed = false;
@@ -27,18 +29,17 @@ export const drawDriver = {
             if (near != null) {
                 session.set({ mode: 'edit', drawSeries: near, px: event.x, py: event.y });
             } else {
-                const sField = feature.seriesKey || null;
                 // Freehand lines (connect: 'sequence') stay ONE path: a far drag
                 // continues the existing line — appending in draw order — instead of
                 // spawning a new series. `into: 'new'` opts back into a fresh line;
-                // domain lines still start a new series per drag.
+                // domain lines still start a new series per drag. WHICH series that
+                // is (the last unlocked one, or a key minted from the schema's
+                // declared domain) is the edit's to resolve on its first tick: it
+                // sees the schema and the lock, and this driver sees neither.
                 const continueLine = feature.connect === 'sequence'
                     && data.length > 0
                     && edits[0].into !== 'new';
-                const key = continueLine
-                    ? (sField ? data[data.length - 1][sField] : 0)
-                    : nextSeriesKey(data, sField);
-                session.set({ mode: 'draw', drawSeries: key, lastDomain: null, lastX: null, lastY: null, px: event.x, py: event.y });
+                session.set({ mode: 'draw', drawSeries: null, drawContinue: continueLine, lastDomain: null, lastX: null, lastY: null, px: event.x, py: event.y });
             }
             edits.forEach((edit) => { if (runEdit(edit, null)) changed = true; });
             changed = true;

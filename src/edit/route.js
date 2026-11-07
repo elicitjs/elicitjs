@@ -46,7 +46,17 @@ export function collectEdits(feature) {
             edits.push(e.channels ? e : { ...e, channels: [name] });
         }
     }
-    for (const e of (feature.edits || [])) edits.push(e);
+    for (const e of (feature.edits || [])) {
+        // An edit that reads a positional SPAN PAIR (brushSpan) and names no
+        // channels takes the mark's own pair — the extent the mark draws.
+        if (!e.channels && /** @type {any} */ (e).spans) {
+            const pair = channels.x1 && channels.x2 ? ['x1', 'x2']
+                : channels.y1 && channels.y2 ? ['y1', 'y2'] : null;
+            edits.push(pair ? { ...e, channels: pair } : e);
+            continue;
+        }
+        edits.push(e);
+    }
     return edits;
 }
 

@@ -10,7 +10,7 @@
 //   sweep     — you-draw-it: repaint each point the pointer crosses (drag)
 
 import { warn } from '../core/dev.js';
-import { makeEdit, schemaDefaults, nextSeriesKey, numOf, invertChannel, mintDatum } from './shared.js';
+import { makeEdit, schemaDefaults, nextSeriesKey, lastFreeSeries, numOf, invertChannel, mintDatum } from './shared.js';
 import { nearestSeries, nearestMark, nearestMarkOnAxis, resolveThreshold } from './pick.js';
 import { resolveSamples } from '../core/samples.js';
 import { move } from './basic.js';
@@ -55,10 +55,11 @@ export function anchor(options = {}) {
                 // a new series, so a far click keeps a single path. Domain lines, and
                 // into:'new', still start a fresh series.
                 if (seriesVal == null && ctx.connect === 'sequence' && sField && (ctx.data || []).length) {
-                    seriesVal = ctx.data[ctx.data.length - 1][sField];
+                    seriesVal = lastFreeSeries(ctx.data, sField, ctx.locked);
                 }
             }
-            if (seriesVal == null) seriesVal = nextSeriesKey(ctx.data, sField);
+            if (seriesVal == null) seriesVal = nextSeriesKey(ctx.data, sField, ctx.schema);
+            if (seriesVal === undefined) return undefined; // closed domain exhausted
 
             // Same minting core as `create`; anchor's only extra is the resolved
             // series. It goes in `defaults` (not `seed`): a series key is a grouping,
@@ -116,7 +117,8 @@ export function newSeries(options = {}) {
             const seedValue = valueScale && valueScale.invertible
                 ? valueScale.invertValue(seedVisual)
                 : (valueScale && valueScale.domain ? valueScale.domain()[0] : null);
-            const seriesVal = nextSeriesKey(ctx.data, sField);
+            const seriesVal = nextSeriesKey(ctx.data, sField, ctx.schema);
+            if (seriesVal === undefined) return undefined; // closed domain exhausted
 
             const seeded = positions.map((pos) => {
                 const datum = { ...schemaDefaults(ctx.schema) };
@@ -178,8 +180,17 @@ export function draw(options = {}) {
             const st = ctx.session;
             if (!st) return undefined; // engine sets the per-drag lock on dragstart
             const sField = seriesField || ctx.seriesKey || null;
-            const seriesVal = st.drawSeries;
             const freehandLine = ctx.connect === 'sequence';
+            // The driver locks WHICH line on dragstart; a fresh line's key is
+            // resolved here on the first tick, where the schema (a declared series
+            // domain) and the lock (a given line is not continued) are in view.
+            let seriesVal = st.drawSeries;
+            if (st.mode === 'draw' && seriesVal == null) {
+                seriesVal = st.drawContinue ? lastFreeSeries(ctx.data, sField, ctx.locked) : undefined;
+                if (seriesVal === undefined) seriesVal = nextSeriesKey(ctx.data, sField, ctx.schema);
+                if (seriesVal === undefined) return undefined; // closed domain exhausted
+                st.drawSeries = seriesVal;
+            }
 
             /** @type {Record<string, import('../types').ResolvedChannel>} */
             const byName = {};

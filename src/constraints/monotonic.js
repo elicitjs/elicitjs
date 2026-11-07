@@ -35,7 +35,7 @@ export function monotonic(options = {}) {
     const up = dir !== 'down';
 
     return defineConstraint(
-        ({ data, activeIndex, field }) => {
+        ({ data, activeIndex, field, locked }) => {
             if (!data || data.length < 2 || field == null) return undefined;
 
             // Group into series, each judged on its own. One unkeyed group is the
@@ -65,6 +65,27 @@ export function monotonic(options = {}) {
                 // has to hold, it just has nothing to hold FIXED.
                 const at = run.indexOf(/** @type {number} */(activeIndex));
                 const pivot = at >= 0 ? at : 0;
+
+                // A LOCKED row is a fixed point: the lock runs last and would put it
+                // back, leaving the run broken around it. So instead of pushing a
+                // locked neighbour, the active value is capped by the nearest locked
+                // row on each side, and the push propagates between them.
+                if (at >= 0 && locked) {
+                    let v = Number(next[run[at]][field]);
+                    for (let k = at + 1; k < run.length; k++) {
+                        if (!locked(next[run[k]], run[k])) continue;
+                        const bound = Number(next[run[k]][field]);
+                        v = up ? Math.min(v, bound) : Math.max(v, bound);
+                        break;
+                    }
+                    for (let k = at - 1; k >= 0; k--) {
+                        if (!locked(next[run[k]], run[k])) continue;
+                        const bound = Number(next[run[k]][field]);
+                        v = up ? Math.max(v, bound) : Math.min(v, bound);
+                        break;
+                    }
+                    if (v !== Number(next[run[at]][field])) { next[run[at]][field] = v; touched = true; }
+                }
 
                 for (let k = pivot + 1; k < run.length; k++) {
                     const prev = Number(next[run[k - 1]][field]);

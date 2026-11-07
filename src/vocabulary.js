@@ -129,7 +129,7 @@ export const GUIDE_OPTIONS = {
 export const EDIT_UNIVERSAL_OPTIONS = [
     'type', 'name', 'gesture', 'channel', 'channels', 'when', 'pick', 'threshold',
     'scope', 'into', 'constrain', 'guide', 'stage', 'advance', 'target',
-    'cardinality', 'inverts', 'table', 'inline', 'multiline', 'defaults', 'apply',
+    'cardinality', 'inverts', 'spans', 'table', 'inline', 'multiline', 'defaults', 'apply',
     'targets',
 ];
 

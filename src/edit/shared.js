@@ -177,18 +177,69 @@ export function claimEdge(edit, name) {
 
 /**
  * A fresh series key not already present in the data — the identity of a new line.
- * Uses the smallest non-negative integer free among the existing keys, so colors
- * (an ordinal scale over the keys) stay stable as lines come and go.
+ *
+ * When the schema DECLARES the series field's domain, the key is the first
+ * declared category no row uses (`nextCategory`, which honours `open`): a chart
+ * whose `symbol` domain is ['AAPL', 'IBM'] gets a line called 'IBM', never `0`.
+ * With a closed, exhausted domain there is no legal key — returns undefined and
+ * warns, so the creator refuses instead of minting a value the axis has no room
+ * for. Without a declared domain the key is the smallest non-negative integer
+ * free among the existing keys, so colours (an ordinal scale over the keys) stay
+ * stable as lines come and go.
  * @param {any[]} data
  * @param {string | null} seriesField
- * @returns {number}
+ * @param {Record<string, any> | null} [schema] the table's field schema
+ * @returns {any} the key, or undefined when a closed domain is exhausted
  */
-export function nextSeriesKey(data, seriesField) {
+export function nextSeriesKey(data, seriesField, schema) {
     if (!seriesField) return 0;
-    const existing = new Set((data || []).map((d) => d[seriesField]));
+    const fs = schema && schema[seriesField];
+    if (fs && Array.isArray(fs.domain) && fs.domain.length) {
+        const key = nextCategory(data, seriesField, fs.domain, { open: !!fs.open, label: seriesField });
+        if (key === undefined) {
+            warn(
+                `series:exhausted:${seriesField}`,
+                `every declared category of "${seriesField}" already has a line, and the domain is ` +
+                `closed, so no new series can be started. Declare more categories, or ` +
+                `\`open: true\` on the field.`
+            );
+        }
+        return key;
+    }
+    const existing = new Set((data || []).map((d) => seriesKeyOf(d[seriesField])));
     let n = 0;
     while (existing.has(n)) n++;
     return n;
+}
+
+/**
+ * The series of the last row a freehand stroke may CONTINUE: the last row that
+ * is not read-only. A locked line is given, not elicited, so a far click that
+ * "extends the existing path" must not pour new points into it — the lock would
+ * accept the append (appending breaks no locked row) and the given line would
+ * grow. Returns undefined when every row is locked, so the caller mints a new key.
+ * @param {any[]} data
+ * @param {string | null} seriesField
+ * @param {((row: any, i: number) => boolean) | null | undefined} locked
+ * @returns {any}
+ */
+export function lastFreeSeries(data, seriesField, locked) {
+    for (let i = (data || []).length - 1; i >= 0; i--) {
+        if (locked && locked(data[i], i)) continue;
+        return seriesField ? data[i][seriesField] : 0;
+    }
+    return undefined;
+}
+
+/**
+ * A series value as a grouping KEY: a Date groups by its time, so two rows holding
+ * equal-valued distinct Date objects fall in one series instead of one per row.
+ * Every place that groups or compares series values goes through this.
+ * @param {any} v
+ * @returns {any}
+ */
+export function seriesKeyOf(v) {
+    return v instanceof Date ? v.getTime() : v;
 }
 
 /**
@@ -211,7 +262,8 @@ export function nextSeriesKey(data, seriesField) {
  * @param {any[]} data
  * @param {string | null | undefined} field
  * @param {any[]} domain the field's declared/resolved domain
- * @param {{ open?: boolean, label?: string }} [options] `label` is the placeholder stem
+ * @param {{ open?: boolean, label?: string | ((n: number) => string) }} [options]
+ *   `label` is the placeholder stem, or a function of the placeholder's number
  * @returns {any} the category, or undefined when a closed domain is exhausted
  */
 export function nextCategory(data, field, domain, { open = false, label = 'Category' } = {}) {
@@ -219,11 +271,13 @@ export function nextCategory(data, field, domain, { open = false, label = 'Categ
     const used = new Set((data || []).map((d) => d[field]));
     for (const c of domain || []) if (!used.has(c)) return c;
     if (!open) return undefined;
+    /** @param {number} n */
+    const name = (n) => (typeof label === 'function' ? label(n) : `${label} ${n}`);
     // Number from the domain's length so the first minted name follows the declared
     // ones, and step past anything already taken (including a previous placeholder).
     let n = (domain || []).length + 1;
-    while (used.has(`${label} ${n}`) || (domain || []).includes(`${label} ${n}`)) n++;
-    return `${label} ${n}`;
+    while (used.has(name(n)) || (domain || []).includes(name(n))) n++;
+    return name(n);
 }
 
 // The starting values a minted datum gets from the schema. The SCHEMA owns that
@@ -498,20 +552,34 @@ export function invertChannel(ch, pointer, center = null) {
  * clamping independently (which would shrink the span to zero at the edge and
  * leave it stuck). If the span is already wider than the range, it pins to the
  * full range.
+ * The span's WIDTH comes from the DATUM, encoded through the two channels' scales
+ * (a rect's node carries it as width/height, but an area's node is a handle
+ * circle and a rule's a line, and they carry none); the node is the fallback. The
+ * two values come back ordered: `a` is the smaller, whichever pixel end that was —
+ * on a y axis the smaller pixel is the LARGER value, and handing it to the first
+ * channel swapped a vertical span's low and high every tick.
  * @param {any} node the mark's current scene node (rect: x/y/width/height)
  * @param {import('../types').ResolvedChannel} chA
  * @param {import('../types').ResolvedChannel} chB
  * @param {{ x: number, y: number }} pointer
+ * @param {any} [datum] the row, for the span's data-space width
  * @returns {{ a: any, b: any } | undefined}
  */
-export function recenterSpan(node, chA, chB, pointer) {
-    if (!node || !chA || !chB || !chA.scale || !chB.scale) return undefined;
+export function recenterSpan(node, chA, chB, pointer, datum) {
+    if (!chA || !chB || !chA.scale || !chB.scale) return undefined;
     if (!chA.scale.invertible || !chB.scale.invertible) return undefined;
     const axis = axisOf(chA.name);
     if (!axis || axis !== axisOf(chB.name)) return undefined; // must share an axis
 
     const visual = axis === 'x' ? pointer.x : pointer.y;
-    const span = axis === 'x' ? node.width : node.height;
+    let span = null;
+    if (datum && datum[chA.field] != null && datum[chB.field] != null
+        && typeof chA.scale.encode === 'function' && typeof chB.scale.encode === 'function') {
+        const pa = chA.scale.encode(datum[chA.field]);
+        const pb = chB.scale.encode(datum[chB.field]);
+        if (Number.isFinite(pa) && Number.isFinite(pb)) span = Math.abs(pa - pb);
+    }
+    if (span == null && node) span = axis === 'x' ? node.width : node.height;
     if (visual === undefined || span == null) return undefined;
 
     let p1 = visual - span / 2;
@@ -532,5 +600,7 @@ export function recenterSpan(node, chA, chB, pointer) {
         if (p2 > rHi) { p1 -= p2 - rHi; p2 = rHi; }
     }
 
-    return { a: chA.scale.invertValue(p1), b: chB.scale.invertValue(p2) };
+    const va = chA.scale.invertValue(p1);
+    const vb = chB.scale.invertValue(p2);
+    return numOf(va) <= numOf(vb) ? { a: va, b: vb } : { a: vb, b: va };
 }

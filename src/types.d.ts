@@ -518,6 +518,9 @@ export interface Edit {
   // whose scale cannot. Declared by move/slide/resize/rotate/… and by any custom
   // edit that inverts; a capability, never a list of type names.
   inverts?: boolean;
+  // Does this edit read a positional SPAN PAIR (x1/x2 or y1/y2)? Then, placed at
+  // mark level with no `channels`, collectEdits supplies the mark's own pair.
+  spans?: boolean;
   // This edit is completed by TYPING, so a node its feature draws should open the
   // renderer's inline editor on double-click. A declared CAPABILITY, read by the
   // engine's tagging pass into `FeatureNode.editText` — which is why the engine
@@ -1922,6 +1925,9 @@ export interface Session {
   // draw driver: the locked mode + series and the pointer/domain trail.
   mode?: 'edit' | 'draw';
   drawSeries?: any;
+  // draw driver: a fresh freehand stroke CONTINUES the last unlocked line rather
+  // than starting one; the edit resolves the key on its first tick.
+  drawContinue?: boolean | null;
   // geo draw: index of the row whose coordinates list is being authored this stroke.
   drawIndex?: number | null;
   lastDomain?: any;

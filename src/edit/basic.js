@@ -106,7 +106,7 @@ export function moveSpan(options = {}) {
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
             const [chA, chB] = ctx.channels;
             const node = resolveMarkNode(ctx);
-            const span = recenterSpan(node, chA, chB, ctx.pointer);
+            const span = recenterSpan(node, chA, chB, ctx.pointer, ctx.datum);
             if (!span) return undefined;
             return { ...ctx.datum, [chA.field]: span.a, [chB.field]: span.b };
         }
@@ -144,6 +144,10 @@ export function brushSpan(options = {}) {
         type: 'brushSpan',
         inverts: true,
         gesture: 'drag',
+        // Reads a positional SPAN PAIR. With no `channels` named, collectEdits
+        // supplies the mark's own pair (x1/x2 or y1/y2) — `brushSpan()` on a rect
+        // used to resolve no channel at all and drag nothing, in silence.
+        spans: true,
         ...rest,
         pick: 'brush',
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
@@ -161,7 +165,7 @@ export function brushSpan(options = {}) {
 
             if (zone === 'body') {
                 const node = resolveMarkNode(ctx);
-                const span = recenterSpan(node, chA, chB, ctx.pointer);
+                const span = recenterSpan(node, chA, chB, ctx.pointer, ctx.datum);
                 if (!span) return undefined;
                 return { ...datum, [chA.field]: span.a, [chB.field]: span.b };
             }
@@ -250,7 +254,7 @@ export function brushRect(options = {}) {
                 let placed = false;
                 for (const [a, b] of [xPair, yPair]) {
                     if (!a || !b) continue;
-                    const span = recenterSpan(node, a, b, ctx.pointer);
+                    const span = recenterSpan(node, a, b, ctx.pointer, ctx.datum);
                     if (!span) continue;
                     out[a.field] = span.a;
                     out[b.field] = span.b;
@@ -778,10 +782,31 @@ export function rank(options = {}) {
             if (nextRank === undefined) return undefined;
             const oldRank = ctx.datum[f];
             if (oldRank === nextRank) return undefined;
-            // Swap: the dragged datum takes nextRank; whoever held it gets oldRank.
+            // SHIFT the rows between the old slot and the new one by one place, so a
+            // drag across several slots reads as "insert here" whatever its speed.
+            // Swapping with the slot's occupant gave a different permutation per
+            // tick — a slow drag inserted, a fast one swapped. The slot order is the
+            // declared domain (a band/point rank), else the ranks in play, sorted.
+            const declared = discreteDomain(ch, ctx.schema);
+            const order = declared && declared.length
+                ? declared
+                : [...new Set(ctx.data.map((d) => d[f]))].sort((a, b) => Number(a) - Number(b));
+            const from = order.indexOf(oldRank);
+            const to = order.indexOf(nextRank);
+            if (from < 0 || to < 0) {
+                // Unknown slots: fall back to the swap, which is always a permutation.
+                return ctx.data.map((d, i) => {
+                    if (i === ctx.index) return { ...d, [f]: nextRank };
+                    if (d[f] === nextRank) return { ...d, [f]: oldRank };
+                    return d;
+                });
+            }
             return ctx.data.map((d, i) => {
                 if (i === ctx.index) return { ...d, [f]: nextRank };
-                if (d[f] === nextRank) return { ...d, [f]: oldRank };
+                const k = order.indexOf(d[f]);
+                if (k < 0) return d;
+                if (from < to && k > from && k <= to) return { ...d, [f]: order[k - 1] };
+                if (from > to && k >= to && k < from) return { ...d, [f]: order[k + 1] };
                 return d;
             });
         }

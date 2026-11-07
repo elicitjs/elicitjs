@@ -242,6 +242,25 @@ function normalizeTable(name, entry) {
         };
     }
     // Bare field-map sugar: the role is the table's own name.
+    //
+    // A boolean under a LINK_FACTS name is a fact about the TABLE stated in the
+    // short form (`links: { directed: false, source: {…}, target: {…} }`), never a
+    // column — a FieldSchema is an object. Read it as the fact it is, and say so,
+    // because taking it as a column named `directed` left the fact unread and the
+    // chart drawing an undirected network with arrowheads.
+    const facts = linkFactsOf(entry);
+    if (Object.keys(facts).length) {
+        warn(
+            `schema:${name}:fact-as-column`,
+            `table "${name}" states ${Object.keys(facts).map((k) => `\`${k}\``).join(', ')} beside its ` +
+            `columns. Read as the table's fact; the long form keeps the two apart: ` +
+            `${name}: { ${Object.entries(facts).map(([k, v]) => `${k}: ${v}`).join(', ')}, fields: { … } }.`
+        );
+        /** @type {Record<string, any>} */
+        const columns = {};
+        for (const k of Object.keys(entry)) if (!(k in facts)) columns[k] = entry[k];
+        entry = columns;
+    }
     if (Object.prototype.hasOwnProperty.call(entry, RESERVED_FIELD)) {
         throw new Error(
             `[elicit] table "${name}" declares a column named "${RESERVED_FIELD}", which is ` +
@@ -250,7 +269,7 @@ function normalizeTable(name, entry) {
             `${name}: { fields: { ${RESERVED_FIELD}: … } }.`
         );
     }
-    return { name, role: name, fields: entry, key: keyFieldOf(entry, name) };
+    return { name, role: name, fields: entry, key: keyFieldOf(entry, name), ...facts };
 }
 
 /**

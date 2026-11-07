@@ -39,6 +39,11 @@ export function unique(options = {}) {
             /** @type {Map<any, number[]>} */
             const groups = new Map();
             data.forEach((d, i) => {
+                // A row with no answer yet is not a category: `null` is "unfilled",
+                // the same rule enforceRefs applies to a null reference. Grouping the
+                // unfilled rows together made every seeded-blank chart reject its
+                // first answer.
+                if (fields.some((f) => d[f] == null)) return;
                 const k = keyOf(d);
                 let g = groups.get(k);
                 if (!g) { g = []; groups.set(k, g); }

@@ -113,6 +113,26 @@ export function lockConstraint(isLocked) {
         // upserted): index i still addresses the same row. Restore every locked row
         // the proposal changed and keep the rest of it — so one gesture that spans
         // locked and free rows still commits its free half.
+        //
+        // Unless the longer proposal SPLICED (a stack cut inserts its new segment
+        // beside the one it split, shifting every later row by one): then index i
+        // addresses a neighbour, and "restoring" would overwrite a free row with a
+        // locked row's copy. A splice keeps the untouched rows' IDENTITY, so it is
+        // detectable: some old row sits in the proposal at a different index. Judge
+        // such a proposal by survival, like a delete — a locked row that is still
+        // present (by identity or value) passes, a modified one is refused, since
+        // where to restore it cannot be known.
+        const aligned = data.length === oldData.length
+            || oldData.every((row, i) => data[i] === row || data.indexOf(row) < 0);
+        if (!aligned) {
+            for (let i = 0; i < oldData.length; i++) {
+                const row = oldData[i];
+                if (!isLocked(row, i)) continue;
+                if (data.indexOf(row) >= 0 || data.some((d) => sameRow(d, row))) continue;
+                return false;
+            }
+            return undefined;
+        }
         /** @type {any[] | null} */
         let out = null;
         for (let i = 0; i < oldData.length; i++) {

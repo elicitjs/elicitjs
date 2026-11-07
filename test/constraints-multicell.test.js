@@ -76,3 +76,115 @@ describe('clamp', () => {
         expect(ys[2]).toBe(50);
     });
 });
+
+describe('maintainSum with a negative total', () => {
+    it('redistributes within [total, 0] instead of zeroing every row', async () => {
+        const el = Elicit({
+            width: 300, height: 200,
+            schema: { k: { type: 'categorical', domain: ['a', 'b'] }, v: { type: 'quantitative', domain: [-100, 0] } },
+            data: [{ k: 'a', v: -50 }, { k: 'b', v: -50 }],
+            constraints: [constraints.maintainSum({ field: 'v', total: -100, strategy: 'redistribute' })],
+            marks: [plot.barY({ channels: { x: { field: 'k' }, y: { field: 'v', edit: edit.move({ name: 'v' }) } } })],
+        });
+        document.body.appendChild(el);
+        await tick();
+        el.control('v', 0).set(-30);
+        const vs = el.getData().map((d) => d.v);
+        expect(vs[0]).toBeCloseTo(-30, 6);
+        expect(vs[1]).toBeCloseTo(-70, 6);
+    });
+});
+
+describe('unique with unfilled rows', () => {
+    it('does not treat null as a category', async () => {
+        const el = Elicit({
+            width: 300, height: 200,
+            schema: { slot: { type: 'categorical', domain: ['s1', 's2', 's3'] }, sport: { type: 'categorical', domain: ['run', 'swim', 'row'] } },
+            data: [{ slot: 's1', sport: null }, { slot: 's2', sport: null }, { slot: 's3', sport: null }],
+            constraints: [constraints.unique({ field: 'sport' })],
+            marks: [plot.point({ channels: { x: { field: 'slot' }, y: { value: 50 }, fill: { field: 'sport', edit: edit.set({ name: 'pick' }) } } })],
+        });
+        document.body.appendChild(el);
+        await tick();
+        el.control('pick', 0).set('run');
+        expect(el.getData()[0].sport).toBe('run');
+        el.control('pick', 1).set('run');
+        expect(el.getData()[1].sport).toBeNull(); // a real duplicate is still refused
+    });
+});
+
+describe('monotonic beside a lock', () => {
+    it('caps the dragged value at the locked neighbour instead of leaving the run broken', async () => {
+        const el = Elicit({
+            width: 300, height: 200,
+            lock: (d) => d.x === 0,
+            schema: { x: { type: 'quantitative', domain: [0, 3] }, y: { type: 'quantitative', domain: [0, 100] } },
+            data: [{ x: 0, y: 50 }, { x: 1, y: 50 }, { x: 2, y: 50 }],
+            constraints: [constraints.monotonic({ field: 'y', along: 'x' })],
+            marks: [plot.lineY({ channels: { x: { field: 'x' }, y: { field: 'y', edit: edit.move({ name: 'v' }) } } })],
+        });
+        document.body.appendChild(el);
+        await tick();
+        el.control('v', 1).set(40);
+        expect(el.getData().map((d) => d.y)).toEqual([50, 50, 50]);
+        el.control('v', 1).set(70);
+        expect(el.getData().map((d) => d.y)).toEqual([50, 70, 70]);
+    });
+});
+
+describe('rank', () => {
+    it('shifts the rows between the old and new slot by one', async () => {
+        const el = Elicit({
+            width: 300, height: 200,
+            schema: { name: { type: 'categorical', domain: ['a', 'b', 'c', 'd', 'e'] }, rank: { type: 'ordinal', domain: [1, 2, 3, 4, 5] }, len: { type: 'quantitative', domain: [0, 1] } },
+            data: ['a', 'b', 'c', 'd', 'e'].map((name, i) => ({ name, rank: i + 1, len: 1 })),
+            marks: [plot.barX({ channels: { y: { field: 'rank', edit: edit.rank({ name: 'r' }) }, x: { field: 'len' } } })],
+        });
+        document.body.appendChild(el);
+        await tick();
+        el.control('r', 0).set(4);
+        expect(el.getData().map((d) => d.rank)).toEqual([4, 1, 2, 3, 5]);
+        el.control('r', 4).set(1);
+        expect(el.getData().map((d) => d.rank)).toEqual([5, 2, 3, 4, 1]);
+    });
+});
+
+describe('brushSpan', () => {
+    function mount(extra) {
+        const el = Elicit({
+            width: 300, height: 300, margins: { top: 10, right: 10, bottom: 10, left: 10 }, axes: false,
+            schema: { k: { type: 'categorical', domain: ['a'] }, lo: { type: 'quantitative', domain: [0, 100] }, hi: { type: 'quantitative', domain: [0, 100] } },
+            data: [{ k: 'a', lo: 40, hi: 60 }],
+            ...extra,
+        });
+        document.body.appendChild(el);
+        return el;
+    }
+    it('keeps low below high through a body drag on a VERTICAL span, with ordering declared', async () => {
+        const el = mount({
+            constraints: [constraints.ordering({ field: ['lo', 'hi'] })],
+            marks: [plot.barY({ channels: { x: { field: 'k' }, y1: { field: 'lo' }, y2: { field: 'hi' } }, edits: [edit.brushSpan({ channels: ['y1', 'y2'] })] })],
+        });
+        await tick();
+        // The span's centre: value 50 of [0,100] over an inner height of 280 → y=140.
+        el.emit({ type: 'dragstart', x: 140, y: 140 });
+        el.emit({ type: 'drag', x: 140, y: 100 });
+        el.emit({ type: 'dragend', x: 140, y: 100 });
+        const row = el.getData()[0];
+        expect(row.lo).toBeLessThan(row.hi);
+        expect(row.hi - row.lo).toBeCloseTo(20, 3);
+        expect(row.lo).toBeGreaterThan(40);
+    });
+    it('takes the mark\'s own span pair when placed with no channels', async () => {
+        const el = mount({
+            marks: [plot.barY({ channels: { x: { field: 'k' }, y1: { field: 'lo' }, y2: { field: 'hi' } }, edits: [edit.brushSpan()] })],
+        });
+        await tick();
+        el.emit({ type: 'dragstart', x: 140, y: 140 });
+        el.emit({ type: 'drag', x: 140, y: 100 });
+        el.emit({ type: 'dragend', x: 140, y: 100 });
+        const row = el.getData()[0];
+        expect(row.lo).toBeGreaterThan(40);
+        expect(row.hi - row.lo).toBeCloseTo(20, 3);
+    });
+});
