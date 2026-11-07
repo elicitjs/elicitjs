@@ -31,8 +31,11 @@ export function spacing(options = {}) {
     const { field, min = 1, series = null } = constraintOptions('spacing', options);
 
     return defineConstraint(
-        ({ data, activeIndex, field }) => {
+        ({ data, activeIndex, field, domain }) => {
             if (!data || data.length < 2 || !(min > 0) || field == null) return undefined;
+            const bounds = Array.isArray(domain) && domain.length >= 2
+                ? [Math.min(...domain.map(Number)), Math.max(...domain.map(Number))]
+                : null;
 
             /** @type {Map<any, number[]>} */
             const groups = new Map();
@@ -55,6 +58,17 @@ export function spacing(options = {}) {
                 // with nothing moved, settle the run from its low end.
                 const at = run.indexOf(/** @type {number} */(activeIndex));
                 const pivot = at >= 0 ? at : 0;
+
+                // The chain has to FIT the field's domain: with k neighbours beyond
+                // the dragged value it may sit no closer than k·min to that wall, or
+                // the shove carries a neighbour past the wall and a clamp folds the
+                // pushed thresholds together. Cap the dragged value first.
+                if (at >= 0 && bounds) {
+                    const [lo, hi] = bounds;
+                    const v = Number(next[run[at]][field]);
+                    const capped = Math.max(lo + at * min, Math.min(hi - (run.length - 1 - at) * min, v));
+                    if (Number.isFinite(capped) && capped !== v) { next[run[at]][field] = capped; touched = true; }
+                }
 
                 for (let k = pivot + 1; k < run.length; k++) {
                     const floor = Number(next[run[k - 1]][field]) + min;

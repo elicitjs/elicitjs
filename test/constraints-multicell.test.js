@@ -188,3 +188,22 @@ describe('brushSpan', () => {
         expect(row.hi - row.lo).toBeCloseTo(20, 3);
     });
 });
+
+describe('spacing beside a clamp', () => {
+    it('stops the dragged threshold where the chain still fits the domain', async () => {
+        const el = Elicit({
+            width: 420, height: 170,
+            schema: { grade: { type: 'categorical', domain: ['D', 'C', 'B', 'A'] }, at: { type: 'quantitative', domain: [0, 100] } },
+            data: [{ grade: 'D', at: 50 }, { grade: 'C', at: 65 }, { grade: 'B', at: 78 }, { grade: 'A', at: 90 }],
+            constraints: [constraints.spacing({ field: 'at', min: 8 }), constraints.clamp({ min: 0, max: 100, field: 'at' })],
+            marks: [plot.tickX({ channels: { x: { field: 'at', edit: edit.move({ name: 't' }) } } })],
+        });
+        document.body.appendChild(el);
+        await tick();
+        el.control('t', 0).set(99);
+        const ats = el.getData().map((d) => d.at).sort((a, b) => a - b);
+        const gaps = ats.slice(1).map((v, i) => v - ats[i]);
+        expect(gaps.every((g) => g >= 8 - 1e-9)).toBe(true);
+        expect(Math.max(...ats)).toBeLessThanOrEqual(100);
+    });
+});
