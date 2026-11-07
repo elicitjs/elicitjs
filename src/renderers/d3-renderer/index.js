@@ -1025,6 +1025,8 @@ export class D3Renderer {
    * @param {string} [anchorDefault]
    */
   _geomText(sel, anchorDefault = "start") {
+    // A stroke on text is a HALO behind the glyphs, not an outline over them.
+    sel.style("paint-order", "stroke");
     sel
       .attr("x", (/** @type {any} */ d) => d.x)
       .attr("y", (/** @type {any} */ d) => d.y)
@@ -1448,7 +1450,7 @@ export class D3Renderer {
       .attr("class", "mark")
       .style(
         "pointer-events",
-        (/** @type {any} */ d) => d.pointerEvents || "auto",
+        (/** @type {any} */ d) => d.pointerEvents || "visible",
       )
       .style("cursor", (/** @type {any} */ d) =>
         d.editable ? d.cursor || "ns-resize" : "default",
@@ -1511,7 +1513,7 @@ export class D3Renderer {
       .attr("class", "mark")
       .style(
         "pointer-events",
-        (/** @type {any} */ d) => d.pointerEvents || "auto",
+        (/** @type {any} */ d) => d.pointerEvents || "visible",
       )
       // `d.cursor` is honoured here like it is on every other node type. Circles
       // alone hard-coded "move", so a mark that set a cursor to say what its handle

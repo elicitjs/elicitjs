@@ -245,18 +245,19 @@ function text(ctx, node, defaults, anchorDefault) {
                 : node.y - ((lines.length - 1) * step) / 2;
 
         const op = s.opacity != null ? s.opacity : 1;
-        if (s.fill && s.fill !== 'none') {
-            ctx.globalAlpha = op * (s.fillOpacity != null ? s.fillOpacity : 1);
-            ctx.fillStyle = s.fill;
-            lines.forEach((/** @type {any} */ l, /** @type {number} */ i) =>
-                ctx.fillText(String(l), node.x, first + i * step));
-        }
+        // Stroke first: a stroke on text is a halo behind the glyphs.
         if (s.stroke && s.stroke !== 'none') {
             ctx.globalAlpha = op * (s.strokeOpacity != null ? s.strokeOpacity : 1);
             ctx.strokeStyle = s.stroke;
             ctx.lineWidth = s.strokeWidth != null ? s.strokeWidth : 1;
             lines.forEach((/** @type {any} */ l, /** @type {number} */ i) =>
                 ctx.strokeText(String(l), node.x, first + i * step));
+        }
+        if (s.fill && s.fill !== 'none') {
+            ctx.globalAlpha = op * (s.fillOpacity != null ? s.fillOpacity : 1);
+            ctx.fillStyle = s.fill;
+            lines.forEach((/** @type {any} */ l, /** @type {number} */ i) =>
+                ctx.fillText(String(l), node.x, first + i * step));
         }
         ctx.globalAlpha = 1;
     });

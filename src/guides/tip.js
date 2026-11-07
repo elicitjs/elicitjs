@@ -69,7 +69,9 @@ export function tip(options = {}) {
             const fontSize = fontSizeOpt ?? ((ctx.theme && ctx.theme.font && ctx.theme.font.size) || 10) + 1;
             const lineHeight = Math.round(fontSize * 1.35);
             const pad = 6;
-            const textW = Math.max(...lines.map((l) => measureText(l, { fontSize })));
+            // A small allowance: the page's own font is often a little wider than
+            // the measuring context's fallback family.
+            const textW = Math.max(...lines.map((l) => measureText(l, { fontSize }))) * 1.08 + 2;
             const boxW = textW + pad * 2;
             const boxH = lines.length * lineHeight + pad * 2 - (lineHeight - fontSize);
 

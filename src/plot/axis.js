@@ -220,7 +220,7 @@ export function axis(options = {}) {
             for (const v of values) labelW = Math.max(labelW, measureText(String(format(v)), { fontSize }));
             const angle = titleAngle != null ? titleAngle : (anchor === 'left' ? 90 : -90);
             const gap = angle ? fontSize * 0.9 : fontSize * 1.2;
-            const titleExtent = angle ? (fontSize + 1) * 0.7 : measureText(String(title), { fontSize: fontSize + 1 }) / 2;
+            const titleExtent = angle ? (fontSize + 1) * 0.7 : measureText(String(title), { fontSize: fontSize + 1 }) * 1.06;
             return tickSize + 4 + labelW * 1.06 + gap + titleExtent + 2;
         },
         /**
@@ -368,7 +368,10 @@ export function axis(options = {}) {
                     const gap = angle ? fontSize * 0.9 : fontSize * 1.2;
                     nodes.push({
                         type: 'text', x: t.x + dir * (tickSize + 4 + labelW + gap), y: t.y + height / 2,
-                        text: title, textAnchor: 'middle', fill, fontSize: fontSize + 1,
+                        // Rotated, the title is centred on its line; flat, it hangs
+                        // AWAY from the labels so it never sits on top of them.
+                        text: title, textAnchor: angle ? 'middle' : (dir < 0 ? 'end' : 'start'),
+                        fill, fontSize: fontSize + 1,
                         background: true, pointerEvents: 'none',
                         ...(angle ? { angle } : {}),
                     });
