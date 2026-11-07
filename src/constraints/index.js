@@ -17,4 +17,9 @@ export { snap } from './snap.js';
 export { ordering } from './ordering.js';
 export { monotonic } from './monotonic.js';
 export { spacing } from './spacing.js';
+// Coupling rules: columns of one row that move together. `follow` carries a
+// range with its centre; `symmetric` mirrors a pair about it. Compose them with
+// `ordering` for a mean-with-interval glyph.
+export { follow } from './follow.js';
+export { symmetric } from './symmetric.js';
 

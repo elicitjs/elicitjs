@@ -201,5 +201,7 @@ export const CONSTRAINT_OPTIONS = {
     ordering: ['field', 'strategy'],
     monotonic: ['field', 'along', 'dir', 'series'],
     spacing: ['field', 'min', 'series'],
+    follow: ['field', 'lead'],
+    symmetric: ['field', 'about'],
     custom: [],
 };

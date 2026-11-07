@@ -75,6 +75,8 @@ import type {
   NodeOptions,
   OptionRingsGuideOptions,
   OrderingOptions,
+  FollowOptions,
+  SymmetricOptions,
   PointOptions,
   ProbabilityTokensOptions,
   PromptGuideOptions,
@@ -340,6 +342,10 @@ export const constraints: {
   unique(options?: UniqueOptions): Constraint;
   snap(options?: SnapOptions): Constraint;
   ordering(options?: OrderingOptions): Constraint;
+  /** Columns that move with a lead column by the same delta (a range with its mean). */
+  follow(options?: FollowOptions): Constraint;
+  /** A pair mirrored about a centre column when one end moves. */
+  symmetric(options?: SymmetricOptions): Constraint;
   monotonic(options?: MonotonicOptions): Constraint;
   spacing(options?: SpacingOptions): Constraint;
 };

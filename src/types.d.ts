@@ -2744,6 +2744,20 @@ export interface OrderingOptions {
   /** 'push' (default) moves the neighbours aside; 'block' rejects the edit. */
   strategy?: 'push' | 'block';
 }
+/** `constraints.follow`: columns of a row that move WITH a lead column, by the same delta. */
+export interface FollowOptions {
+  /** The columns that follow (the ones the rule repairs). */
+  field?: string | string[];
+  /** The column they follow. */
+  lead?: string;
+}
+/** `constraints.symmetric`: a pair of columns mirrored about a centre column when one of them moves. */
+export interface SymmetricOptions {
+  /** The pair, e.g. ['lo', 'hi']. */
+  field?: string[];
+  /** The centre they mirror about, e.g. 'mean'. */
+  about?: string;
+}
 export interface MonotonicOptions extends FieldConstraintOptions {
   /** The axis field the run is ordered along. */
   along?: string;
@@ -2853,7 +2867,7 @@ export interface LineConeOptions extends Omit<WidgetOptions, 'stage'> {
 export interface RankingOptions extends WidgetOptions { items?: string[] }
 export interface AllocationOptions extends WidgetOptions { categories?: string[]; total?: number; values?: number[] }
 export interface ProbabilityTokensOptions extends WidgetOptions { bins?: string[]; maxTokens?: number }
-export interface IntervalOptions extends WidgetOptions { category?: string; mean?: number; lo?: number; hi?: number; domain?: [number, number] }
+export interface IntervalOptions extends WidgetOptions { category?: string; mean?: number; lo?: number; hi?: number; domain?: [number, number]; /** Dragging one end mirrors the other about the mean. */ symmetric?: boolean }
 export interface HistogramOptions extends WidgetOptions { bins?: string[]; max?: number; values?: number[] }
 export interface RegionWidgetOptions extends WidgetOptions {
   xDomain?: [number, number];
