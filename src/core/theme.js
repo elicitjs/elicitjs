@@ -78,7 +78,7 @@ export const DEFAULT_THEME = {
     // Annotation literals keep the historical look; edit-guide parts merge under
     // GUIDE_PARTS defaults, then under a per-edit `guide: { … }` override.
     guide: {
-        rule: { stroke: '#64748b', strokeDasharray: '5 4', strokeWidth: 1, opacity: 0.9 },
+        rule: { stroke: '#64748b', strokeDash: '5 4', strokeWidth: 1, opacity: 0.9 },
         region: { fill: '#64748b', opacity: 0.1 },
         // `currentStroke`/`currentWidth` ring the swatch(es) the target row(s)
         // currently hold, so a picker says what a click would REPLACE as well as
@@ -105,9 +105,9 @@ export const DEFAULT_THEME = {
     effects: DEFAULT_EFFECTS,
 
     // Ghost-preview styling (probe driver, Phase 2). A ghost node multiplies its
-    // opacity by `opacity`; a non-null fill/stroke/strokeDasharray overrides the
+    // opacity by `opacity`; a non-null fill/stroke/strokeDash overrides the
     // committed mark's paint so the preview reads as tentative.
-    ghost: { opacity: 0.45, fill: null, stroke: null, strokeDasharray: null },
+    ghost: { opacity: 0.45, fill: null, stroke: null, strokeDash: null },
 
     // Survey-instrument affordance tokens (widgets/theme.js). The historical
     // module-level THEME const, now injectable per-chart.

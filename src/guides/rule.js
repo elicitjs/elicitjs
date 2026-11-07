@@ -27,7 +27,7 @@ import { resolveGuideOptions, warnUnknownGuideOptions } from './shared.js';
 export const RULE_OPTIONS = GUIDE_OPTIONS.rule;
 
 /**
- * @param {{ x?: any, y?: any, stroke?: any, strokeDasharray?: any, label?: any }} [options]
+ * @param {{ x?: any, y?: any, stroke?: any, strokeDash?: any, strokeWidth?: any, opacity?: any, label?: any }} [options]
  * @returns {import('../types').Guide}
  */
 export function rule(options = {}) {
@@ -42,7 +42,7 @@ export function rule(options = {}) {
             const rt = (ctx.theme && ctx.theme.guide && ctx.theme.guide.rule) || {};
             const {
                 x, y, label,
-                stroke = rt.stroke, strokeDasharray = rt.strokeDasharray,
+                stroke = rt.stroke, strokeDash: strokeDasharray = rt.strokeDash,
                 strokeWidth = rt.strokeWidth, opacity = rt.opacity,
             } = resolveGuideOptions(options, ctx);
             const fontSize = (ctx.theme && ctx.theme.font && ctx.theme.font.labelSize) || 10;

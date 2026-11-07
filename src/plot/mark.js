@@ -74,6 +74,11 @@ export const STYLE_DEFAULTS = {
     fill: undefined,
     stroke: undefined,
     strokeWidth: undefined,
+    // The dash pattern — a constant ('4 2') or a field through an ordinal scale
+    // onto a small dash vocabulary (core/encoding.js DEFAULT_DASHES), so a dashed
+    // series is an ENCODING like a coloured one. Public name `strokeDash`
+    // (Vega-Lite's); the scene field the renderers paint is `strokeDasharray`.
+    strokeDash: undefined,
     opacity: undefined,
     fillOpacity: undefined,
     strokeOpacity: undefined
@@ -82,6 +87,12 @@ export const STYLE_DEFAULTS = {
 // The channels resolveStyle sweeps onto every scene node.
 /** @type {string[]} */
 export const STANDARD_STYLE_CHANNELS = Object.keys(STYLE_DEFAULTS);
+
+// Where a style channel lands on the scene node when the two names differ. A
+// channel is the AUTHOR's word; the scene field is the paint vocabulary both
+// renderers read (renderers/shared.js STYLE_FIELDS).
+/** @type {Record<string, string>} */
+const SCENE_FIELD = { strokeDash: 'strokeDasharray' };
 
 // Top-level option shorthands that desugar to constant channels, so an author
 // writes `fill: 'red'` rather than `channels: { fill: { value: 'red' } }`.
@@ -571,7 +582,7 @@ export function resolveStyle(scales, channels, datum, defaults = {}, index, data
     for (const ch of STANDARD_STYLE_CHANNELS) {
         const fallback = ch in defaults ? defaults[ch] : STYLE_DEFAULTS[ch];
         const value = encodeChannel(scales, channels, ch, datum, fallback, index, data);
-        if (value !== undefined) style[ch] = value;
+        if (value !== undefined) style[SCENE_FIELD[ch] || ch] = value;
     }
     return style;
 }

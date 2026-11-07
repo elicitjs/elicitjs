@@ -58,7 +58,7 @@ export const themes = {
         axis: { stroke: '#475569', labelFill: '#cbd5e1', fontSize: 10, handle: '#38bdf8' },
         grid: { stroke: '#1e293b' },
         guide: {
-            rule: { stroke: '#94a3b8', strokeDasharray: '5 4' },
+            rule: { stroke: '#94a3b8', strokeDash: '5 4' },
             region: { fill: '#94a3b8', opacity: 0.14 },
             legend: { stroke: '#cbd5e1', labelFill: '#cbd5e1', fontSize: 11 }
         },

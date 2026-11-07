@@ -861,6 +861,8 @@ export interface StyleChannels {
   opacity?: ChannelSpec;
   fillOpacity?: ChannelSpec;
   strokeOpacity?: ChannelSpec;
+  /** Dash pattern: a constant SVG dash array, or a field through an ordinal scale onto the dash vocabulary. */
+  strokeDash?: ChannelSpec;
 }
 
 export interface Channels extends StyleChannels {
@@ -954,6 +956,7 @@ export interface MarkOptions {
   opacity?: number | ChannelFn;
   fillOpacity?: number | ChannelFn;
   strokeOpacity?: number | ChannelFn;
+  strokeDash?: string | ChannelFn;
   size?: number | ChannelFn;
   // Text-mark shorthands (desugar into raw channels via normalizeMarkOptions).
   text?: any;
@@ -2032,7 +2035,7 @@ export interface Theme {
   grid: { stroke: string; strokeWidth: number };
   // Annotation guides (guides/*) plus edit-guide part tokens (edit/guide.js).
   guide: {
-    rule: { stroke: string; strokeDasharray: string; strokeWidth: number; opacity: number };
+    rule: { stroke: string; strokeDash: string; strokeWidth: number; opacity: number };
     region: { fill: string; opacity: number };
     legend: {
       stroke: string;
@@ -2052,8 +2055,8 @@ export interface Theme {
   // Interaction-effects defaults, merged UNDER spec.effects.
   effects: EffectsSpec;
   // Ghost-preview styling (probe driver): a ghost multiplies its opacity by
-  // `opacity`; a non-null fill/stroke/strokeDasharray overrides the committed paint.
-  ghost: { opacity: number; fill: string | null; stroke: string | null; strokeDasharray: string | null };
+  // `opacity`; a non-null fill/stroke/strokeDash overrides the committed paint.
+  ghost: { opacity: number; fill: string | null; stroke: string | null; strokeDash: string | null };
   // Survey-instrument affordance tokens (widgets/theme.js), read live per frame.
   widget: {
     accent: string; ring: string; track: string; cellFill: string; cellStroke: string;
@@ -2583,7 +2586,6 @@ export interface RectOptions extends MarkOptions {
 }
 export interface RuleOptions extends MarkOptions {
   orientation?: Orientation;
-  strokeDasharray?: string;
   /** What this rule needs from a discrete axis, when it sits inside a composite. */
   discreteScale?: 'band' | 'point';
 }
@@ -2711,7 +2713,7 @@ export interface RuleGuideOptions {
   x?: GuideOption<any>;
   y?: GuideOption<any>;
   stroke?: GuideOption<string>;
-  strokeDasharray?: GuideOption<string>;
+  strokeDash?: GuideOption<string>;
   strokeWidth?: GuideOption<number>;
   opacity?: GuideOption<number>;
   label?: GuideOption<string>;
@@ -2744,7 +2746,7 @@ export interface ProximityGuideOptions {
   /** The feature id whose proximity session the guide draws. */
   target?: GuideOption<string>;
   stroke?: GuideOption<string>;
-  strokeDasharray?: GuideOption<string>;
+  strokeDash?: GuideOption<string>;
   strokeWidth?: GuideOption<number>;
   opacity?: GuideOption<number>;
 }

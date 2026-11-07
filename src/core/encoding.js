@@ -172,6 +172,11 @@ const OPACITY_CHANNELS = new Set(['opacity', 'fillOpacity', 'strokeOpacity']);
 // non-positional and non-invertible (a glyph isn't a coordinate a drag inverts),
 // so it never enters AXIS_OF / visualForChannel — it's edited with cycle/legend.
 const SYMBOL_CHANNELS = new Set(['symbol']);
+// The dash family: a field drives the stroke's dash pattern through an ordinal
+// scale onto DEFAULT_DASHES (an author's `range` is a list of SVG dash arrays).
+const DASH_CHANNELS = new Set(['strokeDash']);
+/** The default dash vocabulary: solid, dashed, dotted, dash-dot, long dash. */
+export const DEFAULT_DASHES = ['', '4 2', '1 2', '6 3 1 3', '8 4'];
 
 // Position family: x1/x2 and y1/y2 are SPAN ENDPOINTS on the x/y axis, not their
 // own axes (Observable Plot's model — a bar's x1/x2 are both "x" units). The one
@@ -354,6 +359,8 @@ export function scaleTypeFor(channelName, measure, discrete = 'band') {
     // quantitative field into glyph buckets is out of scope for v1 — declare the
     // field categorical/ordinal to drive it.)
     if (SYMBOL_CHANNELS.has(channelName)) return 'ordinal';
+    // Dash family: a category -> dash-pattern map.
+    if (DASH_CHANNELS.has(channelName)) return 'ordinal';
     // positional / size / opacity: dates -> time, numbers -> linear, categories ->
     // the mark's discrete scale (band|point).
     if (measure === 'temporal') return 'time';
@@ -508,6 +515,7 @@ export function channelRange(channelName, type, dims, theme, opts = {}) {
     if (COLOR_CHANNELS.has(channelName)) return colorRange(type, theme, opts);
     // Symbol channel: a glyph palette (author overrides with scale.range/scheme).
     if (SYMBOL_CHANNELS.has(channelName)) return [...DEFAULT_SYMBOLS];
+    if (DASH_CHANNELS.has(channelName)) return [...DEFAULT_DASHES];
     // Stroke width in PIXELS. Without a case of its own it fell through to the
     // [0, 1] guard below, so binding a field to `strokeWidth` mapped the whole
     // domain onto sub-pixel strokes — the channel resolved, encoded, and drew

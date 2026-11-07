@@ -37,7 +37,7 @@ function buildRule(options) {
     // Desugar style shorthands (stroke, strokeWidth, opacity) into constant
     // channels, so a rule reads style the same way every mark does.
     const opts = normalizeMarkOptions(options, { mark: 'rule', allow: MARK_OPTIONS.rule });
-    const { channels = {}, id, edits, strokeDasharray, discreteScale } = opts;
+    const { channels = {}, id, edits, discreteScale } = opts;
 
     // Span mode: a pair of endpoint channels on one axis draws a segment between
     // them (a stem / whisker), positioned at the datum's category on the other.
@@ -121,7 +121,6 @@ function buildRule(options) {
                         data: datum,
                         index
                     };
-                    if (strokeDasharray != null) spanNode.strokeDasharray = strokeDasharray;
                     nodes.push(spanNode);
                     return;
                 }
@@ -139,7 +138,6 @@ function buildRule(options) {
                     data: datum,
                     index
                 };
-                if (strokeDasharray != null) node.strokeDasharray = strokeDasharray;
                 nodes.push(node);
             };
 

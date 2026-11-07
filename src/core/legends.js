@@ -26,7 +26,7 @@ import { scaleKey } from './scales.js';
  */
 // `theta` is legendable (a fan of spokes at their bearings); `angle` is NOT — a
 // mark's rotation in place is not an encoding a reader looks up.
-export const LEGENDABLE = ['fill', 'stroke', 'size', 'symbol', 'opacity', 'theta', 'strokeWidth'];
+export const LEGENDABLE = ['fill', 'stroke', 'size', 'symbol', 'opacity', 'theta', 'strokeWidth', 'strokeDash'];
 
 /**
  * Every ENCODING a legend could be a key for: one entry per (channel, field) pair

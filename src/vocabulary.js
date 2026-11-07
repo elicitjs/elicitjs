@@ -30,7 +30,7 @@ export const MARK_UNIVERSAL_OPTIONS = ['channels', 'id', 'edits', 'table'];
  *  names are read by the marks themselves; `angle` is a rotation in place.
  *  @type {string[]} */
 export const MARK_SHORTHANDS = [
-    'fill', 'stroke', 'strokeWidth', 'opacity', 'fillOpacity', 'strokeOpacity',
+    'fill', 'stroke', 'strokeWidth', 'strokeDash', 'opacity', 'fillOpacity', 'strokeOpacity',
     'size', 'symbol', 'text', 'fontSize', 'textAnchor', 'lineAnchor', 'dx', 'dy',
     'angle',
 ];
@@ -76,7 +76,7 @@ export const MARK_OPTIONS = {
     node: ['dy', 'shape', 'format'],
     point: ['shape'],
     rect: ['orientation', 'width', 'height', 'rx'],
-    rule: ['orientation', 'strokeDasharray', 'discreteScale'],
+    rule: ['orientation', 'discreteScale'],
     sticker: ['padding', 'radius', 'maxWidth', 'minWidth', 'minHeight', 'lineHeight', 'fontFamily', 'format'],
     text: ['orientation', 'format', 'wrap', 'lineHeight'],
     tick: ['orientation', 'inset', 'length'],
@@ -109,10 +109,10 @@ export const ELEMENT_OPTIONS = {
 /** Guides: the options each reads on top of the universal guide options (`id`).
  *  @type {Record<string, string[]>} */
 export const GUIDE_OPTIONS = {
-    rule: ['x', 'y', 'stroke', 'strokeDasharray', 'strokeWidth', 'opacity', 'label'],
+    rule: ['x', 'y', 'stroke', 'strokeDash', 'strokeWidth', 'opacity', 'label'],
     region: ['x', 'y', 'fill', 'opacity', 'stroke', 'label'],
     remaining: ['field', 'total', 'unit', 'format', 'anchor', 'label', 'fill', 'fontSize'],
-    proximity: ['target', 'stroke', 'strokeDasharray', 'strokeWidth', 'opacity'],
+    proximity: ['target', 'stroke', 'strokeDash', 'strokeWidth', 'opacity'],
     // The survey-instrument affordances (widgets/theme.js) — grammar keywords too.
     prompt: ['y'],
     optionRings: ['labelOffset', 'radius'],
