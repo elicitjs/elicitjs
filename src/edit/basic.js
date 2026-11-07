@@ -280,11 +280,13 @@ export function brushRect(options = {}) {
 }
 
 // Which pixel of a pointer an axis reads, and whether the value grows toward
-// smaller pixels. `increase: 'left'|'up'` grow as the pointer moves toward
-// smaller x/y (up is smaller y on screen), matching the natural default.
+// smaller pixels. The defaults are the screen's natural directions — `right` on
+// x and `up` on y (up is smaller y on screen) — so a right-drag increases, as it
+// does on every slider. (`x` used to default to `left`, so a right-drag
+// DECREASED the value; every gallery author set `increase` by hand.)
 /** @param {'x'|'y'} axis @param {string|undefined} increase */
 function slideAxis(axis, increase) {
-    const inc = increase || (axis === 'x' ? 'left' : 'up');
+    const inc = increase || (axis === 'x' ? 'right' : 'up');
     return { axis, towardSmaller: inc === 'left' || inc === 'up' };
 }
 
@@ -356,7 +358,11 @@ export function slide(options = {}) {
     }
     return makeEdit({
         type: 'slide',
-        inverts: true,
+        // A slide reads the pointer's TRAVEL and interpolates across the channel's
+        // DOMAIN — it never runs a pixel back through the scale's invert — so it
+        // works on a colour ramp. `'domain'` says so, and keeps the dead-channel
+        // guard (which asks whether the scale can invert) off it.
+        inverts: 'domain',
         gesture: 'drag',
         // Direct in both modes. Relative still needs the driver's dragstart anchor,
         // but the driver claims it by CAPABILITY (type + mode) from either dispatch

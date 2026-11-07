@@ -19,6 +19,7 @@ import { ELEMENT_OPTIONS } from '../vocabulary.js';
 import * as d3 from 'd3';
 import { positionOnScale, isDiscrete } from '../core/scales.js';
 import { themeOf } from '../core/theme.js';
+import { measureText } from '../core/measure.js';
 import { warnUnknownElementOptions, resolveHandles, elementEdits } from './mark.js';
 
 /**
@@ -149,6 +150,7 @@ export function axis(options = {}) {
         tickFormat,
         tickSize = 6,
         title,
+        titleAngle,
         // Chrome colours/size default to the theme's axis tokens, resolved at build
         // time (a factory can't see the chart's theme). An explicit option still wins.
         stroke: strokeOpt,      // spine + ticks
@@ -321,18 +323,29 @@ export function axis(options = {}) {
             }
 
             // Optional axis title, centred along the axis, pushed past the labels.
+            // A y title runs ALONG its axis (rotated, reading bottom to top on the
+            // left, top to bottom on the right) and sits past the widest tick label,
+            // measured — it used to be horizontal at a fixed offset, so it crossed
+            // the labels or was clipped, and nearly every author dropped it.
+            // `titleAngle` overrides the rotation (0 for a horizontal y title).
             if (title) {
                 if (isX) {
                     nodes.push({
                         type: 'text', x: t.x + width / 2, y: t.y + dir * (tickSize + fontSize * 2.4),
                         text: title, textAnchor: 'middle', fill, fontSize: fontSize + 1,
-                        background: true, pointerEvents: 'none'
+                        background: true, pointerEvents: 'none',
+                        ...(titleAngle ? { angle: titleAngle } : {}),
                     });
                 } else {
+                    let labelW = 0;
+                    for (const v of values) labelW = Math.max(labelW, measureText(String(format(v)), { fontSize }));
+                    const angle = titleAngle != null ? titleAngle : (dir < 0 ? 90 : -90);
+                    const gap = angle ? fontSize * 0.9 : fontSize * 1.2;
                     nodes.push({
-                        type: 'text', x: t.x + dir * (tickSize + fontSize * 2.4), y: t.y + height / 2,
+                        type: 'text', x: t.x + dir * (tickSize + 4 + labelW + gap), y: t.y + height / 2,
                         text: title, textAnchor: 'middle', fill, fontSize: fontSize + 1,
-                        background: true, pointerEvents: 'none'
+                        background: true, pointerEvents: 'none',
+                        ...(angle ? { angle } : {}),
                     });
                 }
             }

@@ -1,7 +1,7 @@
 // @ts-check
 import { isBand, baselineOf } from '../core/scales.js';
 import { claimEdge } from '../edit/shared.js';
-import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel, resolveValueAxis, orderSeries, seriesKeyOf } from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel, resolveValueAxis, orderSeries, seriesKeyOf, hasAnyEdit } from './mark.js';
 import { areaGenerator } from '../core/curves.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
@@ -72,7 +72,8 @@ function buildArea(options) {
         id,
         edits: rawEdits,
         curve = 'linear',
-        handles = true,
+        // Handles draw only when something can grab them (see `line`).
+        handles = hasAnyEdit(opts),
         handleSize,
         handleColor,
         connect = 'domain'
@@ -230,11 +231,15 @@ function buildArea(options) {
                 // as opacity:0 + pointerEvents:none and ignore 'hit'.
                 if (handleStyle.grabbable) {
                     sorted.forEach(({ d, i }) => {
-                        const hStyle = resolveStyle(scales, channels, d, {
-                            fill: handleStyle.fill,
+                        // Filled with the band's own colour (its stroke, else its
+                        // fill), ringed with the theme's handle stroke.
+                        const paint = resolveStyle(scales, channels, d, markDefaults(scales, 'area',
+                            { fill: areaInk, stroke: areaInk }), i, currentData);
+                        const hStyle = {
+                            fill: handleStyle.visible ? (handleColor || paint.stroke || paint.fill || handleStyle.fill) : handleStyle.fill,
                             stroke: handleStyle.stroke,
                             strokeWidth: handleStyle.strokeWidth,
-                        }, i, currentData);
+                        };
                         for (const ch of handleChannels) {
                             const onY = ch[0] === 'y';
                             const along = onY

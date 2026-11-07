@@ -233,6 +233,20 @@ export function encodeChannel(scales, channels, channel, datum, fallback, index,
 export const HANDLE_DEFAULTS = { size: 5 };
 
 /**
+ * Does a mark's option bag carry ANY edit — on a channel or in `edits`? The
+ * default for `handles` on a line or area: a handle exists to be grabbed, so a
+ * mark nothing can grab draws none (bar and arc already gate theirs on an edit).
+ * @param {any} opts normalized mark options
+ * @returns {boolean}
+ */
+export function hasAnyEdit(opts) {
+    if (!opts) return false;
+    if (Array.isArray(opts.edits) && opts.edits.length) return true;
+    const channels = opts.channels || {};
+    return Object.values(channels).some((c) => !!(c && typeof c === 'object' && c.edit));
+}
+
+/**
  * Resolve a mark's handle options into the paint every handle node needs.
  *
  * @param {import('../types').ScaleMap} scales the scale map (carries the theme)

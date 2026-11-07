@@ -91,7 +91,7 @@ export const MARK_OPTIONS = {
 export const ELEMENT_OPTIONS = {
     axis: [
         'channel', 'anchor', 'transform', 'ticks', 'tickValues', 'tickFormat', 'tickSize',
-        'title', 'stroke', 'fill', 'fontSize', 'grid', 'handleColor', 'handleSize',
+        'title', 'titleAngle', 'stroke', 'fill', 'fontSize', 'grid', 'handleColor', 'handleSize',
     ],
     grid: ['channel', 'ticks', 'tickValues', 'stroke', 'strokeWidth'],
     legend: [

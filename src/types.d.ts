@@ -517,7 +517,7 @@ export interface Edit {
   // needs that scale to invert, and the engine's dead-drag guard reports a channel
   // whose scale cannot. Declared by move/slide/resize/rotate/… and by any custom
   // edit that inverts; a capability, never a list of type names.
-  inverts?: boolean;
+  inverts?: boolean | 'domain';
   // Does this edit read a positional SPAN PAIR (x1/x2 or y1/y2)? Then, placed at
   // mark level with no `channels`, collectEdits supplies the mark's own pair.
   spans?: boolean;
@@ -577,7 +577,7 @@ export interface EditOptions {
   stage?: number;
   advance?: boolean;
   cardinality?: 'append' | 'appendMany' | 'toggle' | 'delete' | null;
-  inverts?: boolean;
+  inverts?: boolean | 'domain';
   // The rest of the descriptor an author may override (see Edit).
   table?: string;
   scope?: Edit['scope'];
@@ -1402,6 +1402,10 @@ export interface AxisOptions extends ElementOptionsBase {
   tickFormat?: Format;
   tickSize?: number;
   title?: string;
+  /** The title's rotation in math degrees. A y title defaults to running along
+   *  its axis (90 on the left, -90 on the right); 0 lays it flat. An x title
+   *  defaults to 0. */
+  titleAngle?: number;
   /** Chrome paint: the spine + ticks, the labels + title (text nodes). */
   stroke?: string;
   fill?: string;

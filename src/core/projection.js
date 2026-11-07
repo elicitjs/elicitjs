@@ -97,9 +97,14 @@ const warnedDomains = new WeakSet();
  * region and every correctly-wound feature collapses to a sub-pixel dot. Silent
  * and baffling — so say it out loud.
  * @param {any} domain
+ * @param {string | undefined} type the projection type
  */
-function warnInvertedRings(domain) {
+function warnInvertedRings(domain, type) {
     if (!warningsEnabled()) return;
+    // Ring winding is a SPHERICAL rule: `d3.geoArea` on planar coordinates (an
+    // `identity` projection over pre-projected GeoJSON) measures nothing a ring's
+    // direction says, and reported every planar map as inverted.
+    if (type === 'identity') return;
     if (!domain || typeof domain !== 'object' || warnedDomains.has(domain)) return;
     warnedDomains.add(domain);
 
@@ -237,7 +242,7 @@ export function createProjection(projectionOpt, dims) {
     const height = Math.max(0, dims.height - (insetTop || 0) - (insetBottom || 0));
 
     if (domain != null && typeof projection.fitExtent === 'function') {
-        warnInvertedRings(domain);
+        warnInvertedRings(domain, type);
         projection.fitExtent(
             [[insetLeft || 0, insetTop || 0], [(insetLeft || 0) + width, (insetTop || 0) + height]],
             domain

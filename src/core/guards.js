@@ -14,6 +14,7 @@
 // see the header of core/dev.js. Never re-gate a guard on a bundler-specific global.
 
 import { axisOf } from './encoding.js';
+import { scaleKey } from './scales.js';
 import { driverFor, needsPlaneOnTop } from '../edit/drivers/index.js';
 import { UNVERIFIED } from '../edit/shared.js';
 import { warn, warningsEnabled } from './dev.js';
@@ -181,6 +182,9 @@ export function warnDuplicatePlaneEdits(features, editsOf, tableOfEdit) {
     for (const f of features) {
         for (const e of editsOf(f)) {
             if (e.pick === 'direct') continue;
+            // A domain or selection edit writes the schema or the pipeline state,
+            // never the rows, so it cannot double-apply a whole-dataset change.
+            if (e.target === 'domain' || e.target === 'selection') continue;
             const t = tableOfEdit(f, e);
             const list = byTable[t] || (byTable[t] = []);
             if (!list.includes(f)) list.push(f);
@@ -465,8 +469,9 @@ export function warnDeadEditChannels(feature, edits, scales) {
     const markChannels = feature.channels || {};
     for (const e of edits) {
         // Declared on the edit (makeEdit): only an edit that runs the pointer back
-        // through a scale can die on a non-invertible one.
-        if (!e.inverts) continue;
+        // through a scale can die on a non-invertible one. `'domain'` (slide)
+        // interpolates over the domain instead, and works on a ramp.
+        if (e.inverts !== true) continue;
         // A creator mints a whole row rather than inverting one channel, and has
         // its own guard (warnCreateOnNonMark).
         if (isDatasetCreator(e)) continue;
@@ -477,7 +482,9 @@ export function warnDeadEditChannels(feature, edits, scales) {
             const spec = markChannels[n];
             // No field means no column to write; warnMisplacedEdits reports that case.
             if (!spec || spec.field == null) return false;
-            const s = /** @type {any} */ (scales)[n];
+            // A scale is one ENCODING, keyed by (channel, field); the bare name is
+            // the positional path and the fallback.
+            const s = /** @type {any} */ (scales)[scaleKey(n, spec.field)] || /** @type {any} */ (scales)[n];
             return s && !s.invertible;
         });
         if (!dead.length) continue;

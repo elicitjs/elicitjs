@@ -1,6 +1,6 @@
 // @ts-check
 import { isBand } from '../core/scales.js';
-import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel, orderFieldOf, resolveValueAxis, orderSeries, seriesKeyOf } from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel, orderFieldOf, resolveValueAxis, orderSeries, seriesKeyOf, hasAnyEdit } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
 // line: a connected-path mark over an ordered set of points. It is deliberately
@@ -44,7 +44,10 @@ function buildLine(options, defaultConnect = 'domain') {
         id,
         edits,
         curve = 'linear',
-        handles = true,
+        // Handles draw only when something can grab them — an edit on a channel
+        // or in `edits` — the rule bar and arc already follow. A plain recreation
+        // used to need `handles: false` on every line to lose dots it never asked for.
+        handles = hasAnyEdit(opts),
         handleSize,
         handleColor,
         connect = defaultConnect
@@ -151,16 +154,20 @@ function buildLine(options, defaultConnect = 'domain') {
 
             // Handles: an ordinary circle per datum, so edits/pick reuse the mark
             // machinery. Tagged with `series` so a sweep can scope to one line.
+            // A handle is FILLED with its line's colour (the row's resolved stroke)
+            // and ringed with the theme's handle stroke, so a handle on a coloured
+            // series reads as that series — `handleColor` still overrides.
             const handleStyle = resolveHandles(scales, { handles, handleSize, handleColor },
                 { fill: lineDefaults.stroke });
                 placed.forEach(({ d, i, cx, cy, series }) => {
                 if (!handleStyle.grabbable) return;
                 if (cx == null || cy == null) return; // a missing value has no handle
-                const style = resolveStyle(scales, channels, d, {
-                    fill: handleStyle.fill,
+                const paint = resolveStyle(scales, channels, d, lineDefaults, i, currentData);
+                const style = {
+                    fill: handleStyle.visible ? (handleColor || paint.stroke || handleStyle.fill) : handleStyle.fill,
                     stroke: handleStyle.stroke,
                     strokeWidth: handleStyle.strokeWidth,
-                }, i, currentData);
+                };
                 nodes.push({
                     type: 'circle',
                     cx,
