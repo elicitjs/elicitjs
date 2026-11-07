@@ -129,7 +129,21 @@ export const LINK_FACTS = ['directed', 'multi', 'selfLoops'];
  * structure means by the table; the LINK_FACTS are what a pair of its `ref` columns
  * means (see normalizeTable).
  */
-const WRAPPER_KEYS = ['role', 'fields', ...LINK_FACTS];
+const WRAPPER_KEYS = ['role', 'fields', 'context', ...LINK_FACTS];
+
+/** The role a CONTEXT table fills: drawn, never elicited, any number per chart. */
+export const CONTEXT_ROLE = 'context';
+
+/**
+ * Is this table entry a CONTEXT table (`{ context: true, fields }`)? A boolean
+ * `context` settles it the way a string `role` does: a FieldSchema is an object,
+ * so a column called `context` never trips this.
+ * @param {any} entry
+ * @returns {boolean}
+ */
+function isContextEntry(entry) {
+    return !!entry && typeof entry === 'object' && entry.context === true;
+}
 
 /**
  * Is this a table entry in WRAPPER form (`{ role?, directed?, fields }`) rather than
@@ -146,6 +160,7 @@ const WRAPPER_KEYS = ['role', 'fields', ...LINK_FACTS];
 function isTableWrapper(entry) {
     if (!entry || typeof entry !== 'object') return false;
     if (typeof entry.role === 'string') return true;
+    if (typeof entry.context === 'boolean') return true;
     if (!entry.fields || typeof entry.fields !== 'object') return false;
     return Object.keys(entry).every((k) => WRAPPER_KEYS.includes(k));
 }
@@ -232,6 +247,30 @@ function normalizeTable(name, entry) {
                 `long form.`
             );
         }
+        // A CONTEXT table is drawn, never elicited — reference rows beside the
+        // answer (observed history behind a forecast, a basemap of points). It takes
+        // the long form only: `{ context: true, fields: { … } }`. The bare field-map
+        // sugar is not offered for it, because `{ context: true, x: {…} }` would read
+        // `x` as a wrapper key and drop the column in silence — the failure the
+        // wrapper detection above exists to prevent.
+        if (isContextEntry(entry)) {
+            if (!entry.fields || typeof entry.fields !== 'object') {
+                throw new Error(
+                    `[elicit] context table "${name}" declares no \`fields\`. A context ` +
+                    `table takes the long form: ${name}: { context: true, fields: { … } }.`
+                );
+            }
+            if (entry.role != null && entry.role !== CONTEXT_ROLE) {
+                throw new Error(
+                    `[elicit] table "${name}" is \`context: true\` and also claims role ` +
+                    `"${entry.role}". A context table fills no structural role — drop one.`
+                );
+            }
+            return {
+                name, role: CONTEXT_ROLE, context: true, fields: entry.fields,
+                key: keyFieldOf(entry.fields, name), ...linkFactsOf(entry),
+            };
+        }
         const fields = entry.fields || {};
         return {
             name,
@@ -291,6 +330,23 @@ export function normalizeSchema(schema) {
     // `structure`, whose value is a FieldSchema object.
     const isCanonical = typeof declared.structure === 'string';
     const structure = isCanonical ? declared.structure : DEFAULT_STRUCTURE;
+    // Sugar 4 — a top-level map that holds a CONTEXT table is a map of TABLES of
+    // the default structure (`schema: { data: { … }, history: { context: true,
+    // fields } }`), so a single-table chart can add reference rows without
+    // spelling `structure`/`tables`. Every other entry must then be a table.
+    const contextSugar = !isCanonical && Object.values(declared).some(isContextEntry);
+    if (contextSugar) {
+        for (const [name, entry] of Object.entries(declared)) {
+            if (isContextEntry(entry) || isTableWrapper(entry)) continue;
+            if (looksLikeFieldSchema(entry)) {
+                throw new Error(
+                    `[elicit] schema mixes a context table with a column ("${name}"). Beside a ` +
+                    `context table every entry is a TABLE: put the elicited columns under ` +
+                    `${STRUCTURES[DEFAULT_STRUCTURE].primary}: { … }.`
+                );
+            }
+        }
+    }
 
     const def = STRUCTURES[structure];
     if (!def) {
@@ -302,7 +358,9 @@ export function normalizeSchema(schema) {
 
     /** @type {Record<string, any>} */
     let rawTables;
-    if (!isCanonical) {
+    if (contextSugar) {
+        rawTables = declared;
+    } else if (!isCanonical) {
         // Sugar 1 — the bare field map is the primary table of a single-table chart.
         rawTables = { [def.primary]: declared };
     } else if (declared.tables && typeof declared.tables === 'object') {
@@ -329,6 +387,8 @@ export function normalizeSchema(schema) {
     const byRole = {};
     for (const [name, entry] of Object.entries(rawTables)) {
         const table = normalizeTable(name, entry);
+        // A context table fills no role: any number may sit beside the structure.
+        if (table.context) { tables[name] = table; continue; }
         if (!def.roles.includes(table.role)) {
             throw new Error(
                 `[elicit] table "${name}" claims role "${table.role}", which structure ` +
@@ -415,8 +475,29 @@ export function linkRulesOf(spec) {
  */
 export function isBareForm(spec) {
     const def = STRUCTURES[spec.structure];
-    const names = Object.keys(spec.tables);
+    const names = elicitedTables(spec);
     return spec.structure === DEFAULT_STRUCTURE && names.length === 1 && names[0] === def.primary;
+}
+
+/**
+ * The tables a chart ELICITS — every table that is not context. What `getData()`
+ * and `onChange` report, and what undo restores the schema of.
+ * @param {import('../types').SchemaSpec} spec
+ * @returns {string[]}
+ */
+export function elicitedTables(spec) {
+    return Object.keys(spec.tables).filter((n) => !spec.tables[n].context);
+}
+
+/**
+ * Is this table a CONTEXT table — drawn, never elicited?
+ * @param {import('../types').SchemaSpec} spec
+ * @param {string} name
+ * @returns {boolean}
+ */
+export function isContextTable(spec, name) {
+    const t = spec && spec.tables && spec.tables[name];
+    return !!(t && t.context);
 }
 
 /**
@@ -432,6 +513,7 @@ export function denormalizeSchema(spec) {
     /** @type {Record<string, any>} */
     const tables = {};
     for (const [name, t] of Object.entries(spec.tables)) {
+        if (t.context) continue; // context is drawn, never reported
         const facts = linkFactsOf(t);
         const extra = Object.keys(facts).length ? facts : null;
         tables[name] = t.role === name && !extra
@@ -604,6 +686,15 @@ export function normalizeData(data, spec) {
             );
         }
         tables[name] = rows;
+    }
+    for (const name of Object.keys(spec.tables)) {
+        if (spec.tables[name].context && !tables[name].length) {
+            warn(
+                `data:context:empty:${name}`,
+                `context table "${name}" has no rows. A context table is drawn and never ` +
+                `elicited, so nothing can ever add one — seed it in \`data.${name}\`.`
+            );
+        }
     }
     return tables;
 }

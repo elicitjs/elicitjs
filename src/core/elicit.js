@@ -18,6 +18,7 @@ import { reserveLegends, legendsFromChannels } from './legends.js';
 import {
     validateTables, inferMeasureOfDomain,
     normalizeSchema, denormalizeSchema, normalizeData, isBareForm, enforceRefs, isDirected,
+    elicitedTables, isContextTable,
 } from './schema.js';
 import { axisOf, pointerForChannel } from './encoding.js';
 import { warn } from './dev.js';
@@ -202,7 +203,15 @@ export function Elicit(spec) {
     const primaryRows = () => tables[schemaSpec.primary];
     // The dataset in the caller's own spelling, for getData/onChange: a bare array
     // when that is how it came in (every single-table chart), else keyed by table.
-    const shapeData = () => (isBareForm(schemaSpec) ? primaryRows() : tables);
+    // A CONTEXT table is drawn, never elicited, so it is left out of what the
+    // chart reports.
+    const shapeData = () => {
+        if (isBareForm(schemaSpec)) return primaryRows();
+        /** @type {Record<string, any[]>} */
+        const out = {};
+        for (const name of elicitedTables(schemaSpec)) out[name] = tables[name];
+        return out;
+    };
 
     // Which TABLE each feature is a view over, resolved once. A mark states a table
     // by NAME (`table: 'links'`); with none, it takes the table filling its ROLE —
@@ -222,6 +231,20 @@ export function Elicit(spec) {
         feature.table = (named != null && schemaSpec.tables[named])
             ? named
             : (schemaSpec.byRole[feature.tableRole] || schemaSpec.primary);
+        // A context table is read-only by construction (every row locked), so an
+        // edit declared over it can never commit. Say so, rather than letting a
+        // mark that looks editable sit inert.
+        if (isContextTable(schemaSpec, feature.table) && feature.views !== 'scale') {
+            const n = collectEdits(feature).length;
+            if (n) {
+                warn(
+                    `${markLabel(feature)}:context:edits`,
+                    `mark ${markLabel(feature)} declares ${n} edit${n > 1 ? 's' : ''} over context ` +
+                    `table "${feature.table}", which is read-only (drawn, never elicited). ` +
+                    `They will never commit; put the edit on a mark over an elicited table.`
+                );
+            }
+        }
     });
 
     // ── Ports: a channel that becomes a feature ────────────────────────────────
@@ -360,7 +383,12 @@ export function Elicit(spec) {
     /** @param {string} name @returns {((d: any, i: number) => boolean) | null} */
     const isLockedIn = (name) => {
         if (!(name in lockPredicates)) {
-            lockPredicates[name] = resolveLock(spec.lock, () => seedCounts[name] || 0, name);
+            // Every row of a CONTEXT table is read-only: the lock's two halves (the
+            // invariant, and the pointer-transparent `locked` stamp) are exactly
+            // what "drawn, never elicited" means.
+            lockPredicates[name] = isContextTable(schemaSpec, name)
+                ? () => true
+                : resolveLock(spec.lock, () => seedCounts[name] || 0, name);
         }
         return lockPredicates[name];
     };
@@ -577,20 +605,28 @@ export function Elicit(spec) {
     /** @type {{ recorded: boolean } | null} */
     let txn = null;
 
-    const snapshot = () => ({
-        tables: structuredClone(tables),
-        schema: structuredClone(schema),
-        width: curW,
-        height: curH,
-    });
+    // The schema of EVERY elicited table rides in a snapshot (a cross-table rename
+    // writes two tables' domains; a snapshot of the primary's alone could not undo
+    // it). Context tables are left out: nothing can change them.
+    const snapshot = () => {
+        /** @type {Record<string, any>} */
+        const schemas = {};
+        for (const name of elicitedTables(schemaSpec)) schemas[name] = structuredClone(schemaSpec.tables[name].fields);
+        return { tables: structuredClone(tables), schemas, width: curW, height: curH };
+    };
 
     /** @param {any} snap */
     const restoreSnapshot = (snap) => {
         tables = structuredClone(snap.tables);
-        // Replace the schema's CONTENTS: `schema` is captured by closures (and read
-        // by resolveScales each render), so rebinding the name would strand them.
-        for (const k of Object.keys(schema)) delete schema[k];
-        Object.assign(schema, structuredClone(snap.schema));
+        // Replace each schema's CONTENTS: `schema` (the primary's field map) is
+        // captured by closures (and read by resolveScales each render), so
+        // rebinding the name would strand them.
+        for (const [name, fields] of Object.entries(snap.schemas)) {
+            const live = schemaSpec.tables[name] && schemaSpec.tables[name].fields;
+            if (!live) continue;
+            for (const k of Object.keys(live)) delete live[k];
+            Object.assign(live, structuredClone(fields));
+        }
         if (snap.width !== curW || snap.height !== curH) {
             applyResize({ width: snap.width, height: snap.height });
         }
@@ -2127,7 +2163,16 @@ export function Elicit(spec) {
     el.setData = (/** @type {any[] | Record<string, any[]>} */ data) => {
         // Same split as the seed: a bare array is the primary table, a keyed object
         // names its tables. So a caller's setData(rows) keeps working verbatim.
-        tables = normalizeData(structuredClone(data ?? null), schemaSpec);
+        const next = normalizeData(structuredClone(data ?? null), schemaSpec);
+        // A reseed replaces the ELICITED tables. A context table the caller did not
+        // name keeps its rows — it is reference, not an answer, and a bare-array
+        // reseed cannot even name it.
+        for (const name of Object.keys(schemaSpec.tables)) {
+            if (!isContextTable(schemaSpec, name)) continue;
+            const named = data && !Array.isArray(data) && typeof data === 'object' && Array.isArray(data[name]);
+            if (!named) next[name] = tables[name];
+        }
+        tables = next;
         // A reseed is new seed data, so it gets the same contract check as spec.data.
         validateTables(schemaSpec, tables, 'setData()');
         seedCounts = {};

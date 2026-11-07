@@ -120,6 +120,11 @@ export type Structure = 'table' | 'network';
 export interface TableSpec {
   role?: string;
   fields: Schema;
+  // A CONTEXT table: drawn by marks that point at it (`table: 'history'`), never
+  // elicited — every row is read-only, and it is left out of `getData()`,
+  // `onChange` and `getSchema()`. Any number may sit beside the structure's
+  // tables. Long form only (`{ context: true, fields }`).
+  context?: boolean;
   // Links only: does an ordered pair of this table's `ref` columns mean a
   // DIRECTION? See TableSchema.directed — the flag is tri-state on purpose.
   directed?: boolean;
@@ -134,7 +139,10 @@ export interface TableSpec {
 // names its tables. normalizeSchema brings both to SchemaSpec.
 export type SchemaInput =
   | Schema
-  | { structure: Structure; tables: Record<string, Schema | TableSpec> };
+  | { structure: Structure; tables: Record<string, Schema | TableSpec> }
+  // A map of tables of the default structure, when one of them is a context
+  // table: `{ data: { … }, history: { context: true, fields: { … } } }`.
+  | Record<string, Schema | TableSpec>;
 
 // How a link is drawn between its two endpoints. A STYLE choice resolved per row,
 // not a manipulable geometry: there are no anchor points to drag.
@@ -196,6 +204,8 @@ export interface TableSchema {
   name: string;
   role: string;
   fields: Schema;
+  // Drawn, never elicited (see TableSpec.context). Its role is 'context'.
+  context?: boolean;
   // The `key: true` field, or null. What a `ref` points at by default.
   key: string | null;
   // Links only. Does an ordered pair of this table's `ref` columns mean a
