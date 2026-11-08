@@ -84,7 +84,7 @@ export class CanvasRenderer {
             images: this._images,
             theme: context.theme,
             requestRepaint: () => this._repaint(),
-            clip: !!context.clip,
+            clip: context.clip || null,
             innerWidth: width - margins.left - margins.right,
             innerHeight: height - margins.top - margins.bottom,
         });
@@ -123,7 +123,7 @@ export class CanvasRenderer {
             images: this._images,
             theme: context.theme,
             requestRepaint: () => this._repaint(),
-            clip: !!context.clip,
+            clip: context.clip || null,
             innerWidth: width - margins.left - margins.right,
             innerHeight: height - margins.top - margins.bottom,
         });

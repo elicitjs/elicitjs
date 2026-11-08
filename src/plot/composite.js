@@ -374,6 +374,9 @@ export function composite(options = {}) {
         // the box and every part — otherwise a composite({ table }) would draw its
         // parts from the primary table while its box drew the named one.
         table,
+        // `clip: false` escapes the chart's clip for the whole glyph: stamped on the
+        // box and every part that does not state its own, like `table`.
+        clip,
         channels: groupChannels = {},
         // Glyphs usually sit in category slots; a band gives each part a centred
         // slot. Stamped onto parts that don't state their own preference. (Scale
@@ -506,6 +509,7 @@ export function composite(options = {}) {
             // A part states its own table only to override the glyph's; otherwise
             // the whole composite is one view over one table.
             table: part.table || table,
+            clip: part.clip != null ? part.clip : clip,
             discreteScale: part.discreteScale || discreteScale,
             // Composite-level edits land on the LAST part, the same rule an inherited
             // channel edit follows: one dataset, so a whole-dataset edit declared on
@@ -553,6 +557,7 @@ export function composite(options = {}) {
         channels: boxChannels,
         edits,
         table,
+        clip,
         discreteScale,
         ...positionalKeys(boxChannels),
         /**

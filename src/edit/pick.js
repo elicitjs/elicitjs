@@ -327,6 +327,26 @@ export function hitTest(marks, px, py) {
 }
 
 /**
+ * The nodes a pointer at (px, py) can reach on a chart that clips its marks to
+ * the rect `clip` ({ x, y, width, height } in plot-local pixels, from
+ * `clipRect`): all of them inside the rect, and only the `unclipped` ones (a
+ * chart element's chrome, a mark that says `clip: false`) outside it —
+ * what is not drawn there must not be grabbed or tipped there. With no clip,
+ * every node.
+ * @param {any[]} marks
+ * @param {number} px
+ * @param {number} py
+ * @param {{ x?: number, y?: number, width: number, height: number } | null | undefined} clip
+ * @returns {any[]}
+ */
+export function clipVisible(marks, px, py, clip) {
+    const x0 = clip ? clip.x || 0 : 0;
+    const y0 = clip ? clip.y || 0 : 0;
+    if (!clip || (px >= x0 && py >= y0 && px <= x0 + clip.width && py <= y0 + clip.height)) return marks || [];
+    return (marks || []).filter((m) => m && m.unclipped);
+}
+
+/**
  * The node under the pointer, EDITABLE OR NOT — what a tooltip or a readout
  * asks, as opposed to `hitTest`, which asks what a gesture may grab. Chrome
  * (guides, background, effects) is still skipped, as is a node that opted out

@@ -84,3 +84,59 @@ export function paintOrder(built) {
     if (!out.some((n) => n && n.raise)) return out;
     return [...out.filter((n) => !(n && n.raise)), ...out.filter((n) => n && n.raise)];
 }
+
+const CLIP_SIDES = ['top', 'right', 'bottom', 'left'];
+
+/**
+ * The rect the marks are confined to under `spec.clip`, in plot-local pixels
+ * (the plot's top-left is 0, 0), or null when the chart does not clip.
+ *
+ * `clip` is `true` (the plot rect, axis to axis), `false`, or `{ pad }`: the plot
+ * rect grown by `pad` pixels on every side (a number) or per side (`{ top, right,
+ * bottom, left }`), so a point sitting ON a domain edge draws whole instead of
+ * cut in half by its own axis. `auto` is what an unset `clip` resolved to.
+ *
+ * One function decides the rect, and the renderers' clip paths and the engine's
+ * hit filter (`clipVisible`) all read it, so what is drawn and what can be
+ * grabbed cannot disagree.
+ * @param {boolean | { pad?: number | { top?: number, right?: number, bottom?: number, left?: number } } | null | undefined} clip
+ * @param {boolean} auto
+ * @param {number} width   inner plot width
+ * @param {number} height  inner plot height
+ * @returns {{ x: number, y: number, width: number, height: number } | null}
+ */
+export function clipRect(clip, auto, width, height) {
+    const on = clip == null ? auto : clip !== false;
+    if (!on) return null;
+    const pad = clip && typeof clip === 'object' ? clip.pad : 0;
+    /** @type {Record<string, number>} */
+    const side = {};
+    for (const s of CLIP_SIDES) {
+        const v = typeof pad === 'number' ? pad : (pad && /** @type {any} */ (pad)[s]);
+        side[s] = Number.isFinite(v) ? v : 0;
+    }
+    return {
+        x: 0 - side.left,
+        y: 0 - side.top,
+        width: Math.max(0, width + side.left + side.right),
+        height: Math.max(0, height + side.top + side.bottom),
+    };
+}
+
+/**
+ * The spelling problems `clipRect` would otherwise absorb in silence: an unknown
+ * key, or a `pad` that is neither a number nor a map of sides.
+ * @param {any} clip
+ * @returns {string | null} a message, or null when the spelling is fine
+ */
+export function clipProblem(clip) {
+    if (clip == null || typeof clip === 'boolean') return null;
+    if (typeof clip !== 'object' || Array.isArray(clip)) return 'clip is true, false, or { pad }.';
+    const extra = Object.keys(clip).filter((k) => k !== 'pad');
+    if (extra.length) return `clip has no option ${extra.map((k) => `"${k}"`).join(', ')}; it takes { pad }.`;
+    const { pad } = clip;
+    if (pad == null || Number.isFinite(pad)) return null;
+    if (typeof pad !== 'object' || Array.isArray(pad)) return 'clip.pad is a number of pixels, or { top, right, bottom, left }.';
+    const bad = Object.keys(pad).filter((k) => !CLIP_SIDES.includes(k) || !Number.isFinite(pad[k]));
+    return bad.length ? `clip.pad sides are top, right, bottom and left, each a number of pixels (got ${bad.map((k) => `"${k}"`).join(', ')}).` : null;
+}

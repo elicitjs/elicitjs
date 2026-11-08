@@ -1,12 +1,12 @@
 // @ts-check
-import { SceneGraph, paintOrder } from './scene.js';
+import { SceneGraph, paintOrder, clipRect, clipProblem } from './scene.js';
 import { resolveScales } from './resolve.js';
 import { createProjection } from './projection.js';
 import { parsePath, flatten } from '../plot/shapes.js';
-import { resolveLock, lockConstraint, isNodeLocked } from './lock.js';
+import { resolveLock, resolveContext, lockConstraint, isNodeLocked } from './lock.js';
 import { collectEdits, resolveChannels, warnMisplacedEdits } from '../edit/route.js';
 import { markCenter, nudgeTarget } from '../edit/shared.js';
-import { hitTest, hitTestAny, pointInPolygon } from '../edit/pick.js';
+import { hitTest, hitTestAny, pointInPolygon, clipVisible } from '../edit/pick.js';
 import { encodeChannel, rawChannel } from '../plot/mark.js';
 import { portFeature, portRolesOf, portKey } from '../plot/port.js';
 import { drivers, driverFor, needsPlaneOnTop } from '../edit/drivers/index.js';
@@ -21,7 +21,6 @@ import { reserveTitles, titleNodes } from './titles.js';
 import {
     validateTables, inferMeasureOfDomain,
     normalizeSchema, denormalizeSchema, normalizeData, isBareForm, enforceRefs, isDirected,
-    elicitedTables, isContextTable,
 } from './schema.js';
 import { axisOf, pointerForChannel } from './encoding.js';
 import { warn } from './dev.js';
@@ -210,15 +209,85 @@ export function Elicit(spec) {
     // The PRIMARY table: what a bare-array `data` seeds, what a mark with no `table`
     // draws, and what the index-addressed selection API means.
     const primaryRows = () => tables[schemaSpec.primary];
+
+    // CONTEXT rows (spec.context, see core/lock.js): reference rows of a table —
+    // observed history behind a forecast — drawn and locked like any locked row,
+    // and left out of everything the chart REPORTS. Context is not a table of its
+    // own: the rows share the table's columns, so nothing is declared twice and the
+    // two can never disagree on a type.
+    //
+    // Membership is decided ONCE, over the seed, and held as row IDENTITY: a
+    // predicate re-asked of live rows would swallow an answer dragged into its
+    // region. The lock keeps the identity stable (a locked row survives every
+    // commit as the same object), undo carries it as indices, and setData keeps the
+    // context rows. A table is a key here exactly when `spec.context` speaks for it.
+    /** @type {Record<string, WeakSet<object>>} */
+    let contextRows = {};
+    const seedContext = () => {
+        contextRows = {};
+        let seen = 0;
+        let matched = 0;
+        for (const name of Object.keys(tables)) {
+            const pred = resolveContext(spec.context, name);
+            if (!pred) continue;
+            /** @type {WeakSet<object>} */
+            const set = new WeakSet();
+            tables[name].forEach((d, i) => {
+                seen++;
+                if (d && typeof d === 'object' && pred(d, i)) { set.add(d); matched++; }
+            });
+            contextRows[name] = set;
+        }
+        if (seen && !matched) {
+            warn(
+                'spec:context:none',
+                `spec.context matched none of the ${seen} seeded rows, so nothing is drawn as ` +
+                `context. It is asked once, of the rows in \`data\` (and kept by setData).`
+            );
+        }
+    };
+    seedContext();
+    /** @param {string} name @param {any} d @returns {boolean} */
+    const isContextRow = (name, d) =>
+        !!(contextRows[name] && d && typeof d === 'object' && contextRows[name].has(d));
+    // What the chart REPORTS of a table: its rows minus the context rows. The
+    // index-addressed public API (selection, control) speaks THESE indices, so
+    // `getData()[i]` and `el.select(i)` always name the same row.
+    /** @param {string} name @returns {any[]} */
+    const reportedRows = (name) => {
+        const rows = tables[name] || [];
+        return contextRows[name] ? rows.filter((d) => !isContextRow(name, d)) : rows;
+    };
+    // A reported index -> the row's index in the table, or -1.
+    /** @param {string} name @param {number} i @returns {number} */
+    const rowIndexOf = (name, i) => {
+        if (!contextRows[name]) return i;
+        const rows = tables[name] || [];
+        let k = -1;
+        for (let j = 0; j < rows.length; j++) {
+            if (isContextRow(name, rows[j])) continue;
+            if (++k === i) return j;
+        }
+        return -1;
+    };
+    // A table index -> its reported index, or null for a context row.
+    /** @param {string} name @param {number} j @returns {number | null} */
+    const reportedIndexOf = (name, j) => {
+        if (!contextRows[name]) return j;
+        const rows = tables[name] || [];
+        if (isContextRow(name, rows[j])) return null;
+        let k = 0;
+        for (let m = 0; m < j && m < rows.length; m++) if (!isContextRow(name, rows[m])) k++;
+        return k;
+    };
     // The dataset in the caller's own spelling, for getData/onChange: a bare array
     // when that is how it came in (every single-table chart), else keyed by table.
-    // A CONTEXT table is drawn, never elicited, so it is left out of what the
-    // chart reports.
+    // Context rows are drawn, never elicited, so they are left out.
     const shapeData = () => {
-        if (isBareForm(schemaSpec)) return primaryRows();
+        if (isBareForm(schemaSpec)) return reportedRows(schemaSpec.primary);
         /** @type {Record<string, any[]>} */
         const out = {};
-        for (const name of elicitedTables(schemaSpec)) out[name] = tables[name];
+        for (const name of Object.keys(tables)) out[name] = reportedRows(name);
         return out;
     };
 
@@ -240,20 +309,6 @@ export function Elicit(spec) {
         feature.table = (named != null && schemaSpec.tables[named])
             ? named
             : (schemaSpec.byRole[feature.tableRole] || schemaSpec.primary);
-        // A context table is read-only by construction (every row locked), so an
-        // edit declared over it can never commit. Say so, rather than letting a
-        // mark that looks editable sit inert.
-        if (isContextTable(schemaSpec, feature.table) && feature.views !== 'scale') {
-            const n = collectEdits(feature).length;
-            if (n) {
-                warn(
-                    `${markLabel(feature)}:context:edits`,
-                    `mark ${markLabel(feature)} declares ${n} edit${n > 1 ? 's' : ''} over context ` +
-                    `table "${feature.table}", which is read-only (drawn, never elicited). ` +
-                    `They will never commit; put the edit on a mark over an elicited table.`
-                );
-            }
-        }
     });
 
     // ── Ports: a channel that becomes a feature ────────────────────────────────
@@ -392,12 +447,13 @@ export function Elicit(spec) {
     /** @param {string} name @returns {((d: any, i: number) => boolean) | null} */
     const isLockedIn = (name) => {
         if (!(name in lockPredicates)) {
-            // Every row of a CONTEXT table is read-only: the lock's two halves (the
-            // invariant, and the pointer-transparent `locked` stamp) are exactly
-            // what "drawn, never elicited" means.
-            lockPredicates[name] = isContextTable(schemaSpec, name)
-                ? () => true
-                : resolveLock(spec.lock, () => seedCounts[name] || 0, name);
+            // A CONTEXT row is read-only: the lock's two halves (the invariant, and
+            // the pointer-transparent `locked` stamp) are exactly what "drawn, never
+            // elicited" means. Reads `contextRows` live — setData and undo rebuild it.
+            const lock = resolveLock(spec.lock, () => seedCounts[name] || 0, name);
+            lockPredicates[name] = !(name in contextRows) ? lock
+                : lock ? (d, i) => isContextRow(name, d) || lock(d, i)
+                : (d) => isContextRow(name, d);
         }
         return lockPredicates[name];
     };
@@ -492,6 +548,25 @@ export function Elicit(spec) {
      */
     const activeEdits = (feature) =>
         collectEdits(feature).filter(e => e.stage == null || e.stage === currentStage);
+
+    // Was the plane raised on the last render? Only then does a hover arrive as
+    // a plane gesture over a mark (see handleEvent's hover routing).
+    let planeRaised = false;
+    // Clip the marks to the plot rect? `spec.clip` says so; left unset, a chart
+    // clips when any edit moves a domain as a WINDOW over the data (`viewport`:
+    // zoom, pan), because then rows legitimately sit past the axes. Decided once
+    // over EVERY edit, not the active stage's, so a stage change never flips it.
+    // `{ pad }` grows the rect past the axes (`clipRect`, the one place the rect
+    // is decided — the renderers and the hit filter below both read it).
+    const clipAuto = features.some((f) => collectEdits(f).some((e) => e.viewport));
+    { const problem = clipProblem(spec.clip); if (problem) warn('spec:clip', problem); }
+    const clipNow = () => clipRect(spec.clip, clipAuto, innerWidth, innerHeight);
+    // Under the clip a mark outside the clip rect is not drawn, so it must not be
+    // grabbed or tipped either: past the rect only `unclipped` nodes (a chart
+    // element's handles, legend swatches, a mark that says `clip: false`) are
+    // hit-testable.
+    /** @param {any[]} nodes @param {number} x @param {number} y */
+    const visibleAt = (nodes, x, y) => clipVisible(nodes, x, y, clipNow());
 
     // Move the stage cursor WITHOUT re-rendering: drop every transient (an in-flight
     // driver lock, a hover preview) so a stage switch can't resume a half-finished
@@ -635,19 +710,32 @@ export function Elicit(spec) {
     /** @type {{ recorded: boolean } | null} */
     let txn = null;
 
-    // The schema of EVERY elicited table rides in a snapshot (a cross-table rename
-    // writes two tables' domains; a snapshot of the primary's alone could not undo
-    // it). Context tables are left out: nothing can change them.
+    // The schema of EVERY table rides in a snapshot (a cross-table rename writes
+    // two tables' domains; a snapshot of the primary's alone could not undo it).
+    // So does context membership, as row indices: the clone has new row objects,
+    // and the context set is keyed by identity.
     const snapshot = () => {
         /** @type {Record<string, any>} */
         const schemas = {};
-        for (const name of elicitedTables(schemaSpec)) schemas[name] = structuredClone(schemaSpec.tables[name].fields);
-        return { tables: structuredClone(tables), schemas, width: curW, height: curH };
+        for (const name of Object.keys(schemaSpec.tables)) schemas[name] = structuredClone(schemaSpec.tables[name].fields);
+        /** @type {Record<string, number[]>} */
+        const context = {};
+        for (const name of Object.keys(contextRows)) {
+            context[name] = [];
+            (tables[name] || []).forEach((d, i) => { if (isContextRow(name, d)) context[name].push(i); });
+        }
+        return { tables: structuredClone(tables), schemas, context, width: curW, height: curH };
     };
 
     /** @param {any} snap */
     const restoreSnapshot = (snap) => {
         tables = structuredClone(snap.tables);
+        for (const [name, idx] of Object.entries(snap.context)) {
+            /** @type {WeakSet<object>} */
+            const set = new WeakSet();
+            for (const i of /** @type {number[]} */ (idx)) if (tables[name] && tables[name][i]) set.add(tables[name][i]);
+            contextRows[name] = set;
+        }
         // Replace each schema's CONTENTS: `schema` (the primary's field map) is
         // captured by closures (and read by resolveScales each render), so
         // rebinding the name would strand them.
@@ -695,14 +783,24 @@ export function Elicit(spec) {
     // Notify a selection change. Selection is not the belief data, so it is a
     // SEPARATE channel from `change` — a `select` listener hears it, `onChange`/
     // `getData` never do.
+    // The selection as the caller sees it: REPORTED indices (see reportedRows), so
+    // a selected row and `getData()` agree. A selected context row has no reported
+    // index and is left out.
+    /** @param {string} [table] @returns {number[]} */
+    const reportedSelection = (table = schemaSpec.primary) => /** @type {number[]} */ (
+        selectionList(table).map((i) => reportedIndexOf(table, i)).filter((i) => i != null)
+    );
     const notifySelect = () => {
-        const primary = selectionPrimary();
+        const list = reportedSelection();
+        const primary = list.length ? list[0] : null;
         // A single-table chart reports bare row indices, as it always has. A
         // multi-table one reports {table, index}, because a bare number there names
         // no particular row.
         const all = isBareForm(schemaSpec)
-            ? [...selectionIn(schemaSpec.primary)]
-            : [...ui.selection].map(selParse);
+            ? [...selectionIn(schemaSpec.primary)].map((i) => reportedIndexOf(schemaSpec.primary, i)).filter((i) => i != null)
+            : [...ui.selection].map(selParse)
+                .map((sel) => ({ ...sel, index: reportedIndexOf(sel.table, sel.index) }))
+                .filter((sel) => sel.index != null);
         for (const cb of listeners.select) cb(primary, /** @type {any} */ (all));
     };
 
@@ -915,8 +1013,13 @@ export function Elicit(spec) {
         // Plane-on-top drivers (brushRect, nearest, …) may stash a cursor hint in
         // their per-feature session so the interaction plane can show edge/body
         // affordances without a second interaction system.
+        planeRaised = planeOnTop;
         let planeCursor = 'pointer';
-        if (planeOnTop && ui.session) {
+        // Over a mark a press would grab (see handleEvent's hover routing), the
+        // plane shows that mark's cursor rather than the plane edit's.
+        const hoveredNode = planeOnTop && ui.hover && ui.hover.node;
+        if (hoveredNode && hoveredNode.editable) planeCursor = hoveredNode.cursor || 'move';
+        else if (planeOnTop && ui.session) {
             for (const fid of Object.keys(ui.session)) {
                 const cur = ui.session[fid] && ui.session[fid].cursor;
                 if (cur) { planeCursor = cur; break; }
@@ -1013,6 +1116,11 @@ export function Elicit(spec) {
             // and pick.js skips it when resolving a proximity target.
             nodes.forEach((/** @type {any} */ node) => {
                 node.featureId = feature.id;
+                // A chart element draws a SCALE in the chart's chrome (an axis
+                // handle on the edge, a legend in the margin): the mark clip is
+                // for the data, never for these. A mark opts out with `clip:
+                // false` — an annotation meant to sit in the margin.
+                if ((feature.views === 'scale' || feature.clip === false) && node.unclipped == null) node.unclipped = true;
                 const locked = isLocked && isNodeLocked(node, feature, currentData, isLocked);
                 if (locked) node.locked = true;
                 if (editable && !locked) node.editable = true;
@@ -1126,14 +1234,15 @@ export function Elicit(spec) {
             /** @type {{ featureId: string, index: number, node: any }[]} */
             const hits = [];
             for (let i = features.length - 1; i >= 0; i--) {
-                let hit = hitTestAny(featureNodes[features[i].id] || [], ui.pointer.x, ui.pointer.y);
+                const nodesAt = visibleAt(featureNodes[features[i].id] || [], ui.pointer.x, ui.pointer.y);
+                let hit = hitTestAny(nodesAt, ui.pointer.x, ui.pointer.y);
                 // A geo region is a projected `d` path: test the pointer against its
                 // rings in SCREEN space (even-odd over every ring, so holes and
                 // multipolygons count) — right under every projection, including an
                 // identity over pre-projected coordinates, where inverting to lon/lat
                 // would hand degrees-shaped pixels to a spherical test.
                 if (!hit && features[i].supportsGeo) {
-                    const nodesHere = featureNodes[features[i].id] || [];
+                    const nodesHere = nodesAt;
                     const ptr = /** @type {{ x: number, y: number }} */ (ui.pointer);
                     for (let k = nodesHere.length - 1; k >= 0; k--) {
                         const n = nodesHere[k];
@@ -1377,7 +1486,7 @@ export function Elicit(spec) {
             planeCursor,
             tracksPointer,
             hasWheel,
-            clip: !!spec.clip,
+            clip: clipNow(),
             responsive: mode,
             overflow,
             focusOutline,
@@ -2092,7 +2201,7 @@ export function Elicit(spec) {
     /** @param {number} x @param {number} y @returns {any | null} */
     const hitAny = (x, y) => {
         for (let i = features.length - 1; i >= 0; i--) {
-            const hit = hitTest(featureNodes[features[i].id] || [], x, y);
+            const hit = hitTest(visibleAt(featureNodes[features[i].id] || [], x, y), x, y);
             if (hit) return hit;
         }
         return null;
@@ -2240,6 +2349,22 @@ export function Elicit(spec) {
             if (event.type === 'dragend') { planeGrab = null; directStroke = false; }
             if (hit) event = { ...event, node: hit };
         }
+        // Hover follows the same rule: over a mark a press would grab, the mark is
+        // what the pointer is about to touch, so it lights as `hovered` and the
+        // plane edits see the pointer LEAVE (a pan drops its grab cursor, a sweep
+        // its preview). Off it, the plane edits get the hover back.
+        if (!event.node && event.type === 'hover' && event.x != null && planeRaised) {
+            const hit = hitAny(event.x, event.y);
+            const owner = hit ? features.find((f) => f.id === hit.featureId) : null;
+            const accepts = owner && activeEdits(owner).some((e) => e.pick === 'direct'
+                && arbitrates(owner, e, { ...event, type: 'dragstart', node: hit }));
+            if (hit && accepts) {
+                if (!ui.hover || ui.hover.node !== hit) handleEvent({ type: 'pointerover', node: hit });
+                event = { ...event, type: 'hoverout' };
+            } else if (ui.hover) {
+                handleEvent({ type: 'pointerout', node: ui.hover.node });
+            }
+        }
         if (!event.node && event.x != null) {
             planeLive = new Map(features.map(f => [f.id, livePlaneEdits(f, event)]));
             let any = false;
@@ -2329,13 +2454,12 @@ export function Elicit(spec) {
         // Same split as the seed: a bare array is the primary table, a keyed object
         // names its tables. So a caller's setData(rows) keeps working verbatim.
         const next = normalizeData(structuredClone(data ?? null), schemaSpec);
-        // A reseed replaces the ELICITED tables. A context table the caller did not
-        // name keeps its rows — it is reference, not an answer, and a bare-array
-        // reseed cannot even name it.
-        for (const name of Object.keys(schemaSpec.tables)) {
-            if (!isContextTable(schemaSpec, name)) continue;
-            const named = data && !Array.isArray(data) && typeof data === 'object' && Array.isArray(data[name]);
-            if (!named) next[name] = tables[name];
+        // setData takes what getData gives: the ELICITED rows. The context rows are
+        // reference, not an answer, so they are kept — the same objects, so their
+        // membership survives — ahead of the new rows.
+        for (const name of Object.keys(contextRows)) {
+            const keep = (tables[name] || []).filter((d) => isContextRow(name, d));
+            if (keep.length) next[name] = [...keep, ...(next[name] || [])];
         }
         tables = next;
         // A reseed is new seed data, so it gets the same contract check as spec.data.
@@ -2393,11 +2517,11 @@ export function Elicit(spec) {
     // selection; a caller reads it to drive its own UI (which row is highlighted).
     // Stays scalar under multi-select — it reports the FIRST selected row, so a
     // caller written against a single selection keeps working.
-    el.getSelection = () => selectionPrimary();
+    el.getSelection = () => { const list = reportedSelection(); return list.length ? list[0] : null; };
 
     // EVERY selected index, ascending. What to read when the chart can hold more
     // than one (edit.select({ multi: true }), el.select([…]), el.selectAll()).
-    el.getSelectionAll = () => selectionList();
+    el.getSelectionAll = () => reportedSelection();
 
     // Drive the selection from outside, then render. Each wrapper renders itself (it
     // runs OUTSIDE the dispatch, which is what renders the gesture path), and returns
@@ -2416,10 +2540,12 @@ export function Elicit(spec) {
     // the call is idempotent and there is no clear-then-add for a caller to get
     // half-right. An empty array clears, like `null`.
     el.select = (/** @type {number | number[] | null} */ index) => {
-        const rows = primaryRows();
+        // Reported indices in, table indices from here on (see reportedRows).
+        const rows = reportedRows(schemaSpec.primary);
         const ok = (/** @type {any} */ i) => typeof i === 'number' && i >= 0 && i < rows.length;
+        const row = (/** @type {number} */ i) => rowIndexOf(schemaSpec.primary, i);
         if (Array.isArray(index)) {
-            const list = index.filter(ok);
+            const list = index.filter(ok).map(row);
             if (!list.length) return driveSelection({ index: null, clear: true });
             // One commit, so `select` fires once and the render happens once: clear
             // through the same descriptor path, then add the rest additively.
@@ -2431,17 +2557,19 @@ export function Elicit(spec) {
             update();
             return true;
         }
-        const i = ok(index) ? /** @type {number} */ (index) : null;
+        const i = ok(index) ? row(/** @type {number} */ (index)) : null;
         return driveSelection({ index: i, exclusive: true, toggle: false, clear: i == null });
     };
 
     // Add or remove ONE row, leaving the rest of the selection alone — the external
     // counterpart of a shift-click (edit.select({ multi: true })).
-    el.toggleSelection = (/** @type {number} */ index) =>
-        driveSelection({ index, exclusive: false, toggle: true });
+    el.toggleSelection = (/** @type {number} */ index) => {
+        const i = typeof index === 'number' ? rowIndexOf(schemaSpec.primary, index) : -1;
+        return i < 0 ? false : driveSelection({ index: i, exclusive: false, toggle: true });
+    };
 
     // Select every row of the primary table.
-    el.selectAll = () => el.select(primaryRows().map((_, i) => i));
+    el.selectAll = () => el.select(reportedRows(schemaSpec.primary).map((_, i) => i));
 
     // Select by CATEGORY / predicate: pick rows matching `{ field: value }` (or a
     // predicate function) and select them. This is the "select a category" entry
@@ -2456,7 +2584,7 @@ export function Elicit(spec) {
         const match = typeof where === 'function'
             ? /** @type {(d: any, i: number) => boolean} */ (where)
             : (/** @type {any} */ d) => d && d[where] === value;
-        const rows = primaryRows();
+        const rows = reportedRows(schemaSpec.primary);
         if (options && options.all) {
             const hits = rows.map((d, i) => (match(d, i) ? i : -1)).filter((i) => i >= 0);
             return el.select(hits.length ? hits : null);
@@ -2519,18 +2647,21 @@ export function Elicit(spec) {
     // own `gesture` to route value-space vs pointer-space — the FAÇADE branches; the
     // engine dispatch never learns a controller exists.
     el.control = (/** @type {string} */ name, /** @type {number} */ index = 0) => {
+        // `index` is a REPORTED index (see reportedRows) — row i of getData() — so
+        // it is translated to the row's place in the table the edit's mark draws.
+        const rowOf = (/** @type {any} */ feature) => rowIndexOf(feature ? feature.table : schemaSpec.primary, index);
         // Value -> the pointer that would set it, forward-encoding through the SAME
         // scale the edit inverts (the inverse of the edit's inverse — encoding, run
         // forward). Mirrors the nudge normalizer: untouched axes keep the datum's
         // CURRENT pixel so they don't teleport.
         const dragPointer = (/** @type {any} */ feature, /** @type {any} */ edit, /** @type {any} */ value) => {
-            const node = nodeAt(feature, index);
+            const node = nodeAt(feature, rowOf(feature));
             const center = markCenter(node);
-            const datum = primaryRows()[index];
+            const datum = tableOf(feature)[rowOf(feature)];
             const channels = feature.channels || {};
             // Forward-encode through the SAME scales the edit will invert — which,
             // inside a composite's frame, are the node's own (see frameScalesFor).
-            const editScales = frameScalesFor(feature, node, index) || scales;
+            const editScales = frameScalesFor(feature, node, rowOf(feature)) || scales;
             // Base: where the datum currently sits, so a single-axis set doesn't move
             // the other axis.
             let x = datum ? encodeChannel(editScales, channels, 'x', datum, center ? center.cx : 0) : (center ? center.cx : 0);
@@ -2577,7 +2708,7 @@ export function Elicit(spec) {
                 const found = findNamedEdit(name);
                 if (!found) return;
                 const { feature, edit } = found;
-                const node = nodeAt(feature, index);
+                const node = nodeAt(feature, rowOf(feature));
                 // editName addresses THIS edit, so a sibling edit sharing the gesture
                 // (another set() on the same feature) doesn't also fire.
                 if (edit.gesture === 'commit') {
@@ -2595,13 +2726,13 @@ export function Elicit(spec) {
                 const found = findNamedEdit(name);
                 if (!found) return;
                 live = true;
-                el.emit({ type: 'dragstart', node: nodeAt(found.feature, index), editName: name });
+                el.emit({ type: 'dragstart', node: nodeAt(found.feature, rowOf(found.feature)), editName: name });
             },
             end() {
                 const found = findNamedEdit(name);
                 live = false;
                 if (!found) return;
-                el.emit({ type: 'dragend', node: nodeAt(found.feature, index), editName: name });
+                el.emit({ type: 'dragend', node: nodeAt(found.feature, rowOf(found.feature)), editName: name });
             },
             // Fire a TRIGGER edit — one that takes no value, it just acts on the datum
             // (cycle advances a category, remove drops the row, toggle flips it). An
@@ -2614,12 +2745,12 @@ export function Elicit(spec) {
                 const found = findNamedEdit(name);
                 if (!found) return;
                 const g = gesture || found.edit.gesture || 'click';
-                el.emit({ type: g, node: nodeAt(found.feature, index), editName: name });
+                el.emit({ type: g, node: nodeAt(found.feature, rowOf(found.feature)), editName: name });
             },
             // Raw passthrough, auto-scoped to this feature's node for the datum.
             emit(/** @type {any} */ event) {
                 const found = findNamedEdit(name);
-                el.emit({ node: found ? nodeAt(found.feature, index) : undefined, ...event });
+                el.emit({ node: found ? nodeAt(found.feature, rowOf(found.feature)) : undefined, ...event });
             },
             // What values this channel ACCEPTS, read off its scale — so external UI
             // (dropdown options, slider min/max, colour choices) respects the scale
@@ -2628,7 +2759,7 @@ export function Elicit(spec) {
                 const found = findNamedEdit(name);
                 if (!found) return null;
                 const { feature, edit } = found;
-                const editScales = frameScalesFor(feature, null, index) || scales;
+                const editScales = frameScalesFor(feature, null, rowOf(feature)) || scales;
                 const ch = resolveChannels(edit.channels, feature.channels || {}, editScales, feature)[0];
                 const scale = /** @type {any} */ (ch && ch.scale);
                 const fieldSpec = (schema && ch && ch.field && schema[ch.field]) || null;

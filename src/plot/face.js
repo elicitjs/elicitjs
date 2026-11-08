@@ -124,7 +124,7 @@ const G = {
  */
 export function face(options = {}) {
     const opts = normalizeMarkOptions(options, { mark: 'face', allow: MARK_OPTIONS.face });
-    const { id, edits, table, ink = G.ink } = opts;
+    const { id, edits, table, clip, ink = G.ink } = opts;
 
     /** @type {Record<string, any>} */
     const channels = { ...opts.channels };
@@ -218,6 +218,7 @@ export function face(options = {}) {
         id: glyph,
         edits,
         table,
+        clip,
         // The author's placement channels define the face's box — verbatim, edits
         // included: the box is a real grab target, so a `move()` / `resize()` here
         // takes hold of the whole glyph and every part follows.

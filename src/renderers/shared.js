@@ -35,7 +35,7 @@ export const STYLE_FIELDS = [
  * core/scene.js) — so a renderer only has to preserve it.
  *
  * Paint stack (bottom → top):
- *   background → guideRegions → marks → guideFront → effects
+ *   background → guideRegions → marks → chrome → guideFront → effects → effectsChrome
  *
  * Guide rects (shaded bands) stay behind marks; every other guide node (rules,
  * constraint ticks, labels) goes to `guideFront` in scene order so lines/text
@@ -44,16 +44,27 @@ export const STYLE_FIELDS = [
  * use `background` (same layer as axes) so a non-interactive legend sits behind
  * marks without stealing hits.
  *
+ * Under `clip` (the chart confines its marks to the plot rect), a mark or effect
+ * node flagged `unclipped` — a chart element's chrome: an axis handle on the
+ * plot edge, an interactive legend in the margin — goes to `chrome` /
+ * `effectsChrome` instead, which the renderer paints above the clipped marks /
+ * effects without the clip. Without `clip` both are empty, so an unclipped
+ * chart's paint order is untouched.
+ *
  * @param {any[]} children `scene.children`
+ * @param {{ clip?: boolean }} [opts]
  * @returns {{
  *   background: any[],
  *   guideRegions: any[],
  *   marks: any[],
+ *   chrome: any[],
  *   guideFront: any[],
- *   effects: any[]
+ *   effects: any[],
+ *   effectsChrome: any[]
  * }}
  */
-export function partitionScene(children) {
+export function partitionScene(children, opts = {}) {
+    const clip = !!opts.clip;
     /** @type {any[]} */
     const background = [];
     /** @type {any[]} */
@@ -64,13 +75,17 @@ export function partitionScene(children) {
     const guideFront = [];
     /** @type {any[]} */
     const effects = [];
+    /** @type {any[]} */
+    const chrome = [];
+    /** @type {any[]} */
+    const effectsChrome = [];
 
     for (const n of children || []) {
         if (!n) continue;
         // Effects win over guide/background: a select outline is also tagged
         // `guide` for the engine's guide pass, but it must paint on top.
         if (n.effect) {
-            effects.push(n);
+            (clip && n.unclipped ? effectsChrome : effects).push(n);
             continue;
         }
         if (n.background) {
@@ -84,9 +99,9 @@ export function partitionScene(children) {
             else guideFront.push(n);
             continue;
         }
-        marks.push(n);
+        (clip && n.unclipped ? chrome : marks).push(n);
     }
-    return { background, guideRegions, marks, guideFront, effects };
+    return { background, guideRegions, marks, chrome, guideFront, effects, effectsChrome };
 }
 
 /**

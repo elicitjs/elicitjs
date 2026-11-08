@@ -11,7 +11,7 @@
 //   dragstart / drag / dragend — node present for a direct-pick drag, absent for plane
 //   hover / hoverout         — plane, plane-on-top only (mirrors the D3 plane gestures)
 // Keyboard nudge and the text-edit `commit` are deliberately not wired yet.
-import { hitTest } from '../../edit/pick.js';
+import { hitTest, clipVisible } from '../../edit/pick.js';
 import { frameThrottle } from '../shared.js';
 
 // Movement (px) before a press becomes a drag. `direct` matches d3.drag's
@@ -38,6 +38,11 @@ export function bindCanvasEvents(canvas, getCtx) {
     /** @type {string | null} */
     let hoverKey = null;
     let suppressClick = false; // swallow the native click that trails a drag / mark-click
+
+    // The editable mark under (x, y). Under `clip` a mark past the clip rect is
+    // not drawn, so it is not grabbed either — only chrome reaches out there.
+    /** @param {any} ctx @param {number} x @param {number} y */
+    const pick = (ctx, x, y) => hitTest(clipVisible(ctx.scene.children, x, y, ctx.clip || null), x, y);
 
     canvas.style.touchAction = 'none';
     canvas.style.userSelect = 'none';
@@ -100,7 +105,7 @@ export function bindCanvasEvents(canvas, getCtx) {
             gesture = { mode: 'plane', sx: x, sy: y, dragging: false };
         } else {
             // Direct pick: is there an editable mark under the pointer?
-            const node = hitTest(ctx.scene.children, x, y);
+            const node = pick(ctx, x, y);
             if (node) {
                 // d3.drag fires 'start' on press (before any movement); mirror that so
                 // the engine's undo transaction brackets the whole stroke.
@@ -148,7 +153,7 @@ export function bindCanvasEvents(canvas, getCtx) {
                 // there are no elements to bind to, so the hit test IS the enter/leave
                 // boundary. Without this a direct-pick mark had no pre-press signal at
                 // all beyond the cursor — see core/effects.js's `hovered` state.
-                const node = hitTest(ctx.scene.children, x, y);
+                const node = pick(ctx, x, y);
                 const key = node ? `${node.featureId}:${node.index}` : null;
                 if (key !== hoverKey) {
                     hoverKey = key;
@@ -224,7 +229,7 @@ export function bindCanvasEvents(canvas, getCtx) {
         // boundary handle) just as often as on the plane. Emitting only the plane
         // form here meant such an edit could never fire on canvas, while `create`'s
         // plane dblclick still worked, so the gesture looked half-implemented.
-        const node = ctx.planeOnTop ? null : hitTest(ctx.scene.children, x, y);
+        const node = ctx.planeOnTop ? null : pick(ctx, x, y);
         ctx.onEvent({ type: 'dblclick', x, y, ...(node ? { node } : {}), rawEvent: e });
     });
 }

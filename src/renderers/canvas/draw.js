@@ -393,13 +393,26 @@ function paintEffect(ctx, n) {
  * order IS z-order on a canvas (last wins).
  * @param {CanvasRenderingContext2D} ctx
  * @param {any[]} children scene nodes
- * @param {{ images: Map<string, any>, requestRepaint: () => void, theme?: any, clip?: boolean, innerWidth?: number, innerHeight?: number }} io
+ * @param {{ images: Map<string, any>, requestRepaint: () => void, theme?: any, clip?: { x: number, y: number, width: number, height: number } | null, innerWidth?: number, innerHeight?: number }} io
  */
 export function paintScene(ctx, children, io) {
     // The theme's font tokens for this pass (read by text()); null family keeps the
     // pre-theme 'sans-serif' default so an un-themed chart is unchanged.
     activeFont = (io && io.theme && io.theme.font) || null;
-    const { background, guideRegions, marks, guideFront, effects } = partitionScene(children);
+    const { background, guideRegions, marks, chrome, guideFront, effects, effectsChrome } =
+        partitionScene(children, { clip: !!(io && io.clip) });
+    // The clip rect (the plot rect, grown by any `pad`), for what `clip` confines
+    // (the data's marks and effects).
+    const clip = io && io.clip;
+    const clipped = (/** @type {() => void} */ paint) => {
+        if (!clip) { paint(); return; }
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(clip.x, clip.y, clip.width, clip.height);
+        ctx.clip();
+        paint();
+        ctx.restore();
+    };
 
     // Background: tiles (floor), then legend chips/ramps + axis chrome, then
     // vector basemap paths (geoBasemap) so they sit above grids the way they did
@@ -420,19 +433,15 @@ export function paintScene(ctx, children, io) {
     guideRegions.forEach((n) => rect(ctx, n, { fill: 'none', stroke: 'none', strokeWidth: 1, opacity: 1 }));
 
     // Ordinary marks in features/parts array order — confined to the plot rect
-    // under `clip: true` (chrome and guides stay unclipped).
-    if (io.clip) {
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(0, 0, Math.max(0, io.innerWidth || 0), Math.max(0, io.innerHeight || 0));
-        ctx.clip();
-    }
-    marks.forEach((n) => paintMark(ctx, n));
-    if (io.clip) ctx.restore();
+    // under `clip` — then a chart element's interactive chrome, which is not.
+    clipped(() => marks.forEach((n) => paintMark(ctx, n)));
+    chrome.forEach((n) => paintMark(ctx, n));
 
     // Rules, constraint ticks, guide labels — in scene order.
     guideFront.forEach((n) => paintGuideFront(ctx, n));
 
-    // Interaction overlays (proximity ring, select outline) — above everything.
-    effects.forEach((n) => paintEffect(ctx, n));
+    // Interaction overlays (proximity ring, select outline) — above everything,
+    // and clipped with the marks they are about.
+    clipped(() => effects.forEach((n) => paintEffect(ctx, n)));
+    effectsChrome.forEach((n) => paintEffect(ctx, n));
 }

@@ -73,7 +73,7 @@ export class D3Renderer {
       innerHeight,
       responsive,
       overflow,
-      clip: !!context.clip,
+      clip: context.clip || null,
     });
 
     // Stashed for the text mark's content-edit overlay (_editText), which is
@@ -129,8 +129,8 @@ export class D3Renderer {
     // Role layers are fixed (background → guide regions → marks → guide
     // front → effects). Within the mark layer, features/parts array order is
     // z-order — type joins still bind by shape, then we reorder DOM.
-    const { background, guideRegions, marks, guideFront, effects: effectNodes } =
-      partitionScene(scene.children);
+    const { background, guideRegions, marks, chrome, guideFront, effects: effectNodes, effectsChrome } =
+      partitionScene(scene.children, { clip: !!context.clip });
     /** @param {any[]} list @param {string} t */
     const ofType = (list, t) =>
       list.filter((/** @type {any} */ n) => n.type === t);
@@ -187,11 +187,26 @@ export class D3Renderer {
     });
     this._orderMarkLayer(layers.marks, marks);
 
+    // A chart element's interactive chrome (an axis handle on the plot edge, an
+    // interactive legend) — empty unless the marks are clipped, when it paints
+    // here, above them and outside the clip.
+    const io = { drag, markClick, markDblClick, keys, hover };
+    this._drawPaths(layers.chrome, ofType(chrome, "path"), io);
+    this._drawMarks(layers.chrome, ofType(chrome, "rect"), ofType(chrome, "circle"), io);
+    this._drawEllipses(layers.chrome, ofType(chrome, "ellipse"), io);
+    this._drawLines(layers.chrome, ofType(chrome, "line"), io);
+    this._drawTextMarks(layers.chrome, ofType(chrome, "text"), io);
+    this._orderMarkLayer(layers.chrome, chrome);
+
     // Rules / constraint ticks / guide labels — in front of marks.
     this._drawGuideFront(layers.guideFront, guideFront);
 
     // Interaction overlays (proximity ring, select outline) — above everything.
-    this._drawEffects(layers.effects, effectNodes);
+    // Two groups inside the one effects layer, so the plane-on-top stacking
+    // below still sees a single topmost layer: the data's effects (clipped with
+    // the marks) and chrome's (not).
+    this._drawEffects(this._subLayer(layers.effects, "effects-data"), effectNodes);
+    this._drawEffects(this._subLayer(layers.effects, "effects-chrome"), effectsChrome);
 
     // In plane-on-top (proximity) mode the plane must sit above the marks and
     // own all pointer events; the marks become purely visual. Guides/effects
@@ -275,7 +290,7 @@ export class D3Renderer {
    * interaction plane, and the background layer (behind every mark). Idempotent
    * — on re-render it just returns the existing nodes.
    * @param {any} container
-   * @param {{ width: number, height: number, margins: any, innerWidth: number, innerHeight: number, responsive?: string, overflow?: string, clip?: boolean }} dims
+   * @param {{ width: number, height: number, margins: any, innerWidth: number, innerHeight: number, responsive?: string, overflow?: string, clip?: { x: number, y: number, width: number, height: number } | null }} dims
    * @returns {{ svg: any, g: any, plane: any }}
    */
   _ensureScene(
@@ -288,7 +303,7 @@ export class D3Renderer {
       innerHeight,
       responsive = "fixed",
       overflow = "hidden",
-      clip = false,
+      clip = null,
     },
   ) {
     /** @type {any} */
@@ -349,8 +364,9 @@ export class D3Renderer {
     // Let marks draw into the margin band (radial/gauge labels) when asked; the
     // default keeps the historical clip to the SVG viewport.
     svg.style("overflow", overflow === "visible" ? "visible" : null);
-    // `clip: true` confines the MARKS to the plot rect (a zoomed-in line would
-    // otherwise run across the axes into the margins); chrome and guides stay.
+    // `clip` confines the MARKS to its rect — the plot rect, grown by any `pad`
+    // (a zoomed-in line would otherwise run across the axes into the margins);
+    // chrome and guides stay.
     if (clip) {
       let defs = svg.select("defs");
       if (defs.empty()) defs = /** @type {any} */ (svg).insert("defs", ":first-child");
@@ -359,11 +375,11 @@ export class D3Renderer {
       if (cp.empty()) cp = defs.append("clipPath").attr("id", this._clipId);
       let r = cp.select("rect");
       if (r.empty()) r = cp.append("rect");
-      r.attr("x", 0).attr("y", 0).attr("width", Math.max(0, innerWidth)).attr("height", Math.max(0, innerHeight));
-      svg.select(".scene-container").select("g.mark-layer").attr("clip-path", `url(#${this._clipId})`);
-    } else {
-      svg.select(".scene-container").select("g.mark-layer").attr("clip-path", null);
+      r.attr("x", clip.x).attr("y", clip.y).attr("width", clip.width).attr("height", clip.height);
     }
+    // Clipped: the data's marks and their effects. Unclipped: chrome-layer and
+    // effects-chrome. Applied below, once _sceneLayers has made sure they exist.
+    this._clipUrl = clip ? `url(#${this._clipId})` : null;
 
     const g = svg
       .select(".scene-container")
@@ -373,17 +389,19 @@ export class D3Renderer {
       .attr("height", innerHeight);
     // Ensure role layers exist (fresh svg creates them above; a long-lived
     // container from before mark-layer existed still needs the groups).
-    this._sceneLayers(g);
+    const layers = this._sceneLayers(g);
+    layers.marks.attr("clip-path", this._clipUrl);
+    this._subLayer(layers.effects, "effects-data").attr("clip-path", this._clipUrl);
     return { svg, g, plane: g.select("rect.plane") };
   }
 
   /**
    * Role-layer groups under the scene container. Order in the DOM is the
-   * paint stack: plane → bg → guide-back → marks → guide-front → effects.
+   * paint stack: plane → bg → guide-back → marks → chrome → guide-front → effects.
    * Only mutates the layer list when a group is first created — re-appending
    * every frame would move focused mark nodes and break keyboard editing.
    * @param {any} g scene container
-   * @returns {{ bg: any, guideBack: any, marks: any, guideFront: any, effects: any }}
+   * @returns {{ bg: any, guideBack: any, marks: any, chrome: any, guideFront: any, effects: any }}
    */
   _sceneLayers(g) {
     const hadMarkLayer = !g.select("g.mark-layer").empty();
@@ -401,6 +419,7 @@ export class D3Renderer {
     const bg = ensure("bg-layer");
     const guideBack = ensure("guide-back-layer");
     const marks = ensure("mark-layer");
+    const chrome = ensure("chrome-layer");
     const guideFront = ensure("guide-front-layer");
     const effects = ensure("effects-layer");
     // Pre-layer renderers joined marks as direct children of `g`. Drop those
@@ -419,13 +438,24 @@ export class D3Renderer {
         bg.node(),
         guideBack.node(),
         marks.node(),
+        chrome.node(),
         guideFront.node(),
         effects.node(),
       ]) {
         if (el) root.appendChild(/** @type {Node} */ (el));
       }
     }
-    return { bg, guideBack, marks, guideFront, effects };
+    return { bg, guideBack, marks, chrome, guideFront, effects };
+  }
+
+  /**
+   * A named child group of a layer, created once (in call order) and reused.
+   * @param {any} layer @param {string} cls @returns {any}
+   */
+  _subLayer(layer, cls) {
+    let sub = layer.select(`:scope > g.${cls}`);
+    if (sub.empty()) sub = layer.append("g").attr("class", cls);
+    return sub;
   }
 
   /**

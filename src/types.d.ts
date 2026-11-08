@@ -97,6 +97,15 @@ export type LockSpec =
   | boolean
   | ((datum: Datum, index: number, table?: string) => boolean);
 
+// Which rows are CONTEXT (see ElicitSpec.context, core/lock.js): reference rows of
+// the elicited table — observed history behind a forecast — that are drawn, read-
+// only, and left out of everything the chart reports. `true` makes every seeded
+// row context; a predicate picks seeded rows. Asked ONCE, of the seed: a row an
+// edit adds or moves never becomes context.
+export type ContextSpec =
+  | boolean
+  | ((datum: Datum, index: number, table?: string) => boolean);
+
 // One TABLE's schema: what data is being elicited, keyed by field name. It is the
 // source of truth for a field's scale (ranked above data inference), so a chart
 // resolves its scales — and can mint new data — with zero starter data.
@@ -120,11 +129,6 @@ export type Structure = 'table' | 'network';
 export interface TableSpec {
   role?: string;
   fields: Schema;
-  // A CONTEXT table: drawn by marks that point at it (`table: 'history'`), never
-  // elicited — every row is read-only, and it is left out of `getData()`,
-  // `onChange` and `getSchema()`. Any number may sit beside the structure's
-  // tables. Long form only (`{ context: true, fields }`).
-  context?: boolean;
   // Links only: does an ordered pair of this table's `ref` columns mean a
   // DIRECTION? See TableSchema.directed — the flag is tri-state on purpose.
   directed?: boolean;
@@ -139,10 +143,7 @@ export interface TableSpec {
 // names its tables. normalizeSchema brings both to SchemaSpec.
 export type SchemaInput =
   | Schema
-  | { structure: Structure; tables: Record<string, Schema | TableSpec> }
-  // A map of tables of the default structure, when one of them is a context
-  // table: `{ data: { … }, history: { context: true, fields: { … } } }`.
-  | Record<string, Schema | TableSpec>;
+  | { structure: Structure; tables: Record<string, Schema | TableSpec> };
 
 // How a link is drawn between its two endpoints. A STYLE choice resolved per row,
 // not a manipulable geometry: there are no anchor points to drag.
@@ -204,8 +205,6 @@ export interface TableSchema {
   name: string;
   role: string;
   fields: Schema;
-  // Drawn, never elicited (see TableSpec.context). Its role is 'context'.
-  context?: boolean;
   // The `key: true` field, or null. What a `ref` points at by default.
   key: string | null;
   // Links only. Does an ordered pair of this table's `ref` columns mean a
@@ -472,7 +471,7 @@ export interface Edit {
   channels: string[] | null;
   when: ((ctx: EditContext) => boolean) | null;
   pick: 'direct' | 'nearest' | 'plane' | 'sweep' | 'draw' | 'brush' | 'brushRect' | 'geoBrush'
-    | 'probe' | 'axisDrag' | 'slide' | (string & {});
+    | 'probe' | 'axisDrag' | 'slide' | 'pan' | (string & {});
   // null = universal (any mark). Otherwise the mark FAMILY this edit needs, which
   // is also where it lives in the API (the scope shows in the name: edit.line.*,
   // edit.arc.*, edit.waffle.*, edit.geo.*, edit.axis.*). Each scope names a mark
@@ -534,6 +533,11 @@ export interface Edit {
   // whose scale cannot. Declared by move/slide/resize/rotate/… and by any custom
   // edit that inverts; a capability, never a list of type names.
   inverts?: boolean | 'domain';
+  // Does this edit move a positional domain as a WINDOW over the data (zoom,
+  // pan)? Then rows legitimately fall outside the plot rect, and the engine clips
+  // the marks to it unless the spec says `clip: false`. A capability, so a
+  // custom view edit gets the same treatment.
+  viewport?: boolean;
   // Does this edit read a positional SPAN PAIR (x1/x2 or y1/y2)? Then, placed at
   // mark level with no `channels`, collectEdits supplies the mark's own pair.
   spans?: boolean;
@@ -594,6 +598,7 @@ export interface EditOptions {
   advance?: boolean;
   cardinality?: 'append' | 'appendMany' | 'toggle' | 'delete' | null;
   inverts?: boolean | 'domain';
+  viewport?: boolean;
   // The rest of the descriptor an author may override (see Edit).
   table?: string;
   scope?: Edit['scope'];
@@ -955,6 +960,21 @@ export interface Channels extends StyleChannels {
   [channel: string]: ChannelSpec | undefined;
 }
 
+/** The object form of `ElicitSpec.clip`: clip, to the plot rect grown by `pad`. */
+export interface ClipSpec {
+  /** Pixels past the plot rect the marks may still draw: one number for every
+   *  side, or per side. Default 0. */
+  pad?: number | { top?: number; right?: number; bottom?: number; left?: number };
+}
+
+/** A clip rect in plot-local pixels: the plot's top-left corner is (0, 0). */
+export interface ClipRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 // The shared option surface for every mark factory (bar, point, and new marks).
 // `channels` carries the bindings; the shorthands are sugar that desugar into
 // constant channels via normalizeMarkOptions (an explicit `channels` entry wins).
@@ -997,6 +1017,12 @@ export interface MarkOptions {
   edits?: Edit[];
   // Which TABLE this mark is a view over, by NAME (see Mark.table).
   table?: string;
+  /**
+   * `false` draws this mark past the chart's clip (`ElicitSpec.clip`): an
+   * annotation or a label meant to sit in the margin. Its nodes stay grabbable
+   * and tippable there too. Unset, the mark follows the chart.
+   */
+  clip?: boolean;
   // No `constraints` here on purpose: a constraint is a DATASET invariant and gates
   // every edit from every mark, so one written inside a mark reads as scoped to that
   // mark and is not. `ElicitSpec.constraints` is the only home.
@@ -1274,6 +1300,9 @@ export interface CompositeOptions {
   edits?: Edit[];
   // The table the glyph is a view over; stamped onto its box and every part.
   table?: string;
+  // `false` draws the whole glyph past the chart's clip (see MarkOptions.clip);
+  // stamped onto its box and every part that doesn't state its own.
+  clip?: boolean;
 }
 
 /**
@@ -1603,6 +1632,8 @@ export interface Mark {
    * tables needs no `table:` written anywhere. Ignored on a single-table chart.
    */
   table?: string;
+  /** `false`: this mark's nodes escape the chart's clip (MarkOptions.clip). */
+  clip?: boolean;
   /**
    * The ROLE whose table this mark draws when it states no `table`. Set by the mark
    * factory, not the author: `link` declares `'links'`, everything else leaves it
@@ -1964,6 +1995,9 @@ export interface FeatureNode {
   polygon?: boolean;
   // A guide rect that sits ABOVE the marks (a tip's box) rather than behind them.
   front?: boolean;
+  // Escapes the mark clip (`ElicitSpec.clip`): stamped by the engine on every node
+  // a chart element draws (an axis handle on the plot edge, a legend swatch).
+  unclipped?: boolean;
   // A gradient fill (a mark's `gradient` option), painted by the renderers as a
   // <linearGradient> / createLinearGradient over the node's own box.
   fillGradient?: GradientSpec;
@@ -2019,6 +2053,9 @@ export interface Session {
   grabValue?: any;
   pxPerUnit?: number;
   cursor?: string;
+  // pan driver: the pointer at the previous tick; each tick pans by the travel
+  // since, so a wheel zoom mid-drag composes.
+  panFrom?: { x: number; y: number } | null;
   // slide driver (relative mode): the dragstart-locked target datum, plus one
   // frozen anchor per edit — the grab pixel on that edit's axis and the datum's
   // value when the grab began, which is what the value moves relative to (no jump
@@ -2239,6 +2276,16 @@ export interface ElicitSpec {
   // not grabbable, and proximity picking (nearest / sweep / draw) skips them. Note
   // `setData` re-seeds the chart, so it also re-takes a `'seed'` lock.
   lock?: LockSpec;
+  // Reference rows. `true` makes every row in `data` context; a predicate picks
+  // which seeded rows are (`d => d.year <= 2020`). Context rows share the table's
+  // columns — nothing is declared twice — are drawn by every mark over the table,
+  // are locked (as `lock` makes them), and are left out of `getData()`, `onChange`
+  // and the index-addressed selection/control API, whose indices count reported
+  // rows only. Decided once, over the seed: an answer dragged into the predicate's
+  // region stays an answer. `setData(rows)` replaces the elicited rows and keeps
+  // the context. Constraints see context rows (they are rows of the table), with
+  // `locked` telling them apart.
+  context?: ContextSpec;
   // The dataset's invariants. They gate and REPAIR every edit, whichever mark fired
   // it: a rejected proposal is dropped; a returned array replaces it, and the marks
   // re-derive from the repaired rows on the next render. Declared in exactly one
@@ -2316,9 +2363,14 @@ export interface ElicitSpec {
   title?: string;
   subtitle?: string;
   caption?: string;
-  /** Confine the marks to the plot rect (a zoomed-in line otherwise runs into the
-   *  margins). Chrome and guides are not clipped. Default false. */
-  clip?: boolean;
+  /** Confine the marks to the plot rect, axis to axis, so nothing draws on or
+   *  past an axis (a zoomed-in line otherwise runs into the margins). A mark
+   *  outside the rect is not grabbed or tipped either. Axes, legends, guides and
+   *  any mark with `clip: false` are not clipped. `{ pad }` clips to the plot
+   *  rect grown by `pad` pixels — on every side, or per side — so a point on a
+   *  domain edge draws whole. Default: on when an edit moves a domain as a
+   *  window (`edit.axis.zoom`, `edit.axis.pan`), off otherwise. */
+  clip?: boolean | ClipSpec;
   // NO index signature. The spec's key set is CLOSED: an unknown key is a typo
   // that would otherwise draw a wrong chart in silence, and `warnUnknownSpecKeys`
   // (core/elicit.js) reports it at run time. Closing it here is the compile-time
@@ -2462,8 +2514,9 @@ export interface RenderContext {
   // route all gestures as plane events (no node) rather than hit-testing marks.
   planeOnTop?: boolean;
   planeCursor?: string;
-  /** Confine the marks to the plot rect. */
-  clip?: boolean;
+  /** The rect the marks are confined to, in plot-local pixels (the plot rect,
+   *  grown by `ClipSpec.pad`), or null when the chart does not clip. */
+  clip?: ClipRect | null;
   /** An active edit listens to the wheel: the renderer reports `wheel` from its root and prevents the page scroll. */
   hasWheel?: boolean;
   /** A guide reads the pointer: the renderer reports pointermove / pointerleave from its root. */
@@ -2730,6 +2783,13 @@ export interface AxisZoomOptions extends EditOptions {
   limit?: 'declared' | any[] | false;
   /** The narrowest span it may zoom in to, in data units. */
   minSpan?: number;
+}
+/** `edit.axis.pan`: drag the plot to slide the axis's domain along. */
+export interface AxisPanOptions extends EditOptions {
+  /** The schema field whose domain the axis edits, when the channel carries more than one. */
+  field?: string;
+  /** How far it may pan: the declared domain (default), an explicit [lo, hi], or false. */
+  limit?: 'declared' | any[] | false;
 }
 export interface ScaleCategoriesOptions extends EditOptions {
   field?: string;

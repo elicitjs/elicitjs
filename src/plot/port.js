@@ -133,6 +133,8 @@ export function portFeature(host, spec) {
         // still paint as whole objects, ports included.
         table: host.table,
         ...(host.glyph ? { glyph: host.glyph } : {}),
+        // A node drawn past the clip keeps its ports with it.
+        ...(host.clip === false ? { clip: false } : {}),
         channels,
         edits: edit ? [edit] : [],
         rawChannels: ['ports'],

@@ -238,5 +238,5 @@ export function sticker(options = {}) {
     // The composite gets NOTHING editable: no channels to trickle, no edits to hand
     // its last part. Its last-part rules then have nothing to act on, instead of
     // quietly routing the sticker's drag to its own label.
-    return composite({ id: common.id, table: common.table, channels: {}, parts });
+    return composite({ id: common.id, table: common.table, clip: common.clip, channels: {}, parts });
 }

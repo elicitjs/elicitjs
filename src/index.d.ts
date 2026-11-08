@@ -14,6 +14,7 @@ import type {
   AxisRadialOptions,
   AxisScaleOptions,
   AxisZoomOptions,
+  AxisPanOptions,
   BarOptions,
   BrushRectOptions,
   BrushSpanOptions,
@@ -283,6 +284,8 @@ export const edit: {
     scale(options?: AxisScaleOptions): Edit;
     /** The wheel narrows or widens the axis's domain about the value under the pointer. */
     zoom(options?: AxisZoomOptions): Edit;
+    /** Drag the plot to slide the axis's domain along. Composes with zoom. */
+    pan(options?: AxisPanOptions): Edit;
   };
   /** Turns a legend into an input; reads geometry only a legend stamps. */
   legend: {

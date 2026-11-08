@@ -56,6 +56,7 @@ import { axisDragDriver } from './axisDrag.js';
 import { slideDriver } from './slide.js';
 import { moveDriver } from './move.js';
 import { connectDriver } from './connect.js';
+import { panDriver } from './pan.js';
 
 /**
  * @typedef {Object} DriverSession
@@ -107,7 +108,7 @@ import { connectDriver } from './connect.js';
  */
 
 /** @type {Driver[]} */
-export const drivers = [planeDriver, nearestDriver, sweepDriver, drawDriver, brushDriver, brushRectDriver, geoBrushDriver, probeDriver, axisDragDriver, slideDriver, moveDriver, connectDriver];
+export const drivers = [planeDriver, nearestDriver, sweepDriver, drawDriver, brushDriver, brushRectDriver, geoBrushDriver, probeDriver, axisDragDriver, slideDriver, moveDriver, connectDriver, panDriver];
 
 /**
  * Register a custom driver (or replace a built-in by the same `name`). The engine

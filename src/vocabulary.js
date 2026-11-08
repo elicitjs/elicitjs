@@ -23,7 +23,7 @@
 /** Options EVERY mark accepts, whatever it draws. (`constraints` is deliberately
  *  absent: a constraint is a DATASET invariant and belongs on the spec.)
  *  @type {string[]} */
-export const MARK_UNIVERSAL_OPTIONS = ['channels', 'id', 'edits', 'table', 'tip'];
+export const MARK_UNIVERSAL_OPTIONS = ['channels', 'id', 'edits', 'table', 'tip', 'clip'];
 
 /** Top-level constant shorthands every mark desugars into channels
  *  (`fill: 'red'` -> `channels.fill = { value: 'red' }`). `size` and the text
@@ -133,7 +133,7 @@ export const GUIDE_OPTIONS = {
 export const EDIT_UNIVERSAL_OPTIONS = [
     'type', 'name', 'gesture', 'channel', 'channels', 'when', 'pick', 'threshold',
     'scope', 'into', 'constrain', 'guide', 'stage', 'advance', 'target',
-    'cardinality', 'inverts', 'spans', 'table', 'inline', 'multiline', 'defaults', 'apply',
+    'cardinality', 'inverts', 'viewport', 'spans', 'table', 'inline', 'multiline', 'defaults', 'apply',
     'targets',
 ];
 
@@ -165,6 +165,7 @@ export const EDIT_OPTIONS = {
     'line.removeSeries': ['series'],
     'axis.scale': ['field', 'mode'],
     'axis.zoom': ['field', 'factor', 'limit', 'minSpan'],
+    'axis.pan': ['field', 'limit'],
     'scale.addCategory': ['field', 'mode'],
     'scale.renameCategory': ['field', 'mode'],
     'scale.removeCategory': ['field', 'mode'],

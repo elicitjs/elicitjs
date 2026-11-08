@@ -60,9 +60,9 @@ function encodingsOf(features) {
             if (chSpec.scale === null || raw.has(channel) || frameSpecOf(chSpec)) continue;
             const prior = out.find((e) => e.channel === channel && e.field === chSpec.field);
             if (prior) {
-                // A mark that names no table draws the elicited one; prefer it over a
-                // mark that named another (a context table), so an editable legend
-                // writes the rows the chart elicits.
+                // A mark that names no table draws the primary one; prefer it over a
+                // mark that named another, so an editable legend writes the rows the
+                // chart elicits by default.
                 if (prior.table != null && f.table == null) {
                     prior.table = f.table; prior.tableRole = f.tableRole; prior.feature = f;
                 }

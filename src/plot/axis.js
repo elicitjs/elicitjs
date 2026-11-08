@@ -177,8 +177,8 @@ export function axis(options = {}) {
         || (channel !== 'y' && (anchor === 'bottom' || anchor === 'top'));
     const edits = elementEdits(options, channel);
     // Handles and category affordances serve DIRECT edits (a handle drag, a
-    // rename); a plane edit (the wheel zoom) draws nothing to grab.
-    const editable = edits.some((e) => e.pick !== 'plane');
+    // rename); a plane or driver edit (the wheel zoom, a pan) draws nothing to grab.
+    const editable = edits.some((e) => e.pick === 'direct');
 
     return {
         id,

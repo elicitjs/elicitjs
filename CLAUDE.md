@@ -70,21 +70,30 @@ the schema doesn't declare. NAMES go in `table:`; ROLES go in `tableRole` and
 not rows. A `composite` stamps its table onto its box and every part, because it
 desugars into features that each resolve their own.
 
-**A CONTEXT table is drawn, never elicited.** `{ context: true, fields }` on a schema
-table (any number, beside the structure's own; a top-level schema map that holds one
-is read as a map of tables, so `schema: { data: {…}, history: { context: true, fields
-} }` needs no `structure`) declares reference rows — observed history behind a
-forecast, a basemap of points. Marks point at it with `table: 'history'`, its values
-widen the inferred scale domains like any other table's, and that is ALL it does:
-every row is locked by construction (`isLockedIn` returns always-true for it, so the
-lock invariant and the pointer-transparent `locked` stamp both apply), an edit
-declared over it warns (`<mark>:context:edits`), `getData()`/`onChange`/`getSchema()`
-leave it out (`elicitedTables`, and `isBareForm` counts only elicited tables, so a
-one-table chart with context stays a bare array), `setData` keeps the context rows a
-reseed does not name, and undo never touches it. Before this, reference data was
-either `lock`ed rows that still came back as the answer, or `guides.custom` nodes
-that said nothing about what they were. Don't add a per-mark `data` for it, and
-don't let a context table fill a structural role.
+**CONTEXT is a set of ROWS, not a table.** `spec.context` (`true` | `(d, i, table)
+=> boolean`, beside `lock`) marks reference rows of the elicited table — observed
+history behind a forecast. They share the table's columns, so nothing is declared
+twice and a shared column can never carry two types; every mark over the table draws
+them; they are locked (`isLockedIn` ORs them into the lock predicate, so the
+invariant and the `locked` stamp both apply); and everything the chart REPORTS
+leaves them out — `getData()`/`onChange` (`reportedRows`) AND the index-addressed
+API (`select*`, `getSelection*`, the `select` event, `control(name, i)`), which
+counts reported rows only, so `getData()[i]` and `select(i)` name one row. A
+context TABLE (`{ context: true, fields }`) existed briefly and was removed: it
+restated every shared column and let the copies disagree; `normalizeSchema` now
+throws on that form with the replacement. Reference data with other columns goes in
+the same table (each row fills its own columns; a missing value draws nothing), and
+data unrelated to the answer is a guide.
+
+Membership is decided ONCE, over the seed, and held as row IDENTITY (`contextRows`,
+a `WeakSet` per table). Never re-ask the predicate of live rows: an answer dragged
+into its region would become context and vanish from `getData()` — silently
+corrupting the elicited data. Identity is affordable because the lock guarantees it:
+`lockConstraint` hands back a locked row as the SAME object on every path (aligned,
+delete, splice), not merely an equal one. Undo carries membership as indices (the
+snapshot is a clone), and `setData(rows)` replaces the answers and keeps the context
+rows, ahead of them. Constraints see context rows — they are rows of the table —
+with `locked` to tell them apart.
 
 **The reason structures were affordable is that a mark, an edit and a constraint
 each still see ONE array.** The engine hands `tableOf(feature)` wherever it used to
@@ -426,6 +435,26 @@ one undo entry by a short timer. Zoom WRITES THE DOMAIN through `commitDomainEdi
 a domain describes the data — and `el.setDomain(field, domain | null)` is its
 external twin (`null` restores the declared domain, kept as `seedSchema`). Don't add
 a zoom that bypasses the domain commit, and don't make it a view transform.
+
+**Pan is zoom's drag twin, and the CLIP follows from both.** `edit.axis.pan` writes
+the domain through the same commit, served by its own `pan` driver (`pick: 'pan'`,
+so the plane rises; a press or hover on a mark whose direct edit accepts it still
+goes to the mark). Each tick shifts the window by the pointer's travel since the
+LAST tick through the live scale — not from a frozen dragstart domain — which is
+what lets a wheel zoom mid-drag compose. Zoom and pan share `fitWithin`/`ceilingOf`
+so they stop at one wall. Both declare `viewport: true`, a capability, and the engine
+clips the marks to the plot rect whenever any edit does (`spec.clip` overrides either
+way). Under the clip a mark past the rect is not drawn, so it is not hit either
+(`clipVisible`, in the engine's `hitAny`/tip pass and canvas's hit test). A chart
+element's nodes are stamped `unclipped` and paint in an unclipped `chrome` bucket
+(`partitionScene`) — an axis handle sits ON the plot edge and an interactive legend
+lives in the margin, and the first clip cut both away. The clip RECT is decided in
+one place, `clipRect` (`core/scene.js`): the plot rect, grown by `clip: { pad }`
+(a number or per side), handed to the renderers as `RenderContext.clip` and to
+`clipVisible` alike, so what is drawn and what is hit cannot disagree. A MARK escapes
+it with `clip: false` (universal, via `markCommon`; a composite stamps it on its box
+and parts, a port feature inherits its host's) and the tagging pass stamps its nodes
+`unclipped` exactly as it does an element's — the one flag, not a second mechanism.
 
 **Two edits on one mark must read different COMPONENTS of the gesture.** A drag fans to every direct edit on the touched feature, which is intended (that's how a brow's height and tilt, or an eye's `rx` and `ry`, come off one gesture). It only works if they read orthogonal things: `slide({ axis: 'x' })` beside `slide({ axis: 'y' })`, or a positional `move({ channels: ['y'] })` beside an x-slide. Two edits reading the same component fight, and the loser is whichever applies first. Note the corollary for `rotate`: its sensitivity is the pointer's DISTANCE TO THE PIVOT, so on a glyph part — where you grab the thing at its own centre — a few pixels swing the pointer most of a half-turn and pin the value to a domain end. `rotate` is for a needle or a dial you grab at arm's length; a tilt you grab on top of is a `slide`, even though the channel is an `angle`.
 
@@ -1130,8 +1159,10 @@ aimed at the row before it.
   ISN'T, and the page still renders, so no gate but `verify:browser` sees it.
 - A `fn:`-style warn key that collides with another module's namespace (`resolve.js`
   and `mark.js` shared `fn:<channel>` and silenced each other).
-- Reference rows as `lock`ed answer rows or `guides.custom` nodes. A context table
-  (`context: true`) says what they are and keeps them out of `getData()`.
+- Reference rows as `lock`ed answer rows, or as a TABLE of their own that restates
+  the answer's columns. `spec.context` marks them in the elicited table.
+- A context predicate re-evaluated against live rows, or a locked row handed back
+  as an equal copy instead of the same object. Context membership is identity.
 - A constraint that repairs only the active row's one cell (`snap`/`clamp` did), or
   a push that carries a neighbour past a wall the lock or the domain will enforce.
 - A custom edit that moves several columns of a glyph at once. `follow` + `symmetric`
@@ -1140,7 +1171,10 @@ aimed at the row before it.
   whose edits all declined it. Arbitration is the engine's, once, per stroke.
 - An element edit under a named pick that raises the plane (`pick: 'axisDrag'` did).
 - A zoom that is a view transform or bypasses `commitDomainEdit`; a `setDomain` that
-  does not go through it.
+  does not go through it. A pan that freezes the dragstart domain (it fights a
+  mid-drag zoom), or a clip that cuts a chart element's chrome or leaves hidden
+  marks hittable; a second place that computes the clip rect, or a per-mark clip
+  escape that is anything but the `unclipped` stamp.
 - A tooltip that binds hover to inert nodes or sits on a mark's own nodes; a pointer
   report that dispatches. `ui.pointer`/`ui.hit` + a guide.
 - A chart title drawn as a text mark in the margin, or a title that changes the

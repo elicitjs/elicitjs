@@ -560,7 +560,7 @@ export const SPEC_KEYS = [
     // view STATE. Plus the implicit layers that desugar into elements.
     'marks', 'elements', 'guides', 'axes', 'legends',
     // The elicited dataset and its contract
-    'schema', 'data', 'constraints', 'lock',
+    'schema', 'data', 'constraints', 'lock', 'context',
     // Scales (per channel). No `domain` here — a domain describes the DATA.
     'scales', 'projection',
     // Presentation

@@ -228,6 +228,8 @@ export function outlineNodes(mark, state) {
         // unrotated position, which read as the effect tracking the wrong mark.
         // Keep any new shape concentric with its source, or it needs a pivot too.
         ...(mark.angle ? { angle: mark.angle } : {}),
+        // An outline about chrome (an axis handle) escapes the mark clip with it.
+        ...(mark.unclipped ? { unclipped: true } : {}),
         guide: true, effect: true, pointerEvents: 'none',
     };
 

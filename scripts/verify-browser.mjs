@@ -581,7 +581,7 @@ async function main() {
         console.log('\nHovered effect on a direct-pick mark (/editing/gestures)');
         await open('/editing/gestures', '#slide .chart svg circle.mark');
         const fxCount = () => page.$eval('#slide .chart svg .effects-layer',
-            (el) => el.childElementCount).catch(() => 0);
+            (el) => el.querySelectorAll('.effect').length).catch(() => 0);
         const fxIdle = await fxCount();
         check('hover: no effect overlay while the pointer is away', fxIdle === 0, `${fxIdle} nodes`);
         const hoverTarget = await centreOf(page.locator('#slide .chart svg circle.mark').first());
@@ -4307,16 +4307,27 @@ async function main() {
         check('band sweep: every low is untouched', bsAfter.every((d, i) => d.lo === bsBefore[i].lo),
             bsAfter.map((d) => d.lo).join(','));
 
-        // A context table is drawn, read-only, and not part of the answer.
-        console.log('\nContext tables (/schema)');
-        await open('/schema', '#context svg path.mark-line');
+        // Context rows are drawn, read-only, and not part of the answer.
+        console.log('\nContext rows (/editing/existence)');
+        await open('/editing/existence', '#context svg path.mark-line');
         const ctxEl = '#context .chart > div';
         const ctxData = await page.$eval(ctxEl, (e) => e.getData());
-        check('context: getData() is the bare elicited array', Array.isArray(ctxData) && ctxData.length === 4,
-            JSON.stringify(ctxData).slice(0, 80));
-        check('context: getSchema() leaves the context table out',
-            await page.$eval(ctxEl, (e) => !('history' in e.getSchema()) && 'rate' in e.getSchema()));
-        check('context: both lines draw', (await page.locator('#context svg path.mark-line').count()) === 2);
+        check('context: getData() is the bare array of answers', Array.isArray(ctxData) && ctxData.length === 4
+            && ctxData.every((d) => d.year > 2020), JSON.stringify(ctxData).slice(0, 80));
+        check('context: one line draws record and forecast', (await page.locator('#context svg path.mark-line').count()) === 1);
+        // Drag the first record point: it is locked, so the answer is unchanged.
+        const ctxDots = page.locator('#context svg circle.mark:not([data-hit])');
+        check('context: every row draws a handle', (await ctxDots.count()) === 10);
+        const rec = await boxCentre(ctxDots.first());
+        await dragPage(rec.x, rec.y, rec.x, rec.y - 40);
+        const ctxAfterRec = await page.$eval(ctxEl, (e) => e.getData());
+        check('context: a record point does not move', JSON.stringify(ctxAfterRec) === JSON.stringify(ctxData));
+        // Drag a forecast point: getData() reports it.
+        const fc = await boxCentre(ctxDots.nth(7));
+        await dragPage(fc.x, fc.y, fc.x, fc.y - 40);
+        const ctxAfterFc = await page.$eval(ctxEl, (e) => e.getData());
+        check('context: a forecast drag is reported', ctxAfterFc.length === 4 && ctxAfterFc[1].rate > ctxData[1].rate + 0.5,
+            `${ctxData[1].rate} -> ${ctxAfterFc[1] && ctxAfterFc[1].rate}`);
 
         // follow: dragging the mean carries the interval.
         console.log('\nfollow (/constraints)');
@@ -4374,6 +4385,71 @@ async function main() {
         const span = (s) => { const d = s.x.domain; return Number(d[1]) - Number(d[0]); };
         check('zoom: a wheel-up narrows the domain', span(zAfter) < span(zBefore), `${span(zBefore)} -> ${span(zAfter)}`);
         check('zoom: the page did not scroll', (await page.evaluate(() => window.scrollY)) === scrollBefore);
+
+        // Pan: a drag on empty plot slides the zoomed domain; a press on a point
+        // still edits the point; the buttons zoom from outside; the marks clip.
+        console.log('\nPan (/editing/zoom)');
+        await open('/editing/zoom', '#pan svg circle.mark');
+        const pEl = '#pan .chart > div';
+        const pDom = async () => (await page.$eval(pEl, (e) => e.getSchema())).week.domain.map(Number);
+        check('pan: the marks clip to the plot by default',
+            /^url\(#/.test((await page.locator('#pan svg g.mark-layer').getAttribute('clip-path')) || ''));
+        await page.locator('#pan button', { hasText: 'Zoom in' }).click();
+        await page.waitForTimeout(150);
+        const pz = await pDom();
+        check('pan: the Zoom in button narrows the domain', pz[1] - pz[0] < 52, pz.join(' – '));
+        const plane = await boxCentre(page.locator('#pan svg rect.plane').first());
+        // Near the top of the plot, above every point (rain stays under 80 of 100).
+        const topY = plane.b.y + plane.b.height * 0.06;
+        const pDataBefore = await page.$eval(pEl, (e) => JSON.stringify(e.getData()));
+        await dragPage(plane.x, topY, plane.x - 80, topY);
+        const pp = await pDom();
+        check('pan: dragging the plot left moves the window right', pp[0] > pz[0] + 1, `${pz[0]} -> ${pp[0]}`);
+        check('pan: the span is kept', Math.abs((pp[1] - pp[0]) - (pz[1] - pz[0])) < 1e-6);
+        check('pan: the data is untouched', (await page.$eval(pEl, (e) => JSON.stringify(e.getData()))) === pDataBefore);
+        // A point inside the plot is still grabbed by its own move().
+        const inside = await page.$$eval('#pan svg g.mark-layer circle.mark', (cs, box) => {
+            const c = cs.map((el) => el.getBoundingClientRect())
+                .find((r) => r.x > box.x + 20 && r.right < box.x + box.width - 20);
+            return c ? { x: c.x + c.width / 2, y: c.y + c.height / 2 } : null;
+        }, plane.b);
+        if (inside) {
+            const rainBefore = (await page.$eval(pEl, (e) => e.getData())).map((d) => d.rain).join();
+            await dragPage(inside.x, inside.y, inside.x, inside.y + 30);
+            const rainAfter = (await page.$eval(pEl, (e) => e.getData())).map((d) => d.rain).join();
+            const pAfter = await pDom();
+            check('pan: a press on a point edits it rather than panning', rainAfter !== rainBefore && pAfter[0] === pp[0]);
+        } else check('pan: a point is visible inside the zoomed plot', false);
+
+        // clip: { pad } grows the clip rect; clip: false on a mark paints it in
+        // the margin, where it still follows its row.
+        console.log('\nClip pad + per-mark opt-out (/editing/zoom#clip)');
+        await open('/editing/zoom', '#clip svg circle.mark');
+        const cEl = '#clip .chart > div';
+        check('clip: pad grows the clip rect past the plot',
+            (await page.locator('#clip svg clipPath rect').first().getAttribute('x')) === '-6');
+        const cPlane = (await boxCentre(page.locator('#clip svg rect.plane').first())).b;
+        const label = () => page.$eval('#clip svg', (svg) => {
+            const t = [...svg.querySelectorAll('text')].find((n) => /today/.test(n.textContent || ''));
+            if (!t) return null;
+            const r = t.getBoundingClientRect();
+            return { chrome: !!t.closest('g.chrome-layer'), x: r.x, y: r.y + r.height / 2 };
+        });
+        const l0 = await label();
+        check('clip: a clip:false label paints in the margin, outside the clip',
+            !!l0 && l0.chrome && l0.x > cPlane.x + cPlane.width, JSON.stringify(l0));
+        const last = await page.$$eval('#clip svg circle.mark', (cs) => {
+            const r = cs.map((c) => c.getBoundingClientRect()).sort((a, b) => b.x - a.x)[0];
+            return r ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null;
+        });
+        if (last && l0) {
+            const highBefore = (await page.$eval(cEl, (e) => e.getData())).at(-1).high;
+            await dragPage(last.x, last.y, last.x, last.y + (last.y < cPlane.y + cPlane.height / 2 ? 40 : -40));
+            const highAfter = (await page.$eval(cEl, (e) => e.getData())).at(-1).high;
+            const l1 = await label();
+            check('clip: the edge point is grabbed and its margin label follows',
+                highAfter !== highBefore && !!l1 && Math.abs(l1.y - l0.y) > 10, `${highBefore} -> ${highAfter}`);
+        } else check('clip: the last point and its label render', false);
 
         // A shape is a mark: picked inside its body and moved by move().
         console.log('\nShape mark (/marks/shape)');

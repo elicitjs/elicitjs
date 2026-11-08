@@ -143,6 +143,10 @@ export function makeEdit(spec) {
         // that scale to invert? Declared, so the dead-drag guard reads a capability
         // rather than an allowlist of type names (which missed rank and stack.edge).
         inverts: !!spec.inverts,
+        // Does this edit move a positional domain as a WINDOW over the data (zoom,
+        // pan)? Then rows legitimately fall outside the plot, and the engine clips
+        // the marks to the plot rect unless the spec says `clip: false`.
+        viewport: !!spec.viewport,
         apply: spec.apply
     };
 }

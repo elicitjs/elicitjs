@@ -790,7 +790,7 @@ const UNIVERSAL_OPTIONS = MARK_UNIVERSAL_OPTIONS;
  * indirection is what lets a schema call its tables `claims`/`supports` and
  * need no `table:` written anywhere.
  * @param {any} opts the result of normalizeMarkOptions
- * @returns {{ id: any, edits: any, table: any, tip: any }}
+ * @returns {{ id: any, edits: any, table: any, tip: any, clip: any }}
  */
 export function markCommon(opts) {
     return {
@@ -802,6 +802,9 @@ export function markCommon(opts) {
         // A tooltip for this mark's rows: `true`, the columns to show, or a
         // function of the row. The engine desugars it into `guides.tip({ mark })`.
         tip: opts.tip,
+        // `false` draws this mark past the clip (an annotation in the margin):
+        // the engine stamps its nodes `unclipped`, as it does a chart element's.
+        clip: opts.clip,
     };
 }
 

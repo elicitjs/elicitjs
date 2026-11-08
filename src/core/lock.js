@@ -30,6 +30,7 @@
 // from every mark); the stamp is what makes it feel right.
 
 import { defineConstraint } from '../constraints/define.js';
+import { warn } from './dev.js';
 
 /**
  * Canonical value key for a row: key-order independent (an edit rebuilds a datum
@@ -42,9 +43,6 @@ function rowKey(row) {
     if (row == null || typeof row !== 'object') return JSON.stringify(row) || 'null';
     return JSON.stringify(Object.keys(row).sort().map((k) => [k, row[k]]));
 }
-
-/** @param {any} a @param {any} b @returns {boolean} */
-const sameRow = (a, b) => a === b || (a != null && b != null && rowKey(a) === rowKey(b));
 
 /**
  * Resolve `spec.lock` into the row predicate everything else reads.
@@ -77,7 +75,43 @@ export function resolveLock(lock, seedCount, table) {
 }
 
 /**
- * The dataset invariant behind a lock: locked rows survive every edit unchanged.
+ * Resolve `spec.context` for one table into the predicate that picks its CONTEXT
+ * rows out of the SEED. Context rows are reference — observed history behind a
+ * forecast, the record a guess is made against — drawn and locked like any locked
+ * row, and left out of what the chart reports (`getData()`, `onChange`, the
+ * index-addressed selection and control API).
+ *
+ *   true           -> every row the table was seeded with is context.
+ *   (datum, index, table) -> the seeded rows it accepts are context.
+ *
+ * The predicate is asked ONCE, of the seed, and the answer is kept as the rows'
+ * identity (the engine holds the row objects). It is never re-asked of live rows:
+ * an answer dragged into the predicate's region (a forecast point pulled back to
+ * 2015 under `d => d.year <= 2020`) must not silently become context and vanish
+ * from the reported data — for an elicitation library that is the worst failure
+ * available. The lock is what keeps the identity stable: a locked row always
+ * survives a commit as the SAME object (see lockConstraint).
+ * @param {import('../types').ContextSpec | undefined} context
+ * @param {string} table
+ * @returns {((datum: any, index: number) => boolean) | null} null = no context rows
+ */
+export function resolveContext(context, table) {
+    if (context == null || context === false) return null;
+    if (context === true) return () => true;
+    if (typeof context === 'function') return (d, i) => !!context(d, i, table);
+    warn(
+        'spec:context',
+        `spec.context: expected true (every seeded row) or a (datum, index, table) => ` +
+        `boolean predicate over the seeded rows; got ${JSON.stringify(context)}. ` +
+        `No row is context.`
+    );
+    return null;
+}
+
+/**
+ * The dataset invariant behind a lock: locked rows survive every edit unchanged —
+ * as the SAME row object, not merely an equal one, so anything keyed by a row's
+ * identity (the engine's context set) survives an edit that rebuilt every row.
  * Pure data — it judges a proposal against the committed rows and never sees a
  * pixel, like every other constraint.
  * @param {(datum: any, index: number) => boolean} isLocked
@@ -88,62 +122,76 @@ export function lockConstraint(isLocked) {
         if (!oldData || !oldData.length) return undefined;
 
         // Rows were REMOVED, so indices no longer line up and there is nothing to
-        // restore in place. Judge the lock by survival instead: every locked row
-        // must still be present, by value. (A multiset, so deleting one of two
-        // identical locked rows is still caught.) Anything else is a free row
-        // being deleted — allowed.
-        if (data.length < oldData.length) {
-            /** @type {Map<string, number>} */
-            const need = new Map();
-            oldData.forEach((row, i) => {
-                if (!isLocked(row, i)) return;
-                const k = rowKey(row);
-                need.set(k, (need.get(k) || 0) + 1);
-            });
-            if (!need.size) return undefined;
-            for (const row of data) {
-                const k = rowKey(row);
-                const n = need.get(k);
-                if (n) n === 1 ? need.delete(k) : need.set(k, n - 1);
-            }
-            return need.size === 0 ? undefined : false; // a locked row was deleted
-        }
-
-        // Same length (an in-place edit) or longer (a create appended, a draw
-        // upserted): index i still addresses the same row. Restore every locked row
-        // the proposal changed and keep the rest of it — so one gesture that spans
-        // locked and free rows still commits its free half.
+        // restore in place. Judge the lock by SURVIVAL instead: every locked row
+        // must still be present. Anything else is a free row being deleted —
+        // allowed.
         //
-        // Unless the longer proposal SPLICED (a stack cut inserts its new segment
+        // Or the longer proposal SPLICED (a stack cut inserts its new segment
         // beside the one it split, shifting every later row by one): then index i
         // addresses a neighbour, and "restoring" would overwrite a free row with a
         // locked row's copy. A splice keeps the untouched rows' IDENTITY, so it is
         // detectable: some old row sits in the proposal at a different index. Judge
-        // such a proposal by survival, like a delete — a locked row that is still
-        // present (by identity or value) passes, a modified one is refused, since
-        // where to restore it cannot be known.
+        // it by survival too — a modified locked row is refused, since where to
+        // restore it cannot be known.
         const aligned = data.length === oldData.length
-            || oldData.every((row, i) => data[i] === row || data.indexOf(row) < 0);
-        if (!aligned) {
-            for (let i = 0; i < oldData.length; i++) {
-                const row = oldData[i];
-                if (!isLocked(row, i)) continue;
-                if (data.indexOf(row) >= 0 || data.some((d) => sameRow(d, row))) continue;
-                return false;
-            }
-            return undefined;
-        }
+            || (data.length > oldData.length
+                && oldData.every((row, i) => data[i] === row || data.indexOf(row) < 0));
+        if (!aligned) return survives(data, oldData, isLocked);
+
+        // Same length (an in-place edit) or longer (a create appended, a draw
+        // upserted): index i still addresses the same row. Restore every locked row
+        // the proposal touched and keep the rest of it — so one gesture that spans
+        // locked and free rows still commits its free half. "Touched" is identity,
+        // not value: a whole-dataset edit that rebuilt an unchanged locked row gets
+        // the original object back.
         /** @type {any[] | null} */
         let out = null;
         for (let i = 0; i < oldData.length; i++) {
             const row = oldData[i];
             if (!isLocked(row, i)) continue;
-            if (sameRow(data[i], row)) continue;
+            if (data[i] === row) continue;
             out = out || data.slice();
             out[i] = row;
         }
         return out || undefined;
     }, { type: 'lock' });
+}
+
+/**
+ * The survival half of the lock, for a proposal whose indices no longer line up
+ * with the committed rows (a delete, a splice). Every locked row must be present,
+ * matched by identity first and then by value — each proposal row claimed once, so
+ * deleting one of two identical locked rows is still caught — and a match by value
+ * is swapped back to the original object. `false` when a locked row is gone.
+ * @param {any[]} data
+ * @param {any[]} oldData
+ * @param {(datum: any, index: number) => boolean} isLocked
+ * @returns {any[] | false | undefined}
+ */
+function survives(data, oldData, isLocked) {
+    /** @type {Set<number>} */
+    const claimed = new Set();
+    /** @type {(string | undefined)[]} */
+    const keys = [];
+    const keyAt = (/** @type {number} */ j) => (keys[j] === undefined ? (keys[j] = rowKey(data[j])) : keys[j]);
+    /** @type {any[] | null} */
+    let out = null;
+    for (let i = 0; i < oldData.length; i++) {
+        const row = oldData[i];
+        if (!isLocked(row, i)) continue;
+        let j = data.indexOf(row);
+        if (j >= 0 && claimed.has(j)) j = -1;
+        if (j < 0) {
+            const k = rowKey(row);
+            for (let m = 0; m < data.length; m++) {
+                if (!claimed.has(m) && keyAt(m) === k) { j = m; break; }
+            }
+        }
+        if (j < 0) return false; // a locked row was deleted or changed
+        claimed.add(j);
+        if (data[j] !== row) { out = out || data.slice(); out[j] = row; }
+    }
+    return out || undefined;
 }
 
 /**

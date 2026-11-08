@@ -5,12 +5,15 @@
 // path (see core/elicit.js). The domain is the data's own property, so reshaping it
 // IS the edit — grids, guides and marks then reflow from it on the next render.
 //
-// Two edits, because a numeric axis and a categorical one want incompatible
-// interaction models (a driven drag vs. direct clicks + inline typing) and one axis
-// is only ever one kind:
-//   edit.axis.scale()       numeric/temporal — drag an end-handle to rescale the range
+// Three edits, all on a numeric/temporal axis (a categorical axis's add / rename /
+// remove are `edit.scale.categories`):
+//   edit.axis.scale()       drag an end-handle to rescale the range
+//   edit.axis.zoom()        the wheel narrows / widens the domain about the pointer
+//   edit.axis.pan()         drag the plot to slide the domain along
+// Zoom and pan treat the domain as a WINDOW over the data (`viewport: true`), so
+// the chart clips its marks to the plot rect by default when one is present.
 //
-// Both are namespaced under `edit.axis.*` so the scope shows in the name, mirroring
+// All are namespaced under `edit.axis.*` so the scope shows in the name, mirroring
 // `edit.line.*`. The axis mark wires them (plot/axis.js): it forwards the edit and,
 // per the scale's kind, emits the handle / label / add / remove affordance nodes.
 
@@ -34,6 +37,43 @@ function domainsFor(fields, domain) {
     const domains = {};
     for (const f of fields) domains[f] = domain;
     return domains;
+}
+
+/**
+ * The widest window a zoom or pan may show: the field's domain as declared at
+ * Elicit() (`'declared'`, the default), an explicit [lo, hi], or null for none.
+ * @param {'declared' | any[] | false | undefined} limit
+ * @param {import('../types').EditContext} ctx
+ * @param {string[]} fields
+ * @returns {any[] | null}
+ */
+function ceilingOf(limit, ctx, fields) {
+    if (limit === 'declared' || limit === undefined) {
+        const f = ctx.seedSchema && ctx.seedSchema[fields[0]];
+        return (f && f.domain) || null;
+    }
+    return Array.isArray(limit) ? limit : null;
+}
+
+/**
+ * Fit the window [lo, hi] inside the ceiling, keeping its SPAN where it can: a
+ * window wider than the ceiling becomes the ceiling, and one that overhangs an
+ * end slides back inside. Zoom and pan share it, so a pan stops at the same wall
+ * a zoom-out does.
+ * @param {number} lo @param {number} hi @param {any[] | null} ceiling
+ * @returns {[number, number]}
+ */
+function fitWithin(lo, hi, ceiling) {
+    if (!ceiling || ceiling.length < 2) return [lo, hi];
+    const a = numOf(ceiling[0]);
+    const b = numOf(ceiling[ceiling.length - 1]);
+    const clo = Math.min(a, b);
+    const chi = Math.max(a, b);
+    if (!Number.isFinite(clo) || !Number.isFinite(chi)) return [lo, hi];
+    if (hi - lo >= chi - clo) return [clo, chi];
+    if (lo < clo) return [clo, hi + (clo - lo)];
+    if (hi > chi) return [lo - (hi - chi), chi];
+    return [lo, hi];
 }
 
 /**
@@ -172,6 +212,9 @@ export function zoom(options = {}) {
         scope: 'axis',
         target: 'domain',
         inverts: true,
+        // The domain becomes a WINDOW over the data, so rows legitimately fall
+        // outside it: the chart clips its marks to the plot rect by default.
+        viewport: true,
         ...rest,
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
             const ch = ctx.channels[0];
@@ -203,18 +246,7 @@ export function zoom(options = {}) {
             let nlo = Math.min(a, b);
             let nhi = Math.max(a, b);
             // Zoom-out ceiling: the declared domain (or an explicit one).
-            const ceiling = limit === 'declared'
-                ? (ctx.seedSchema && ctx.seedSchema[fields[0]] && ctx.seedSchema[fields[0]].domain) || null
-                : Array.isArray(limit) ? limit : null;
-            if (ceiling && ceiling.length >= 2) {
-                const clo = Math.min(numOf(ceiling[0]), numOf(ceiling[ceiling.length - 1]));
-                const chi = Math.max(numOf(ceiling[0]), numOf(ceiling[ceiling.length - 1]));
-                if (nhi - nlo >= chi - clo) { nlo = clo; nhi = chi; }
-                else {
-                    if (nlo < clo) { nhi += clo - nlo; nlo = clo; }
-                    if (nhi > chi) { nlo -= nhi - chi; nhi = chi; }
-                }
-            }
+            [nlo, nhi] = fitWithin(nlo, nhi, ceilingOf(limit, ctx, fields));
             if (typeof minSpan === 'number' && minSpan > 0 && nhi - nlo < minSpan) {
                 const mid = (nlo + nhi) / 2;
                 nlo = mid - minSpan / 2;
@@ -222,6 +254,80 @@ export function zoom(options = {}) {
             }
             if (!Number.isFinite(nlo) || !Number.isFinite(nhi) || nhi <= nlo) return undefined;
             if (nlo === lo && nhi === hi) return undefined;
+            const domain = temporal ? [new Date(nlo), new Date(nhi)] : [nlo, nhi];
+            return { domains: domainsFor(fields, domain) };
+        }
+    });
+}
+
+/**
+ * edit.axis.pan — drag the plot to slide a positional axis's DOMAIN along, the
+ * companion of `edit.axis.zoom`. Like zoom it writes the field's domain, never
+ * the dataset, through the same domain commit: one drag is one undo step, and
+ * `el.setDomain` is its external twin. Zoom and pan compose because they share
+ * the one piece of state they change — the domain — so either picks up wherever
+ * the other left it.
+ *
+ * A pan resolves no target (it moves the whole view), so it is served by its own
+ * driver (`pick: 'pan'`, drivers/pan.js), which raises the plane. A press that
+ * lands on a mark whose direct edit accepts it still grabs the mark; a press on
+ * empty plot pans. Put one on each axis you want to pan: a diagonal drag pans x
+ * by the pointer's horizontal travel and y by its vertical travel.
+ *
+ * Each tick shifts the window by the pointer's travel since the last tick, in
+ * the scale's own (pixel) space — so a log or time axis pans evenly — and
+ * through the LIVE scale, so a wheel zoom mid-drag composes.
+ *
+ *   limit   how far it may pan: 'declared' (the declared domain, the default),
+ *           an explicit [lo, hi], or false for no limit
+ * @param {{ field?: string, limit?: 'declared' | any[] | false, [k: string]: any }} [options]
+ * @returns {import('../types').Edit}
+ */
+export function pan(options = {}) {
+    const { field, limit = 'declared', ...rest } = options;
+    if (rest.pick != null && rest.pick !== 'pan') {
+        warn(
+            'axis.pan:pick',
+            `edit.axis.pan() is served by the pan driver (it moves the whole view, ` +
+            `so it picks no target), so { pick: "${rest.pick}" } is ignored.`
+        );
+        delete rest.pick;
+    }
+    return makeEdit({
+        type: 'axis.pan',
+        gesture: 'drag',
+        pick: 'pan',
+        scope: 'axis',
+        target: 'domain',
+        inverts: true,
+        viewport: true,
+        ...rest,
+        apply: (/** @type {import('../types').EditContext} */ ctx) => {
+            const ch = ctx.channels[0];
+            const from = ctx.session && ctx.session.panFrom;
+            if (!from || !ch || !ch.scale || ch.scale.kind !== 'continuous' || !ch.scale.invertible) return undefined;
+            const fields = targetFields(ch.scale, field);
+            if (!fields.length) return undefined;
+            const axis = ch.name === 'y' ? 'y' : 'x';
+            const d = axis === 'x' ? ctx.pointer.x - from.x : ctx.pointer.y - from.y;
+            if (!d || !Number.isFinite(d)) return undefined;
+            const dom = typeof ch.scale.domain === 'function' ? ch.scale.domain() : null;
+            if (!dom || dom.length < 2) return undefined;
+            const temporal = dom[0] instanceof Date || dom[dom.length - 1] instanceof Date;
+            const sc = /** @type {any} */ (ch.scale);
+            if (typeof sc.invert !== 'function') return undefined;
+            const r0 = Number(sc.encode(dom[0]));
+            const r1 = Number(sc.encode(dom[dom.length - 1]));
+            if (!Number.isFinite(r0) || !Number.isFinite(r1)) return undefined;
+            // Dragging the content right shows what lay to its left: the window
+            // moves AGAINST the pointer, by the same number of pixels.
+            const a = numOf(sc.invert(r0 - d));
+            const b = numOf(sc.invert(r1 - d));
+            let [nlo, nhi] = fitWithin(Math.min(a, b), Math.max(a, b), ceilingOf(limit, ctx, fields));
+            if (!Number.isFinite(nlo) || !Number.isFinite(nhi) || nhi <= nlo) return undefined;
+            const lo = numOf(dom[0]);
+            const hi = numOf(dom[dom.length - 1]);
+            if (nlo === Math.min(lo, hi) && nhi === Math.max(lo, hi)) return undefined;
             const domain = temporal ? [new Date(nlo), new Date(nhi)] : [nlo, nhi];
             return { domains: domainsFor(fields, domain) };
         }
