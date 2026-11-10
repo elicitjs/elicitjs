@@ -45,7 +45,7 @@
 // would run twice per gesture — see warnDuplicatePlaneEdits. Declare the edit on
 // the mark the reader grabs; the band re-derives on the next render.
 
-import { resolveStyle, normalizeMarkOptions, markDefaults, themeOf, encodeValue, positionalKeys, resolveHandles, markCommon} from './mark.js';
+import { resolveStyle, normalizeMarkOptions, markDefaults, themeOf, encodeValue, positionalKeys, resolveHandles, markCommon, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 import {
     paramChannels, readParams, anchorsOf, valueAt,
@@ -163,6 +163,8 @@ export function trendBand(options = {}) {
             };
 
             currentData.forEach((/** @type {any} */ d, /** @type {number} */ i) => {
+                // No intercept or slope: no line, so no band about it.
+                if (missingValue(channels, 'intercept', d) || missingValue(channels, 'slope', d)) return;
                 const params = readParams(d, channels, scales, i, currentData);
                 const style = resolveStyle(scales, channels, d, bandDefaults, i, currentData);
                 const paint = style.fill || bandDefaults.fill;

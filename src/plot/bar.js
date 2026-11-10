@@ -1,6 +1,6 @@
 // @ts-check
 import { isBand, bandwidthOf, bandStartOf, baselineOf } from '../core/scales.js';
-import { encodeChannel, encodeValue, categoryOf, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, resolveValueAxis, orientationOf } from './mark.js';
+import { encodeChannel, encodeValue, categoryOf, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, resolveValueAxis, orientationOf, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 import { groupByPosition, stackLayout, stackDescriptor } from './stack.js';
 
@@ -203,7 +203,11 @@ function buildBar(options) {
             };
 
             /** @type {import('../types').FeatureNode[]} */
-            const nodes = currentData.map((d, i) => {
+            const nodes = currentData.flatMap((d, i) => {
+                // A row with no category has no band to sit in: draw no bar (it fell
+                // to the first band's start). A missing VALUE keeps its zero-height
+                // bar at the baseline, which a nearest pick can still lift.
+                if (missingValue(channels, catChannel, d)) return [];
                 // Standard style surface (fill/stroke/opacity/…), resolved per
                 // datum through the same channels every mark uses.
                 const style = resolveStyle(scales, channels, d, barDefaults, i, currentData);

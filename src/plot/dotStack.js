@@ -32,7 +32,7 @@
 // choice. Like waffle's, it is resolved statically rather than from the scales,
 // because the derived count scale needs the direction before any build() runs.
 
-import { encodeChannel, categoryOf, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, resolveValueAxis } from './mark.js';
+import { encodeChannel, categoryOf, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, resolveValueAxis, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
 /**
@@ -48,7 +48,8 @@ function slotsOf(scale, key, data) {
     if (scale && Array.isArray(scale.domainConfig)) return scale.domainConfig;
     /** @type {any[]} */
     const seen = [];
-    for (const d of data) if (!seen.includes(d[key])) seen.push(d[key]);
+    // A row with no category names no slot.
+    for (const d of data) if (d[key] != null && !seen.includes(d[key])) seen.push(d[key]);
     return seen;
 }
 
@@ -124,6 +125,9 @@ function buildDotStack(options) {
             /** @type {Map<any, number>} */
             const counts = new Map();
             currentData.forEach((d, i) => {
+                // A row with no category is a token in no slot: it counts nowhere
+                // and draws nothing (it stacked into the first slot).
+                if (missingValue(channels, categoryChannel, d)) return;
                 const key = categoryOf(channels, categoryChannel, d, categoryKey, i, currentData);
                 counts.set(key, (counts.get(key) || 0) + 1);
             });
@@ -162,6 +166,7 @@ function buildDotStack(options) {
             /** @type {Map<any, number>} */
             const seen = new Map();
             currentData.forEach((/** @type {any} */ d, i) => {
+                if (missingValue(channels, categoryChannel, d)) return;
                 const key = categoryOf(channels, categoryChannel, d, categoryKey, i, currentData);
                 const n = seen.get(key) || 0;
                 seen.set(key, n + 1);

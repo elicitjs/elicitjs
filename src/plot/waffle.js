@@ -56,7 +56,7 @@
 
 import { bandwidthOf, bandStartOf, baselineOf } from '../core/scales.js';
 import { warn } from '../core/dev.js';
-import { encodeChannel, categoryOf, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, resolveValueAxis, orientationOf } from './mark.js';
+import { encodeChannel, categoryOf, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, resolveValueAxis, orientationOf, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
 /**
@@ -194,6 +194,10 @@ function buildWaffle(options) {
 
             const waffleDefaults = markDefaults(scales, 'waffle', { fill: themeOf(scales).ink });
             currentData.forEach((/** @type {any} */ d, i) => {
+                // A row with no category has no block to fill: draw nothing (it fell
+                // into the first band). A category with no count keeps its empty
+                // grid, which is what a reader fills.
+                if (missingValue(channels, vertical ? 'x' : 'y', d)) return;
                 const style = resolveStyle(scales, channels, d, waffleDefaults, i, currentData);
                 // A `symbol` channel (or shape:'symbol') fills the block with glyph
                 // cells — an emoji waffle (🍎🍎🍎 for a count of 3). Every cell of a

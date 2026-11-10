@@ -1,7 +1,7 @@
 // @ts-check
 import { isBand, baselineOf } from '../core/scales.js';
 import { claimEdge } from '../edit/shared.js';
-import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel, resolveValueAxis, orderSeries, seriesKeyOf, hasAnyEdit, inkOf } from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel, resolveValueAxis, orderSeries, seriesKeyOf, hasAnyEdit, inkOf, missingValue } from './mark.js';
 import { areaGenerator } from '../core/curves.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
@@ -122,7 +122,11 @@ function buildArea(options) {
 
             /** @type {Map<any, { d: any, i: number }[]>} */
             const groups = new Map();
+            // A row whose DOMAIN field is missing has no place along the band (a
+            // reference row filling other columns): skip it rather than break there.
+            const alongAxis = valueAxis === 'y' ? 'x' : 'y';
             currentData.forEach((d, i) => {
+                if (missingValue(channels, alongAxis, d)) return;
                 const key = seriesField != null ? seriesKeyOf(d[seriesField]) : SINGLE;
                 let bucket = groups.get(key);
                 if (!bucket) { bucket = []; groups.set(key, bucket); }

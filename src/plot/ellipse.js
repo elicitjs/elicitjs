@@ -34,7 +34,7 @@
 
 import {
     encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions,
-    themeOf, markDefaults, positionalKeys, markCommon,} from './mark.js';
+    themeOf, markDefaults, positionalKeys, markCommon, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
 /**
@@ -80,7 +80,10 @@ export function ellipse(options = {}) {
          */
         build: (currentData, scales, width, height) => {
             const defaults = markDefaults(scales, 'ellipse', { fill: themeOf(scales).ink });
-            return currentData.map((d, i) => {
+            return currentData.flatMap((d, i) => {
+                // A row with no x or y value has no position: no ellipse (it sat at
+                // the centre of the plot).
+                if (missingValue(channels, 'x', d) || missingValue(channels, 'y', d)) return [];
                 const style = resolveStyle(scales, channels, d, defaults, i, currentData);
                 const cx = encodeChannel(scales, channels, 'x', d, width / 2, i, currentData);
                 const cy = encodeChannel(scales, channels, 'y', d, height / 2, i, currentData);

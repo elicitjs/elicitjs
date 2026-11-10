@@ -26,7 +26,7 @@
 // handle's drag while an editable one still receives its own.
 
 import { baselineOf, isBand, bandStartOf, bandwidthOf } from '../core/scales.js';
-import { encodeChannel, categoryOf, resolveStyle, normalizeMarkOptions, positionalKeys, markCommon, markDefaults, themeOf, resolveValueAxis } from './mark.js';
+import { encodeChannel, categoryOf, resolveStyle, normalizeMarkOptions, positionalKeys, markCommon, markDefaults, themeOf, resolveValueAxis, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
 /**
@@ -95,6 +95,12 @@ function buildRule(options) {
                     const posLen = posAxis === 'x' ? width : height;
                     const baseline = baselineOf(scales[spanAxis]);
                     const [c1, c2] = spanAxis === 'y' ? ['y1', 'y2'] : ['x1', 'x2'];
+                    // A row with no value where the rule sits, or none for any bound
+                    // endpoint, has no segment: draw nothing (it fell to the centre
+                    // of the plot, or to a zero-length line at the baseline).
+                    if (missingValue(channels, posAxis, datum)) return;
+                    const bound = [c1, c2].filter((c) => channels[c] && channels[c].field != null);
+                    if (bound.length && bound.every((c) => missingValue(channels, c, datum))) return;
                     const a = channels[c1] ? encodeChannel(scales, channels, c1, datum, baseline, index, currentData) : baseline;
                     const b = channels[c2] ? encodeChannel(scales, channels, c2, datum, baseline, index, currentData) : baseline;
                     if (a === undefined || b === undefined) return;

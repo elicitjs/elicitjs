@@ -84,7 +84,7 @@
 // exists to state, and a default that cannot be turned off is not a default. Staging
 // goes on the edit (`edit.trend.slope({ stage: 1 })`), like every other edit's stage.
 
-import { resolveStyle, normalizeMarkOptions, markDefaults, encodeValue, positionalKeys, resolveHandles, markCommon} from './mark.js';
+import { resolveStyle, normalizeMarkOptions, markDefaults, encodeValue, positionalKeys, resolveHandles, markCommon, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 import { paramChannels, readParams, anchorsOf, lineSegment, segmentEnds, valueAt } from './trendGeometry.js';
 import { warn } from '../core/dev.js';
@@ -162,6 +162,9 @@ export function trend(options = {}) {
                 { fill: trendDefaults.fill });
 
             currentData.forEach((/** @type {any} */ d, /** @type {number} */ i) => {
+                // A row with no intercept or slope has no line: draw nothing (it read
+                // as 0 and drew a flat line, with handles, at the axis floor).
+                if (missingValue(channels, 'intercept', d) || missingValue(channels, 'slope', d)) return;
                 const params = readParams(d, channels, scales, i, currentData);
                 const style = resolveStyle(scales, channels, d, trendDefaults, i, currentData);
 

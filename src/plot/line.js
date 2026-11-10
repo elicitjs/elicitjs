@@ -1,6 +1,6 @@
 // @ts-check
 import { isBand } from '../core/scales.js';
-import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel, orderFieldOf, resolveValueAxis, orderSeries, seriesKeyOf, hasAnyEdit, inkOf } from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel, orderFieldOf, resolveValueAxis, orderSeries, seriesKeyOf, hasAnyEdit, inkOf, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
 // line: a connected-path mark over an ordered set of points. It is deliberately
@@ -109,13 +109,16 @@ function buildLine(options, defaultConnect = 'domain') {
             // A row with no VALUE has no position: its coordinate is null, which
             // breaks the path there (core/curves.js) and draws no handle. The domain
             // axis keeps the centre fallback, so a value-only row still sits on it.
-            const placed = currentData.map((d, i) => ({
+            // A row whose DOMAIN field is missing has no place along the line at
+            // all (a reference row filling other columns): it is skipped, not a
+            // gap — it sat at the centre and broke the path there.
+            const placed = currentData.flatMap((d, i) => missingValue(channels, domainAxis, d) ? [] : [{
                 d,
                 i,
                 cx: encodeChannel(scales, channels, 'x', d, valueAxis === 'x' ? null : width / 2, i, currentData),
                 cy: encodeChannel(scales, channels, 'y', d, valueAxis === 'y' ? null : height / 2, i, currentData),
                 series: seriesField ? d[seriesField] : SINGLE
-            }));
+            }]);
 
             // Group into series (first-seen order), preserving each group's
             // original data order so `order: 'sequence'` connects as drawn. Grouped

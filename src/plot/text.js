@@ -33,7 +33,7 @@
 //   textX — value on x, y parked at the vertical centre (a 1-D label along x)
 //   textY — value on y, x parked at the horizontal centre (a 1-D label along y)
 
-import { encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions, rawChannel, markDefaults, positionalKeys, markCommon, themeOf} from './mark.js';
+import { encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions, rawChannel, markDefaults, positionalKeys, markCommon, themeOf, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 import { measureBlock } from '../core/measure.js';
 import { warn } from '../core/dev.js';
@@ -165,11 +165,14 @@ function buildText(options) {
          * @returns {import('../types').FeatureNode[]}
          */
         build: (currentData, scales, width, height) => {
-            return currentData.map((d, i) => {
+            return currentData.flatMap((d, i) => {
+                // A row with no x or y value has no position: no label (it sat at
+                // the centre of the plot, which reads as a label that belongs there).
+                if (missingValue(channels, 'x', d) || missingValue(channels, 'y', d)) return [];
                 const { x, y } = anchorOf(d, i, currentData, scales, width, height);
-                return textNodeAt(scales, channels, d, i, x, y, {
+                return [textNodeAt(scales, channels, d, i, x, y, {
                     format, data: currentData, wrap, lineHeight,
-                });
+                })];
             });
         },
 

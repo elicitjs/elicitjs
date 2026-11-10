@@ -23,7 +23,7 @@
 //   tapered path + hub → the mark itself; hub is the shared-contract handle
 //   handles: true|false|'hit' — false emits no hub and silences the path
 
-import { encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions, markDefaults, resolveHandles, markCommon} from './mark.js';
+import { encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions, markDefaults, resolveHandles, markCommon, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 import { warn } from '../core/dev.js';
 import { needleTriangle } from './polar.js';
@@ -106,6 +106,9 @@ export function needle(options = {}) {
             const handleStyle = resolveHandles(scales, { handles, handleSize, handleColor });
 
             currentData.forEach((/** @type {any} */ d, /** @type {number} */ i) => {
+                // A row with no bearing (or no hub position it binds) has no needle:
+                // draw nothing (it pointed at 0°).
+                if (['theta', 'x', 'y'].some((c) => missingValue(channels, c, d))) return;
                 const cx = encodeChannel(scales, channels, 'x', d, width / 2, i, currentData);
                 const cy = encodeChannel(scales, channels, 'y', d, height / 2, i, currentData);
                 // Through encodeAngle like every other angle-reading mark, so a scaled

@@ -51,7 +51,7 @@
 
 import {
     encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions,
-    themeOf, markDefaults, positionalKeys, markCommon, resolveValueAxis } from './mark.js';
+    themeOf, markDefaults, positionalKeys, markCommon, resolveValueAxis, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 import { HIT_WIDTH, sampleQuadratic } from './hitpath.js';
 
@@ -119,6 +119,9 @@ function buildCurve(options) {
             /** @type {import('../types').FeatureNode[]} */
             const nodes = [];
             currentData.forEach((d, i) => {
+                // A row missing any positional value it binds has no chord: draw
+                // nothing (its ends fell to fixed fractions of the plot).
+                if (['x', 'y', 'x1', 'x2', 'y1', 'y2'].some((c) => missingValue(channels, c, d))) return;
                 const style = resolveStyle(scales, channels, d, defaults, i, currentData);
                 const at = encodeChannel(scales, channels, valueAxis, d, valueFull / 2, i, currentData);
 

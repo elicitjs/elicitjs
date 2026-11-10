@@ -1,6 +1,6 @@
 // @ts-check
 import { isBand, bandwidthOf, bandStartOf, baselineOf, rangeExtent } from '../core/scales.js';
-import { encodeChannel, categoryOf, encodeAngle, resolveStyle, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon} from './mark.js';
+import { encodeChannel, categoryOf, encodeAngle, resolveStyle, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
 // rect: the generalized bar. A bar fixes ONE axis to a categorical band (position
@@ -156,7 +156,15 @@ function buildRect(options) {
             const { x: xScale, y: yScale } = scales;
             const rectDefaults = markDefaults(scales, 'rect', { fill: themeOf(scales).ink });
 
-            return currentData.map((d, i) => {
+            // A dimension whose every positional field is missing on this row has
+            // no extent: draw no rect (it collapsed to a zero box at the origin).
+            /** @param {any} d @param {string[]} names */
+            const noExtent = (d, names) => {
+                const bound = names.filter((n) => channels[n] && channels[n].field != null);
+                return bound.length > 0 && bound.every((n) => missingValue(channels, n, d));
+            };
+            return currentData.flatMap((d, i) => {
+                if (noExtent(d, ['x', 'x1', 'x2']) || noExtent(d, ['y', 'y1', 'y2'])) return [];
                 const style = resolveStyle(scales, channels, d, rectDefaults, i, currentData);
 
                 const xExt = resolveExtent('x', channels, scales, xScale, d, xKey, forcedValueAxis === 'x', width, i, currentData);

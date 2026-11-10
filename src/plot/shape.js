@@ -19,7 +19,7 @@
 // node carries no `angle`), and the node also carries its outline polygon and
 // its centre, so both renderers pick it, effects outline it, and `resize` /
 // `rotate` pivot on it like any other mark.
-import { encodeChannel, resolveStyle, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, encodeAngle, resolveSymbol } from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, encodeAngle, resolveSymbol, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 import { warn } from '../core/dev.js';
 import { unitShape, placeShape, DEFAULT_SHAPES } from './shapes.js';
@@ -84,7 +84,10 @@ export function shape(options = {}) {
          */
         build: (currentData, scales, width, height) => {
             const defaults = markDefaults(scales, 'shape', { fill: themeOf(scales).ink });
-            return currentData.map((d, i) => {
+            return currentData.flatMap((d, i) => {
+                // A row with no x or y value has no position: no shape (it sat at
+                // the centre of the plot).
+                if (missingValue(channels, 'x', d) || missingValue(channels, 'y', d)) return [];
                 const style = resolveStyle(scales, channels, d, defaults, i, currentData);
                 const cx = encodeChannel(scales, channels, 'x', d, width / 2, i, currentData);
                 const cy = encodeChannel(scales, channels, 'y', d, height / 2, i, currentData);
