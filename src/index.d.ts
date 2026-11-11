@@ -103,6 +103,8 @@ import type {
   StickerOptions,
   TextOptions,
   Theme,
+  ThemeName,
+  ThemeSpec,
   ThermometerOptions,
   TickOptions,
   ToggleOptions,
@@ -451,9 +453,11 @@ export class CanvasRenderer implements Renderer {
   render(context: import('./types.js').RenderContext): void;
 }
 
-export const themes: Record<string, Theme>;
-export function setTheme(theme: DeepPartial<Theme> | null): void;
-export function resolveTheme(partial?: DeepPartial<Theme>): Theme;
+/** The built-in named themes. `default`, `survey` and `dark` are ElicitJS's own;
+ *  the other fourteen are Flint's house styles (https://github.com/microsoft/flint-chart). */
+export const themes: Record<ThemeName, DeepPartial<Theme> & { extends?: ThemeName }>;
+export function setTheme(theme: ThemeSpec | null): void;
+export function resolveTheme(partial?: ThemeSpec): Theme;
 export const DEFAULT_THEME: Theme;
 
 /**

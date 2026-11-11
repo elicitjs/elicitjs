@@ -182,7 +182,7 @@ function buildRect(options) {
                 // Corner radius, in px like every other geometry channel here.
                 const rx = channels.rx
                     ? encodeChannel(scales, channels, 'rx', d, 0, i, currentData)
-                    : undefined;
+                    : rectDefaults.rx;
 
                 return {
                     type: 'rect',

@@ -376,6 +376,10 @@ export function resolveScales(features, tables, spec, dims) {
           ...opt,
           type,
           domain,
+          // The theme's band spacing, used when the channel names no padding of
+          // its own. A capability of the scale it builds — core/scales.js decides
+          // which scale types read it.
+          bandPadding: spec.theme && /** @type {any} */ (spec.theme).bandPadding,
           // A nested category's sub-bands ABUT by default (Vega-Lite's grouped bar):
           // the gap between groups is the parent band's padding, and a second gap
           // inside each group reads as a second level of grouping that isn't there.

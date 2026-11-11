@@ -71,11 +71,16 @@ function originTransform(ch) {
  * zero on both axes), `false` forces the ordinary left/bottom frame even
  * alongside a `trend`/`trendBand` mark. Left unset, the default above still
  * applies, so every existing spec that never mentions `axes` is unaffected.
+ * A THEME may ask for gridlines too (`theme.grid.show`, or a `theme.grid.zero`
+ * line): each implicit axis then gets an `auto` grid, which draws only what the
+ * theme covers for its scale's kind — the theme cannot know at this point which
+ * axis will turn out continuous. A grid the spec asks for itself is unaffected.
  * @param {any[]} features
  * @param {any} axesOpt
+ * @param {any} [theme] the resolved theme
  * @returns {any[]} the axis/grid marks to prepend (drawn behind marks)
  */
-export function autoAxes(features, axesOpt) {
+export function autoAxes(features, axesOpt, theme) {
     if (axesOpt === false) return [];
     const flat = flattenFeatures(features);
     const origin = axesOpt && typeof axesOpt === 'object' ? axesOpt.origin : undefined;
@@ -86,9 +91,15 @@ export function autoAxes(features, axesOpt) {
         || (origin === undefined && axesOpt == null && flat.some((f) => f.isTrend));
     /** @type {any[]} */
     const injected = [];
+    // Grids go FIRST, so every spine and tick paints over the gridlines it meets
+    // (a dashed grid line at 0 must not stipple the axis drawn on top of it).
+    /** @type {any[]} */
+    const grids = [];
     /** @param {string} ch */
     const hasExplicit = (ch) => flat.some((f) => (f.isAxis || f.isGrid) && f.channel === ch);
     const builders = { x: { axis: axisX, grid: gridX }, y: { axis: axisY, grid: gridY } };
+    const themeGrid = theme && theme.grid;
+    const themeWantsGrid = !!themeGrid && ((themeGrid.show && themeGrid.show !== 'none') || !!themeGrid.zero);
     // A count axis, only when asked for. It draws on the screen side the counting
     // mark stacks along, which the mark itself declares.
     if (axesOpt && axesOpt.count && !hasExplicit('count')) {
@@ -115,7 +126,16 @@ export function autoAxes(features, axesOpt) {
             opts.transform = originTransform(ch);
         }
         injected.push(builders[ch].axis(opts));
-        if (opts.grid) injected.push(builders[ch].grid(gridOptionsOf(opts)));
+        // `grid: true` borrows the axis's tick options; `grid: { … }` adds its own
+        // paint (`strokeDash`, `zero`, …) on top.
+        if (opts.grid) grids.push(builders[ch].grid({ ...gridOptionsOf(opts), ...(typeof opts.grid === 'object' ? opts.grid : {}) }));
+        else if (opts.grid === undefined && themeWantsGrid) {
+            const themed = builders[ch].grid(opts.ticks !== undefined || opts.tickValues !== undefined
+                ? { ...(opts.ticks !== undefined ? { ticks: opts.ticks } : {}), ...(opts.tickValues !== undefined ? { tickValues: opts.tickValues } : {}) }
+                : {});
+            themed.auto = true;
+            grids.push(themed);
+        }
     }
-    return injected;
+    return [...grids, ...injected];
 }

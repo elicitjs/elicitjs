@@ -102,6 +102,11 @@ export function textNodeAt(scales, channels, d, i, px, py, opts = {}) {
     const lineAnchor = rawChannel(channels, 'lineAnchor', d, 'middle', i, data);
     const fontSize = rawChannel(channels, 'fontSize', d, 12, i, data);
     const text = format(rawChannel(channels, 'text', d, '', i, data));
+    // Typography, per row or constant. Unset, a label inherits the chart's font
+    // (the theme's `font.family`, painted on the root) at the renderer's weight.
+    const fontWeight = rawChannel(channels, 'fontWeight', d, undefined, i, data);
+    const fontStyle = rawChannel(channels, 'fontStyle', d, undefined, i, data);
+    const fontFamily = rawChannel(channels, 'fontFamily', d, undefined, i, data);
 
     // Only measured when the mark asked to wrap: measurement is cheap but not free,
     // and every label in the library that isn't in a box wants its one line.
@@ -109,7 +114,8 @@ export function textNodeAt(scales, channels, d, i, px, py, opts = {}) {
         ? measureBlock(text, {
             maxWidth: wrap,
             fontSize: +fontSize || 12,
-            fontFamily: (themeOf(scales).font && themeOf(scales).font.family) || undefined,
+            fontFamily: fontFamily || (themeOf(scales).font && themeOf(scales).font.family) || undefined,
+            fontWeight,
             lineHeight,
         })
         : null;
@@ -123,6 +129,9 @@ export function textNodeAt(scales, channels, d, i, px, py, opts = {}) {
         textAnchor: rawChannel(channels, 'textAnchor', d, 'middle', i, data),
         lineAnchor,
         dominantBaseline: dominantBaselineOf(lineAnchor),
+        ...(fontWeight != null ? { fontWeight } : {}),
+        ...(fontStyle != null ? { fontStyle } : {}),
+        ...(fontFamily != null ? { fontFamily } : {}),
         ...(angle ? { angle } : {}),
         ...(block && block.lines.length > 1
             ? { lines: block.lines, lineHeight: block.lineHeight }
@@ -132,6 +141,13 @@ export function textNodeAt(scales, channels, d, i, px, py, opts = {}) {
         index: i,
     };
 }
+
+/** The channels a label reads itself, unscaled (`rawChannel`). Shared with
+ *  `geoText`, which places the same node through a projection.
+ *  @type {string[]} */
+export const TEXT_RAW_CHANNELS = [
+    'text', 'fontSize', 'fontWeight', 'fontStyle', 'fontFamily', 'textAnchor', 'lineAnchor', 'dx', 'dy',
+];
 
 /**
  * @param {any} options
@@ -152,7 +168,7 @@ function buildText(options) {
         // through `rawChannel`. It declared NONE of them, so binding a field to any
         // of them (`text: { field: 'label' }`) made the resolver build a global scale
         // that nothing reads. See `link`, which has the same list for the same reason.
-        rawChannels: ['text', 'fontSize', 'textAnchor', 'lineAnchor', 'dx', 'dy'],
+        rawChannels: TEXT_RAW_CHANNELS,
         // A label sits AT a category (a tick, no interval) when an axis is discrete.
         discreteScale: 'point',
         ...positionalKeys(channels),
@@ -195,7 +211,9 @@ function buildText(options) {
             const block = measureBlock(format(rawChannel(channels, 'text', d, '', i, rows)), {
                 maxWidth: typeof wrap === 'function' ? wrap(d, i, rows) : wrap,
                 fontSize,
-                fontFamily: (themeOf(scales).font && themeOf(scales).font.family) || undefined,
+                fontWeight: rawChannel(channels, 'fontWeight', d, undefined, i, rows),
+                fontFamily: rawChannel(channels, 'fontFamily', d, undefined, i, rows)
+                    || (themeOf(scales).font && themeOf(scales).font.family) || undefined,
                 lineHeight,
             });
             const hw = block.width / 2;

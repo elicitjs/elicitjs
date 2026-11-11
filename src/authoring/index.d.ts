@@ -1642,10 +1642,10 @@ export namespace THEME {
  * DEFAULT_THEME < setTheme() base < the widget's own `theme` option — the same
  * precedence the engine applies to `spec.theme`, so the baked-in mark colour and the
  * live affordance colours always agree.
- * @param {import('../types.js').DeepPartial<import('../types.js').Theme> | undefined} [theme]
+ * @param {import('../types.js').ThemeSpec | undefined} [theme]
  * @returns {import('../types.js').Theme}
  */
-export function widgetTheme(theme?: import("../types.js").DeepPartial<import("../types.js").Theme> | undefined): import("../types.js").Theme;
+export function widgetTheme(theme?: import("../types.js").ThemeSpec | undefined): import("../types.js").Theme;
 // ── from src/core/projection.js ─────────────────────────────────────────────
 export type ProjectionContext = {
     apply: (p: [number, number]) => [number, number] | null;

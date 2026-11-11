@@ -23,6 +23,8 @@
 
 import { DEFAULT_PALETTE, DEFAULT_RAMP, DEFAULT_DIVERGING } from './encoding.js';
 import { DEFAULT_EFFECTS } from './effects.js';
+import { themes } from './themes.js';
+import { warn } from './dev.js';
 
 /**
  * The built-in defaults. Every value here is the literal the library drew with
@@ -69,15 +71,67 @@ export const DEFAULT_THEME = {
     font: { family: null, size: 10, labelSize: 12, titleSize: 13 },
 
     // Chart titles (spec.title / subtitle / caption — core/titles.js). A null fill
-    // takes the axis label ink, so a dark theme's titles follow its labels.
-    title: { fill: null, fontSize: 16, fontWeight: 600 },
-    subtitle: { fill: null, fontSize: 12, fontWeight: 'normal' },
-    caption: { fill: null, fontSize: 11, fontWeight: 'normal' },
+    // takes the axis label ink, so a dark theme's titles follow its labels. A null
+    // fontFamily inherits `font.family`; a headline may set its own (a serif title
+    // over sans-serif labels is the commonest house style there is).
+    title: { fill: null, fontSize: 16, fontWeight: 600, fontFamily: null, fontStyle: null },
+    subtitle: { fill: null, fontSize: 12, fontWeight: 'normal', fontFamily: null, fontStyle: null },
+    caption: { fill: null, fontSize: 11, fontWeight: 'normal', fontFamily: null, fontStyle: null },
 
     // Chart chrome. Axis spine/ticks (stroke), tick labels + title (labelFill), the
     // edit handle on a draggable axis (handle). Grid lines are separate.
-    axis: { stroke: '#6b7280', labelFill: '#374151', fontSize: 10, handle: '#2563eb' },
-    grid: { stroke: '#e5e7eb', strokeWidth: 1 },
+    //
+    // Every token is also an `axis()` option of the same name, and the option wins.
+    // `discrete` / `continuous` hold per-KIND overrides of any token, read off the
+    // scale's capability flag — which is how a theme says "no spine on the value
+    // axis, a spine under the categories" (the newsroom look Flint's presets share,
+    // https://github.com/microsoft/flint-chart, `structure.axis.measure|categorical`).
+    axis: {
+        stroke: '#6b7280',
+        labelFill: '#374151',
+        fontSize: 10,
+        handle: '#2563eb',
+        // Spine (domain line) width, also the tick width.
+        strokeWidth: 1,
+        // Draw the spine at all. `false` keeps the ticks and labels.
+        line: true,
+        // Tick length in px; 0 draws no ticks.
+        tickSize: 6,
+        // Gap between a tick's end and its label, in px.
+        tickPadding: 3,
+        // Tick-label rotation in math degrees (counter-clockwise), like a mark's `angle`.
+        labelAngle: 0,
+        // Label typography; null inherits `font.family` / the renderer's weight.
+        fontFamily: null,
+        fontWeight: null,
+        // The axis title. Null fill takes `labelFill`; null size is `fontSize + 1`.
+        titleFill: null,
+        titleFontSize: null,
+        titleFontWeight: null,
+        // Extra gap between the tick labels and the title, in px (added to the default).
+        titlePadding: 0,
+        // Per-kind overrides (any token above). Empty: both kinds look alike.
+        discrete: {},
+        continuous: {},
+    },
+    // Gridlines. `show` decides which IMPLICIT axes get a grid without the spec
+    // asking (`axes: { y: { grid: true } }` still works either way): 'none' keeps
+    // the historical look; 'value' grids the axis the value runs along (the
+    // continuous one, y when both are — Flint's "measure" grid); 'continuous'
+    // every continuous axis; 'all' every axis.
+    // `zero` emphasises the line at 0 on a continuous grid (a baseline rule):
+    // null for none, or `{ stroke, strokeWidth, strokeDash }`.
+    grid: { stroke: '#e5e7eb', strokeWidth: 1, strokeDash: null, opacity: null, show: 'none', zero: null },
+
+    // The PLOT AREA's own surface, distinct from `background` (which covers the
+    // margins too). `fill` paints behind the grid — the ggplot2 grey panel — and
+    // `stroke` draws a frame around it. Both null: no panel node at all.
+    panel: { fill: null, stroke: null, strokeWidth: 1 },
+
+    // Inner padding of a band scale (the gap between bars), as a fraction of the
+    // step. A channel's own `scale: { padding }` still wins. Flint calls the
+    // complement `bandFraction` (bar width / step).
+    bandPadding: 0.1,
 
     // Non-interactive annotation guides (guides/*) PLUS the per-part tokens an
     // edit's self-drawn guide reads (edit/guide.js — bounds / catchment / track).
@@ -95,6 +149,11 @@ export const DEFAULT_THEME = {
         legend: {
             stroke: '#374151', labelFill: '#374151', fontSize: 11,
             currentStroke: '#111827', currentWidth: 2,
+            // Swatch geometry: chip size and the gap between items (both px), and
+            // the chip's corner radius — `swatchSize / 2` draws round chips.
+            swatchSize: 14, gap: 6, swatchRadius: 0,
+            // null renders the title at the label weight (measured as if bold).
+            titleFontWeight: null,
         },
         // Edit-guide parts (resolveGuide). Colour falls back to theme.constraint.
         bounds: { dash: '4 4', width: 1, opacity: 0.9 },
@@ -132,7 +191,9 @@ export const DEFAULT_THEME = {
 
     // Sparse per-mark overrides, keyed by mark name. Empty by default — a mark's
     // own built-in fallback (passed to markDefaults) stands unless a theme fills a
-    // slot here. e.g. `marks: { bar: { fill: 'crimson' } }`.
+    // slot here. e.g. `marks: { bar: { fill: 'crimson' } }`. Beyond the paint
+    // channels, a few marks read a geometry default here too: `bar.rx` / `rect.rx`
+    // (corner radius) and `point.size` (radius).
     marks: {}
 };
 
@@ -165,32 +226,74 @@ export function deepMerge(base, over) {
 // The app-wide base, settable via setTheme(). A per-chart spec.theme layers over
 // this, which layers over DEFAULT_THEME. Starts empty so DEFAULT_THEME is the
 // baseline until an app opts in.
-/** @type {import('../types').DeepPartial<import('../types').Theme>} */
+/** @type {import('../types').ThemeSpec} */
 let globalTheme = {};
 
 /**
  * Set the application-wide default theme (a partial, deep-merged over DEFAULT_THEME).
  * Every chart created afterwards picks it up unless it passes its own spec.theme,
  * which layers on top. Pass `null`/`{}` to reset to the built-in default.
- * @param {import('../types').DeepPartial<import('../types').Theme> | null} [partial]
+ * @param {import('../types').ThemeSpec | null} [partial]
  */
 export function setTheme(partial) {
     globalTheme = partial || {};
 }
 
 /**
+ * Flatten a theme's `extends` chain into one partial. `extends` names a built-in
+ * theme (a key of `themes`) to start from; the theme's own tokens deep-merge over
+ * it. The idea and the word are Flint's (`ThemeSpec.extends`,
+ * https://github.com/microsoft/flint-chart/blob/main/docs/theme-spec.md), where a
+ * preset like `pop` is a remix of `swiss`. A bare string is shorthand for
+ * `{ extends: name }`. An unknown name warns and contributes nothing, so a typo
+ * shows the default look instead of throwing.
+ * @param {any} user a partial theme, a theme name, or null
+ * @param {number} [depth] cycle guard
+ * @returns {any} a partial with no `extends` key
+ */
+function expandTheme(user, depth = 0) {
+    if (user == null) return {};
+    const t = typeof user === 'string' ? { extends: user } : user;
+    if (t.extends == null) return t;
+    const { extends: name, ...own } = t;
+    /** @type {Record<string, any>} */
+    const named = themes;
+    const base = depth < 8 && Object.prototype.hasOwnProperty.call(named, name) ? named[name] : null;
+    if (!base) {
+        warn(`theme:unknown:${name}`, `theme "${name}" is not a built-in theme (${Object.keys(themes).join(', ')}); using the default look.`);
+        return own;
+    }
+    return deepMerge(expandTheme(base, depth + 1), own);
+}
+
+/**
  * Resolve a chart's effective theme: DEFAULT_THEME < setTheme() base < spec.theme.
- * A string names a built-in theme; an object is a partial that deep-merges.
- * @param {import('../types').DeepPartial<import('../types').Theme> | string} [user]
+ * Either layer may be a built-in theme's NAME (`'dark'`, `'nyt'`) or a partial,
+ * and a partial may `extends` a named theme.
+ * @param {import('../types').ThemeSpec | null} [user]
  * @returns {import('../types').Theme}
  */
 export function resolveTheme(user) {
-    const withGlobal = deepMerge(DEFAULT_THEME, globalTheme);
+    const withGlobal = deepMerge(DEFAULT_THEME, expandTheme(globalTheme));
     if (user == null) return withGlobal;
-    // A string is resolved by the caller (index.js exposes `themes`); here it is
-    // already an object by the time the engine calls us. Guard anyway.
-    if (typeof user === 'string') return withGlobal;
-    return deepMerge(withGlobal, user);
+    return deepMerge(withGlobal, expandTheme(user));
+}
+
+/**
+ * One axis token as it applies to an axis over `scale`: the `discrete` /
+ * `continuous` override for that scale's kind, else the axis-wide token. Reads the
+ * capability flag `kind`, never `scale.type`.
+ * @param {import('../types').Theme} theme
+ * @param {any} scale
+ * @param {string} token
+ * @returns {any}
+ */
+export function axisToken(theme, scale, token) {
+    const axisTheme = /** @type {any} */ (theme.axis) || {};
+    const kind = scale && scale.kind === 'continuous' ? 'continuous' : 'discrete';
+    const over = axisTheme[kind];
+    if (over && over[token] !== undefined) return over[token];
+    return axisTheme[token];
 }
 
 /**

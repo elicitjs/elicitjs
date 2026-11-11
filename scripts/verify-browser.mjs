@@ -131,7 +131,7 @@ async function main() {
             '/editing/existence', '/editing/probe', '/editing/stages', '/editing/axis',
             '/editing/external-controls', '/editing/zoom',
             '/editing/history', '/widgets', '/scales', '/schema', '/constraints',
-            '/effects', '/guides', '/theming', '/playground',
+            '/effects', '/guides', '/theming', '/theming/themes', '/playground',
         ];
         for (const r of routes) await visit(r);
 
@@ -4516,6 +4516,50 @@ async function main() {
             ttTexts.includes('How will the vote split?') && ttTexts.some((t) => /percent/.test(t)), ttTexts.slice(0, 4).join(' | '));
         check('titles: the chart keeps its declared height',
             (await page.locator('#titles svg').first().getAttribute('height')) === '260');
+
+        // ---- Named themes and chrome tokens reach the pixels ----------------
+        // A theme is resolved per chart, so every check reads an SVG attribute
+        // the theme put there — a token that never reached a node is invisible
+        // to typecheck and to the warnings gate alike.
+        console.log('\nNamed themes (/theming/themes)');
+        await open('/theming/themes', '#newsroom svg');
+        const thmHeadFont = await page.$$eval('#newsroom svg text', (ts) => {
+            const t = ts.find((n) => n.textContent === 'nyt');
+            return t ? t.getAttribute('font-family') : null;
+        });
+        check('themes: nyt sets its headline in Georgia', thmHeadFont === 'Georgia, serif', `font-family=${thmHeadFont}`);
+        const thmMatRx = await page.$$eval('#product svg', (svgs) => {
+            const bar = svgs[svgs.length - 1].querySelector('rect.mark');
+            return bar ? bar.getAttribute('rx') : null;
+        });
+        check('themes: material rounds its bars', thmMatRx === '4', `rx=${thmMatRx}`);
+        const thmPbBg = await page.$$eval('#business svg', (svgs) => svgs[svgs.length - 1].style.background);
+        check('themes: powerbi paints its own canvas', /rgb\(27,\s*26,\s*25\)|#1b1a19/i.test(thmPbBg), `bg=${thmPbBg}`);
+        const thmNytGrid = await page.$$eval('#newsroom svg', (svgs) => {
+            const lines = [...svgs[0].querySelectorAll('line')];
+            const horizontal = lines.filter((l) => l.getAttribute('y1') === l.getAttribute('y2') && +l.getAttribute('x2') - +l.getAttribute('x1') > 100);
+            return { grid: horizontal.filter((l) => l.getAttribute('stroke') === '#e4e4e4').length, zero: horizontal.filter((l) => l.getAttribute('stroke') === '#121212').length };
+        });
+        check('themes: nyt grids its value axis and rules zero', thmNytGrid.grid >= 3 && thmNytGrid.zero >= 1, JSON.stringify(thmNytGrid));
+        // A theme is paint only: the same drag still writes the row.
+        await page.locator('#extends .chart svg').scrollIntoViewIfNeeded();
+        const thmExEl = '#extends .chart > div';
+        const thmExBefore = await page.$eval(thmExEl, (e) => e.getData()[0].v);
+        const thmExBar = await boxCentre(page.locator('#extends svg rect.mark').first());
+        await dragPage(thmExBar.x, thmExBar.y, thmExBar.x, thmExBar.y - 30);
+        const thmExAfter = await page.$eval(thmExEl, (e) => e.getData()[0].v);
+        // `move()` is absolute: the value becomes the pointer's height, so only "it changed" is asserted.
+        check('themes: a drag on a themed (extends) chart writes its row', Math.abs(thmExAfter - thmExBefore) > 1, `${thmExBefore} -> ${thmExAfter}`);
+
+        console.log('\nChrome tokens (/theming, /marks/axes)');
+        await open('/theming', '#chrome svg');
+        const thmPanelFill = await page.$eval('#chrome svg rect.bg-rect', (r) => r.getAttribute('fill'));
+        check('theme.panel paints the plot area first', thmPanelFill === '#ebebeb', `fill=${thmPanelFill}`);
+        await open('/marks/axes', '#styling svg');
+        const thmTurned = await page.$$eval('#styling svg text', (ts) => ts.filter((t) => /rotate\(-40/.test(t.getAttribute('transform') || '')).length);
+        check('axis: labelAngle turns the tick labels', thmTurned === 5, `thmTurned=${thmTurned}`);
+        const thmTwoLine = await page.$$eval('#styling svg text', (ts) => ts.filter((t) => t.querySelectorAll('tspan').length === 2).length);
+        check('axis: a "\\n" in a tick label paints two lines', thmTwoLine >= 2, `two-line labels=${thmTwoLine}`);
 
         check('no page/console errors', errors.length === 0, errors.slice(0, 3).join(' | '));
     } finally {

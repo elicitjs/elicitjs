@@ -1023,6 +1023,9 @@ export interface MarkOptions {
   // Text-mark shorthands (desugar into raw channels via normalizeMarkOptions).
   text?: any;
   fontSize?: number | ChannelFn;
+  fontWeight?: string | number | ChannelFn;
+  fontStyle?: 'normal' | 'italic' | string | ChannelFn;
+  fontFamily?: string | ChannelFn;
   textAnchor?: 'start' | 'middle' | 'end' | string | ChannelFn;
   lineAnchor?: 'top' | 'middle' | 'bottom' | string | ChannelFn;
   dx?: number | ChannelFn;
@@ -1478,30 +1481,65 @@ export interface AxisOptions extends ElementOptionsBase {
   /** Tick count hint (linear); ignored for band/point. */
   ticks?: number | any[];
   tickValues?: any[];
+  /** A label per tick. A `\n` in the formatted label breaks it onto a second
+   *  line (a year under its January). */
   tickFormat?: Format;
-  tickSize?: number;
+  /** Tick length in px (0 draws none), or per tick `(value, index) => px`.
+   *  Default: the theme's `axis.tickSize` (6). */
+  tickSize?: number | AxisTickFn<number>;
+  /** Gap from a tick's end to its label, px. Default: theme (3). */
+  tickPadding?: number;
   title?: string;
   /** The title's rotation in math degrees. A y title defaults to running along
    *  its axis (90 on the left, -90 on the right); 0 lays it flat. An x title
    *  defaults to 0. */
   titleAngle?: number;
-  /** Chrome paint: the spine + ticks, the labels + title (text nodes). */
-  stroke?: string;
-  fill?: string;
+  /** The spine + ticks' colour, or per tick `(value, index) => colour` (the spine
+   *  then takes the theme's). */
+  stroke?: string | AxisTickFn<string>;
+  /** Spine and tick width. */
+  strokeWidth?: number;
+  /** Draw the spine (domain line). Default: theme (`true`). */
+  line?: boolean;
+  /** Label colour (the title's too, unless `titleFill`), or per tick. */
+  fill?: string | AxisTickFn<string>;
   fontSize?: number;
-  /** Also emit a paired gridline element. */
+  fontFamily?: string;
+  /** Label weight, or per tick (bold on January). */
+  fontWeight?: string | number | AxisTickFn<string | number>;
+  /** Tick-label rotation in math degrees (counter-clockwise, like a mark's
+   *  `angle`); the axis reserves the room the turned labels need. */
+  labelAngle?: number;
+  titleFill?: string;
+  titleFontSize?: number;
+  titleFontWeight?: string | number;
+  /** Extra px between the tick labels and the title. */
+  titlePadding?: number;
+  /** Move the axis this many px away from the plot. */
+  offset?: number;
+  /** Also emit a paired gridline element; an object styles it. */
   grid?: boolean | GridOptions;
   handleSize?: number;
   handleColor?: string;
 }
 
-/** `elements.grid` / `gridX` / `gridY`. */
+/** A per-tick axis option: called with the tick's value and index. */
+export type AxisTickFn<T> = (value: any, index: number) => T | undefined;
+
+/** `elements.grid` / `gridX` / `gridY`. Paint defaults to the theme's `grid` tokens. */
 export interface GridOptions extends ElementOptionsBase {
   channel?: 'x' | 'y';
   ticks?: number | any[];
   tickValues?: any[];
-  stroke?: string;
-  strokeWidth?: number;
+  /** Line colour, or per line `(value, index) => colour`. */
+  stroke?: string | AxisTickFn<string>;
+  strokeWidth?: number | AxisTickFn<number>;
+  /** Dash pattern ('4 4', '1 3'), or per line — a dashed grid with solid Januaries. */
+  strokeDash?: string | AxisTickFn<string | null>;
+  opacity?: number;
+  /** An emphasised line at 0 on a continuous scale: `true` for the theme's
+   *  `grid.zero` style, an object for its own, `false` for none. */
+  zero?: boolean | { stroke?: string; strokeWidth?: number; strokeDash?: string };
 }
 
 /** `elements.legend` / `legendColor` / `legendSize` / `legendSymbol` — the
@@ -2110,6 +2148,61 @@ export type DeepPartial<T> = {
   [K in keyof T]?: T[K] extends (infer U)[] ? U[] : T[K] extends object ? DeepPartial<T[K]> : T[K];
 };
 
+/**
+ * The built-in themes, by name (`themes[name]`, or `theme: name` on a spec).
+ * `default`, `survey` and `dark` are ElicitJS's own; the other fourteen are the
+ * named house styles of Flint (https://github.com/microsoft/flint-chart),
+ * transcribed from its presets.
+ */
+export type ThemeName =
+  | 'default' | 'survey' | 'dark'
+  | 'nyt' | 'economist' | 'swiss' | 'nature' | 'mckinsey' | 'datawrapper'
+  | 'powerbi' | 'powerbiLight' | 'pop' | 'cartoon' | 'apple' | 'deStijl' | 'bbc' | 'material';
+
+/**
+ * What a chart (or `setTheme`) may pass as its theme: a built-in theme's NAME, or
+ * a partial that deep-merges over the default — and may start from a named theme
+ * with `extends` (Flint's word for the same idea).
+ */
+export type ThemeSpec = ThemeName | (DeepPartial<Theme> & { extends?: ThemeName });
+
+/** A title part's typography (`theme.title` / `subtitle` / `caption`). */
+export interface TitleTokens {
+  fill: string | null;
+  fontSize: number;
+  fontWeight: string | number;
+  /** null inherits `font.family`. */
+  fontFamily: string | null;
+  fontStyle: string | null;
+}
+
+/** The axis tokens — each also an `axis()` option of the same name. */
+export interface AxisTokens {
+  stroke: string;
+  labelFill: string;
+  fontSize: number;
+  handle: string;
+  /** Spine (and tick) width. */
+  strokeWidth: number;
+  /** Draw the spine. */
+  line: boolean;
+  /** Tick length in px; 0 draws none. */
+  tickSize: number;
+  /** Gap from a tick's end to its label, in px. */
+  tickPadding: number;
+  /** Tick-label rotation, math degrees (counter-clockwise). */
+  labelAngle: number;
+  fontFamily: string | null;
+  fontWeight: string | number | null;
+  /** null takes `labelFill`. */
+  titleFill: string | null;
+  /** null is `fontSize + 1`. */
+  titleFontSize: number | null;
+  titleFontWeight: string | number | null;
+  /** Extra px between the tick labels and the title. */
+  titlePadding: number;
+}
+
 // The STYLE layer: default colours, fonts, and affordance tokens the library draws
 // with. This is the RESOLVED shape (every container present, as DEFAULT_THEME
 // provides), read by marks (default ink), chrome (axis/grid/guides), the renderers
@@ -2138,11 +2231,29 @@ export interface Theme {
   font: { family: string | null; size: number; labelSize: number; titleSize: number };
   // Chart chrome.
   // Chart titles (spec.title / subtitle / caption). A null fill takes the axis label ink.
-  title: { fill: string | null; fontSize: number; fontWeight: string | number };
-  subtitle: { fill: string | null; fontSize: number; fontWeight: string | number };
-  caption: { fill: string | null; fontSize: number; fontWeight: string | number };
-  axis: { stroke: string; labelFill: string; fontSize: number; handle: string };
-  grid: { stroke: string; strokeWidth: number };
+  title: TitleTokens;
+  subtitle: TitleTokens;
+  caption: TitleTokens;
+  /** Axis chrome, with per-kind overrides read off the scale's `kind`. */
+  axis: AxisTokens & { discrete: Partial<AxisTokens>; continuous: Partial<AxisTokens> };
+  /**
+   * Gridlines. `show` says which IMPLICIT axes get a grid the spec did not ask
+   * for: 'none' (the default); 'value', the axis the value runs along (the
+   * continuous one, y when both are); 'continuous', every continuous axis; 'all'.
+   * `zero` draws an emphasised line at 0 on a continuous grid.
+   */
+  grid: {
+    stroke: string;
+    strokeWidth: number;
+    strokeDash: string | null;
+    opacity: number | null;
+    show: 'none' | 'value' | 'continuous' | 'all';
+    zero: { stroke?: string; strokeWidth?: number; strokeDash?: string | null } | null;
+  };
+  /** The plot area's own surface (`background` covers the margins too) and frame. */
+  panel: { fill: string | null; stroke: string | null; strokeWidth: number };
+  /** Inner padding of a band scale, as a fraction of its step (default 0.1). */
+  bandPadding: number;
   // Annotation guides (guides/*) plus edit-guide part tokens (edit/guide.js).
   guide: {
     rule: { stroke: string; strokeDash: string; strokeWidth: number; opacity: number };
@@ -2154,6 +2265,12 @@ export interface Theme {
       /** Rings the swatch(es) the target row(s) currently hold — also the unarmed-state signal. */
       currentStroke?: string;
       currentWidth?: number;
+      /** Discrete swatch size and the gap between items, px. */
+      swatchSize?: number;
+      gap?: number;
+      /** Corner radius of a colour chip; `swatchSize / 2` is round. */
+      swatchRadius?: number;
+      titleFontWeight?: string | number | null;
     };
     /** Edit-guide parts — merged under GUIDE_PARTS, under per-edit overrides. */
     bounds?: GuidePartStyle;
@@ -2338,8 +2455,9 @@ export interface ElicitSpec {
   effects?: EffectsSpec;
   // The chart's theme (style layer): default colours, fonts, and affordance tokens.
   // A partial, deep-merged over the built-in DEFAULT_THEME (and any setTheme() base).
-  // See Theme (the resolved shape) and DeepPartial.
-  theme?: DeepPartial<Theme>;
+  // See Theme (the resolved shape) and DeepPartial. A built-in theme's NAME works
+  // too (`theme: 'nyt'`), and a partial may `extends` one.
+  theme?: ThemeSpec;
   guides?: Guide[];
   // Sizing mode. 'fixed' (default) draws at the pixel width/height. 'scale' wraps
   // the SVG in a viewBox so the browser scales it to fill the parent (one draw,
@@ -2412,7 +2530,7 @@ export interface WidgetOptions {
   // multi-stage form (the edit is live only when the chart's stage matches).
   stage?: number;
   // The widget's theme (style layer), a partial deep-merged over DEFAULT_THEME.
-  theme?: DeepPartial<Theme>;
+  theme?: ThemeSpec;
 }
 
 // The DOM element Elicit returns: the chart container plus a small observation
@@ -2661,6 +2779,8 @@ export interface AreaOptions extends MarkOptions, HandleOptions {
 export interface BarOptions extends MarkOptions, HandleOptions {
   orientation?: Orientation;
   gradient?: GradientSpec;
+  /** Corner radius, px. Default: the theme's `marks.bar.rx` (none). */
+  rx?: number;
   /** Stack the bars sharing a band on each other's cumulative total. */
   stack?: boolean;
 }

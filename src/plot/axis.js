@@ -18,7 +18,7 @@ import { ELEMENT_OPTIONS } from '../vocabulary.js';
 
 import * as d3 from 'd3';
 import { positionOnScale, isDiscrete } from '../core/scales.js';
-import { themeOf } from '../core/theme.js';
+import { themeOf, axisToken } from '../core/theme.js';
 import { measureText } from '../core/measure.js';
 import { warnUnknownElementOptions, resolveHandles, elementEdits } from './mark.js';
 
@@ -129,6 +129,90 @@ export function tickData(scale, opts = {}) {
 }
 
 /**
+ * A per-tick option: a constant, or `(value, index) => constant` — the conditional
+ * axis (a long tick and a bold label on January, a lighter one elsewhere). Only the
+ * TICK-level options take the function form; the spine is one line and reads the
+ * constant (or the theme) whatever the ticks do.
+ * @param {any} opt
+ * @param {any} v
+ * @param {number} i
+ * @returns {any}
+ */
+const perTick = (opt, v, i) => (typeof opt === 'function' ? opt(v, i) : opt);
+
+/** A formatted tick label split into lines: a `\n` in the label is a line break,
+ *  which is how a date axis puts the year under its January.
+ * @param {any} label @returns {string[]} */
+const linesOf = (label) => String(label).split('\n');
+
+/**
+ * The axis's chrome, resolved for ONE scale: the option, else the theme's
+ * per-kind token (`axis.discrete` / `axis.continuous`), else the axis-wide token.
+ * Shared by `measureTitle` and `build`, so what the engine reserves and what the
+ * axis draws are one geometry.
+ * @param {any} o the axis options
+ * @param {any} scales
+ * @param {any} scale
+ */
+function chromeOf(o, scales, scale) {
+    const thm = themeOf(scales);
+    const tok = (/** @type {string} */ name) => axisToken(thm, scale, name);
+    const fontSize = o.fontSize ?? tok('fontSize');
+    const fill = o.fill ?? tok('labelFill');
+    return {
+        stroke: o.stroke ?? tok('stroke'),
+        strokeWidth: o.strokeWidth ?? tok('strokeWidth') ?? 1,
+        line: o.line ?? tok('line') ?? true,
+        tickSize: o.tickSize ?? tok('tickSize') ?? 6,
+        tickPadding: o.tickPadding ?? tok('tickPadding') ?? 3,
+        labelAngle: o.labelAngle ?? tok('labelAngle') ?? 0,
+        fill,
+        fontSize,
+        fontFamily: o.fontFamily ?? tok('fontFamily') ?? null,
+        fontWeight: o.fontWeight ?? tok('fontWeight') ?? null,
+        titleFill: o.titleFill ?? tok('titleFill') ?? (typeof fill === 'function' ? tok('labelFill') : fill),
+        titleFontSize: o.titleFontSize ?? tok('titleFontSize') ?? fontSize + 1,
+        titleFontWeight: o.titleFontWeight ?? tok('titleFontWeight') ?? null,
+        titlePadding: o.titlePadding ?? tok('titlePadding') ?? 0,
+        offset: o.offset ?? 0,
+    };
+}
+
+/**
+ * Where the tick LABELS reach, measured outward from the axis line, and the widest
+ * label — the one geometry both the title placement and the layout reservation
+ * read. A rotated label reaches by its projection on the axis normal; a multi-line
+ * one by its line count.
+ * @param {boolean} isX
+ * @param {any} c resolved chrome
+ * @param {string[]} labels formatted labels
+ * @param {number} tickSize the largest tick length (a per-tick size may vary)
+ * @returns {{ far: number, labelW: number, lines: number }}
+ */
+function labelReach(isX, c, labels, tickSize) {
+    let labelW = 0;
+    let lines = 1;
+    for (const l of labels) {
+        const ls = linesOf(l);
+        lines = Math.max(lines, ls.length);
+        for (const s of ls) labelW = Math.max(labelW, measureText(s, { fontSize: c.fontSize, fontFamily: c.fontFamily || undefined }));
+    }
+    const lineH = Math.round(c.fontSize * 1.2);
+    const rad = (Math.abs(c.labelAngle) * Math.PI) / 180;
+    const base = tickSize + c.tickPadding;
+    if (c.labelAngle) {
+        const along = isX ? Math.sin(rad) : Math.cos(rad);
+        const across = isX ? Math.cos(rad) : Math.sin(rad);
+        return { far: base + labelW * along + c.fontSize * across * 0.6, labelW, lines };
+    }
+    // Unrotated: an x label's baseline sits 0.7em past the padding (its cap height),
+    // every further line one line-height lower; a y label reaches by its width.
+    return isX
+        ? { far: base + c.fontSize * 0.7 + (lines - 1) * lineH, labelW, lines }
+        : { far: base + labelW, labelW, lines };
+}
+
+/**
  * The shared axis builder. `axisX`/`axisY` are thin wrappers that pin `channel`.
  * @param {any} [options]
  * @returns {import('../types').Mark}
@@ -148,14 +232,33 @@ export function axis(options = {}) {
         ticks = 5,
         tickValues,
         tickFormat,
-        tickSize = 6,
         title,
         titleAngle,
-        // Chrome colours/size default to the theme's axis tokens, resolved at build
-        // time (a factory can't see the chart's theme). An explicit option still wins.
-        stroke: strokeOpt,      // spine + ticks
-        fill: fillOpt,          // tick labels + title (text nodes take a fill)
-        fontSize: fontSizeOpt,
+        // Chrome. Every one defaults to the theme's axis token of the same name
+        // (per scale kind — see chromeOf), resolved at build time because a factory
+        // can't see the chart's theme. An explicit option still wins.
+        //   stroke / strokeWidth / line   the spine (and the ticks' paint)
+        //   tickSize / tickPadding        tick length; gap from tick to label
+        //   fill / fontSize / fontFamily / fontWeight / labelAngle   the labels
+        //   titleFill / titleFontSize / titleFontWeight / titlePadding   the title
+        //   offset                        px between the plot edge and the axis
+        // `tickSize`, `stroke`, `fill` and `fontWeight` also take a function
+        // `(value, index) => …` for per-tick styling.
+        tickSize,
+        tickPadding,
+        stroke,
+        strokeWidth,
+        line,
+        fill,
+        fontSize,
+        fontFamily,
+        fontWeight,
+        labelAngle,
+        titleFill,
+        titleFontSize,
+        titleFontWeight,
+        titlePadding,
+        offset,
         grid = false,
         // Opt-in interactivity: an edit (edit.axis.scale / edit.scale.categories) or
         // a list of them, and an optional single field the edit pins (defaults to
@@ -168,6 +271,10 @@ export function axis(options = {}) {
         handleSize: handleSizeOpt,
         id,
     } = options;
+    const chromeOpts = {
+        tickSize, tickPadding, stroke, strokeWidth, line, fill, fontSize, fontFamily,
+        fontWeight, labelAngle, titleFill, titleFontSize, titleFontWeight, titlePadding, offset,
+    };
 
     // Which way this axis RUNS. For x/y the channel says it. A `count` axis runs
     // along whichever screen direction its mark stacks in, which the channel name
@@ -179,6 +286,29 @@ export function axis(options = {}) {
     // Handles and category affordances serve DIRECT edits (a handle drag, a
     // rename); a plane or driver edit (the wheel zoom, a pan) draws nothing to grab.
     const editable = edits.some((e) => e.pick === 'direct');
+
+    /**
+     * Resolved chrome + tick data + label reach for this render — one pass that
+     * measure and build both read.
+     * @param {any} scales
+     * @param {any} scale
+     */
+    const layout = (scales, scale) => {
+        // A per-tick FUNCTION is resolved tick by tick below; the constant chrome
+        // (the spine, the title, a tick the function leaves undefined) takes the
+        // theme's value in its place.
+        const constant = { ...chromeOpts };
+        for (const k of /** @type {const} */ (['tickSize', 'fontWeight', 'stroke'])) {
+            if (typeof constant[k] === 'function') constant[k] = undefined;
+        }
+        const c = chromeOf(constant, scales, scale);
+        const { values, format } = tickData(scale, { ticks, tickValues, tickFormat });
+        const sizes = values.map((v, i) => Number(perTick(tickSize, v, i) ?? c.tickSize) || 0);
+        // The longest tick decides how far the labels sit, so they stay in one row.
+        const maxTick = sizes.length ? Math.max(...sizes) : c.tickSize;
+        const labels = values.map((v) => String(format(v)));
+        return { c, values, format, sizes, maxTick, labels, reach: labelReach(isX, c, labels, maxTick) };
+    };
 
     return {
         id,
@@ -205,23 +335,24 @@ export function axis(options = {}) {
         // legend's, instead of a rotated y title falling outside a tight margin.
         anchor,
         /**
+         * How far past the plot edge this axis reaches when it reaches further
+         * than the default margin plans for: a title, rotated or multi-line labels,
+         * an offset. 0 otherwise, so an unstyled axis reserves nothing new.
          * @param {import('../types').ScaleMap} scales
-         * @returns {number} px from the plot edge to the title's far edge (0: no title)
+         * @returns {number} px from the plot edge to the axis's far edge
          */
         measureTitle(scales) {
-            if (!title || transform) return 0;
+            if (transform) return 0;
             const scale = scales[channel];
             if (!scale) return 0;
-            const thm = themeOf(scales);
-            const fontSize = fontSizeOpt ?? thm.axis.fontSize;
-            if (isX) return tickSize + fontSize * 2.4 + fontSize * 0.6 + 2;
-            const { values, format } = tickData(scale, { ticks, tickValues, tickFormat });
-            let labelW = 0;
-            for (const v of values) labelW = Math.max(labelW, measureText(String(format(v)), { fontSize }));
+            const { c, reach } = layout(scales, scale);
+            if (!title && !c.labelAngle && !c.offset && reach.lines <= 1) return 0;
+            if (!title) return c.offset + reach.far + 2;
+            if (isX) return c.offset + reach.far + c.titlePadding + c.fontSize * 0.5 + c.titleFontSize * 1.15 + 2;
             const angle = titleAngle != null ? titleAngle : (anchor === 'left' ? 90 : -90);
-            const gap = angle ? fontSize * 0.9 : fontSize * 1.2;
-            const titleExtent = angle ? (fontSize + 1) * 0.7 : measureText(String(title), { fontSize: fontSize + 1 }) * 1.06;
-            return tickSize + 4 + labelW * 1.06 + gap + titleExtent + 2;
+            const gap = angle ? c.fontSize * 0.9 : c.fontSize * 1.2;
+            const titleExtent = angle ? c.titleFontSize * 0.7 : measureText(String(title), { fontSize: c.titleFontSize, fontWeight: c.titleFontWeight || undefined }) * 1.06;
+            return c.offset + reach.far + 1 + gap + c.titlePadding + titleExtent + 2;
         },
         /**
          * @param {any[]} _data
@@ -234,11 +365,8 @@ export function axis(options = {}) {
             const scale = scales[channel];
             if (!scale) return []; // 1D plot / hidden channel — no-op
 
-            // Resolve chrome from the theme (option overrides > theme.axis tokens).
             const thm = themeOf(scales);
-            const stroke = strokeOpt ?? thm.axis.stroke;
-            const fill = fillOpt ?? thm.axis.labelFill;
-            const fontSize = fontSizeOpt ?? thm.axis.fontSize;
+            const { c, values, format, sizes, maxTick, reach } = layout(scales, scale);
             // Shared handle contract (plot/mark.js) — axis used to hard-code size
             // and pull colour from theme.axis.handle without going through resolveHandles.
             const handleStyle = resolveHandles(scales, {
@@ -250,15 +378,24 @@ export function axis(options = {}) {
             const handleSize = handleStyle.size;
             const handleStroke = handleStyle.stroke;
 
-            const base = baseTranslate(anchor, width, height);
-            const t = transform
-                ? { ...base, ...(transform({ width, height, scales, anchor, base }) || {}) }
-                : base;
-
-            const { values, format } = tickData(scale, { ticks, tickValues, tickFormat });
             // Tick/label direction: axes on bottom/right push ticks in the positive
             // direction (down / right), top/left in the negative.
             const dir = (anchor === 'bottom' || anchor === 'right') ? 1 : -1;
+            const base = baseTranslate(anchor, width, height);
+            // `offset` moves the whole axis away from the plot.
+            if (c.offset) {
+                if (isX) base.y += dir * c.offset;
+                else base.x += dir * c.offset;
+            }
+            const t = transform
+                ? { ...base, ...(transform({ width, height, scales, anchor, base }) || {}) }
+                : base;
+            const spineStroke = c.stroke;
+            /** Label typography shared by every tick label. */
+            const font = {
+                ...(c.fontFamily ? { fontFamily: c.fontFamily } : {}),
+            };
+            const lineH = Math.round(c.fontSize * 1.2);
 
             /** @type {import('../types').FeatureNode[]} */
             const nodes = [];
@@ -270,55 +407,83 @@ export function axis(options = {}) {
             const continuous = editable && scale.kind === 'continuous';
 
             // Domain spine — spans the scale's pixel range along the axis.
-            if (isX) {
-                nodes.push({
-                    type: 'line', x1: t.x, x2: t.x + width, y1: t.y, y2: t.y,
-                    stroke, strokeWidth: 1, background: true, pointerEvents: 'none'
-                });
-            } else {
-                nodes.push({
-                    type: 'line', x1: t.x, x2: t.x, y1: t.y, y2: t.y + height,
-                    stroke, strokeWidth: 1, background: true, pointerEvents: 'none'
-                });
+            if (c.line) {
+                nodes.push(isX
+                    ? { type: 'line', x1: t.x, x2: t.x + width, y1: t.y, y2: t.y, stroke: spineStroke, strokeWidth: c.strokeWidth, background: true, pointerEvents: 'none' }
+                    : { type: 'line', x1: t.x, x2: t.x, y1: t.y, y2: t.y + height, stroke: spineStroke, strokeWidth: c.strokeWidth, background: true, pointerEvents: 'none' });
             }
 
             // Ticks + labels.
-            for (const v of values) {
+            values.forEach((v, i) => {
                 const p = positionOnScale(scale, v);
-                if (p == null || Number.isNaN(p)) continue;
-                if (isX) {
-                    const px = t.x + p;
-                    nodes.push({
-                        type: 'line', x1: px, x2: px, y1: t.y, y2: t.y + dir * tickSize,
-                        stroke, strokeWidth: 1, background: true, pointerEvents: 'none'
-                    });
-                    const ly = t.y + dir * (tickSize + fontSize);
-                    nodes.push(discrete
-                        ? categoryLabel({ x: px, y: ly, textAnchor: 'middle', v, format, fill, fontSize })
-                        : { type: 'text', x: px, y: ly, text: format(v), textAnchor: 'middle', fill, fontSize, background: true, pointerEvents: 'none' });
-                    if (discrete) nodes.push(removeGlyph({ x: px, y: ly + fontSize, v, fontSize }));
-                } else {
-                    const py = t.y + p;
-                    nodes.push({
-                        type: 'line', x1: t.x, x2: t.x + dir * tickSize, y1: py, y2: py,
-                        stroke, strokeWidth: 1, background: true, pointerEvents: 'none'
-                    });
-                    const lx = t.x + dir * (tickSize + 3);
-                    nodes.push(discrete
-                        ? categoryLabel({ x: lx, y: py + fontSize / 3, textAnchor: dir < 0 ? 'end' : 'start', v, format, fill, fontSize })
-                        : { type: 'text', x: lx, y: py + fontSize / 3, text: format(v), textAnchor: dir < 0 ? 'end' : 'start', fill, fontSize, background: true, pointerEvents: 'none' });
-                    if (discrete) nodes.push(removeGlyph({ x: lx + dir * (fontSize + 4), y: py + fontSize / 3, v, fontSize }));
+                if (p == null || Number.isNaN(p)) return;
+                const size = sizes[i];
+                const tickStroke = perTick(stroke, v, i) ?? c.stroke;
+                const labelFill = perTick(c.fill, v, i);
+                const weight = perTick(fontWeight, v, i) ?? c.fontWeight;
+                const text = String(format(v));
+                const lines = linesOf(text);
+                const paint = {
+                    fill: labelFill, fontSize: c.fontSize, ...font,
+                    ...(weight != null ? { fontWeight: weight } : {}),
+                    ...(lines.length > 1 ? { lines, lineHeight: lineH } : {}),
+                };
+                // Labels sit one row past the LONGEST tick, so a long tick on one
+                // value doesn't knock its label out of line.
+                const reachOut = maxTick + c.tickPadding;
+                if (size > 0) {
+                    nodes.push(isX
+                        ? { type: 'line', x1: t.x + p, x2: t.x + p, y1: t.y, y2: t.y + dir * size, stroke: tickStroke, strokeWidth: c.strokeWidth, background: true, pointerEvents: 'none' }
+                        : { type: 'line', x1: t.x, x2: t.x + dir * size, y1: t.y + p, y2: t.y + p, stroke: tickStroke, strokeWidth: c.strokeWidth, background: true, pointerEvents: 'none' });
                 }
-            }
+                /** @type {any} */
+                let label;
+                if (c.labelAngle) {
+                    // Rotated about the point just past the tick, with the text running
+                    // AWAY from the axis: its end sits at the tick when it rises to
+                    // the right of an x axis below the plot (or to the left of a y
+                    // axis), its start otherwise.
+                    const up = c.labelAngle > 0;
+                    const ends = isX ? (dir > 0 ? up : !up) : dir < 0;
+                    label = {
+                        type: 'text',
+                        x: isX ? t.x + p : t.x + dir * reachOut,
+                        y: isX ? t.y + dir * reachOut : t.y + p,
+                        text, textAnchor: ends ? 'end' : 'start', dominantBaseline: 'central',
+                        angle: c.labelAngle, ...paint,
+                    };
+                } else if (isX) {
+                    // A multi-line label grows away from the axis: down below the
+                    // plot, up above it.
+                    label = {
+                        type: 'text', x: t.x + p, y: t.y + dir * (reachOut + c.fontSize * 0.7),
+                        text, textAnchor: 'middle', ...paint,
+                        ...(lines.length > 1 ? { lineAnchor: dir > 0 ? 'top' : 'bottom' } : {}),
+                    };
+                } else {
+                    label = {
+                        type: 'text', x: t.x + dir * reachOut, y: t.y + p + c.fontSize / 3,
+                        text, textAnchor: dir < 0 ? 'end' : 'start', ...paint,
+                    };
+                }
+                if (discrete) {
+                    nodes.push({ ...label, ...categoryLabel({ x: label.x, y: label.y, textAnchor: label.textAnchor, v, format, fill: labelFill, fontSize: c.fontSize }) });
+                    nodes.push(isX
+                        ? removeGlyph({ x: label.x, y: label.y + c.fontSize, v, fontSize: c.fontSize })
+                        : removeGlyph({ x: label.x + dir * (c.fontSize + 4), y: label.y, v, fontSize: c.fontSize }));
+                } else {
+                    nodes.push({ ...label, background: true, pointerEvents: 'none' });
+                }
+            });
 
             // Editable affordances past the ticks: a "+" to add a category, or the two
             // numeric end-handles the axisDrag driver grabs.
             if (discrete) {
-                const addX = isX ? t.x + width + fontSize : t.x;
-                const addY = isX ? t.y + dir * (tickSize + fontSize) : t.y + height + dir * (tickSize + fontSize);
+                const addX = isX ? t.x + width + c.fontSize : t.x;
+                const addY = isX ? t.y + dir * (c.tickSize + c.fontSize) : t.y + height + dir * (c.tickSize + c.fontSize);
                 nodes.push({
                     type: 'text', x: addX, y: addY, text: '＋', textAnchor: 'middle',
-                    fill: handleColor, fontSize: fontSize + 4, cursor: 'pointer',
+                    fill: handleColor, fontSize: c.fontSize + 4, cursor: 'pointer',
                     addCategory: true, editText: true, index: 0
                 });
             } else if (continuous) {
@@ -354,25 +519,27 @@ export function axis(options = {}) {
             // the labels or was clipped, and nearly every author dropped it.
             // `titleAngle` overrides the rotation (0 for a horizontal y title).
             if (title) {
+                const titlePaint = {
+                    fill: c.titleFill, fontSize: c.titleFontSize, ...font,
+                    ...(c.titleFontWeight != null ? { fontWeight: c.titleFontWeight } : {}),
+                    background: true, pointerEvents: 'none',
+                };
                 if (isX) {
                     nodes.push({
-                        type: 'text', x: t.x + width / 2, y: t.y + dir * (tickSize + fontSize * 2.4),
-                        text: title, textAnchor: 'middle', fill, fontSize: fontSize + 1,
-                        background: true, pointerEvents: 'none',
+                        type: 'text', x: t.x + width / 2,
+                        y: t.y + dir * (reach.far + c.titlePadding + c.fontSize * 0.5 + c.titleFontSize * 0.85),
+                        text: title, textAnchor: 'middle', ...titlePaint,
                         ...(titleAngle ? { angle: titleAngle } : {}),
                     });
                 } else {
-                    let labelW = 0;
-                    for (const v of values) labelW = Math.max(labelW, measureText(String(format(v)), { fontSize }));
                     const angle = titleAngle != null ? titleAngle : (dir < 0 ? 90 : -90);
-                    const gap = angle ? fontSize * 0.9 : fontSize * 1.2;
+                    const gap = angle ? c.fontSize * 0.9 : c.fontSize * 1.2;
                     nodes.push({
-                        type: 'text', x: t.x + dir * (tickSize + 4 + labelW + gap), y: t.y + height / 2,
+                        type: 'text', x: t.x + dir * (reach.far + 1 + gap + c.titlePadding), y: t.y + height / 2,
                         // Rotated, the title is centred on its line; flat, it hangs
                         // AWAY from the labels so it never sits on top of them.
                         text: title, textAnchor: angle ? 'middle' : (dir < 0 ? 'end' : 'start'),
-                        fill, fontSize: fontSize + 1,
-                        background: true, pointerEvents: 'none',
+                        ...titlePaint,
                         ...(angle ? { angle } : {}),
                     });
                 }
@@ -385,6 +552,11 @@ export function axis(options = {}) {
 
 /**
  * The shared grid builder — full-span lines across the plot, one per tick.
+ *
+ * An `auto` grid is one the THEME asked for (`theme.grid.show`), which the
+ * implicit axes add on every positional channel: it draws its lines only when the
+ * theme's `show` covers its scale's kind, and its zero line whenever the theme sets
+ * one. Written by hand, a grid always draws.
  * @param {any} [options]
  * @returns {import('../types').Mark}
  */
@@ -394,22 +566,31 @@ export function grid(options = {}) {
         channel = 'x',
         ticks = 5,
         tickValues,
-        // Grid line colour/width default to the theme's grid tokens (build-time).
+        // Line paint defaults to the theme's grid tokens (build-time). `stroke`,
+        // `strokeWidth` and `strokeDash` also take `(value, index) => …`.
         stroke: strokeOpt,
         strokeWidth: strokeWidthOpt,
+        strokeDash: strokeDashOpt,
+        opacity: opacityOpt,
+        // An emphasised line at 0 (continuous scales only): `true` for the theme's
+        // zero style, an object for one of its own, `false` for none.
+        zero: zeroOpt,
         id,
     } = options;
 
     // A grid has no anchor — it spans the plot — so its direction is the channel's.
     const isX = channel === 'x';
 
-    return {
+    /** @type {import('../types').Mark & { auto?: boolean }} */
+    const mark = {
         id,
         type: 'grid',
         isGrid: true,
         views: 'scale',
         channel,
         layer: 'background',
+        // Set by the implicit-axes layer (core/axes.js) on a grid the THEME asked for.
+        auto: false,
         /**
          * @param {any[]} _data
          * @param {import('../types').ScaleMap} scales
@@ -421,30 +602,60 @@ export function grid(options = {}) {
             const scale = scales[channel];
             if (!scale) return [];
             const thm = themeOf(scales);
-            const stroke = strokeOpt ?? thm.grid.stroke;
-            const strokeWidth = strokeWidthOpt ?? thm.grid.strokeWidth;
+            const g = /** @type {any} */ (thm.grid);
+            const continuous = scale.kind === 'continuous';
+            const show = g.show || 'none';
+            // 'value' is the axis the VALUE runs along: the continuous one, or y
+            // when both are (a line over time grids its values, not its dates).
+            const other = /** @type {any} */ (scales)[isX ? 'y' : 'x'];
+            const isValueAxis = continuous && (!(other && other.kind === 'continuous') || !isX);
+            const drawLines = !mark.auto || show === 'all'
+                || (show === 'continuous' && continuous)
+                || (show === 'value' && isValueAxis);
             const { values } = tickData(scale, { ticks, tickValues });
+            /** @param {number} p @param {any} paint */
+            const lineAt = (p, paint) => (isX
+                ? { type: 'line', x1: p, x2: p, y1: 0, y2: height, ...paint, background: true, pointerEvents: 'none' }
+                : { type: 'line', x1: 0, x2: width, y1: p, y2: p, ...paint, background: true, pointerEvents: 'none' });
 
             /** @type {import('../types').FeatureNode[]} */
             const nodes = [];
-            for (const v of values) {
-                const p = positionOnScale(scale, v);
-                if (p == null || Number.isNaN(p)) continue;
-                if (isX) {
-                    nodes.push({
-                        type: 'line', x1: p, x2: p, y1: 0, y2: height,
-                        stroke, strokeWidth, background: true, pointerEvents: 'none'
-                    });
-                } else {
-                    nodes.push({
-                        type: 'line', x1: 0, x2: width, y1: p, y2: p,
-                        stroke, strokeWidth, background: true, pointerEvents: 'none'
-                    });
+            if (drawLines) {
+                values.forEach((v, i) => {
+                    const p = positionOnScale(scale, v);
+                    if (p == null || Number.isNaN(p)) return;
+                    const dash = perTick(strokeDashOpt, v, i) ?? g.strokeDash;
+                    const opacity = opacityOpt ?? g.opacity;
+                    nodes.push(lineAt(p, {
+                        stroke: perTick(strokeOpt, v, i) ?? g.stroke,
+                        strokeWidth: perTick(strokeWidthOpt, v, i) ?? g.strokeWidth,
+                        ...(dash ? { strokeDasharray: dash } : {}),
+                        ...(opacity != null ? { opacity } : {}),
+                    }));
+                });
+            }
+            // The zero line, last so it sits over the gridlines it crosses.
+            const zero = zeroOpt === false ? null
+                : zeroOpt && typeof zeroOpt === 'object' ? { ...(g.zero || {}), ...zeroOpt }
+                    : zeroOpt === true ? (g.zero || { stroke: thm.axis.stroke, strokeWidth: 1 })
+                        : g.zero;
+            if (zero && continuous) {
+                const dom = /** @type {any[]} */ (scale.domain ? scale.domain() : []).map(numOf);
+                if (Math.min(...dom) <= 0 && Math.max(...dom) >= 0) {
+                    const p = positionOnScale(scale, 0);
+                    if (p != null && !Number.isNaN(p)) {
+                        nodes.push(lineAt(p, {
+                            stroke: zero.stroke || thm.axis.stroke,
+                            strokeWidth: zero.strokeWidth ?? 1,
+                            ...(zero.strokeDash ? { strokeDasharray: zero.strokeDash } : {}),
+                        }));
+                    }
                 }
             }
             return nodes;
         }
     };
+    return mark;
 }
 
 /** @param {any} [options] @returns {import('../types').Mark} */

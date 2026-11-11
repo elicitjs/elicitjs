@@ -16,6 +16,7 @@ import { D3Renderer } from '../renderers/d3-renderer/index.js';
 import { resolveEffects, stateEffectNodes, outlineNodes, effectStyleFor, elementEffectOf } from './effects.js';
 import { resolveTheme } from './theme.js';
 import { autoAxes } from './axes.js';
+import { panelNodes } from './panel.js';
 import { reserveLegends, legendsFromChannels } from './legends.js';
 import { reserveTitles, titleNodes } from './titles.js';
 import {
@@ -127,7 +128,7 @@ export function Elicit(spec) {
     // before autoLegends so a minted legend counts as "explicit" for its channel
     // and the implicit layer doesn't add a second one beside it.
     const features = [
-        ...autoAxes(userFeatures, axesOpt),
+        ...autoAxes(userFeatures, axesOpt, theme),
         ...userFeatures,
         ...legendsFromChannels(userFeatures, legends),
     ].flat(Infinity);
@@ -1138,6 +1139,8 @@ export function Elicit(spec) {
             built.push({ glyph: feature.glyph, nodes });
         });
 
+        // The plot area's own surface (theme.panel), first so it is the floor.
+        panelNodes(theme, innerWidth, innerHeight).forEach((/** @type {any} */ node) => scene.add(node));
         paintOrder(built).forEach((/** @type {any} */ node) => scene.add(node));
         // The chart's title block and caption, as background chrome.
         if (spec.title || spec.subtitle || spec.caption) {

@@ -55,7 +55,7 @@ export function point(options = {}) {
          * @returns {import('../types').NodeBox}
          */
         nodeBox: (d, i, rows, scales, width, height) => {
-            const r = Math.max(0, +encodeChannel(scales, channels, 'size', d, 5, i, rows) || 0);
+            const r = Math.max(0, +encodeChannel(scales, channels, 'size', d, markDefaults(scales, 'point', {}).size ?? 5, i, rows) || 0);
             return {
                 cx: encodeChannel(scales, channels, 'x', d, width / 2, i, rows),
                 cy: encodeChannel(scales, channels, 'y', d, height / 2, i, rows),
@@ -82,7 +82,7 @@ export function point(options = {}) {
                 const style = resolveStyle(scales, channels, d, pointDefaults, i, currentData);
                 const cx = encodeChannel(scales, channels, 'x', d, width / 2, i, currentData);
                 const cy = encodeChannel(scales, channels, 'y', d, height / 2, i, currentData);
-                const size = encodeChannel(scales, channels, 'size', d, 5, i, currentData);
+                const size = encodeChannel(scales, channels, 'size', d, pointDefaults.size ?? 5, i, currentData);
                 const angle = encodeAngle(scales, channels, 'angle', d, 0, i, currentData);
                 // A `symbol` channel turns the dot into a glyph (emoji / unicode
                 // shape) — the same category->encoding path, rendered as text. `size`

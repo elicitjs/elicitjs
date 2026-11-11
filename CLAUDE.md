@@ -379,6 +379,20 @@ and painted by the renderers (`<linearGradient>` in defs, `createLinearGradient`
 canvas); an effect restyle still wins. A missing value (null/NaN) BREAKS a line or
 band and draws no handle (`core/curves.js`, `defined`); there is no option for it.
 
+**A theme is DATA, every chrome option is also a theme token, and a named theme is a
+partial.** `core/theme.js` owns the tokens and `resolveTheme`; `core/themes.js` holds
+the named themes (`theme: "nyt"`, or `{ extends: "nyt", … }`), fourteen of them
+transcribed from Flint's presets through `fromFlint` — add a preset as a row in
+Flint's vocabulary, not as hand-mapped tokens. An axis option and its `theme.axis`
+token share ONE name and resolve through `chromeOf` (option > `axis.discrete` /
+`axis.continuous` by the scale's `kind` > `axis` token), which `measureTitle` and
+`build` both read, so what the engine reserves and what the axis draws cannot
+disagree. Per-tick FUNCTIONS live on the options only (`tickSize: (v, i) => …`);
+the theme stays functions-free so it deep-merges. A grid the theme asks for
+(`grid.show`, `grid.zero`) is injected by `autoAxes` with an internal `auto` flag,
+and grids go BEFORE axes so a spine paints over its gridline. A new default must
+reproduce the old look exactly (legend titles stay unbolded, `show: 'none'`).
+
 **`plot.shape` is a point that draws a PATH.** One path per row from a `symbol`
 channel (an ordinal scale onto shape NAMES — d3's circle/square/triangle/diamond/
 star/cross/wye — or SVG path strings) or a `path` option; `plot/shapes.js` keeps a

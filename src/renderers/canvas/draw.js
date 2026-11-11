@@ -227,9 +227,9 @@ function text(ctx, node, defaults, anchorDefault) {
     if (node.text == null) return;
     withAngle(ctx, node, () => {
         const s = styleOf(node, defaults);
-        const family = (activeFont && activeFont.family) || 'sans-serif';
+        const family = node.fontFamily || (activeFont && activeFont.family) || 'sans-serif';
         const size = node.fontSize != null ? node.fontSize : ((activeFont && activeFont.size) || 10);
-        ctx.font = `${node.fontWeight != null ? node.fontWeight + ' ' : ''}${size}px ${family}`;
+        ctx.font = `${node.fontStyle ? node.fontStyle + ' ' : ''}${node.fontWeight != null ? node.fontWeight + ' ' : ''}${size}px ${family}`;
         ctx.textAlign = ALIGN[node.textAnchor || anchorDefault] || 'start';
         ctx.textBaseline = BASELINE[node.dominantBaseline] || 'alphabetic';
 

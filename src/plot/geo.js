@@ -14,7 +14,7 @@
 
 import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, resolveHandles, markCommon, rawChannel, orderFieldOf, seriesKeyOf } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
-import { textNodeAt } from './text.js';
+import { textNodeAt, TEXT_RAW_CHANNELS } from './text.js';
 import { resolveFormat } from '../format.js';
 import { warn } from '../core/dev.js';
 import { projectPoint, projectBounds } from '../core/projection.js';
@@ -618,7 +618,7 @@ export function geoText(options = {}) {
         ...markCommon(opts),
         type: 'geoText',
         channels,
-        rawChannels: ['lon', 'lat'],
+        rawChannels: ['lon', 'lat', ...TEXT_RAW_CHANNELS],
         supportsGeo: true,
         lonKey,
         latKey,

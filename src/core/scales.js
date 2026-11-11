@@ -182,7 +182,7 @@ export function createScale(spec, range) {
         scale = d3.scaleTime().domain(spec.domain.map(toDate)).range(range);
     } else if (type === 'band') {
         scale = d3.scaleBand().domain(spec.domain).range(range)
-            .padding(spec.padding != null ? spec.padding : 0.1);
+            .padding(spec.padding != null ? spec.padding : (spec.bandPadding != null ? spec.bandPadding : 0.1));
     } else if (type === 'point') {
         scale = d3.scalePoint().domain(spec.domain).range(range)
             .padding(spec.padding != null ? spec.padding : 0.5);

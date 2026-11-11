@@ -24,7 +24,7 @@ import { resolveTheme } from '../core/theme.js';
  * DEFAULT_THEME < setTheme() base < the widget's own `theme` option — the same
  * precedence the engine applies to `spec.theme`, so the baked-in mark colour and the
  * live affordance colours always agree.
- * @param {import('../types').DeepPartial<import('../types').Theme> | undefined} [theme]
+ * @param {import('../types').ThemeSpec | undefined} [theme]
  * @returns {import('../types').Theme}
  */
 export function widgetTheme(theme) {

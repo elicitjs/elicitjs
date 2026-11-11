@@ -120,6 +120,9 @@ function buildBar(options) {
         // A gradient fill ({ stops, direction }), stamped on each bar's rect as
         // `fillGradient` for the renderers' <defs> / createLinearGradient.
         gradient,
+        // Corner radius in px, on every bar (each segment of a stack too). Unset,
+        // it is the theme's `marks.bar.rx` — a rounded house style is one token.
+        rx: rxOpt,
     } = opts;
 
     // Channel-native: read the x/y field from the channels, falling back to the
@@ -187,6 +190,7 @@ function buildBar(options) {
             const barDefaults = markDefaults(scales, 'bar', doStack
                 ? { fill: themeOf(scales).ink, stroke: themeOf(scales).handleStroke, strokeWidth: 1 }
                 : { fill: themeOf(scales).ink });
+            const rx = rxOpt ?? barDefaults.rx;
 
             // One handle contract for every mark that draws one: shared radius
             // default, one meaning per `handles` value, paint from the theme.
@@ -249,6 +253,7 @@ function buildBar(options) {
                     return {
                         type: 'rect',
                         ...(gradient ? { fillGradient: gradient } : {}),
+                        ...(rx ? { rx } : {}),
                         x: lo,
                         y: bandStart,
                         width: hi - lo,
@@ -286,6 +291,7 @@ function buildBar(options) {
                 return {
                     type: 'rect',
                     ...(gradient ? { fillGradient: gradient } : {}),
+                    ...(rx ? { rx } : {}),
                     x: bandStart,
                     y: lo,
                     width: thickness,

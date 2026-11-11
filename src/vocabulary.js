@@ -31,7 +31,8 @@ export const MARK_UNIVERSAL_OPTIONS = ['channels', 'id', 'edits', 'table', 'tip'
  *  @type {string[]} */
 export const MARK_SHORTHANDS = [
     'fill', 'stroke', 'strokeWidth', 'strokeDash', 'opacity', 'fillOpacity', 'strokeOpacity',
-    'size', 'symbol', 'text', 'fontSize', 'textAnchor', 'lineAnchor', 'dx', 'dy',
+    'size', 'symbol', 'text', 'fontSize', 'fontWeight', 'fontStyle', 'fontFamily',
+    'textAnchor', 'lineAnchor', 'dx', 'dy',
     'angle',
 ];
 
@@ -50,7 +51,7 @@ export const GUIDE_UNIVERSAL_OPTIONS = ['id'];
 export const MARK_OPTIONS = {
     arc: ['outerRadius', 'innerRadius', 'padAngle', 'arc', 'start', 'end', 'handles', 'handleSize', 'handleColor'],
     area: ['orientation', 'curve', 'handles', 'handleSize', 'handleColor', 'connect', 'gradient'],
-    bar: ['orientation', 'stack', 'handles', 'handleSize', 'handleColor', 'gradient'],
+    bar: ['orientation', 'stack', 'handles', 'handleSize', 'handleColor', 'gradient', 'rx'],
     composite: ['parts', 'discreteScale'],
     curve: ['orientation', 'length'],
     dotStack: ['orientation', 'gap', 'ghost', 'label'],
@@ -92,9 +93,11 @@ export const MARK_OPTIONS = {
 export const ELEMENT_OPTIONS = {
     axis: [
         'channel', 'anchor', 'transform', 'ticks', 'tickValues', 'tickFormat', 'tickSize',
-        'title', 'titleAngle', 'stroke', 'fill', 'fontSize', 'grid', 'handleColor', 'handleSize',
+        'tickPadding', 'title', 'titleAngle', 'stroke', 'strokeWidth', 'line', 'fill', 'fontSize',
+        'fontFamily', 'fontWeight', 'labelAngle', 'titleFill', 'titleFontSize', 'titleFontWeight',
+        'titlePadding', 'offset', 'grid', 'handleColor', 'handleSize',
     ],
-    grid: ['channel', 'ticks', 'tickValues', 'stroke', 'strokeWidth'],
+    grid: ['channel', 'ticks', 'tickValues', 'stroke', 'strokeWidth', 'strokeDash', 'opacity', 'zero'],
     legend: [
         'channel', 'anchor', 'orient', 'swatchSize', 'gap', 'labelWidth', 'rampLength',
         'rampThickness', 'ticks', 'tickFormat', 'title', 'row', 'stroke', 'fill',

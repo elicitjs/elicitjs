@@ -180,8 +180,9 @@ export function legend(options = {}) {
         // Vertical (a stacked column) on the sides, horizontal (a row) top/bottom;
         // overridable.
         orient: orientOpt,
-        swatchSize = 14,
-        gap = 6,
+        // Swatch geometry; unset, the theme's `guide.legend` tokens (14 / 6).
+        swatchSize: swatchSizeOpt,
+        gap: gapOpt,
         labelWidth: labelWidthOpt,
         rampLength = 140,
         rampThickness = 12,
@@ -239,6 +240,18 @@ export function legend(options = {}) {
     // build closure reads, so the engine can place the legend without widening
     // build()'s signature.
     const place = { offset: 0, size: 0 };
+
+    /** Swatch geometry and title weight: option > theme legend token > default.
+     *  @param {any} thm */
+    const geometryOf = (thm) => {
+        const lt = thm.guide.legend || {};
+        return {
+            swatchSize: swatchSizeOpt ?? lt.swatchSize ?? 14,
+            gap: gapOpt ?? lt.gap ?? 6,
+            swatchRadius: lt.swatchRadius ?? 0,
+            titleWeight: lt.titleFontWeight ?? null,
+        };
+    };
 
     /**
      * The domain values a discrete legend lists, or the [lo,hi] a ramp spans, plus
@@ -299,11 +312,12 @@ export function legend(options = {}) {
             const scale = scaleOf(scales);
             if (!scale || typeof scale.domain !== 'function') return null;
             const thm = themeOf(scales);
+            const { swatchSize, gap, titleWeight } = geometryOf(thm);
             const { form, values, labelW, fontSize } = readScale(scale, thm);
             const titleText = legendTitle(title, field, scale);
             const titlePad = titleText ? fontSize + 4 : 0;
             // The title is part of EVERY form's band, not just the swatches'.
-            const titleW = titleText ? measureText(titleText, { fontSize: fontSize + 1, fontWeight: 600 }) + 2 : 0;
+            const titleW = titleText ? measureText(titleText, { fontSize: fontSize + 1, fontWeight: titleWeight ?? 600 }) + 2 : 0;
             /** @param {{ width: number, height: number }} box */
             const withTitle = (box) => ({ width: Math.max(box.width, titleW), height: box.height });
 
@@ -382,6 +396,7 @@ export function legend(options = {}) {
             }
 
             const thm = themeOf(scales);
+            const { swatchSize, gap, swatchRadius, titleWeight } = geometryOf(thm);
             const swatchStroke = strokeOpt ?? (thm.guide.legend.stroke || '#374151');
             const labelFill = fillOpt ?? (thm.guide.legend.labelFill || '#374151');
             // Shared handle contract (plot/mark.js) — legend used to hard-code size
@@ -413,6 +428,7 @@ export function legend(options = {}) {
                 nodes.push({
                     type: 'text', x: cx0, y: cy0 + fontSize, text: titleText,
                     textAnchor: 'start', fill: labelFill, fontSize: fontSize + 1,
+                    ...(titleWeight != null ? { fontWeight: titleWeight } : {}),
                     background: true, pointerEvents: 'none',
                 });
                 contentTop = cy0 + fontSize + 4;
@@ -462,7 +478,7 @@ export function legend(options = {}) {
             const shared = {
                 scale, values, format, cx0, cy0: contentTop, vertical, anchor,
                 fontSize, swatchStroke, labelFill, editable, domainEditable,
-                handleColor, data, channel, field,
+                handleColor, data, channel, field, swatchRadius,
                 targetRow, targetRows,
                 currentStroke: thm.guide.legend.currentStroke || '#111827',
                 currentWidth: thm.guide.legend.currentWidth ?? 2,
@@ -649,10 +665,12 @@ function buildWeights(nodes, o) {
  * than a colour and so need a colour to be shown IN (a size dot, an opacity chip).
  * Those two used to be literals — `#64748b` and `#334155` — so a themed chart got
  * two slate shapes that matched nothing else on the page.
- * @param {{ channel: string, x: number, y: number, size: number, encoded: any, stroke: string, ink: string, interactive: boolean }} o
+ * `radius` rounds a colour or opacity chip (the theme's `guide.legend.swatchRadius`).
+ * @param {{ channel: string, x: number, y: number, size: number, encoded: any, stroke: string, ink: string, interactive: boolean, radius?: number }} o
  * @returns {any}
  */
-function swatchNode({ channel, x, y, size, encoded, stroke, ink, interactive }) {
+function swatchNode({ channel, x, y, size, encoded, stroke, ink, interactive, radius = 0 }) {
+    const round = radius > 0 ? { rx: Math.min(radius, size / 2) } : {};
     const base = interactive ? {} : { background: true, pointerEvents: 'none' };
     if (channel === 'symbol') {
         // A SHAPE identity (a name, or an SVG path — what plot/shape.js draws) is
@@ -677,13 +695,13 @@ function swatchNode({ channel, x, y, size, encoded, stroke, ink, interactive }) 
         return { type: 'circle', cx: x + size / 2, cy: y + size / 2, r, fill: ink, stroke, strokeWidth: 1, ...base };
     }
     if (channel === 'opacity') {
-        return { type: 'rect', x, y, width: size, height: size, fill: ink, fillOpacity: Number(encoded), stroke, strokeWidth: 1, ...base };
+        return { type: 'rect', x, y, width: size, height: size, fill: ink, fillOpacity: Number(encoded), stroke, strokeWidth: 1, ...round, ...base };
     }
     if (channel === 'strokeDash') {
         // A dash pattern is shown as a short stroked segment in the legend ink.
         return { type: 'line', x1: x, x2: x + size, y1: y + size / 2, y2: y + size / 2, stroke: ink, strokeWidth: 2, strokeDasharray: String(encoded), ...base };
     }
-    return { type: 'rect', x, y, width: size, height: size, fill: encoded, stroke, strokeWidth: 1, ...base };
+    return { type: 'rect', x, y, width: size, height: size, fill: encoded, stroke, strokeWidth: 1, ...round, ...base };
 }
 
 /**
@@ -705,7 +723,7 @@ function swatchNode({ channel, x, y, size, encoded, stroke, ink, interactive }) 
 function buildSwatches(nodes, o) {
     const { domain, cx0, cy0, vertical, swatchSize, gap, fontSize, swatchStroke, labelFill,
         editable, domainEditable, handleColor, targetRow, targetRows, scale, channel, data, field,
-        currentStroke, currentWidth } = o;
+        currentStroke, currentWidth, swatchRadius } = o;
     // A picker needs a target ROW; a domain edit needs only the scale. So the chip
     // is a live mark-layer node if EITHER is armed — reading one flag for both is
     // what would leave a rename-only legend inert on a chart with no selection.
@@ -744,7 +762,7 @@ function buildSwatches(nodes, o) {
         const encoded = typeof scale.encode === 'function' ? scale.encode(value) : (typeof scale === 'function' ? scale(value) : value);
         const { sx, sy } = posOf(i);
 
-        const chip = swatchNode({ channel, x: sx, y: sy, size: swatchSize, encoded, stroke: swatchStroke, ink: labelFill, interactive });
+        const chip = swatchNode({ channel, x: sx, y: sy, size: swatchSize, encoded, stroke: swatchStroke, ink: labelFill, interactive, radius: swatchRadius });
         if (interactive) {
             // `category` is read by BOTH interactions — as the value a picker click
             // writes, and as the name a rename commit renames FROM. One key, because

@@ -16,7 +16,7 @@ import { wrapText } from './measure.js';
  * fill so a dark theme's titles stay legible without a token of their own.
  * @param {any} theme
  * @param {'title' | 'subtitle' | 'caption'} part
- * @returns {{ fill: string, fontSize: number, fontWeight: string | number }}
+ * @returns {{ fill: string, fontSize: number, fontWeight: string | number, fontFamily: string | null, fontStyle: string | null }}
  */
 function tokens(theme, part) {
     const t = (theme && theme[part]) || {};
@@ -28,6 +28,8 @@ function tokens(theme, part) {
         fill: t.fill || (part === 'title' ? labelFill : labelFill),
         fontSize: t.fontSize != null ? t.fontSize : defaults.fontSize,
         fontWeight: t.fontWeight != null ? t.fontWeight : defaults.fontWeight,
+        fontFamily: t.fontFamily || null,
+        fontStyle: t.fontStyle || null,
     };
 }
 
@@ -55,12 +57,12 @@ export function reserveTitles(spec, theme, maxWidth = 0) {
 /**
  * A title part's lines, wrapped to the width it may use (the chart's width
  * from the plot's left edge); one line when no width is known.
- * @param {any} text @param {{ fontSize: number, fontWeight: any }} t @param {number} maxWidth
+ * @param {any} text @param {{ fontSize: number, fontWeight: any, fontFamily?: string | null }} t @param {number} maxWidth
  * @returns {string[]}
  */
 function linesOf(text, t, maxWidth) {
     if (text == null || text === '') return [];
-    return wrapText(String(text), { maxWidth: maxWidth > 0 ? maxWidth : 0, fontSize: t.fontSize, fontWeight: t.fontWeight });
+    return wrapText(String(text), { maxWidth: maxWidth > 0 ? maxWidth : 0, fontSize: t.fontSize, fontWeight: t.fontWeight, fontFamily: t.fontFamily || undefined });
 }
 
 /**
@@ -85,7 +87,10 @@ export function titleNodes(spec, theme, { innerWidth, outerHeight, effectiveMarg
         nodes.push({
             type: 'text', x: 0, y: top + t.fontSize * 0.8, text: String(spec[part]),
             ...(lines.length > 1 ? { lines, lineHeight: Math.round(t.fontSize * step) } : {}),
-            fill: t.fill, fontSize: t.fontSize, fontWeight: t.fontWeight, ...chrome,
+            fill: t.fill, fontSize: t.fontSize, fontWeight: t.fontWeight,
+            ...(t.fontFamily ? { fontFamily: t.fontFamily } : {}),
+            ...(t.fontStyle ? { fontStyle: t.fontStyle } : {}),
+            ...chrome,
         });
         return lines.length * t.fontSize * step;
     };

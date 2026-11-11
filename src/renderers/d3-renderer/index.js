@@ -1074,6 +1074,10 @@ export class D3Renderer {
         d.fontSize != null ? d.fontSize : this._themeFontSize(),
       )
       .attr("font-weight", (/** @type {any} */ d) => (d.fontWeight != null ? d.fontWeight : null))
+      // A per-node family / style (a serif headline, an italic caption); unset
+      // inherits the root svg's theme family.
+      .attr("font-family", (/** @type {any} */ d) => (d.fontFamily != null ? d.fontFamily : null))
+      .attr("font-style", (/** @type {any} */ d) => (d.fontStyle != null ? d.fontStyle : null))
       // Math degrees on the node; _angleTransform converts to SVG rotate.
       .attr("transform", (/** @type {any} */ d) => this._angleTransform(d));
 
