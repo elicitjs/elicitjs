@@ -873,24 +873,80 @@ async function main() {
             `joy ${gPlantGrown.joy} -> ${gPlantBloomed.joy}, energy ${gPlantGrown.energy} -> ${gPlantBloomed.energy}`);
 
         await gToView('hourglass');
-        const gSandTop = () => gGlyphChart('hourglass').locator('svg rect').evaluateAll((rs) => {
-            const sand = rs.filter((n) => n.getAttribute('fill') === '#eab308')
-                .sort((a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width)[0];
-            const r = sand.getBoundingClientRect();
-            return { x: r.x + r.width / 2, top: r.y, bottom: r.y + r.height };
+        // Two piles share one field over mirrored ranges: the top pile is the
+        // higher of the two sand rects.
+        const gSand = () => gGlyphChart('hourglass').locator('svg rect').evaluateAll((rs) => {
+            const piles = rs.filter((n) => n.getAttribute('fill') === '#eab308')
+                .map((n) => n.getBoundingClientRect()).sort((a, b) => a.y - b.y);
+            const box = (r) => ({ x: r.x + r.width / 2, top: r.y, bottom: r.y + r.height, height: r.height });
+            return { top: box(piles[0]), bottom: box(piles[1]) };
         });
-        const gSand0 = await gSandTop();
+        const gSand0 = await gSand();
         const gWeeks0 = (await gGlyphData('hourglass')).weeks;
-        // Grab near the bottom of the sand, far from its surface: a relative move
-        // must still shift the surface by the drag distance, not jump to the pointer.
-        await mouseDrag(gSand0.x, gSand0.bottom - 4, gSand0.x, gSand0.bottom - 4 - 34);
+        // Grab near the bottom of the top pile, far from its surface: a relative
+        // move must shift the surface by the drag distance, not jump to the pointer.
+        await mouseDrag(gSand0.top.x, gSand0.top.bottom - 4, gSand0.top.x, gSand0.top.bottom - 4 - 28);
         const gWeeks1 = (await gGlyphData('hourglass')).weeks;
-        const gSand1 = await gSandTop();
-        check('glyphs hourglass: dragging the sand up adds whole weeks',
+        const gSand1 = await gSand();
+        check('glyphs hourglass: dragging the top sand up adds whole weeks',
             gWeeks1 > gWeeks0 && Number.isInteger(gWeeks1), `weeks ${gWeeks0} -> ${gWeeks1}`);
-        check('glyphs hourglass: the surface moves with the pointer (relative move, snapped)',
-            Math.abs((gSand0.top - gSand1.top) - 34) < 9, `surface moved ${gSand0.top - gSand1.top}px for a 34px drag`);
+        check('glyphs hourglass: the top surface moves with the pointer (relative move, snapped)',
+            Math.abs((gSand0.top.top - gSand1.top.top) - 28) < 9,
+            `surface moved ${gSand0.top.top - gSand1.top.top}px for a 28px drag`);
+        check('glyphs hourglass: the bottom pile shrinks as the top grows (one field, mirrored ranges)',
+            gSand1.bottom.height < gSand0.bottom.height - 10,
+            `bottom ${gSand0.bottom.height}px -> ${gSand1.bottom.height}px`);
+        await mouseDrag(gSand1.bottom.x, gSand1.bottom.bottom - 4, gSand1.bottom.x, gSand1.bottom.bottom - 4 - 28);
+        const gWeeks2 = (await gGlyphData('hourglass')).weeks;
+        check('glyphs hourglass: dragging the bottom pile up takes the weeks back',
+            gWeeks2 < gWeeks1, `weeks ${gWeeks1} -> ${gWeeks2}`);
 
+        // Positioned glyphs: one per row, placed by the composite's x / y. A gesture
+        // on one glyph must write that row alone.
+        const gPos = (n) => page.locator('#positions .chart').nth(n);
+        const gPosData = (n) => gPos(n).locator(':scope > div').first().evaluate((e) => e.getData());
+        await gPos(0).locator('svg').first().scrollIntoViewIfNeeded();
+        await page.waitForTimeout(150);
+        const gHeads = await gPos(0).locator('svg circle.mark').evaluateAll((cs) => cs
+            .filter((c) => !c.hasAttribute('data-hit') && c.getAttribute('fill') !== 'none')
+            .map((c) => c.getBoundingClientRect())
+            .filter((r) => r.width > 40)
+            // The forehead: clear of the mouth, whose hit path covers the lower face.
+            .map((r) => ({ x: r.x + r.width * 0.42, y: r.y + r.height * 0.22 })));
+        check('glyphs positions: one face per row', gHeads.length === 5, `${gHeads.length} heads`);
+        const gFaces0 = await gPosData(0);
+        await mouseDrag(gHeads[0].x, gHeads[0].y, gHeads[0].x + 40, gHeads[0].y);
+        const gFaces1 = await gPosData(0);
+        const gChanged = gFaces1.map((d, i) => d.feeling !== gFaces0[i].feeling);
+        check('glyphs positions: sliding one head colours that face alone',
+            gChanged.filter(Boolean).length === 1, `changed rows: ${gChanged}`);
+        check('glyphs positions: a plain drag keeps every face where it is',
+            gFaces1.every((d, i) => d.slept === gFaces0[i].slept && d.worked === gFaces0[i].worked));
+        // Shift flips the arbitration: every part's edit declines (when.noShift),
+        // and the composite's nearest-pick move (when.shift) takes the drag.
+        await page.keyboard.down('Shift');
+        await mouseDrag(gHeads[0].x, gHeads[0].y, gHeads[0].x + 50, gHeads[0].y - 40);
+        await page.keyboard.up('Shift');
+        const gFaces2 = await gPosData(0);
+        const gMoved = gFaces2.map((d, i) => d.slept !== gFaces1[i].slept || d.worked !== gFaces1[i].worked);
+        check('glyphs positions: Shift-drag moves one face (when.shift on the composite\'s move)',
+            gMoved.filter(Boolean).length === 1, `moved rows: ${gMoved}`);
+        check('glyphs positions: moving a face leaves its answers alone',
+            gFaces2.every((d, i) => d.feeling === gFaces1[i].feeling && d.valence === gFaces1[i].valence));
+        await gPos(2).locator('svg').first().scrollIntoViewIfNeeded();
+        await page.waitForTimeout(150);
+        const gGlass0 = await gPosData(2);
+        const gTopPile = await gPos(2).locator('svg rect').evaluateAll((rs) => {
+            const piles = rs.filter((n) => n.getAttribute('fill') === '#eab308')
+                .map((n) => n.getBoundingClientRect()).sort((a, b) => a.x - b.x || a.y - b.y);
+            const r = piles[0];   // the first task's top pile
+            return { x: r.x + r.width / 2, y: r.y + r.height - 2 };
+        });
+        await mouseDrag(gTopPile.x, gTopPile.y, gTopPile.x, gTopPile.y - 12);
+        const gGlass1 = await gPosData(2);
+        check('glyphs positions: dragging one hourglass changes that task\'s estimate alone',
+            gGlass1[0].weeks > gGlass0[0].weeks && gGlass1.slice(1).every((d, i) => d.weeks === gGlass0[i + 1].weeks),
+            `weeks ${gGlass0.map((d) => d.weeks)} -> ${gGlass1.map((d) => d.weeks)}`);
         // ---- Resize scales the whole glyph (/marks/face) ---------------------
         // `size` is the head's radius AND the frame's half-size, so growing it must
         // grow the eyes with it. That is the frame doing its job: the eye's rx is a
