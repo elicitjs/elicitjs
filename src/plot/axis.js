@@ -17,7 +17,7 @@ import { ELEMENT_OPTIONS } from '../vocabulary.js';
 // translate component(s) — e.g. cross at the origin, or a centred 1D slider axis.
 
 import * as d3 from 'd3';
-import { positionOnScale, isDiscrete } from '../core/scales.js';
+import { positionOnScale, isDiscrete, isBand, bandStartOf, bandwidthOf } from '../core/scales.js';
 import { themeOf, axisToken } from '../core/theme.js';
 import { measureText } from '../core/measure.js';
 import { warnUnknownElementOptions, resolveHandles, elementEdits } from './mark.js';
@@ -174,8 +174,23 @@ function chromeOf(o, scales, scale) {
         titleFontSize: o.titleFontSize ?? tok('titleFontSize') ?? fontSize + 1,
         titleFontWeight: o.titleFontWeight ?? tok('titleFontWeight') ?? null,
         titlePadding: o.titlePadding ?? tok('titlePadding') ?? 0,
+        titleAnchor: o.titleAnchor ?? tok('titleAnchor') ?? 'middle',
+        labelAlign: o.labelAlign ?? tok('labelAlign') ?? null,
+        labelOffset: o.labelOffset ?? tok('labelOffset') ?? 0,
         offset: o.offset ?? 0,
     };
+}
+
+/**
+ * A tick label's text-anchor: `labelAlign` when set, else the side's natural
+ * anchor (centred under an x tick; flush against a y axis, so the text runs away
+ * from the plot).
+ * @param {boolean} isX @param {number} dir @param {any} c resolved chrome
+ * @returns {'start' | 'middle' | 'end'}
+ */
+function labelAnchorOf(isX, dir, c) {
+    if (c.labelAlign) return c.labelAlign;
+    return isX ? 'middle' : (dir < 0 ? 'end' : 'start');
 }
 
 /**
@@ -189,7 +204,7 @@ function chromeOf(o, scales, scale) {
  * @param {number} tickSize the largest tick length (a per-tick size may vary)
  * @returns {{ far: number, labelW: number, lines: number }}
  */
-function labelReach(isX, c, labels, tickSize) {
+function labelReach(isX, c, labels, tickSize, dir = -1) {
     let labelW = 0;
     let lines = 1;
     for (const l of labels) {
@@ -206,10 +221,15 @@ function labelReach(isX, c, labels, tickSize) {
         return { far: base + labelW * along + c.fontSize * across * 0.6, labelW, lines };
     }
     // Unrotated: an x label's baseline sits 0.7em past the padding (its cap height),
-    // every further line one line-height lower; a y label reaches by its width.
-    return isX
-        ? { far: base + c.fontSize * 0.7 + (lines - 1) * lineH, labelW, lines }
-        : { far: base + labelW, labelW, lines };
+    // every further line one line-height lower. A y label reaches by the part of its
+    // width that runs AWAY from the plot, which its alignment decides: all of it
+    // flush against the axis, none of it when `labelAlign` turns it inward (the
+    // space-saving axis, whose labels sit inside the plot on a negative padding).
+    if (isX) return { far: Math.max(0, base + c.fontSize * 0.7 + (lines - 1) * lineH), labelW, lines };
+    const textAnchor = labelAnchorOf(false, dir, c);
+    const outward = textAnchor === 'middle' ? 0.5
+        : (textAnchor === 'end') === (dir < 0) ? 1 : 0;
+    return { far: Math.max(0, base + labelW * outward), labelW, lines };
 }
 
 /**
@@ -258,6 +278,12 @@ export function axis(options = {}) {
         titleFontSize,
         titleFontWeight,
         titlePadding,
+        // Where the title sits ALONG the axis ('start' | 'middle' | 'end' — 'end' is
+        // the right of an x axis and the top of a y axis), and where each label
+        // sits: `labelAlign` its text-anchor, `labelOffset` px along the axis.
+        titleAnchor,
+        labelAlign,
+        labelOffset,
         offset,
         grid = false,
         // Opt-in interactivity: an edit (edit.axis.scale / edit.scale.categories) or
@@ -273,7 +299,8 @@ export function axis(options = {}) {
     } = options;
     const chromeOpts = {
         tickSize, tickPadding, stroke, strokeWidth, line, fill, fontSize, fontFamily,
-        fontWeight, labelAngle, titleFill, titleFontSize, titleFontWeight, titlePadding, offset,
+        fontWeight, labelAngle, titleFill, titleFontSize, titleFontWeight, titlePadding,
+        titleAnchor, labelAlign, labelOffset, offset,
     };
 
     // Which way this axis RUNS. For x/y the channel says it. A `count` axis runs
@@ -307,7 +334,8 @@ export function axis(options = {}) {
         // The longest tick decides how far the labels sit, so they stay in one row.
         const maxTick = sizes.length ? Math.max(...sizes) : c.tickSize;
         const labels = values.map((v) => String(format(v)));
-        return { c, values, format, sizes, maxTick, labels, reach: labelReach(isX, c, labels, maxTick) };
+        const dir = (anchor === 'bottom' || anchor === 'right') ? 1 : -1;
+        return { c, values, format, sizes, maxTick, labels, reach: labelReach(isX, c, labels, maxTick, dir) };
     };
 
     return {
@@ -346,10 +374,13 @@ export function axis(options = {}) {
             const scale = scales[channel];
             if (!scale) return 0;
             const { c, reach } = layout(scales, scale);
-            if (!title && !c.labelAngle && !c.offset && reach.lines <= 1) return 0;
+            if (!title && !c.labelAngle && !c.offset && reach.lines <= 1 && !c.labelAlign) return 0;
             if (!title) return c.offset + reach.far + 2;
             if (isX) return c.offset + reach.far + c.titlePadding + c.fontSize * 0.5 + c.titleFontSize * 1.15 + 2;
             const angle = titleAngle != null ? titleAngle : (anchor === 'left' ? 90 : -90);
+            // A flat title at an END of a y axis sits above (or below) the plot, not
+            // beside the labels: the side only needs room for the labels.
+            if (!angle && c.titleAnchor !== 'middle') return c.offset + reach.far + 2;
             const gap = angle ? c.fontSize * 0.9 : c.fontSize * 1.2;
             const titleExtent = angle ? c.titleFontSize * 0.7 : measureText(String(title), { fontSize: c.titleFontSize, fontWeight: c.titleFontWeight || undefined }) * 1.06;
             return c.offset + reach.far + 1 + gap + c.titlePadding + titleExtent + 2;
@@ -447,23 +478,23 @@ export function axis(options = {}) {
                     const ends = isX ? (dir > 0 ? up : !up) : dir < 0;
                     label = {
                         type: 'text',
-                        x: isX ? t.x + p : t.x + dir * reachOut,
-                        y: isX ? t.y + dir * reachOut : t.y + p,
-                        text, textAnchor: ends ? 'end' : 'start', dominantBaseline: 'central',
+                        x: isX ? t.x + p + c.labelOffset : t.x + dir * reachOut,
+                        y: isX ? t.y + dir * reachOut : t.y + p + c.labelOffset,
+                        text, textAnchor: c.labelAlign || (ends ? 'end' : 'start'), dominantBaseline: 'central',
                         angle: c.labelAngle, ...paint,
                     };
                 } else if (isX) {
                     // A multi-line label grows away from the axis: down below the
                     // plot, up above it.
                     label = {
-                        type: 'text', x: t.x + p, y: t.y + dir * (reachOut + c.fontSize * 0.7),
-                        text, textAnchor: 'middle', ...paint,
+                        type: 'text', x: t.x + p + c.labelOffset, y: t.y + dir * (reachOut + c.fontSize * 0.7),
+                        text, textAnchor: labelAnchorOf(true, dir, c), ...paint,
                         ...(lines.length > 1 ? { lineAnchor: dir > 0 ? 'top' : 'bottom' } : {}),
                     };
                 } else {
                     label = {
-                        type: 'text', x: t.x + dir * reachOut, y: t.y + p + c.fontSize / 3,
-                        text, textAnchor: dir < 0 ? 'end' : 'start', ...paint,
+                        type: 'text', x: t.x + dir * reachOut, y: t.y + p + c.labelOffset + c.fontSize / 3,
+                        text, textAnchor: labelAnchorOf(false, dir, c), ...paint,
                     };
                 }
                 if (discrete) {
@@ -524,24 +555,45 @@ export function axis(options = {}) {
                     ...(c.titleFontWeight != null ? { fontWeight: c.titleFontWeight } : {}),
                     background: true, pointerEvents: 'none',
                 };
+                const at = c.titleAnchor;
                 if (isX) {
                     nodes.push({
-                        type: 'text', x: t.x + width / 2,
+                        type: 'text', x: t.x + (at === 'start' ? 0 : at === 'end' ? width : width / 2),
                         y: t.y + dir * (reach.far + c.titlePadding + c.fontSize * 0.5 + c.titleFontSize * 0.85),
-                        text: title, textAnchor: 'middle', ...titlePaint,
+                        text: title, textAnchor: at, ...titlePaint,
                         ...(titleAngle ? { angle: titleAngle } : {}),
                     });
                 } else {
                     const angle = titleAngle != null ? titleAngle : (dir < 0 ? 90 : -90);
-                    const gap = angle ? c.fontSize * 0.9 : c.fontSize * 1.2;
-                    nodes.push({
-                        type: 'text', x: t.x + dir * (reach.far + 1 + gap + c.titlePadding), y: t.y + height / 2,
-                        // Rotated, the title is centred on its line; flat, it hangs
-                        // AWAY from the labels so it never sits on top of them.
-                        text: title, textAnchor: angle ? 'middle' : (dir < 0 ? 'end' : 'start'),
-                        ...titlePaint,
-                        ...(angle ? { angle } : {}),
-                    });
+                    if (!angle && at !== 'middle') {
+                        // Flat, at an end: past the end of the axis, starting at the
+                        // axis line and running over the plot — Plot's "↑ Frequency",
+                        // Vega-Lite's titleX/titleY. 'end' is the top. Leave room for
+                        // it in the margin on that side.
+                        nodes.push({
+                            type: 'text', x: t.x,
+                            y: at === 'end'
+                                ? t.y - c.titlePadding - c.titleFontSize * 0.5
+                                : t.y + height + c.titlePadding + c.titleFontSize * 1.2,
+                            text: title, textAnchor: dir < 0 ? 'start' : 'end', ...titlePaint,
+                        });
+                    } else {
+                        const gap = angle ? c.fontSize * 0.9 : c.fontSize * 1.2;
+                        // Rotated, the title runs along the axis: 'end' puts it at the
+                        // top, whichever way it reads. Flat and centred, it hangs AWAY
+                        // from the labels so it never sits on top of them.
+                        const readsUp = angle > 0;
+                        const textAnchor = !angle ? (dir < 0 ? 'end' : 'start')
+                            : at === 'middle' ? 'middle'
+                                : (at === 'end') === readsUp ? 'end' : 'start';
+                        nodes.push({
+                            type: 'text', x: t.x + dir * (reach.far + 1 + gap + c.titlePadding),
+                            y: t.y + (at === 'start' ? height : at === 'end' ? 0 : height / 2),
+                            text: title, textAnchor,
+                            ...titlePaint,
+                            ...(angle ? { angle } : {}),
+                        });
+                    }
                 }
             }
 
@@ -575,6 +627,10 @@ export function grid(options = {}) {
         // An emphasised line at 0 (continuous scales only): `true` for the theme's
         // zero style, an object for one of its own, `false` for none.
         zero: zeroOpt,
+        // Where in a BAND a gridline sits: 0 its start edge, 1 its end, 0.5 (the
+        // default) its centre — Vega-Lite's `bandPosition`. 0 draws the lines
+        // BETWEEN the categories instead of through them. Ignored off a band scale.
+        bandPosition: bandPositionOpt,
         id,
     } = options;
 
@@ -613,6 +669,11 @@ export function grid(options = {}) {
                 || (show === 'continuous' && continuous)
                 || (show === 'value' && isValueAxis);
             const { values } = tickData(scale, { ticks, tickValues });
+            const bandPosition = bandPositionOpt ?? g.bandPosition;
+            /** A value's gridline position: its band edge when asked, else its tick. @param {any} v */
+            const at = (v) => (bandPosition != null && isBand(scale)
+                ? bandStartOf(scale, v) + bandwidthOf(scale, 0) * bandPosition
+                : positionOnScale(scale, v));
             /** @param {number} p @param {any} paint */
             const lineAt = (p, paint) => (isX
                 ? { type: 'line', x1: p, x2: p, y1: 0, y2: height, ...paint, background: true, pointerEvents: 'none' }
@@ -622,7 +683,7 @@ export function grid(options = {}) {
             const nodes = [];
             if (drawLines) {
                 values.forEach((v, i) => {
-                    const p = positionOnScale(scale, v);
+                    const p = at(v);
                     if (p == null || Number.isNaN(p)) return;
                     const dash = perTick(strokeDashOpt, v, i) ?? g.strokeDash;
                     const opacity = opacityOpt ?? g.opacity;

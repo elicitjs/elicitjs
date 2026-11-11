@@ -110,6 +110,14 @@ export const DEFAULT_THEME = {
         titleFontWeight: null,
         // Extra gap between the tick labels and the title, in px (added to the default).
         titlePadding: 0,
+        // The title's place along the axis: 'start', 'middle', 'end' (right / top).
+        titleAnchor: 'middle',
+        // A label's text-anchor ('start' | 'middle' | 'end'); null is the side's own
+        // (centred under an x tick, flush against a y axis). `labelOffset` moves
+        // every label along the axis, px. With a negative `tickPadding` these put
+        // the labels inside the plot — the space-saving axis.
+        labelAlign: null,
+        labelOffset: 0,
         // Per-kind overrides (any token above). Empty: both kinds look alike.
         discrete: {},
         continuous: {},
@@ -121,7 +129,9 @@ export const DEFAULT_THEME = {
     // every continuous axis; 'all' every axis.
     // `zero` emphasises the line at 0 on a continuous grid (a baseline rule):
     // null for none, or `{ stroke, strokeWidth, strokeDash }`.
-    grid: { stroke: '#e5e7eb', strokeWidth: 1, strokeDash: null, opacity: null, show: 'none', zero: null },
+    // `bandPosition` puts a band axis's gridlines at that fraction of each band
+    // (0 = between the categories); null is the centre.
+    grid: { stroke: '#e5e7eb', strokeWidth: 1, strokeDash: null, opacity: null, show: 'none', zero: null, bandPosition: null },
 
     // The PLOT AREA's own surface, distinct from `background` (which covers the
     // margins too). `fill` paints behind the grid — the ggplot2 grey panel — and

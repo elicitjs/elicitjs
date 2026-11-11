@@ -95,9 +95,10 @@ export const ELEMENT_OPTIONS = {
         'channel', 'anchor', 'transform', 'ticks', 'tickValues', 'tickFormat', 'tickSize',
         'tickPadding', 'title', 'titleAngle', 'stroke', 'strokeWidth', 'line', 'fill', 'fontSize',
         'fontFamily', 'fontWeight', 'labelAngle', 'titleFill', 'titleFontSize', 'titleFontWeight',
-        'titlePadding', 'offset', 'grid', 'handleColor', 'handleSize',
+        'titlePadding', 'titleAnchor', 'labelAlign', 'labelOffset', 'offset', 'grid',
+        'handleColor', 'handleSize',
     ],
-    grid: ['channel', 'ticks', 'tickValues', 'stroke', 'strokeWidth', 'strokeDash', 'opacity', 'zero'],
+    grid: ['channel', 'ticks', 'tickValues', 'stroke', 'strokeWidth', 'strokeDash', 'opacity', 'zero', 'bandPosition'],
     legend: [
         'channel', 'anchor', 'orient', 'swatchSize', 'gap', 'labelWidth', 'rampLength',
         'rampThickness', 'ticks', 'tickFormat', 'title', 'row', 'stroke', 'fill',

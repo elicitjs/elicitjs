@@ -4560,6 +4560,19 @@ async function main() {
         check('axis: labelAngle turns the tick labels', thmTurned === 5, `thmTurned=${thmTurned}`);
         const thmTwoLine = await page.$$eval('#styling svg text', (ts) => ts.filter((t) => t.querySelectorAll('tspan').length === 2).length);
         check('axis: a "\\n" in a tick label paints two lines', thmTwoLine >= 2, `two-line labels=${thmTwoLine}`);
+        // The space-saving axis: labels left-anchored INSIDE the plot (past the
+        // first band-edge gridline), above their bars.
+        const thmInside = await page.$$eval('#styling svg', (svgs) => {
+            const svg = svgs[svgs.length - 1];
+            const label = [...svg.querySelectorAll('text')].find((t) => t.textContent === 'Engineering');
+            const bars = [...svg.querySelectorAll('rect.mark')].map((r) => r.getBoundingClientRect());
+            if (!label || !bars.length) return null;
+            const lb = label.getBoundingClientRect();
+            const left = Math.min(...bars.map((b) => b.left));
+            return { anchor: label.getAttribute('text-anchor'), inside: lb.left >= left, above: bars.some((b) => lb.bottom <= b.top + 1 && b.top - lb.bottom < 12) };
+        });
+        check('axis: labelAlign + negative tickPadding put labels inside the plot, above their bars',
+            !!thmInside && thmInside.anchor === 'start' && thmInside.inside && thmInside.above, JSON.stringify(thmInside));
 
         check('no page/console errors', errors.length === 0, errors.slice(0, 3).join(' | '));
     } finally {

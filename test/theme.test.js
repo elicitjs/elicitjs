@@ -167,6 +167,72 @@ describe('axis styling', () => {
     });
 });
 
+describe('the space-saving axis', () => {
+    const spaceSaving = () => {
+        const el = Elicit({
+            width: 300, height: 180, margins: { top: 20, right: 10, bottom: 30, left: 4 },
+            schema: { k: { type: 'categorical', domain: ['a', 'b', 'c'] }, v: { type: 'quantitative', domain: [0, 10] } },
+            data: [{ k: 'a', v: 4 }, { k: 'b', v: 8 }, { k: 'c', v: 6 }],
+            axes: {
+                x: false,
+                y: {
+                    line: false, tickSize: 0, tickPadding: -5, labelAlign: 'start', labelOffset: -15,
+                    title: 'Origin', titleAngle: 0, titleAnchor: 'end',
+                    grid: { bandPosition: 0 },
+                },
+            },
+            marks: [plot.barX({ channels: { y: { field: 'k', scale: { padding: 0 } }, x: { field: 'v' } } })],
+        });
+        document.body.appendChild(el);
+        return el;
+    };
+
+    it('puts the labels inside the plot, above each band centre', async () => {
+        const el = spaceSaving();
+        await tick();
+        const ls = labels(el).filter((d) => ['a', 'b', 'c'].includes(d.text));
+        expect(ls.every((d) => d.textAnchor === 'start' && d.x === 5)).toBe(true);
+        const bar = nodes(el, 'rect.mark').find((d) => d.data.k === 'a');
+        const centre = bar.y + bar.height / 2;
+        expect(ls.find((d) => d.text === 'a').y).toBeLessThan(centre);
+    });
+
+    it('reserves no side room for inward labels', async () => {
+        const el = spaceSaving();
+        await tick();
+        expect(el.querySelector('g.scene-container').getAttribute('transform')).toMatch(/^translate\(4,/);
+    });
+
+    it('draws band gridlines between the categories', async () => {
+        const el = spaceSaving();
+        await tick();
+        const grid = bgLines(el).filter((d) => d.y1 === d.y2).map((d) => d.y1).sort((a, b) => a - b);
+        // Three bands of a 130px plot with no padding: edges at 0, 43.3, 86.7.
+        expect(grid.length).toBe(3);
+        expect(grid[0]).toBeCloseTo(0, 5);
+        expect(grid[1]).toBeCloseTo(130 / 3, 3);
+    });
+
+    it('sets a flat y title at the top of the axis', async () => {
+        const el = spaceSaving();
+        await tick();
+        const t = labels(el).find((d) => d.text === 'Origin');
+        expect(t.y).toBeLessThan(0);
+        expect(t.textAnchor).toBe('start');
+        expect(t.angle).toBeUndefined();
+    });
+
+    it('anchors a rotated title at either end', async () => {
+        const el = bars({ axes: { x: { title: 'k', titleAnchor: 'end' }, y: { title: 'v', titleAnchor: 'end' } } });
+        await tick();
+        const ty = labels(el).find((d) => d.text === 'v');
+        const tx = labels(el).find((d) => d.text === 'k');
+        expect(ty.y).toBe(0);
+        expect(ty.textAnchor).toBe('end');
+        expect(tx.textAnchor).toBe('end');
+    });
+});
+
 describe('grid, panel, legend and text', () => {
     it('a grid takes a dash, and a zero line', async () => {
         const el = bars({ axes: { x: false, y: { grid: { strokeDash: '1 3', zero: { stroke: 'black', strokeWidth: 2 } } } } });

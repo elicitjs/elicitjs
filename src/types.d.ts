@@ -1515,6 +1515,16 @@ export interface AxisOptions extends ElementOptionsBase {
   titleFontWeight?: string | number;
   /** Extra px between the tick labels and the title. */
   titlePadding?: number;
+  /** The title's place along the axis: 'start', 'middle' (default) or 'end' — the
+   *  right of an x axis, the top of a y axis. A flat (`titleAngle: 0`) y title at
+   *  an end sits past it, over the plot; leave room in that margin. */
+  titleAnchor?: 'start' | 'middle' | 'end';
+  /** Tick-label text-anchor. Default: centred under an x tick, flush against a y
+   *  axis. With a negative `tickPadding`, `'start'` on a left axis puts the labels
+   *  inside the plot. */
+  labelAlign?: 'start' | 'middle' | 'end';
+  /** Px every label moves along the axis (x: right, y: down). */
+  labelOffset?: number;
   /** Move the axis this many px away from the plot. */
   offset?: number;
   /** Also emit a paired gridline element; an object styles it. */
@@ -1540,6 +1550,9 @@ export interface GridOptions extends ElementOptionsBase {
   /** An emphasised line at 0 on a continuous scale: `true` for the theme's
    *  `grid.zero` style, an object for its own, `false` for none. */
   zero?: boolean | { stroke?: string; strokeWidth?: number; strokeDash?: string };
+  /** On a band axis, where in each band a line sits: 0 its start edge (lines
+   *  between the categories), 0.5 its centre (default), 1 its end. */
+  bandPosition?: number;
 }
 
 /** `elements.legend` / `legendColor` / `legendSize` / `legendSymbol` — the
@@ -2201,6 +2214,12 @@ export interface AxisTokens {
   titleFontWeight: string | number | null;
   /** Extra px between the tick labels and the title. */
   titlePadding: number;
+  /** The title's place along the axis; 'end' is the right of x, the top of y. */
+  titleAnchor: 'start' | 'middle' | 'end';
+  /** A tick label's text-anchor; null is the side's own. */
+  labelAlign: 'start' | 'middle' | 'end' | null;
+  /** Px every label moves along the axis. */
+  labelOffset: number;
 }
 
 // The STYLE layer: default colours, fonts, and affordance tokens the library draws
@@ -2249,6 +2268,8 @@ export interface Theme {
     opacity: number | null;
     show: 'none' | 'value' | 'continuous' | 'all';
     zero: { stroke?: string; strokeWidth?: number; strokeDash?: string | null } | null;
+    /** A band axis's gridlines at this fraction of each band; null is the centre. */
+    bandPosition: number | null;
   };
   /** The plot area's own surface (`background` covers the margins too) and frame. */
   panel: { fill: string | null; stroke: string | null; strokeWidth: number };
