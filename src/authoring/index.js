@@ -40,6 +40,9 @@ export {
     encodeAngle,
     // datum -> CATEGORY, the discrete-axis counterpart of encodeChannel.
     categoryOf,
+    // datum -> the interval it occupies across a category axis: its band, or the
+    // sub-band a nested `xOffset`/`yOffset` picks. What a band mark draws in.
+    categorySlot,
     // the standard style channels, resolved onto a scene node.
     resolveStyle,
     // the `symbol` channel -> a glyph string, and the text node that draws one.
@@ -69,6 +72,9 @@ export {
 // it which category a row is in. Capability reads (`kind`), never a scale type.
 export {
     isBand, isDiscrete, bandwidthOf, bandStartOf, bandSpan, baselineOf, rangeExtent,
+    // one category's slot (a band's interval, a point's step), and the offset
+    // scale nested inside an axis for a mark's channel map.
+    slotOf, slotWidthOf, offsetScaleOf,
 } from '../core/scales.js';
 
 // Polar geometry, for a mark drawn around a centre (arc / needle / axisRadial).

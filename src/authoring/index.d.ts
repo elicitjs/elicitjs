@@ -30,6 +30,30 @@
  */
 export function encodeChannel(scales: import("../types.js").ScaleMap, channels: Record<string, any>, channel: string, datum: import("../types.js").Datum | null, fallback?: any, index?: number, data?: import("../types.js").Datum[]): any;
 /**
+ * The interval a datum occupies across a CATEGORY axis: its category's band, or —
+ * when the mark nests `xOffset`/`yOffset` in that axis — the sub-band the second
+ * category picks inside it. The one place a band mark asks "where does my row
+ * sit, and how thick is it", so a grouped bar, a grouped waffle and a dodged tick
+ * are the same three lines in every mark. Resolves the category through
+ * `categoryOf`, so `{ fn }`/`{ datum }` work on both levels.
+ *
+ * A CONTINUOUS offset (a jitter) shifts the whole band to centre on its encoded
+ * position rather than subdividing it, since it names no interval.
+ * @param {import('../types.js').ScaleMap} scales
+ * @param {Record<string, any>} channels
+ * @param {'x' | 'y'} axis the category axis
+ * @param {import('../types.js').Datum} datum
+ * @param {string | undefined} key the mark's xKey/yKey fallback
+ * @param {number} [index]
+ * @param {import('../types.js').Datum[]} [data]
+ * @param {number} [fallbackWidth] thickness with no band (bandwidthOf's fallback)
+ * @returns {{ start: number, width: number }}
+ */
+export function categorySlot(scales: import("../types.js").ScaleMap, channels: Record<string, any>, axis: "x" | "y", datum: import("../types.js").Datum, key: string | undefined, index?: number, data?: import("../types.js").Datum[], fallbackWidth?: number): {
+    start: number;
+    width: number;
+};
+/**
  * Resolve a mark's handle options into the paint every handle node needs.
  *
  * @param {import('../types.js').ScaleMap} scales the scale map (carries the theme)
@@ -283,12 +307,14 @@ export function seriesFieldOf(channels?: Record<string, any>): string | null;
  * indirection is what lets a schema call its tables `claims`/`supports` and
  * need no `table:` written anywhere.
  * @param {any} opts the result of normalizeMarkOptions
- * @returns {{ id: any, edits: any, table: any }}
+ * @returns {{ id: any, edits: any, table: any, tip: any, clip: any }}
  */
 export function markCommon(opts: any): {
     id: any;
     edits: any;
     table: any;
+    tip: any;
+    clip: any;
 };
 /**
  * Desugar top-level constant shorthands into `channels`, without clobbering an
@@ -411,6 +437,37 @@ export function bandwidthOf(scale: any, fallback?: any): any;
  */
 export function bandStartOf(scale: any, value: any, fallback?: any): any;
 /**
+ * The width of ONE category's slot on a discrete axis: a band's bandwidth, a
+ * point's step (the distance between two ticks, centred on each). Undefined for
+ * a continuous scale, which has no slot. What an OFFSET channel's range spans.
+ * @param {any} scale
+ * @returns {number | undefined}
+ */
+export function slotWidthOf(scale: any): number | undefined;
+/**
+ * The pixel interval a category occupies on a discrete axis: a band's own
+ * interval, or a point's step centred on its tick. Null when the scale is not
+ * discrete or the value is not in its domain.
+ * @param {any} scale
+ * @param {any} value
+ * @returns {{ start: number, width: number } | null}
+ */
+export function slotOf(scale: any, value: any): {
+    start: number;
+    width: number;
+} | null;
+/**
+ * The offset scale nested inside a positional axis for one mark's channel map, or
+ * null when the mark declares no offset there, or its parent is not discrete (an
+ * offset subdivides a category's slot; a number line has none). Same lookup as
+ * every encoding read: the (channel, field) key first, the bare channel after.
+ * @param {Record<string, any>} scales
+ * @param {Record<string, any> | undefined} channels
+ * @param {'x' | 'y'} axis
+ * @returns {any}
+ */
+export function offsetScaleOf(scales: Record<string, any>, channels: Record<string, any> | undefined, axis: "x" | "y"): any;
+/**
  * The pixel span a mark occupies ALONG a (possibly categorical) axis — the
  * inverse concern of `bandwidthOf`: not "how thick" but "from where to where".
  * Mark-agnostic so any mark that spans a band (a tick across its category, and
@@ -422,20 +479,29 @@ export function bandStartOf(scale: any, value: any, fallback?: any): any;
  * @param {any} scale the axis scale for the span dimension (may be null/linear)
  * @param {any} value the datum's category on that axis (band case)
  * @param {number} fullLength the inner pixel length of that axis (no-band case)
- * @param {{ inset?: number, length?: number }} [opts]
+ * @param {{ inset?: number, length?: number, slot?: { start: number, width: number } }} [opts]
+ *   `slot` states the interval outright — a mark's `categorySlot`, which is the
+ *   sub-band when an offset is nested in this axis.
  * @returns {[number, number]} [start, end] in pixels
  */
-export function bandSpan(scale: any, value: any, fullLength: number, { inset, length }?: {
+export function bandSpan(scale: any, value: any, fullLength: number, { inset, length, slot }?: {
     inset?: number;
     length?: number;
+    slot?: {
+        start: number;
+        width: number;
+    };
 }): [number, number];
 /**
  * Pixel baseline (value origin) of a value scale — where a bar starts from.
  * Uses 0 when in the domain, clamped into the range so bars never escape it.
+ * With no scale on that axis (a `{ fn }`-only value channel resolves none) the
+ * caller's fallback stands in, rather than a crash in `range()`.
  * @param {any} valueScale
+ * @param {number} [fallback]
  * @returns {number}
  */
-export function baselineOf(valueScale: any): number;
+export function baselineOf(valueScale: any, fallback?: number): number;
 // ── from src/plot/polar.js ──────────────────────────────────────────────────
 /**
  * @param {number} deg
@@ -796,6 +862,18 @@ export type LinkShapeOptions = {
      */
     obstacles?: LinkBox[] | undefined;
     /**
+     * the edge a self-loop leaves by (`loopSides`)
+     */
+    loopOut?: string | undefined;
+    /**
+     * the edge a self-loop returns by
+     */
+    loopIn?: string | undefined;
+    /**
+     * how many loops sit inside this one on its edge
+     */
+    nest?: number | undefined;
+    /**
      * the chart's routing grid, for detours
      */
     grid?: import("../plot/linkRouter.js").RoutingGrid | undefined;
@@ -1106,13 +1184,21 @@ export function makeEdit(spec: any): import("../types.js").Edit;
 export function claimEdge(edit: any, name: string): any;
 /**
  * A fresh series key not already present in the data — the identity of a new line.
- * Uses the smallest non-negative integer free among the existing keys, so colors
- * (an ordinal scale over the keys) stay stable as lines come and go.
+ *
+ * When the schema DECLARES the series field's domain, the key is the first
+ * declared category no row uses (`nextCategory`, which honours `open`): a chart
+ * whose `symbol` domain is ['AAPL', 'IBM'] gets a line called 'IBM', never `0`.
+ * With a closed, exhausted domain there is no legal key — returns undefined and
+ * warns, so the creator refuses instead of minting a value the axis has no room
+ * for. Without a declared domain the key is the smallest non-negative integer
+ * free among the existing keys, so colours (an ordinal scale over the keys) stay
+ * stable as lines come and go.
  * @param {any[]} data
  * @param {string | null} seriesField
- * @returns {number}
+ * @param {Record<string, any> | null} [schema] the table's field schema
+ * @returns {any} the key, or undefined when a closed domain is exhausted
  */
-export function nextSeriesKey(data: any[], seriesField: string | null): number;
+export function nextSeriesKey(data: any[], seriesField: string | null, schema?: Record<string, any> | null): any;
 /**
  * A category for a row an edit is minting — the categorical sibling of
  * `nextSeriesKey`, and the reason `edit.stack.cut` needs no keyboard.
@@ -1133,12 +1219,13 @@ export function nextSeriesKey(data: any[], seriesField: string | null): number;
  * @param {any[]} data
  * @param {string | null | undefined} field
  * @param {any[]} domain the field's declared/resolved domain
- * @param {{ open?: boolean, label?: string }} [options] `label` is the placeholder stem
+ * @param {{ open?: boolean, label?: string | ((n: number) => string) }} [options]
+ *   `label` is the placeholder stem, or a function of the placeholder's number
  * @returns {any} the category, or undefined when a closed domain is exhausted
  */
 export function nextCategory(data: any[], field: string | null | undefined, domain: any[], { open, label }?: {
     open?: boolean;
-    label?: string;
+    label?: string | ((n: number) => string);
 }): any;
 /**
  * Mint ONE new datum — the single seed-and-invert core every creator builds on
@@ -1300,16 +1387,23 @@ export function invertChannel(ch: import("../types.js").ResolvedChannel, pointer
  * clamping independently (which would shrink the span to zero at the edge and
  * leave it stuck). If the span is already wider than the range, it pins to the
  * full range.
+ * The span's WIDTH comes from the DATUM, encoded through the two channels' scales
+ * (a rect's node carries it as width/height, but an area's node is a handle
+ * circle and a rule's a line, and they carry none); the node is the fallback. The
+ * two values come back ordered: `a` is the smaller, whichever pixel end that was —
+ * on a y axis the smaller pixel is the LARGER value, and handing it to the first
+ * channel swapped a vertical span's low and high every tick.
  * @param {any} node the mark's current scene node (rect: x/y/width/height)
  * @param {import('../types.js').ResolvedChannel} chA
  * @param {import('../types.js').ResolvedChannel} chB
  * @param {{ x: number, y: number }} pointer
+ * @param {any} [datum] the row, for the span's data-space width
  * @returns {{ a: any, b: any } | undefined}
  */
 export function recenterSpan(node: any, chA: import("../types.js").ResolvedChannel, chB: import("../types.js").ResolvedChannel, pointer: {
     x: number;
     y: number;
-}): {
+}, datum?: any): {
     a: any;
     b: any;
 } | undefined;
@@ -1364,23 +1458,33 @@ export function nearestMark(marks: any[], px: number, py: number, threshold: num
  * @param {number} px
  * @param {number} py
  * @param {number} threshold
+ * @param {{ includeLocked?: boolean }} [options] `includeLocked`: an APPEND-only
+ *   edit (anchor) may extend a locked line — appending breaks no locked row — so
+ *   it asks for locked lines too; a sweep or draw, which rewrites rows, must not.
  * @returns {any | null}
  */
-export function nearestSeries(marks: any[], px: number, py: number, threshold: number): any | null;
+export function nearestSeries(marks: any[], px: number, py: number, threshold: number, options?: {
+    includeLocked?: boolean;
+}): any | null;
 /**
  * The nearest mark measured ALONG ONE AXIS only (the you-draw-it sweep target):
  * distance is |px - cx| on 'x' or |py - cy| on 'y', so the pointer's position on
  * the other axis is ignored and a horizontal sweep always selects the point in
- * the column it is over. Only handle nodes with a centre (circles) are eligible.
+ * the column it is over. Any datum-bearing node with a centre is eligible — a
+ * handle circle, or a bar's rect through `markCenter` — so a sweep paints bars
+ * and cells as well as line vertices.
  * @param {any[]} marks
  * @param {number} px
  * @param {number} py
  * @param {number} threshold
  * @param {'x' | 'y'} axis
  * @param {any} [series] restrict to marks with this `series` key (series-locked sweep)
+ * @param {(mark: any) => boolean} [accept] a further filter — a band sweep locked
+ *   to one EDGE passes only that edge's handles, since both edges of a row share
+ *   the domain coordinate this measures
  * @returns {number | null}
  */
-export function nearestMarkOnAxis(marks: any[], px: number, py: number, threshold: number, axis: "x" | "y", series?: any): number | null;
+export function nearestMarkOnAxis(marks: any[], px: number, py: number, threshold: number, axis: "x" | "y", series?: any, accept?: (mark: any) => boolean): number | null;
 /**
  * The topmost mark the pointer is actually ON (containment), or null — the geometric
  * replacement for the browser's SVG hit-test, used by renderers with no DOM elements
@@ -1463,7 +1567,10 @@ export type DriverContext = {
     session: DriverSession;
     preview: DriverPreview;
     stage: DriverStage;
-    runEdit: (edit: import("../types.js").Edit, index: number | null) => boolean;
+    runEdit: (edit: import("../types.js").Edit, index: number | null, at?: {
+        x: number;
+        y: number;
+    }) => boolean;
     previewEdit: (edit: import("../types.js").Edit, index: number | null) => boolean;
     reachable?: ((edit: import("../types.js").Edit, index: number | null, node?: any) => string[] | null) | undefined;
 };

@@ -585,7 +585,9 @@ export function create(options = {}) {
         gesture: 'click',
         // Default to the positional channels; resolveChannels drops any the
         // feature doesn't encode (so a 1D likert create just omits the missing y).
-        channels: ['x', 'y'],
+        // A nested offset is part of the position: on a grouped chart the click
+        // names a category AND a sub-category, and the minted row takes both.
+        channels: ['x', 'y', 'xOffset', 'yOffset'],
         pick: 'plane',
         // The minted row is the one a constraint should resolve around.
         cardinality: 'append',
@@ -626,7 +628,8 @@ export function toggle(options = {}) {
     return makeEdit({
         type: 'toggle',
         gesture: 'click',
-        channels: ['x'],
+        // A slot on x is a category, and on a grouped chart a sub-category too.
+        channels: ['x', 'xOffset'],
         pick: 'plane',
         // Mints OR drops a row per click: a creator, with no single active datum.
         cardinality: 'toggle',

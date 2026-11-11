@@ -34,6 +34,7 @@
 
 import { encodeChannel, categoryOf, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, resolveValueAxis, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
+import { offsetScaleOf } from '../core/scales.js';
 
 /**
  * The discrete slots along the category axis — the ghost/label layer iterates
@@ -122,13 +123,32 @@ function buildDotStack(options) {
 
             // Slot occupancy, resolved up front so the ghost rings can be emitted
             // BEFORE the tokens (draw order == z-order: rings sit behind the stack).
+            // A nested `xOffset`/`yOffset` splits each slot into sub-slots, and a
+            // token stacks in its (category, sub-category) column. The position
+            // itself needs nothing here: encodeChannel adds the offset.
+            const offsetChannel = categoryChannel === 'x' ? 'xOffset' : 'yOffset';
+            const offsetSpec = channels[offsetChannel];
+            const nested = offsetSpec && offsetSpec.field != null && offsetScaleOf(scales, channels, categoryChannel);
+            const offsetField = nested ? offsetSpec.field : null;
+            /** The column a row stacks in. */
+            const columnOf = (/** @type {any} */ d, /** @type {number} */ i) => {
+                const key = categoryOf(channels, categoryChannel, d, categoryKey, i, currentData);
+                return offsetField ? `${key}\u0000${d[offsetField]}` : key;
+            };
+            /** Every (slot, sub-slot) a token may land in: the synthetic rows a ghost or label sits on. */
+            const columns = () => slotsOf(scales[categoryChannel], categoryKey, currentData).flatMap((s) =>
+                offsetField
+                    ? nested.domain().map((/** @type {any} */ o) => ({ [categoryKey]: s, [offsetField]: o }))
+                    : [{ [categoryKey]: s }]);
+
             /** @type {Map<any, number>} */
             const counts = new Map();
             currentData.forEach((d, i) => {
                 // A row with no category is a token in no slot: it counts nowhere
                 // and draws nothing (it stacked into the first slot).
                 if (missingValue(channels, categoryChannel, d)) return;
-                const key = categoryOf(channels, categoryChannel, d, categoryKey, i, currentData);
+                if (offsetField && missingValue(channels, offsetChannel, d)) return;
+                const key = columnOf(d, i);
                 counts.set(key, (counts.get(key) || 0) + 1);
             });
 
@@ -150,10 +170,10 @@ function buildDotStack(options) {
             // reference). Non-interactive — the plane owns the create gesture, and a
             // ring must never swallow the click or the hover preview beneath it.
             if (ghost) {
-                for (const s of slotsOf(scales[categoryChannel], categoryKey, currentData)) {
+                for (const at of columns()) {
                     nodes.push({
                         type: 'circle',
-                        ...placeAt({ [categoryKey]: s }, counts.get(s) || 0),
+                        ...placeAt(at, counts.get(columnOf(at, -1)) || 0),
                         r,
                         fill: 'none',
                         stroke: '#bbb',
@@ -167,7 +187,8 @@ function buildDotStack(options) {
             const seen = new Map();
             currentData.forEach((/** @type {any} */ d, i) => {
                 if (missingValue(channels, categoryChannel, d)) return;
-                const key = categoryOf(channels, categoryChannel, d, categoryKey, i, currentData);
+                if (offsetField && missingValue(channels, offsetChannel, d)) return;
+                const key = columnOf(d, i);
                 const n = seen.get(key) || 0;
                 seen.set(key, n + 1);
                 const style = resolveStyle(scales, channels, d, markDefaults(scales, 'dotStack', { fill: themeOf(scales).ink }), i, currentData);
@@ -192,10 +213,9 @@ function buildDotStack(options) {
 
             // Optional per-slot count label above the column.
             if (label) {
-                for (const s of slotsOf(scales[categoryChannel], categoryKey, currentData)) {
-                    const n = counts.get(s) || 0;
+                for (const synthetic of columns()) {
+                    const n = counts.get(columnOf(synthetic, -1)) || 0;
                     if (n === 0) continue;
-                    const synthetic = { [categoryKey]: s };
                     const along = encodeChannel(scales, channels, categoryChannel, synthetic, (stackAxis === 'y' ? width : height) / 2);
                     const offset = (n + 1) * slot;
                     nodes.push({

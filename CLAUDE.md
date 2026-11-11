@@ -808,6 +808,26 @@ make countable by eye. It reports DATA units so it agrees with the column. Note 
 is built through `axis()` directly and carries its direction in its ANCHOR:
 `axisX`/`axisY` pin `channel` after the spread, so they would overwrite it.
 
+**An OFFSET is a category nested in an axis, not an axis.** `xOffset`/`yOffset`
+split each x (y) category's slot into one sub-band per value of a second field — a
+grouped bar, a waffle per (state, sex), a dodged dot. They are NOT in `AXIS_OF`: an
+offset never unions with x, draws no axis, and is its own bucket keyed by encoding
+(`OFFSET_OF`/`offsetParentOf` in `core/encoding.js`). Its RANGE is one parent slot in
+pixels (`slotWidthOf` — a band's bandwidth, a point's step), so `resolveScales` fits it
+after the parent exists (`nestOffsetScale`), defaulting to padding 0 and running
+`yOffset` `[width, 0]` so `domain[0]` sits at the slot's bottom like a band y axis.
+A mark reads it in ONE of two places: `categorySlot` (`plot/mark.js`) for a mark that
+draws the interval (bar, rect, tick, rule, waffle), and `encodeChannel` on a
+data-space `x`/`y` for a mark that sits at a position (point, text, line) — so a new
+category-placed mark is dodged by calling the helpers it already should. Grouping
+follows the position: a stacked bar groups by `[x, xOffset]`, a dotStack stacks per
+(category, sub-category). The inverse is stamped on the scale: `invertValue` takes an
+ABSOLUTE pixel along the parent axis, finds the parent slot, and inverts the
+remainder, so `create`/`toggle` (whose default channels name the offsets) and an
+absolute `move({ channels: ['x', 'xOffset'] })` need no offset code. A continuous
+parent has no slot: the resolver warns and the offset is ignored. Don't add a
+per-mark `group`/`dodge` option, and don't put the offset in `AXIS_OF`.
+
 **`theta` is a POSITION; `angle` is a ROTATION. They were one channel.** `theta` is
 where a mark sits on the polar axis — a needle's bearing, an arc's sweep; `angle` is
 a mark turned in place — a tilted label, a rotated symbol. Six marks used `angle` for

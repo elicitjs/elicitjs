@@ -957,6 +957,24 @@ export interface Channels extends StyleChannels {
   // (dotStack: one row is one token, no column, so it declares `countPitch` and
   // the resolver synthesises the scale).
   count?: ChannelSpec;
+  // A second category NESTED inside each x (y) category: each category's slot is
+  // split into one sub-band per value of this field, so `x: country` +
+  // `xOffset: year` draws a grouped (dodged) bar chart. Vega-Lite's channels.
+  //
+  // Not an axis: it never unions with x, draws no axis of its own, and needs a
+  // DISCRETE parent (a band or point x) — a number line has no slot to divide. Its
+  // range is one parent slot in pixels; sub-bands abut by default
+  // (`scale: { padding }` opens a gap), and `yOffset` lists `domain[0]` at the
+  // bottom of its slot, as a band y axis does. Every mark that places by category
+  // honours it — bar, rect, tick, rule and waffle draw in the sub-band; point,
+  // text and line sit at its centre; dotStack stacks per (category, sub-category).
+  //
+  // An edit inverts it with the rest of the position: `create` and `toggle` name
+  // it by default, and `move({ channels: ['x', 'xOffset'] })` re-files a row in
+  // another category and group. A stacked bar with an offset stacks per sub-band.
+  xOffset?: ChannelSpec;
+  /** `xOffset`'s twin, nested inside each y category (a grouped horizontal bar). */
+  yOffset?: ChannelSpec;
   [channel: string]: ChannelSpec | undefined;
 }
 

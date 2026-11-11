@@ -1,6 +1,6 @@
 // @ts-check
-import { isBand, bandwidthOf, bandStartOf, baselineOf } from '../core/scales.js';
-import { encodeChannel, encodeValue, categoryOf, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, resolveValueAxis, orientationOf, missingValue } from './mark.js';
+import { baselineOf } from '../core/scales.js';
+import { encodeChannel, encodeValue, categorySlot, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, resolveValueAxis, orientationOf, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 import { groupByPosition, stackLayout, stackDescriptor } from './stack.js';
 
@@ -79,7 +79,10 @@ function orderMembers(members, data, seriesField) {
 function stackOffsets(data, channels, catChannel, catKey, valueKey, seriesField) {
     /** @type {Map<number, { y0: number, y1: number, members: number[], local: number }>} */
     const out = new Map();
-    for (const group of groupByPosition(data, channels, [catChannel], { [catChannel]: catKey })) {
+    // A nested offset is part of the position, so it is part of the grouping: a
+    // stacked AND grouped bar stacks within each sub-band, not across a category.
+    const grouping = [catChannel, catChannel === 'x' ? 'xOffset' : 'yOffset'];
+    for (const group of groupByPosition(data, channels, grouping, { [catChannel]: catKey })) {
         const members = orderMembers(group.members, data, seriesField);
         const { bounds } = stackLayout(members, data, valueKey);
         members.forEach((gi, local) => {
@@ -208,6 +211,10 @@ function buildBar(options) {
                 // to the first band's start). A missing VALUE keeps its zero-height
                 // bar at the baseline, which a nearest pick can still lift.
                 if (missingValue(channels, catChannel, d)) return [];
+                // Nor does a row whose nested category (`xOffset`) is missing: it has
+                // a band but no sub-band, and filling the whole band would read as a
+                // value for every group.
+                if (missingValue(channels, catChannel === 'x' ? 'xOffset' : 'yOffset', d)) return [];
                 // Standard style surface (fill/stroke/opacity/…), resolved per
                 // datum through the same channels every mark uses.
                 const style = resolveStyle(scales, channels, d, barDefaults, i, currentData);
@@ -217,8 +224,8 @@ function buildBar(options) {
                     // Category on y (band geometry), value/length on x. The value
                     // axis resolves through encodeChannel like every other mark; the
                     // band axis keeps its interval geometry (start + thickness).
-                    const bandStart = bandStartOf(yScale, categoryOf(channels, 'y', d, yKey, i, currentData), 0);
-                    const thickness = bandwidthOf(yScale, 20);
+                    // The slot is the category's band, or its sub-band under a `yOffset`.
+                    const { start: bandStart, width: thickness } = categorySlot(scales, channels, 'y', d, yKey, i, currentData);
                     const baseline = baselineOf(xScale);
                     let lo, hi;
                     if (hasXSpan) {
@@ -257,8 +264,7 @@ function buildBar(options) {
 
                 // Vertical: category on x (band geometry), value/length on y. Value
                 // via encodeChannel (as every mark); band axis keeps its interval.
-                const bandStart = bandStartOf(xScale, categoryOf(channels, 'x', d, xKey, i, currentData), 0);
-                const thickness = bandwidthOf(xScale, 20);
+                const { start: bandStart, width: thickness } = categorySlot(scales, channels, 'x', d, xKey, i, currentData);
                 const baseline = baselineOf(yScale);
                 let lo, hi;
                 if (hasYSpan) {
@@ -304,10 +310,8 @@ function buildBar(options) {
             // band's layout from `members` alone and its pair-shift touches no other
             // band.
             if (stacks && hasStackEdit && handleStyle.grabbable) {
-                const catScale = catChannel === 'x' ? xScale : yScale;
                 const valueScale = valueChannel === 'x' ? xScale : yScale;
                 const baseline = baselineOf(valueScale);
-                const thickness = bandwidthOf(catScale, 20);
 
                 /** @type {Set<number[]>} */
                 const seen = new Set();
@@ -317,9 +321,8 @@ function buildBar(options) {
                     seen.add(members);
 
                     const rep = currentData[members[0]];
-                    const bandStart = bandStartOf(
-                        catScale, categoryOf(channels, catChannel, rep, catKey, members[0], currentData), 0);
-                    const centre = bandStart + thickness / 2;
+                    const slot = categorySlot(scales, channels, catChannel, rep, catKey, members[0], currentData);
+                    const centre = slot.start + slot.width / 2;
 
                     for (let local = 0; local < members.length - 1; local++) {
                         const gi = members[local];

@@ -1,6 +1,6 @@
 // @ts-check
-import { isBand, bandwidthOf, bandStartOf, baselineOf, rangeExtent } from '../core/scales.js';
-import { encodeChannel, categoryOf, encodeAngle, resolveStyle, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, missingValue } from './mark.js';
+import { isBand, baselineOf, rangeExtent } from '../core/scales.js';
+import { encodeChannel, categorySlot, encodeAngle, resolveStyle, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
 // rect: the generalized bar. A bar fixes ONE axis to a categorical band (position
@@ -71,8 +71,8 @@ function resolveExtent(axis, channels, scales, scale, datum, key, forcedValue, f
     }
     // 3. BAND — a categorical axis (skipped when this axis is forced to value).
     if (!forcedValue && isBand(scale)) {
-        const start = bandStartOf(scale, categoryOf(channels, axis, datum, key, index, data), 0);
-        const thickness = bandwidthOf(scale, 20);
+        // The category's band, or its sub-band under a nested `xOffset`/`yOffset`.
+        const { start, width: thickness } = categorySlot(scales, channels, axis, datum, key, index, data);
         return { lo: start, hi: start + thickness, band: true };
     }
     // 2. VALUE — a single field drawn from the baseline.

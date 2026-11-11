@@ -54,9 +54,9 @@
 // `edit.waffle.fill({ gesture: 'click' })` at mark level for tap-to-set alongside
 // drag-to-fill.
 
-import { bandwidthOf, bandStartOf, baselineOf } from '../core/scales.js';
+import { baselineOf } from '../core/scales.js';
 import { warn } from '../core/dev.js';
-import { encodeChannel, categoryOf, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, resolveValueAxis, orientationOf, missingValue } from './mark.js';
+import { encodeChannel, categorySlot, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, resolveValueAxis, orientationOf, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
 /**
@@ -187,7 +187,6 @@ function buildWaffle(options) {
          * @returns {import('../types').FeatureNode[]}
          */
         build: (currentData, scales) => {
-            const { x: xScale, y: yScale } = scales;
 
             /** @type {import('../types').FeatureNode[]} */
             const nodes = [];
@@ -198,6 +197,8 @@ function buildWaffle(options) {
                 // into the first band). A category with no count keeps its empty
                 // grid, which is what a reader fills.
                 if (missingValue(channels, vertical ? 'x' : 'y', d)) return;
+                // A row with a category but no nested one (`xOffset`) has no sub-band.
+                if (missingValue(channels, vertical ? 'xOffset' : 'yOffset', d)) return;
                 const style = resolveStyle(scales, channels, d, waffleDefaults, i, currentData);
                 // A `symbol` channel (or shape:'symbol') fills the block with glyph
                 // cells — an emoji waffle (🍎🍎🍎 for a count of 3). Every cell of a
@@ -208,7 +209,6 @@ function buildWaffle(options) {
                 // Band (category) geometry vs value (length) geometry — the same
                 // split bar makes. `bandStart`/`thickness` place the block across
                 // its category; the value scale sets where each cell row lands.
-                const bandScale = vertical ? xScale : yScale;
                 // The magnitude is the COUNT channel, on the count axis — not x/y.
                 // A waffle's quantity is "how many cells", which is a different
                 // question from "how far up the y axis", and unioning the two would
@@ -217,12 +217,10 @@ function buildWaffle(options) {
                 const valueScale = /** @type {any} */ (scales).count;
                 const bandKey = vertical ? xKey : yKey;
 
-                const bandStart = bandStartOf(
-                    bandScale,
-                    categoryOf(channels, vertical ? 'x' : 'y', d, bandKey, i, currentData),
-                    0
-                );
-                const thickness = bandwidthOf(bandScale, 20);
+                // The block's slot: its category's band, or the sub-band a nested
+                // `xOffset`/`yOffset` picks inside it (a waffle per state AND sex).
+                const { start: bandStart, width: thickness } = categorySlot(
+                    scales, channels, vertical ? 'x' : 'y', d, bandKey, i, currentData);
                 const baseline = baselineOf(valueScale);
 
                 // Value DOMAIN in data units, and the pixels that span it. The

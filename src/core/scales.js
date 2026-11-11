@@ -417,6 +417,86 @@ export function bandStartOf(scale, value, fallback) {
 }
 
 /**
+ * The width of ONE category's slot on a discrete axis: a band's bandwidth, a
+ * point's step (the distance between two ticks, centred on each). Undefined for
+ * a continuous scale, which has no slot. What an OFFSET channel's range spans.
+ * @param {any} scale
+ * @returns {number | undefined}
+ */
+export function slotWidthOf(scale) {
+    if (!scale) return undefined;
+    if (scale.kind === 'band') return scale.bandwidth();
+    if (scale.kind === 'point') return typeof scale.step === 'function' ? scale.step() : 0;
+    return undefined;
+}
+
+/**
+ * The pixel interval a category occupies on a discrete axis: a band's own
+ * interval, or a point's step centred on its tick. Null when the scale is not
+ * discrete or the value is not in its domain.
+ * @param {any} scale
+ * @param {any} value
+ * @returns {{ start: number, width: number } | null}
+ */
+export function slotOf(scale, value) {
+    const width = slotWidthOf(scale);
+    if (width === undefined) return null;
+    const p = scale(value);
+    if (p == null || Number.isNaN(p)) return null;
+    return { start: scale.kind === 'point' ? p - width / 2 : p, width };
+}
+
+/**
+ * Nest an OFFSET scale (`xOffset`/`yOffset`) inside its parent: its range becomes
+ * one parent slot in pixels, and its inverse reads an ABSOLUTE pixel along the
+ * parent axis.
+ *
+ * The forward direction needs no help — a mark adds the offset to the slot start
+ * it already knows (plot/mark.js: `categorySlot`). The inverse does, because a
+ * gesture arrives as a pointer on the plot and the sub-band it lands in depends on
+ * WHICH category's slot holds it: find that slot through the parent, then invert
+ * the remainder locally. Stamped here, beside the rest of the capability model,
+ * so an edit inverts through the same object that encoded and nothing in the edit
+ * layer learns that offsets exist.
+ * @param {any} offset the offset channel's scale
+ * @param {any} parent the x or y scale it nests inside (band or point)
+ * @param {number[]} range the slot-local pixel range
+ * @returns {any}
+ */
+export function nestOffsetScale(offset, parent, range) {
+    if (!offset || typeof offset.range !== 'function') return offset;
+    offset.range(range);
+    offset.parent = parent;
+    if (offset.invertible) {
+        offset.invertValue = (/** @type {number} */ pixel) => {
+            const slot = slotOf(parent, parent.invertValue(pixel));
+            return slot ? invertOnScale(offset, pixel - slot.start) : undefined;
+        };
+    }
+    return offset;
+}
+
+/**
+ * The offset scale nested inside a positional axis for one mark's channel map, or
+ * null when the mark declares no offset there, or its parent is not discrete (an
+ * offset subdivides a category's slot; a number line has none). Same lookup as
+ * every encoding read: the (channel, field) key first, the bare channel after.
+ * @param {Record<string, any>} scales
+ * @param {Record<string, any> | undefined} channels
+ * @param {'x' | 'y'} axis
+ * @returns {any}
+ */
+export function offsetScaleOf(scales, channels, axis) {
+    const name = axis === 'x' ? 'xOffset' : 'yOffset';
+    const spec = channels && channels[name];
+    if (!spec || !scales) return null;
+    const parent = scales[axis];
+    if (slotWidthOf(parent) === undefined) return null;
+    const scale = (spec.field != null && scales[scaleKey(name, spec.field)]) || scales[name];
+    return scale && scale.parent === parent ? scale : null;
+}
+
+/**
  * The pixel span a mark occupies ALONG a (possibly categorical) axis — the
  * inverse concern of `bandwidthOf`: not "how thick" but "from where to where".
  * Mark-agnostic so any mark that spans a band (a tick across its category, and
@@ -428,12 +508,17 @@ export function bandStartOf(scale, value, fallback) {
  * @param {any} scale the axis scale for the span dimension (may be null/linear)
  * @param {any} value the datum's category on that axis (band case)
  * @param {number} fullLength the inner pixel length of that axis (no-band case)
- * @param {{ inset?: number, length?: number }} [opts]
+ * @param {{ inset?: number, length?: number, slot?: { start: number, width: number } }} [opts]
+ *   `slot` states the interval outright — a mark's `categorySlot`, which is the
+ *   sub-band when an offset is nested in this axis.
  * @returns {[number, number]} [start, end] in pixels
  */
-export function bandSpan(scale, value, fullLength, { inset = 0, length } = {}) {
+export function bandSpan(scale, value, fullLength, { inset = 0, length, slot } = {}) {
     let lo, hi;
-    if (isBand(scale)) {
+    if (slot) {
+        lo = slot.start;
+        hi = slot.start + slot.width;
+    } else if (isBand(scale)) {
         const start = scale(value);
         const size = scale.bandwidth();
         lo = start;

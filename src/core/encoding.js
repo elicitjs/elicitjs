@@ -229,6 +229,43 @@ export function axisOf(channelName) {
     return AXIS_OF[channelName];
 }
 
+// ── OFFSET channels: a second category NESTED inside the first ──────────────
+// `xOffset`/`yOffset` split each category's slot on x/y into sub-bands by a
+// second field — a grouped (dodged) bar, a waffle per (state, sex), a dot per
+// (question, condition) side by side. Vega-Lite's spelling and model.
+//
+// An offset is deliberately NOT in AXIS_OF. It is not an axis: it has no domain
+// of its own on the plot, draws no axis, and must never union with x (a bar's
+// category and its group are two different vocabularies). It is its own bucket,
+// keyed by encoding like any non-positional channel, and its RANGE is the pixels
+// of ONE parent slot — the parent's bandwidth (a band) or step (a point) — which
+// the resolver fits once the parent scale exists (core/resolve.js). Every mark
+// reads it through one helper (`categorySlot`, plot/mark.js), and `encodeChannel`
+// on x/y adds it, so a mark that places by category is dodged without a line of
+// its own.
+/** @type {Record<string, 'x' | 'y'>} */
+const OFFSET_OF = { xOffset: 'x', yOffset: 'y' };
+
+/**
+ * The positional axis an OFFSET channel nests inside ('x' for `xOffset`, 'y' for
+ * `yOffset`), or undefined for any other channel.
+ * @param {string} channelName
+ * @returns {'x' | 'y' | undefined}
+ */
+export function offsetParentOf(channelName) {
+    return OFFSET_OF[channelName];
+}
+
+/**
+ * The offset channel nested inside a positional axis ('xOffset' for 'x'), or
+ * undefined when the axis takes none.
+ * @param {string} axis
+ * @returns {'xOffset' | 'yOffset' | undefined}
+ */
+export function offsetChannelOf(axis) {
+    return axis === 'x' ? 'xOffset' : axis === 'y' ? 'yOffset' : undefined;
+}
+
 // ── FRAME channels: a composite's LOCAL coordinate box ──────────────────────
 // `frame: -0.4` (short) or `scale: 'frame'` / `scale: { type: 'frame', range }`
 // (long) says: this channel is not on a global axis — resolve it against the
@@ -368,6 +405,10 @@ export function scaleTypeFor(channelName, measure, discrete = 'band') {
     if (SYMBOL_CHANNELS.has(channelName)) return 'ordinal';
     // Dash family: a category -> dash-pattern map.
     if (DASH_CHANNELS.has(channelName)) return 'ordinal';
+    // Offset family: a nested category always takes an INTERVAL of its parent's
+    // slot (a sub-band), whatever the mark prefers for the parent — a dot dodged
+    // by group sits at its sub-band's centre exactly as a bar fills it.
+    if (OFFSET_OF[channelName] && !continuous) return 'band';
     // positional / size / opacity: dates -> time, numbers -> linear, categories ->
     // the mark's discrete scale (band|point).
     if (measure === 'temporal') return 'time';
@@ -618,6 +659,13 @@ export function visualForChannel(channelName, pointer, center) {
     const axis = axisOf(channelName);
     if (axis === 'x') return pointer.x;
     if (axis === 'y') return pointer.y;
+    // An offset reads the pointer along its PARENT axis. Its scale's invertValue
+    // takes that absolute pixel and finds the parent slot first (core/scales.js:
+    // nestOffsetScale), because the sub-band a pixel lands in depends on which
+    // category's slot it is inside.
+    const parent = OFFSET_OF[channelName];
+    if (parent === 'x') return pointer.x;
+    if (parent === 'y') return pointer.y;
     // A radius — `size` (a mark's own extent) or `radius` (a polar position) — is
     // the pointer's distance from the centre.
     if (channelName === 'size' || axis === 'radius') {

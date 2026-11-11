@@ -121,7 +121,7 @@ import { warn, warningsEnabled } from '../core/dev.js';
 
 // A scale is one ENCODING — (channel, field) — not one channel. `scaleKey` is the
 // single source of that key; see core/scales.js for why.
-import { scaleKey } from '../core/scales.js';
+import { scaleKey, slotOf, slotWidthOf, bandStartOf, bandwidthOf, offsetScaleOf } from '../core/scales.js';
 import { MARK_UNIVERSAL_OPTIONS, MARK_SHORTHANDS, ELEMENT_UNIVERSAL_OPTIONS } from '../vocabulary.js';
 
 /**
@@ -167,6 +167,102 @@ export function callChannelFn(spec, channel, datum, index, data, fallback) {
  * @returns {any}
  */
 export function encodeChannel(scales, channels, channel, datum, fallback, index, data) {
+    if (channel !== 'x' && channel !== 'y') return encodeOwn(scales, channels, channel, datum, fallback, index, data);
+    // An OFFSET nested in this axis (`xOffset` on x) moves the position from the
+    // category's centre to its sub-band's centre. Here, on the one datum -> pixel
+    // path, so a point, a label or a line over a band axis is dodged by group with
+    // no code of its own. Only the bare axis channel: x1/x2 are a SPAN's ends. A
+    // sentinel, not the caller's fallback, says "no position": a real band centre
+    // can equal the fallback pixel (the middle of three categories is width / 2).
+    const at = encodeOwn(scales, channels, channel, datum, NO_POSITION, index, data);
+    if (at === NO_POSITION) return fallback;
+    // Only a DATA-space position nests: `{ fn }` and `{ value }` are already pixels.
+    const own = channels[channel];
+    const dataSpace = own && own.scale !== null && (own.field != null || own.datum !== undefined);
+    if (dataSpace && datum && typeof at === 'number') {
+        const offset = offsetScaleOf(scales, channels, channel);
+        if (offset) {
+            const local = offsetPixel(offset, channels, channel === 'x' ? 'xOffset' : 'yOffset', datum, index, data);
+            if (local !== undefined) return at - /** @type {number} */ (slotWidthOf(scales[channel])) / 2 + local;
+        }
+    }
+    return at;
+}
+
+/** What `encodeOwn` hands back for "this row has no position here". */
+const NO_POSITION = Symbol('no position');
+
+/**
+ * A datum's position INSIDE its parent slot, in slot-local pixels: its sub-band's
+ * centre (a band offset) or its encoded position (a continuous one, a jitter).
+ * Undefined when the row has no offset value.
+ * @param {any} offset the nested scale
+ * @param {Record<string, any>} channels
+ * @param {'xOffset' | 'yOffset'} name
+ * @param {any} datum
+ * @param {number} [index]
+ * @param {any[]} [data]
+ * @returns {number | undefined}
+ */
+function offsetPixel(offset, channels, name, datum, index, data) {
+    const v = categoryOf(channels, name, datum, undefined, index, data);
+    if (v === undefined || v === null) return undefined;
+    const p = offset.encode(v);
+    return typeof p === 'number' && Number.isFinite(p) ? p : undefined;
+}
+
+/**
+ * The interval a datum occupies across a CATEGORY axis: its category's band, or —
+ * when the mark nests `xOffset`/`yOffset` in that axis — the sub-band the second
+ * category picks inside it. The one place a band mark asks "where does my row
+ * sit, and how thick is it", so a grouped bar, a grouped waffle and a dodged tick
+ * are the same three lines in every mark. Resolves the category through
+ * `categoryOf`, so `{ fn }`/`{ datum }` work on both levels.
+ *
+ * A CONTINUOUS offset (a jitter) shifts the whole band to centre on its encoded
+ * position rather than subdividing it, since it names no interval.
+ * @param {import('../types').ScaleMap} scales
+ * @param {Record<string, any>} channels
+ * @param {'x' | 'y'} axis the category axis
+ * @param {import('../types').Datum} datum
+ * @param {string | undefined} key the mark's xKey/yKey fallback
+ * @param {number} [index]
+ * @param {import('../types').Datum[]} [data]
+ * @param {number} [fallbackWidth] thickness with no band (bandwidthOf's fallback)
+ * @returns {{ start: number, width: number }}
+ */
+export function categorySlot(scales, channels, axis, datum, key, index, data, fallbackWidth = 20) {
+    const scale = scales[axis];
+    const category = categoryOf(channels, axis, datum, key, index, data);
+    const start = bandStartOf(scale, category, 0);
+    const width = bandwidthOf(scale, fallbackWidth);
+    const offset = offsetScaleOf(scales, channels, axis);
+    if (!offset) return { start, width };
+    const slot = slotOf(scale, category);
+    if (!slot) return { start, width };
+    const name = axis === 'x' ? 'xOffset' : 'yOffset';
+    if (offset.kind === 'band') {
+        const sub = categoryOf(channels, name, datum, undefined, index, data);
+        const at = sub == null ? null : offset(sub);
+        if (at == null || Number.isNaN(at)) return { start, width };
+        return { start: slot.start + at, width: offset.bandwidth() };
+    }
+    const local = offsetPixel(offset, channels, name, datum, index, data);
+    return local === undefined ? { start, width } : { start: slot.start + local - width / 2, width };
+}
+
+/**
+ * The datum -> scaled value path for one channel, before any nested offset.
+ * @param {import('../types').ScaleMap} scales
+ * @param {Record<string, any>} channels
+ * @param {string} channel
+ * @param {import('../types').Datum | null} datum
+ * @param {any} [fallback]
+ * @param {number} [index]
+ * @param {import('../types').Datum[]} [data]
+ * @returns {any}
+ */
+function encodeOwn(scales, channels, channel, datum, fallback, index, data) {
     const spec = channels[channel];
     if (!spec) return fallback;
     // `expr` is RESERVED for the JSON spec layer — the declarative twin of `fn`.

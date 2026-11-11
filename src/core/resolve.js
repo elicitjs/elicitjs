@@ -19,7 +19,7 @@
 // and the axis must span all three. Reading one field's domain and discarding the
 // rest is what forced charts to hand-write a chart-level y domain.
 
-import { createScale, adoptScale, scaleKey, bandwidthOf } from "./scales.js";
+import { createScale, adoptScale, scaleKey, bandwidthOf, slotWidthOf, nestOffsetScale, offsetScaleOf } from "./scales.js";
 import {
   normalizeChannels,
   inferMeasureType,
@@ -29,6 +29,7 @@ import {
   channelRange,
   schemeRange,
   axisOf,
+  offsetParentOf,
   frameSpecOf,
 } from "./encoding.js";
 
@@ -270,6 +271,9 @@ export function resolveScales(features, tables, spec, dims) {
     bucketIndex[bucket] = seenPerChannel[ch] || 0;
     seenPerChannel[ch] = bucketIndex[bucket] + 1;
   }
+  // Offset buckets, fitted to their parent's slot once every scale exists (below).
+  /** @type {{ bucket: string, channel: string, parent: 'x' | 'y', opt: any }[]} */
+  const offsets = [];
   for (const [bucket, a] of Object.entries(acc)) {
     // The CHANNEL this bucket belongs to. For a non-positional bucket the key is
     // `channel\0field`, so everything that wants a channel NAME — the scale type,
@@ -368,7 +372,15 @@ export function resolveScales(features, tables, spec, dims) {
           domain,
           declared: declaredDomains.length > 0,
         })
-      : createScale({ ...opt, type, domain }, range);
+      : createScale({
+          ...opt,
+          type,
+          domain,
+          // A nested category's sub-bands ABUT by default (Vega-Lite's grouped bar):
+          // the gap between groups is the parent band's padding, and a second gap
+          // inside each group reads as a second level of grouping that isn't there.
+          ...(offsetParentOf(channel) && opt.padding == null ? { padding: 0 } : {}),
+        }, range);
 
     if (scale) {
       // The schema fields that fed this axis, in first-seen order. Metadata
@@ -399,7 +411,37 @@ export function resolveScales(features, tables, spec, dims) {
       for (const name of bucketMembers[bucket] || []) {
         if (scales[name] === undefined) scales[name] = scale;
       }
+      const parent = offsetParentOf(channel);
+      if (parent) offsets.push({ bucket, channel, parent, opt });
     }
+  }
+
+  // ── OFFSET scales: a category nested inside x or y ─────────────────────────
+  // An offset's range is ONE parent slot in pixels, so it can only be fitted once
+  // the parent exists. `yOffset` runs [width, 0] for the same reason a band y axis
+  // does: the first category sits at the bottom of its slot, as `domain[0]` sits at
+  // the bottom of the axis. An author's own `range` is slot-local pixels and is
+  // kept as given.
+  for (const { bucket, channel, parent, opt } of offsets) {
+    const scale = /** @type {any} */ (scales)[bucket];
+    const parentScale = /** @type {any} */ (scales)[parent];
+    const width = slotWidthOf(parentScale);
+    if (width === undefined) {
+      warnOnce(
+        `offset:${channel}:parent`,
+        parentScale
+          ? `channel "${channel}" nests a second category inside each "${parent}" category, ` +
+            `but "${parent}" is continuous here, so there is no slot to divide and the offset ` +
+            `is ignored. Declare the "${parent}" field categorical or ordinal.`
+          : `channel "${channel}" nests a second category inside each "${parent}" category, ` +
+            `but no mark encodes "${parent}", so the offset is ignored. Bind "${parent}" to a ` +
+            `categorical field.`,
+      );
+      continue;
+    }
+    let range = opt.range || (channel === "yOffset" ? [width, 0] : [0, width]);
+    if (opt.reverse && !opt.range) range = [...range].reverse();
+    nestOffsetScale(scale, parentScale, range);
   }
 
   // ── A DERIVED count scale ──────────────────────────────────────────────────
@@ -439,8 +481,11 @@ export function resolveScales(features, tables, spec, dims) {
   const laid = features.find((f) => f && f.countAxis && typeof f.countLayout === "function");
   const count = /** @type {any} */ (scales).count;
   if (laid && count && typeof count.range === "function") {
-    const band = laid.countAxis === "x" ? scales.y : scales.x;
-    const thickness = bandwidthOf(band, 20);
+    const bandAxis = laid.countAxis === "x" ? "y" : "x";
+    // The block's thickness is its SLOT: the sub-band when the mark nests an
+    // offset in its category, else the category's band.
+    const nested = offsetScaleOf(scales, laid.channels, bandAxis);
+    const thickness = bandwidthOf(nested || scales[bandAxis], 20);
     const r = count.range();
     const blockLen = Math.abs(r[1] - r[0]);
     const dom = count.domain();

@@ -376,6 +376,8 @@ N/A = use a different edit family (documented).
 3. Schema owns type + domain; data must not invent undeclared columns.
 4. Guide = rules; Effect = state; never paint state as presentation attributes.
 5. Encoding path: `encodeChannel` / `categoryOf` / `encodeValue` — not raw `scale.encode` in mark `build`.
+   A mark that draws a category's INTERVAL (a bar, a block, a tick's span) takes it from
+   `categorySlot`, which is the sub-band when `xOffset`/`yOffset` nests a second category.
 6. A mark that partitions a total among a group of rows stamps `node.stack` (`plot/stack.js`) and
    sets `supportsStack`, so `edit.stack.*` inverts through the layout that drew it.
 7. A mark that draws ONE row as MANY nodes states the row's whole shape as

@@ -1,6 +1,6 @@
 // @ts-check
 import { isBand, bandSpan } from '../core/scales.js';
-import { encodeChannel, categoryOf, encodeAngle, resolveStyle, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, resolveValueAxis, missingValue } from './mark.js';
+import { encodeChannel, categoryOf, categorySlot, encodeAngle, resolveStyle, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, resolveValueAxis, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
 // tick: a thin line-segment mark (Observable Plot's tick). It marks a VALUE on
@@ -59,7 +59,10 @@ function resolveSpan(spanAxis, scale, channels, scales, datum, key, fullLength, 
         const center = encodeChannel(scales, channels, spanAxis, datum, fullLength / 2, index, data);
         return [center - length / 2, center + length / 2];
     }
-    return bandSpan(scale, categoryOf(channels, spanAxis, datum, key, index, data), fullLength, { inset, length });
+    // A nested `xOffset`/`yOffset` narrows the band to the row's sub-band, so a
+    // tick spans its own group's slot rather than the whole category.
+    const slot = isBand(scale) ? categorySlot(scales, channels, /** @type {'x' | 'y'} */ (spanAxis), datum, key, index, data) : undefined;
+    return bandSpan(scale, categoryOf(channels, spanAxis, datum, key, index, data), fullLength, { inset, length, slot });
 }
 
 /**

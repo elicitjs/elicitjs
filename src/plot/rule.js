@@ -25,8 +25,8 @@
 // any mark with no direct-pick edit, so an inert whisker cannot swallow a sibling
 // handle's drag while an editable one still receives its own.
 
-import { baselineOf, isBand, bandStartOf, bandwidthOf } from '../core/scales.js';
-import { encodeChannel, categoryOf, resolveStyle, normalizeMarkOptions, positionalKeys, markCommon, markDefaults, themeOf, resolveValueAxis, missingValue } from './mark.js';
+import { baselineOf, isBand } from '../core/scales.js';
+import { encodeChannel, categorySlot, resolveStyle, normalizeMarkOptions, positionalKeys, markCommon, markDefaults, themeOf, resolveValueAxis, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
 /**
@@ -111,8 +111,9 @@ function buildRule(options) {
                     if (channels[posAxis]) {
                         if (isBand(posScale)) {
                             const catKey = posAxis === 'x' ? xKey : yKey;
-                            const cat = categoryOf(channels, posAxis, datum, catKey, index, currentData);
-                            posAt = bandStartOf(posScale, cat, 0) + bandwidthOf(posScale, 0) / 2;
+                            // The band's centre, or its sub-band's under a nested offset.
+                            const slot = categorySlot(scales, channels, posAxis, datum, catKey, index, currentData, 0);
+                            posAt = slot.start + slot.width / 2;
                         } else {
                             posAt = encodeChannel(scales, channels, posAxis, datum, posLen / 2, index, currentData);
                         }

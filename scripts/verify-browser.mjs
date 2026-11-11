@@ -1528,6 +1528,53 @@ async function main() {
         check('pie stack merge: the total is held fixed',
             Math.abs(pieTotal(postP) - pieTotal(preP)) < 1e-6, `${pieTotal(preP)} -> ${pieTotal(postP)}`);
 
+        // ---- Grouped bars and waffles (xOffset) ---------------------------
+        // A nested category splits each band into sub-bands. The geometry is the
+        // whole feature, and a drag has to land on the sub-band the pointer is over:
+        // only real pointer events prove a press on the third bar of a group writes
+        // that row and no other.
+        console.log('\nGrouped bars + waffles (xOffset)');
+        await open('/marks/bar', '#grouped svg rect.mark');
+        // The section holds two examples; drive the first chart.
+        const groupedEl = '#grouped .chart > div';
+        const groupedBars = await page.$eval(groupedEl, (e) => [...e.querySelectorAll('svg rect.mark')].map((r) => ({
+            x: +r.getAttribute('x'), w: +r.getAttribute('width'),
+        })).sort((a, b) => a.x - b.x));
+        check('grouped bars: 3 regions × 3 years = 9 bars', groupedBars.length === 9, `got ${groupedBars.length}`);
+        check('grouped bars: sub-bands of one region abut',
+            groupedBars.length === 9
+            && Math.abs(groupedBars[0].x + groupedBars[0].w - groupedBars[1].x) < 0.5
+            && Math.abs(groupedBars[1].x + groupedBars[1].w - groupedBars[2].x) < 0.5
+            && groupedBars[3].x - (groupedBars[2].x + groupedBars[2].w) > 1,
+            JSON.stringify(groupedBars.slice(0, 4)));
+        const groupedRows = () => page.$eval(groupedEl, (e) => e.getData());
+        const beforeGrouped = await groupedRows();
+        await page.locator(groupedEl).first().scrollIntoViewIfNeeded();
+        const gBoxes = await page.$eval(groupedEl, (e) => [...e.querySelectorAll('svg rect.mark')].map((r) => {
+            const b = r.getBoundingClientRect();
+            return { x: b.x, y: b.y, w: b.width, h: b.height, row: r.__data__ && r.__data__.data };
+        }));
+        const north24 = gBoxes.find((b) => b.row && b.row.region === 'North' && b.row.year === '2024');
+        await page.mouse.move(north24.x + north24.w / 2, north24.y + 4);
+        await page.mouse.down();
+        for (let k = 1; k <= 8; k++) await page.mouse.move(north24.x + north24.w / 2, north24.y + 4 + k * 5);
+        await page.mouse.up();
+        await page.waitForTimeout(150);
+        const afterGrouped = await groupedRows();
+        const changed = afterGrouped.filter((d, i) => d.sales !== beforeGrouped[i].sales);
+        check('grouped bars: a drag on one sub-band writes that row only',
+            changed.length === 1 && changed[0].region === 'North' && changed[0].year === '2024',
+            JSON.stringify(changed));
+
+        await open('/marks/waffle', '#grouped svg rect.mark');
+        const groupedCells = await page.$$eval('#grouped svg rect.mark', (rs) => rs
+            .map((r) => r.__data__ && r.__data__.data && r.__data__.grid)
+            .filter(Boolean)
+            .map((g) => g.bandStart));
+        check('grouped waffle: 3 sports × 2 sexes = 6 blocks side by side',
+            new Set(groupedCells.map((v) => Math.round(v))).size === 6,
+            `${new Set(groupedCells.map((v) => Math.round(v))).size} distinct block starts`);
+
         // ---- Keyboard editing + undo/redo ---------------------------------
         // Both are gesture-shaped and only prove out under real input: the nudge has
         // to step from where the datum's VALUE is (a bar's node centre is halfway up
