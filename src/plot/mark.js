@@ -123,6 +123,7 @@ import { warn, warningsEnabled } from '../core/dev.js';
 // single source of that key; see core/scales.js for why.
 import { scaleKey, slotOf, slotWidthOf, bandStartOf, bandwidthOf, offsetScaleOf } from '../core/scales.js';
 import { MARK_UNIVERSAL_OPTIONS, MARK_SHORTHANDS, ELEMENT_UNIVERSAL_OPTIONS } from '../vocabulary.js';
+import { frameSpecOf } from '../core/encoding.js';
 
 /**
  * Evaluate a derived channel's `fn(d, i, data)` in VISUAL space. The result is
@@ -281,7 +282,19 @@ function encodeOwn(scales, channels, channel, datum, fallback, index, data) {
         // Derived channel — fn(d, i, data) computed in visual space, used as-is.
         // Wins over value/datum so `{ fn }` is unambiguous.
         if (typeof spec.fn === 'function') {
-            return callChannelFn(spec, channel, datum, index, data, fallback);
+            const out = callChannelFn(spec, channel, datum, index, data, NO_POSITION);
+            if (out === NO_POSITION) return fallback;
+            // Inside a glyph box, `{ fn, frame: true }` is derived in the glyph's
+            // LOCAL units — the same units a `{ frame: -0.4 }` constant is stated
+            // in — so it goes through the part's frame scale like that constant
+            // does. That is how one part sits where another part's VALUE puts it (a
+            // forearm hung from the end of an upper arm whose angle is a field): a
+            // pixel-space fn cannot know where the box is.
+            if (frameSpecOf(spec)) {
+                const scale = scales[channel];
+                return scale ? scale.encode(out, fallback) : fallback;
+            }
+            return out;
         }
         // Visual-space constant — the value IS the output. Subsumes static options
         // like fill: "steelblue".

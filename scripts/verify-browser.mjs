@@ -132,6 +132,7 @@ async function main() {
             '/editing/external-controls', '/editing/zoom',
             '/editing/history', '/widgets', '/scales', '/schema', '/constraints',
             '/effects', '/guides', '/theming', '/theming/themes', '/playground',
+            '/case-studies/glyphs',
         ];
         for (const r of routes) await visit(r);
 
@@ -810,6 +811,85 @@ async function main() {
             mouthNudged.smirk > beforeMouth.smirk
             && Math.abs(mouthNudged.curve - beforeMouth.curve) < 0.05,
             `smirk ${beforeMouth.smirk} -> ${mouthNudged.smirk}, curve ${beforeMouth.curve} -> ${mouthNudged.curve}`);
+
+        // ---- Three new glyphs (/case-studies/glyphs) -------------------------
+        // Built from existing marks only, so these assert the claims the page makes:
+        // a slide writes a COLOUR field (and the head repaints), two parts on one
+        // field stay gAligned, and a relative move keeps an area's edge under the
+        // pointer while a constraint snaps the value.
+        console.log('\nThree new glyphs (/case-studies/glyphs)');
+        await open('/case-studies/glyphs', '#hourglass .chart svg rect');
+        const gGlyphChart = (id) => page.locator(`#${id} .chart`).first();
+        const gGlyphData = async (id) => (await gGlyphChart(id).locator(':scope > div').first().evaluate((e) => e.getData()))[0];
+        const gToView = async (id) => {
+            await gGlyphChart(id).locator('svg').first().scrollIntoViewIfNeeded();
+            await page.waitForTimeout(150);
+        };
+
+        await gToView('face');
+        // The head is the largest circle; grab it left of the eyes, below the brows.
+        const gHeadAt = await gGlyphChart('face').locator('svg circle.mark').evaluateAll((cs) => {
+            const r = cs.map((c) => c.getBoundingClientRect()).sort((a, b) => b.width - a.width)[0];
+            return { x: r.x + r.width * 0.25, y: r.y + r.height * 0.55 };
+        });
+        // The box's hit circle is the head's size too, so skip it (it paints nothing).
+        const gHeadFill = () => gGlyphChart('face').locator('svg circle.mark').evaluateAll((cs) =>
+            cs.filter((c) => !c.hasAttribute('data-hit') && c.getAttribute('fill') !== 'none')
+                .sort((a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width)[0]
+                .getAttribute('fill'));
+        const gFaceBefore = await gGlyphData('face');
+        const gFillBefore = await gHeadFill();
+        await mouseDrag(gHeadAt.x, gHeadAt.y, gHeadAt.x + 80, gHeadAt.y);
+        const gFaceAfter = await gGlyphData('face');
+        check('glyphs face: sliding the head right writes the colour field (toward disgust)',
+            gFaceAfter.feeling > gFaceBefore.feeling + 0.4, `feeling ${gFaceBefore.feeling} -> ${gFaceAfter.feeling}`);
+        check('glyphs face: the head repaints from the field', (await gHeadFill()) !== gFillBefore);
+        check('glyphs face: the colour slide leaves valence alone', gFaceAfter.valence === gFaceBefore.valence);
+
+        await gToView('plant');
+        const gFlowerAt = () => gGlyphChart('plant').locator('svg circle.mark').evaluateAll((cs) => {
+            const c = cs.find((n) => n.getAttribute('fill') === '#db2777');
+            const r = c.getBoundingClientRect();
+            return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+        });
+        const gPlantBefore = await gGlyphData('plant');
+        const gF0 = await gFlowerAt();
+        await mouseDrag(gF0.x, gF0.y, gF0.x, gF0.y - 30);
+        const gPlantGrown = await gGlyphData('plant');
+        check('glyphs plant: dragging the flower up raises energy',
+            gPlantGrown.energy > gPlantBefore.energy + 0.1, `energy ${gPlantBefore.energy} -> ${gPlantGrown.energy}`);
+        const gAligned = await gGlyphChart('plant').locator('svg').first().evaluate((s) => {
+            const stem = s.querySelector('line.mark');
+            const flower = [...s.querySelectorAll('circle.mark')].find((n) => n.getAttribute('fill') === '#db2777');
+            const ys = [+stem.getAttribute('y1'), +stem.getAttribute('y2')];
+            return Math.abs(Math.min(...ys) - +flower.getAttribute('cy'));
+        });
+        check('glyphs plant: the stem top and the flower read one field, so they meet', gAligned < 0.5, `gap ${gAligned}`);
+        const gF1 = await gFlowerAt();
+        await mouseDrag(gF1.x, gF1.y, gF1.x + 40, gF1.y);
+        const gPlantBloomed = await gGlyphData('plant');
+        check('glyphs plant: a sideways drag on the flower writes joy, not energy',
+            gPlantBloomed.joy > gPlantGrown.joy + 0.1 && Math.abs(gPlantBloomed.energy - gPlantGrown.energy) < 0.02,
+            `joy ${gPlantGrown.joy} -> ${gPlantBloomed.joy}, energy ${gPlantGrown.energy} -> ${gPlantBloomed.energy}`);
+
+        await gToView('hourglass');
+        const gSandTop = () => gGlyphChart('hourglass').locator('svg rect').evaluateAll((rs) => {
+            const sand = rs.filter((n) => n.getAttribute('fill') === '#eab308')
+                .sort((a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width)[0];
+            const r = sand.getBoundingClientRect();
+            return { x: r.x + r.width / 2, top: r.y, bottom: r.y + r.height };
+        });
+        const gSand0 = await gSandTop();
+        const gWeeks0 = (await gGlyphData('hourglass')).weeks;
+        // Grab near the bottom of the sand, far from its surface: a relative move
+        // must still shift the surface by the drag distance, not jump to the pointer.
+        await mouseDrag(gSand0.x, gSand0.bottom - 4, gSand0.x, gSand0.bottom - 4 - 34);
+        const gWeeks1 = (await gGlyphData('hourglass')).weeks;
+        const gSand1 = await gSandTop();
+        check('glyphs hourglass: dragging the sand up adds whole weeks',
+            gWeeks1 > gWeeks0 && Number.isInteger(gWeeks1), `weeks ${gWeeks0} -> ${gWeeks1}`);
+        check('glyphs hourglass: the surface moves with the pointer (relative move, snapped)',
+            Math.abs((gSand0.top - gSand1.top) - 34) < 9, `surface moved ${gSand0.top - gSand1.top}px for a 34px drag`);
 
         // ---- Resize scales the whole glyph (/marks/face) ---------------------
         // `size` is the head's radius AND the frame's half-size, so growing it must

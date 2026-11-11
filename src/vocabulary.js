@@ -73,7 +73,7 @@ export const MARK_OPTIONS = {
         'sourceOffset', 'targetOffset',
         'handles', 'handleSize', 'handleColor',
     ],
-    needle: ['length', 'handles', 'handleSize', 'handleColor', 'baseWidth'],
+    needle: ['length', 'handles', 'handleSize', 'handleColor', 'baseWidth', 'tipWidth'],
     node: ['dy', 'shape', 'format'],
     point: ['shape'],
     shape: ['path'],

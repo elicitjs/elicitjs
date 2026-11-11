@@ -89,6 +89,10 @@
 // Two consequences of the per-row wrapping, both deliberate:
 //   · a local part's `build` sees a ONE-ROW dataset, so a derived `{ fn }` channel
 //     is called as `(d, 0, [d])` — it can't look across rows. Read the field.
+//     A bare `{ fn }` returns pixels, which cannot know where the box is; with
+//     `frame: true` it returns LOCAL units and goes through the part's frame scale
+//     (plot/mark.js: encodeOwn). That is how one part sits where another part's
+//     VALUE puts it — a forearm pivoting at the end of an upper arm.
 //   · a series (line-family) mark cannot span rows inside a box, so it is
 //     dev-warned rather than silently drawing one-point lines.
 //
@@ -243,6 +247,22 @@ function frameBox(scales, groupChannels, d, index, data, width, height) {
 }
 
 /**
+ * Whether a local channel's field is DISCRETE — categorical or ordinal, as the
+ * schema declares it (or the channel's own `type`, the override for a field the
+ * schema does not cover). The measure decides the frame scale's kind, exactly as
+ * it decides a global scale's: a category gets a stop, a number gets a line.
+ * @param {any} spec the ChannelSpec
+ * @param {Record<string, any>} schema
+ * @returns {boolean}
+ */
+function isDiscreteField(spec, schema) {
+    if (!spec || spec.field == null) return false;
+    const fieldSpec = schema && schema[spec.field];
+    const measure = spec.type || (fieldSpec && fieldSpec.type);
+    return measure === 'categorical' || measure === 'ordinal';
+}
+
+/**
  * The value domain of one local channel. A `{ field }` channel is in the field's
  * own units, so the SCHEMA owns its domain exactly as it does everywhere else; a
  * `{ datum }` constant is already stated in local units, so the local range IS
@@ -256,6 +276,8 @@ function frameDomain(spec, localRange, schema) {
     if (spec.field == null) return localRange;
     const fieldSpec = schema && schema[spec.field];
     const domain = fieldSpec && fieldSpec.domain;
+    // A discrete field keeps every category: each one is a stop in the slice.
+    if (Array.isArray(domain) && domain.length && isDiscreteField(spec, schema)) return domain.slice();
     if (Array.isArray(domain) && domain.length) return [domain[0], domain[domain.length - 1]];
     warn(
         `frame:domain:${spec.field}`,
@@ -297,6 +319,7 @@ function frameScales(channels, names, box, schema, dims, theme) {
             origin: family === 'x' ? box.cx : family === 'y' ? box.cy : 0,
             halfSize: box.r,
             family,
+            discrete: isDiscreteField(spec, schema),
         });
         // Published under BOTH keys. The frame map is spread over the global scales
         // to shadow them for this datum, and a reader finds a non-positional scale

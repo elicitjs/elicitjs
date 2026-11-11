@@ -26,7 +26,30 @@
 import { encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions, markDefaults, resolveHandles, markCommon, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 import { warn } from '../core/dev.js';
-import { needleTriangle } from './polar.js';
+import { needleTriangle, polarToXY } from './polar.js';
+
+/**
+ * The needle's outline: the tapered triangle, or — with a tip width — the
+ * quadrilateral running from the base's width to the tip's.
+ * @param {number} cx @param {number} cy @param {number} len @param {number} deg
+ * @param {number} baseWidth @param {number} tipWidth
+ * @returns {[number, number][]}
+ */
+function needleOutline(cx, cy, len, deg, baseWidth, tipWidth) {
+    if (!(tipWidth > 0)) return needleTriangle(cx, cy, len, deg, baseWidth);
+    const tip = polarToXY(cx, cy, len, deg);
+    /** @type {(x: number, y: number, half: number, side: number) => [number, number]} */
+    const off = (x, y, half, side) => {
+        const p = polarToXY(x, y, half, deg + side);
+        return [p.x, p.y];
+    };
+    return [
+        off(tip.x, tip.y, tipWidth / 2, 90),
+        off(cx, cy, baseWidth / 2, 90),
+        off(cx, cy, baseWidth / 2, -90),
+        off(tip.x, tip.y, tipWidth / 2, -90),
+    ];
+}
 
 /**
  * @param {any} [options]
@@ -75,6 +98,10 @@ export function needle(options = {}) {
         handleSize,
         handleColor,
         baseWidth = 10,
+        // The tip's width. 0 tapers to a point (a gauge's pointer); equal to
+        // baseWidth draws a bar of even width (a limb pivoting at a joint, which
+        // you grab far from the pivot — where a taper is thinnest).
+        tipWidth = 0,
     } = opts;
 
     // The belief sits on `theta`; x/y only place the pivot. The keys used to be
@@ -121,8 +148,8 @@ export function needle(options = {}) {
                     : encodeChannel(scales, channels, 'size', d, Math.min(width, height) * 0.4, i, currentData);
                 const style = resolveStyle(scales, channels, d,
                     markDefaults(scales, 'needle', { fill: '#1e293b', stroke: '#1e293b', strokeWidth: 1 }), i, currentData);
-                const pts = needleTriangle(cx, cy, len, deg, baseWidth);
-                const dPath = `M ${pts[0][0]} ${pts[0][1]} L ${pts[1][0]} ${pts[1][1]} L ${pts[2][0]} ${pts[2][1]} Z`;
+                const pts = needleOutline(cx, cy, len, deg, baseWidth, tipWidth);
+                const dPath = `M ${pts.map((p) => `${p[0]} ${p[1]}`).join(' L ')} Z`;
 
                 nodes.push({
                     type: 'path',

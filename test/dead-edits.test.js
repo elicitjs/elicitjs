@@ -112,3 +112,27 @@ describe('a sticker whose only edit is on its ports', () => {
         expect(circles[0].style.pointerEvents).not.toBe('none');
     });
 });
+
+describe('slide on a colour ramp', () => {
+    it('keeps inverts: "domain", so the dead-channel guard stays quiet', async () => {
+        expect(edit.slide({ axis: 'x' }).inverts).toBe('domain');
+        setWarnings(true);
+        const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = Elicit({
+            width: 200, height: 200, axes: false,
+            schema: { f: { type: 'quantitative', domain: [-1, 1] } },
+            data: [{ f: 0 }],
+            marks: [plot.point({ channels: {
+                size: { value: 40 },
+                fill: { field: 'f', scale: { type: 'diverging', range: ['red', 'yellow', 'green'] },
+                        edit: edit.slide({ axis: 'x' }) },
+            } })],
+        });
+        document.body.appendChild(el);
+        await tick();
+        const dead = spy.mock.calls.map((c) => String(c[0])).filter((m) => m.includes('cannot be inverted'));
+        spy.mockRestore();
+        setWarnings(false);
+        expect(dead).toEqual([]);
+    });
+});

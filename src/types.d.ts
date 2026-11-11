@@ -817,6 +817,10 @@ export interface ChannelSpec {
   //                        strokeWidth) as a fraction of its half-size
   //   frame: [lo, hi]      map `field`'s SCHEMA domain onto that slice of the box
   //   frame: true          map `field` onto the channel's default local range
+  // A categorical or ordinal field spreads its categories evenly from `lo` to `hi`
+  // (a point scale, so an edit snaps to the nearest). With `fn` instead of a field,
+  // `{ fn, frame: true }` is DERIVED in local units — how one part sits where
+  // another part's value puts it (a forearm at the end of an upper arm).
   // Desugars to `scale` (normalizeFrameKey in core/encoding.js), which stays the
   // single reader. An explicit `scale` wins. `{ value }` still means PIXELS here
   // as everywhere — inside a glyph you almost never want one, which is why the
@@ -2858,6 +2862,8 @@ export interface NeedleOptions extends MarkOptions, HandleOptions {
   length?: number;
   /** Width of the needle's base, in px. */
   baseWidth?: number;
+  /** Width of the needle's tip, in px. 0 (the default) tapers to a point; equal to `baseWidth` draws a bar of even width. */
+  tipWidth?: number;
 }
 export interface NodeOptions extends MarkOptions {
   /** The LABEL's vertical offset from the dot, in px. */

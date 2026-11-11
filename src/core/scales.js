@@ -290,19 +290,31 @@ export function createScale(spec, range) {
  * is that the result is a genuine Scale — capability-stamped, invertible, with a
  * `domainConfig` — so the edit layer inverts a gesture through the SAME object
  * that encoded it and nothing about "an edit is the inverse of encoding" needs a
- * special case. The scales this returns carry type 'linear' (or 'time'); 'frame'
- * is a channel-side marker and never reaches a resolved scale.
- * @param {{ domain: any[], localRange: number[], origin?: number, halfSize?: number, family?: 'x' | 'y' | 'size' | 'plain' }} opts
+ * special case. The scales this returns carry type 'linear' (or 'time'), or
+ * 'point' over a DISCRETE field; 'frame' is a channel-side marker and never
+ * reaches a resolved scale.
+ *
+ * A discrete field (`discrete: true`, which the caller reads off the schema's
+ * measure) spreads its categories evenly from the first stop of `localRange` to
+ * the last, with no padding: the ends of the slice ARE the first and last
+ * category, the way a linear frame puts the domain's ends there. A point scale
+ * inverts to the nearest category, so the universal edits snap without knowing
+ * the field is categorical.
+ * @param {{ domain: any[], localRange: number[], origin?: number, halfSize?: number, family?: 'x' | 'y' | 'size' | 'plain', discrete?: boolean }} opts
  * @returns {import('../types').Scale | null}
  */
-export function createFrameScale({ domain, localRange, origin = 0, halfSize = 1, family = 'plain' }) {
+export function createFrameScale({ domain, localRange, origin = 0, halfSize = 1, family = 'plain', discrete = false }) {
     /** @type {(u: number) => number} */
     const toPixel = family === 'x' ? (u) => origin + u * halfSize
         : family === 'y' ? (u) => origin - u * halfSize   // local y is UP
             : family === 'size' ? (u) => u * halfSize
                 : (u) => u;                               // already in output units
-    const type = domain.some((/** @type {any} */ v) => v instanceof Date) ? 'time' : 'linear';
-    const scale = createScale({ type, domain }, localRange.map(toPixel));
+    const scale = discrete
+        ? createScale({ type: 'point', domain, padding: 0 },
+            [toPixel(localRange[0]), toPixel(localRange[localRange.length - 1])])
+        : createScale(
+            { type: domain.some((/** @type {any} */ v) => v instanceof Date) ? 'time' : 'linear', domain },
+            localRange.map(toPixel));
     // The glyph's radius, carried on the scale so a GESTURE can size itself to the
     // glyph. A `slide` on a frame channel sweeps the domain in one radius instead
     // of a fixed 120px, which is far too coarse on a small glyph and too fine on a

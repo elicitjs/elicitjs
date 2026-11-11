@@ -142,7 +142,10 @@ export function makeEdit(spec) {
         // Does this edit run a POINTER back through a channel's scale, so it needs
         // that scale to invert? Declared, so the dead-drag guard reads a capability
         // rather than an allowlist of type names (which missed rank and stack.edge).
-        inverts: !!spec.inverts,
+        // `'domain'` is kept as stated: slide interpolates over the DOMAIN and never
+        // inverts a pixel, so it works on a colour ramp. Coercing it to a boolean
+        // made the guard report every slide on a ramp as dead.
+        inverts: spec.inverts === 'domain' ? 'domain' : !!spec.inverts,
         // Does this edit move a positional domain as a WINDOW over the data (zoom,
         // pan)? Then rows legitimately fall outside the plot, and the engine clips
         // the marks to the plot rect unless the spec says `clip: false`.

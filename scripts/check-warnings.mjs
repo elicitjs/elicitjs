@@ -53,6 +53,7 @@ const routes = [
     '/editing/external-controls', '/editing/zoom',
     '/editing/history', '/widgets', '/scales', '/schema', '/constraints',
     '/effects', '/guides', '/theming', '/theming/themes', '/playground',
+    '/case-studies/glyphs',
 ];
 
 async function waitForServer(url, timeoutMs = 120000) {
