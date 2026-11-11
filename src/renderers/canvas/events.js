@@ -12,7 +12,7 @@
 //   hover / hoverout         — plane, plane-on-top only (mirrors the D3 plane gestures)
 // Keyboard nudge and the text-edit `commit` are deliberately not wired yet.
 import { hitTest, clipVisible } from '../../edit/pick.js';
-import { frameThrottle } from '../shared.js';
+import { frameThrottle, MODIFIER_KEYS } from '../shared.js';
 
 // Movement (px) before a press becomes a drag. `direct` matches d3.drag's
 // clickDistance(4): a press that stays within it is a click, not a drag. `plane`
@@ -38,6 +38,35 @@ export function bindCanvasEvents(canvas, getCtx) {
     /** @type {string | null} */
     let hoverKey = null;
     let suppressClick = false; // swallow the native click that trails a drag / mark-click
+
+    // Re-report the plane hover when a MODIFIER changes under a still pointer, so
+    // an edit gated `when: when.shift` is re-arbitrated without a move (its hover
+    // ring would otherwise outlive the key). Bound only while the pointer is over
+    // the plane, so a canvas that is gone leaves no window listener behind. The
+    // D3 renderer does the same (`_watchModifiers`).
+    /** @type {{ x: number, y: number } | null} */
+    let modifierHover = null;
+    /** @param {KeyboardEvent} e */
+    const onModifier = (e) => {
+        if (!MODIFIER_KEYS.has(e.key) || gesture || !modifierHover) return;
+        const ctx = getCtx();
+        if (ctx.planeOnTop) ctx.onEvent({ type: 'hover', x: modifierHover.x, y: modifierHover.y, rawEvent: e });
+    };
+    /** @param {number} x @param {number} y */
+    const watchModifiers = (x, y) => {
+        if (!modifierHover && typeof window !== 'undefined') {
+            window.addEventListener('keydown', onModifier);
+            window.addEventListener('keyup', onModifier);
+        }
+        modifierHover = { x, y };
+    };
+    const unwatchModifiers = () => {
+        if (modifierHover && typeof window !== 'undefined') {
+            window.removeEventListener('keydown', onModifier);
+            window.removeEventListener('keyup', onModifier);
+        }
+        modifierHover = null;
+    };
 
     // The editable mark under (x, y). Under `clip` a mark past the clip rect is
     // not drawn, so it is not grabbed either — only chrome reaches out there.
@@ -144,6 +173,7 @@ export function bindCanvasEvents(canvas, getCtx) {
             if (ctx.planeOnTop) {
                 // Plane-on-top: the plane owns the pointer, and `hover` is what a
                 // proximity / probe driver tracks.
+                watchModifiers(x, y);
                 ctx.onEvent({ type: 'hover', x, y, rawEvent: e });
                 canvas.style.cursor = ctx.planeCursor || 'pointer';
             } else {
@@ -192,6 +222,7 @@ export function bindCanvasEvents(canvas, getCtx) {
     });
 
     canvas.addEventListener('pointerleave', (e) => {
+        unwatchModifiers();
         {
             const ctx = getCtx();
             if (ctx.tracksPointer) ctx.onEvent({ type: 'pointerleave', rawEvent: e });

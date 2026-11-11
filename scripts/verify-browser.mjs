@@ -933,6 +933,31 @@ async function main() {
             gMoved.filter(Boolean).length === 1, `moved rows: ${gMoved}`);
         check('glyphs positions: moving a face leaves its answers alone',
             gFaces2.every((d, i) => d.feeling === gFaces1[i].feeling && d.valence === gFaces1[i].valence));
+        // Releasing Shift under a still pointer retires the Shift-only hover ring.
+        // Pressing or releasing a key moves nothing, so the renderer re-reports the
+        // hover, and the engine tells the move's driver (which no longer accepts it)
+        // that the pointer left. Over a pot — a part with no edit — nothing is lit.
+        await gPos(1).locator('svg').first().scrollIntoViewIfNeeded();
+        await page.waitForTimeout(150);
+        const gPot = await gPos(1).locator('svg rect.mark').evaluateAll((rs) => {
+            const r = rs.filter((n) => n.getAttribute('fill') === '#b45309')[0].getBoundingClientRect();
+            return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+        });
+        const gRings = () => gPos(1).locator('svg .effect').count();
+        await page.mouse.move(gPot.x + 2, gPot.y);
+        await page.mouse.move(gPot.x, gPot.y);
+        await page.waitForTimeout(150);
+        await page.keyboard.down('Shift');
+        await page.mouse.move(gPot.x + 1, gPot.y);
+        await page.waitForTimeout(150);
+        const gRingsHeld = await gRings();
+        await page.keyboard.up('Shift');
+        await page.waitForTimeout(200);
+        const gRingsReleased = await gRings();
+        check('glyphs positions: holding Shift lights the move\'s hover ring', gRingsHeld > 0, `${gRingsHeld} rings`);
+        check('glyphs positions: releasing Shift without moving clears it', gRingsReleased === 0, `${gRingsReleased} rings`);
+        await page.mouse.move(5, 5);
+
         await gPos(2).locator('svg').first().scrollIntoViewIfNeeded();
         await page.waitForTimeout(150);
         const gGlass0 = await gPosData(2);

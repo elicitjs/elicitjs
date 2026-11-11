@@ -2176,6 +2176,11 @@ export function Elicit(spec) {
     // on dragstart / click / dblclick / hover and is reused for drag / dragend.
     /** @type {Record<string, import('../types').Edit[]>} */
     let strokeLive = {};
+    // The plane edits that accepted each feature's last HOVER, so one that stops
+    // accepting (a modifier released) is told the pointer left. See the plane
+    // dispatch in handleEvent.
+    /** @type {Record<string, import('../types').Edit[]>} */
+    let hoverLive = {};
     /**
      * @param {any} feature
      * @param {any} event
@@ -2185,6 +2190,10 @@ export function Elicit(spec) {
         const plane = activeEdits(feature).filter(e => e.pick !== 'direct');
         if (!plane.length) return plane;
         if (event.type === 'drag' || event.type === 'dragend') return strokeLive[feature.id] || [];
+        // The pointer LEAVING reaches every plane edit. Dropping hover state is not
+        // a gesture a modifier can decline, and a driver whose edit stopped
+        // accepting (Shift released) must still hear it, or its ring stays lit.
+        if (event.type === 'hoverout') return plane;
         const live = plane.filter(e => arbitrates(feature, e, event));
         if (event.type === 'dragstart') strokeLive[feature.id] = live;
         return live;
@@ -2421,6 +2430,21 @@ export function Elicit(spec) {
             // Plane gestures -> every feature's plane/nearest/sweep/draw edits.
             features.forEach(feature => {
                 const live = planeLive ? planeLive.get(feature.id) : undefined;
+                // A hover a plane edit now DECLINES is, to its driver, the pointer
+                // leaving: a `move({ when: when.shift })` lit a ring while Shift was
+                // down, and with Shift up it is never called again, so it would keep
+                // that ring forever. Retire it first, then hand the hover to the
+                // edits that accept it (they share the feature's session).
+                // Only an edit that accepted the LAST hover has anything to retire, so
+                // a pointer moving with Shift up re-renders nothing.
+                if (event.type === 'hover') {
+                    const accepted = live !== undefined ? live : livePlaneEdits(feature, event);
+                    const declined = (hoverLive[feature.id] || []).filter(e => !accepted.includes(e));
+                    hoverLive[feature.id] = accepted;
+                    if (declined.length && runDrivers(feature, { ...event, type: 'hoverout' }, declined, null)) shouldRender = true;
+                } else if (event.type === 'hoverout') {
+                    delete hoverLive[feature.id];
+                }
                 if (dispatchPlaneEdits(feature, event, live)) shouldRender = true;
             });
             if (event.type === 'dragend') strokeLive = {};

@@ -131,3 +131,10 @@ export function frameThrottle(fn) {
         });
     }));
 }
+
+/**
+ * The keys whose press or release can change what a `when` predicate answers
+ * (`when.shift`, `when.alt`, …). A renderer re-reports the plane hover when one
+ * changes under a still pointer, so the engine re-arbitrates without a move.
+ */
+export const MODIFIER_KEYS = new Set(['Shift', 'Alt', 'Control', 'Meta']);

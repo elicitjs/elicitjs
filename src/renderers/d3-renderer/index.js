@@ -3,7 +3,7 @@ import * as d3 from "d3";
 import { DEFAULT_EFFECTS, ELEMENT_EFFECT_PROPS } from "../../core/effects.js";
 import { markCenter } from "../../edit/shared.js";
 import { rectHitBox, MIN_GRAB } from "../../edit/pick.js";
-import { resolveCurve, lineGenerator, STYLE_FIELDS, partitionScene, frameThrottle } from "../shared.js";
+import { resolveCurve, lineGenerator, STYLE_FIELDS, partitionScene, frameThrottle, MODIFIER_KEYS } from "../shared.js";
 
 // A camelCase effect property -> its CSS property name (strokeWidth ->
 // stroke-width). Effects are applied as CSS PROPERTIES rather than SVG
@@ -542,6 +542,7 @@ export class D3Renderer {
       // Leaving the press handlers bound would keep a dead plane drag alive, and
       // an in-flight gesture has no listener left to end it — abandon it here.
       this._abortPlaneGesture();
+      this._unwatchModifiers();
       plane.on("pointerdown", null).on("pointermove", null).on("pointerleave", null);
       return;
     }
@@ -577,11 +578,43 @@ export class D3Renderer {
         // pointer off-plane too); this element-level one would double-report.
         if (this._planeGesture) return;
         const [px, py] = pointer(event);
+        this._watchModifiers(px, py, onEvent);
         onEvent({ type: "hover", x: px, y: py, rawEvent: event });
       })
       .on("pointerleave", (/** @type {any} */ event) => {
+        this._unwatchModifiers();
         if (!this._planeGesture) onEvent({ type: "hoverout", rawEvent: event });
       });
+  }
+
+  /**
+   * Re-report the plane hover when a MODIFIER changes under a still pointer. An
+   * edit gated `when: when.shift` accepts a hover only while Shift is down, and
+   * pressing or releasing Shift moves nothing, so without this the engine never
+   * re-arbitrates and the gated edit's hover ring outlives the key. The listener
+   * lives only while the pointer is over the plane, so a chart that is gone
+   * leaves nothing behind.
+   * @param {number} px @param {number} py
+   * @param {(e: any) => void} onEvent
+   */
+  _watchModifiers(px, py, onEvent) {
+    this._modifierHover = { px, py, onEvent };
+    if (this._modifierKey || typeof window === "undefined") return;
+    this._modifierKey = (/** @type {KeyboardEvent} */ event) => {
+      if (!MODIFIER_KEYS.has(event.key) || this._planeGesture || !this._modifierHover) return;
+      const at = this._modifierHover;
+      at.onEvent({ type: "hover", x: at.px, y: at.py, rawEvent: event });
+    };
+    window.addEventListener("keydown", this._modifierKey);
+    window.addEventListener("keyup", this._modifierKey);
+  }
+
+  _unwatchModifiers() {
+    this._modifierHover = null;
+    if (!this._modifierKey || typeof window === "undefined") return;
+    window.removeEventListener("keydown", this._modifierKey);
+    window.removeEventListener("keyup", this._modifierKey);
+    this._modifierKey = null;
   }
 
   /**
