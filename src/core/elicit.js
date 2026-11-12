@@ -1049,10 +1049,18 @@ export function Elicit(spec) {
             // whole dataset, the canonical schema (to find another table by ROLE), and
             // which table it is itself drawing. Passed as a 5th argument, so every
             // existing mark's four-parameter build() is untouched.
+            // A ROW HANDLE (`node.rowHandle`) exists only to be grabbed, so it is drawn
+            // only where a gesture could move it: not on a locked or context row, and
+            // not while every edit on the mark waits for a later stage. A mark decides
+            // at factory time WHETHER it draws handles (it has edits); only the engine
+            // knows the lock and the stage, so it decides WHICH rows keep them. Dropped
+            // before featureNodes is written, so picking never sees them either.
+            const hasLiveEdit = activeEdits(feature).length > 0;
             const nodes = feature.build(currentData, scales, innerWidth, innerHeight, {
                 tables, schema: schemaSpec, table: feature.table,
                 nodeBox: nodeBoxRule(), nodePorts: nodePortsRule,
-            });
+            }).filter((/** @type {any} */ node) => !(node && node.rowHandle && (!hasLiveEdit
+                || (isLocked && isNodeLocked(node, feature, currentData, isLocked)))));
             featureNodes[feature.id] = nodes;
 
             const declaredEdits = collectEdits(feature);
@@ -1406,6 +1414,25 @@ export function Elicit(spec) {
                 [grabbed, effects.grabbed],
             ];
 
+            // The HANDLE hover names, when a row draws several (a band's y1 and y2
+            // edges, a trend's intercept and slope). The pointer names one directly
+            // (ui.hover.node); a proximity driver names one by the `channel` its
+            // session locked or would lock (a band sweep's edge). Found by tags, not
+            // identity — this pass runs on freshly built nodes. Without it the row's
+            // FIRST node was outlined, so hovering a band's upper edge lit the lower.
+            const hoverRef = ui.hover && ui.hover.featureId === feature.id && ui.hover.node
+                && ui.hover.node.channel != null
+                ? ui.hover.node
+                : (viaProximity != null && session && session.channel != null
+                    ? { index: viaProximity, channel: session.channel }
+                    : null);
+            const hoverHandle = hoverRef
+                ? marks.find((m) => m && !m.ghost && handleKey(m) === handleKey(hoverRef)) || null
+                : null;
+            /** A sibling handle of the hovered one: same row, a different channel. */
+            const isOtherHandle = (/** @type {any} */ node) => !!hoverHandle && node.channel != null
+                && node.index === hoverHandle.index && node.channel !== hoverHandle.channel;
+
             // Restyle half: merge the element props of every state a datum is in onto
             // that datum's own nodes. Stamped on the node so it survives into both
             // renderers and, being the mark's own node, lands on the mark's actual
@@ -1421,7 +1448,11 @@ export function Elicit(spec) {
             }
             for (const node of marks) {
                 if (!node || node.ghost || node.index == null) continue;
-                const style = effectStyleFor(statesByIndex.get(node.index) || []);
+                let states = statesByIndex.get(node.index) || [];
+                // Hover names ONE handle of the row; its sibling is not the mark
+                // a gesture would take, so it keeps its own paint.
+                if (isOtherHandle(node)) states = states.filter((s) => s !== effects.hovered);
+                const style = effectStyleFor(states);
                 if (style) node.effectStyle = style;
             }
 
@@ -1458,10 +1489,6 @@ export function Elicit(spec) {
             // several nodes a feature draws for one row — is outlined itself, found
             // by its tags rather than by identity (this pass runs on freshly built
             // nodes); every other case outlines the row's first node, as before.
-            const hoverHandle = ui.hover && ui.hover.featureId === feature.id && ui.hover.node
-                && ui.hover.node.channel != null
-                ? marks.find((m) => m && handleKey(m) === handleKey(ui.hover && ui.hover.node))
-                : null;
             for (const [indices, state] of byState) {
                 if (!indices.size) continue;
                 /** @type {any[]} */

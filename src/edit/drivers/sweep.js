@@ -40,6 +40,24 @@ export const sweepDriver = {
                 (m) => edge == null || m.channel == null || m.channel === edge);
 
         /**
+         * The EDGE a press at the pointer locks onto: on a band, the edge whose
+         * handle is nearest in 2-D, wherever the press lands — above the band or
+         * below it — so a band sweep always paints one edge. (A press outside the
+         * catchment used to run both edges' edits and collapse the band.) Null on a
+         * mark with untagged handles (a plain line). Hover and dragstart both ask,
+         * so what is highlighted is what the stroke paints.
+         * @param {any} lockSeries
+         * @returns {string | null}
+         */
+        const edgeAt = (lockSeries) => {
+            const edged = (marks || []).filter((m) => m && m.channel != null);
+            const near = edged.length
+                ? nearestNode(edged, event.x, event.y, Infinity, lockSeries)
+                : nearestNode(marks, event.x, event.y, threshold, lockSeries);
+            return near && near.channel != null ? near.channel : null;
+        };
+
+        /**
          * Run the edits that govern this tick's edge. An edit placed at MARK level
          * names no channel, so its apply would resolve none and write nothing: it
          * runs with the channels this driver sweeps (the engine warns when that
@@ -93,9 +111,15 @@ export const sweepDriver = {
 
         let changed = false;
         if (event.type === 'hover') {
+            // Resolve the target a press HERE would take — edge included — so the
+            // hover highlight names the handle the stroke will paint. Resolving with
+            // no edge took a band's first handle in the column (its lower edge)
+            // while the press then locked the upper one.
             const s = nearestSeries(marks, event.x, event.y, threshold);
-            const hit = resolve(s == null ? undefined : s, null);
-            session.set({ px: event.x, py: event.y, threshold, hoverIndex: hit, series: s });
+            const lock = s == null ? undefined : s;
+            const edge = edgeAt(lock);
+            const hit = resolve(lock, edge);
+            session.set({ px: event.x, py: event.y, threshold, hoverIndex: hit, series: s, channel: edge });
             changed = true;
         } else if (event.type === 'hoverout') {
             session.clear();
@@ -105,14 +129,7 @@ export const sweepDriver = {
             // the edge whose handle is nearest in 2-D.
             const s = nearestSeries(marks, event.x, event.y, threshold);
             const lock = s == null ? undefined : s;
-            // The nearest EDGE handle wins wherever the press lands — above the band
-            // or below it — so a band sweep always paints one edge. (A press outside
-            // the catchment used to run both edges' edits and collapse the band.)
-            const edged = (marks || []).filter((m) => m && m.channel != null);
-            const near = edged.length
-                ? nearestNode(edged, event.x, event.y, Infinity, lock)
-                : nearestNode(marks, event.x, event.y, threshold, lock);
-            const edge = near && near.channel != null ? near.channel : null;
+            const edge = edgeAt(lock);
             const index = resolve(lock, edge);
             session.set({ px: event.x, py: event.y, threshold, hoverIndex: index, activeIndex: index, series: s, channel: edge, lastX: event.x, lastY: event.y });
             if (index != null && paint(index, edge)) changed = true;

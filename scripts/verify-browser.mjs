@@ -2029,28 +2029,27 @@ async function main() {
         // removal: the handles are still DRAWN, so the chart looks identical either
         // way, and typecheck/check:warnings both stay green on the broken version.
         console.log('\nA mark with no edit is inert (/marks/trend)');
-        await open('/marks/trend', '#inert .chart svg circle');
+        await open('/marks/trend', '#inert .chart svg line');
         const inertChart = page.locator('#inert .chart').first();
         const inertRows = () => inertChart.locator(':scope > div').first().evaluate((e) => e.getData());
         const inertBefore = await inertRows();
+        // A ROW HANDLE draws only where a live edit can reach its row (the engine
+        // drops `node.rowHandle` otherwise), so a trend with no edit draws its line
+        // and no grips: a dot a drag cannot move is an affordance that lies.
         const inertHandles = await inertChart.locator('svg circle').count();
-        // Three, not two: the intercept handle at the anchor plus a slope grip at
-        // EACH end of the line. One end-mounted grip would teleport across the plot
-        // as the line passes vertical, so the pair is the affordance, not a bonus.
-        check('trend (no edit): the handles are still drawn', inertHandles === 3, `${inertHandles} circles`);
-        for (const nth of [0, 1, 2]) {
-            const h = inertChart.locator('svg circle').nth(nth);
-            await h.scrollIntoViewIfNeeded();
-            const hb = await h.boundingBox();
-            if (!hb) continue;
-            await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
+        check('trend (no edit): no handles are drawn', inertHandles === 0, `${inertHandles} circles`);
+        // Drag across the line where the intercept handle used to sit: still nothing.
+        const inertBox = await inertChart.locator('svg').first().boundingBox();
+        if (inertBox) {
+            const cx = inertBox.x + inertBox.width / 2, cy = inertBox.y + inertBox.height / 2;
+            await page.mouse.move(cx, cy);
             await page.mouse.down();
-            await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2 - 45, { steps: 6 });
+            await page.mouse.move(cx, cy - 45, { steps: 6 });
             await page.mouse.up();
         }
         await page.waitForTimeout(150);
         const inertAfter = await inertRows();
-        check('trend (no edit): dragging both handles writes NOTHING',
+        check('trend (no edit): dragging the line writes NOTHING',
             JSON.stringify(inertAfter) === JSON.stringify(inertBefore),
             `${JSON.stringify(inertBefore)} -> ${JSON.stringify(inertAfter)}`);
 
@@ -4508,6 +4507,14 @@ async function main() {
         const topHandles = page.locator('#band svg circle[data-channel="y2"]');
         const t0 = await boxCentre(topHandles.nth(1));
         const t3 = await boxCentre(topHandles.nth(4));
+        // Hovering just above the top edge outlines a TOP handle — the edge a press
+        // there would paint — not the row's first node (its lower edge).
+        await page.mouse.move(t0.x, t0.y - 6);
+        await page.waitForTimeout(150);
+        const outlineY = await page.locator('#band svg circle.effect:not([stroke-dasharray])').first()
+            .evaluate((c) => c.getBoundingClientRect().y + c.getBoundingClientRect().height / 2).catch(() => null);
+        check('band sweep: hover over the top edge outlines a top handle',
+            outlineY != null && Math.abs(outlineY - t0.y) < 3, `outline y ${outlineY}, top handle y ${t0.y}`);
         await dragPage(t0.x, t0.y, t3.x, t0.y - 30, 16);
         const bsAfter = await page.$eval(bsEl, (e) => e.getData());
         const hiMoved = bsAfter.filter((d, i) => Math.abs(d.hi - bsBefore[i].hi) > 0.5).length;
@@ -4524,14 +4531,21 @@ async function main() {
             && ctxData.every((d) => d.year > 2020), JSON.stringify(ctxData).slice(0, 80));
         check('context: one line draws record and forecast', (await page.locator('#context svg path.mark-line').count()) === 1);
         // Drag the first record point: it is locked, so the answer is unchanged.
+        // A handle draws only where a drag can move its row: the four answers, not
+        // the six context rows (`node.rowHandle`, dropped on a locked row).
         const ctxDots = page.locator('#context svg circle.mark:not([data-hit])');
-        check('context: every row draws a handle', (await ctxDots.count()) === 10);
-        const rec = await boxCentre(ctxDots.first());
+        check('context: only the answer rows draw a handle', (await ctxDots.count()) === 4, `${await ctxDots.count()} handles`);
+        // Drag the line where the first record point sits: the answer is unchanged.
+        const rec = await page.locator('#context svg path.mark-line').first().evaluate((path) => {
+            const p = path.getPointAtLength(0);
+            const m = path.getScreenCTM();
+            return { x: m.a * p.x + m.c * p.y + m.e, y: m.b * p.x + m.d * p.y + m.f };
+        });
         await dragPage(rec.x, rec.y, rec.x, rec.y - 40);
         const ctxAfterRec = await page.$eval(ctxEl, (e) => e.getData());
         check('context: a record point does not move', JSON.stringify(ctxAfterRec) === JSON.stringify(ctxData));
         // Drag a forecast point: getData() reports it.
-        const fc = await boxCentre(ctxDots.nth(7));
+        const fc = await boxCentre(ctxDots.nth(1));
         await dragPage(fc.x, fc.y, fc.x, fc.y - 40);
         const ctxAfterFc = await page.$eval(ctxEl, (e) => e.getData());
         check('context: a forecast drag is reported', ctxAfterFc.length === 4 && ctxAfterFc[1].rate > ctxData[1].rate + 0.5,

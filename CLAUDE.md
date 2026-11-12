@@ -411,6 +411,15 @@ colour was themed on some and a literal on others; and `handles: false` meant th
 different things. A handle whose travel range isn't a scale declares it as `node.dm`
 (the same descriptor `linearInvert` inverts through), which is what `guide: { track: true }`
 draws — so the line the author sees IS the mapping, not a redrawing of it.
+A node a mark draws ONLY to be grabbed (a line's vertex dot, a band's edge dot, a
+trend's grips, defaulted geo vertices) is stamped `rowHandle: true`, and the engine
+drops it wherever no ACTIVE edit can reach its row — a locked or context row, or a
+stage whose edits aren't live yet. The mark decides WHETHER it draws handles; only
+the engine knows the lock and the stage, so only it decides WHICH rows keep them.
+A handle a drag cannot move is an affordance that lies. Don't stamp it on a node
+that IS the data's ink (a point's circle, a needle's hub), and read
+`handlesAreAffordance` rather than stamping it unconditionally: an explicit
+`handles: true` on a mark with no edit asks for the dots AS ink, and they draw.
 
 **A mark with no direct-pick edit is pointer-transparent.** The engine sets `pointerEvents:'none'` on such a mark's nodes unless the mark set a value itself. This is load-bearing, not cosmetic: the renderer defaults nodes to `pointer-events:auto` and draws lines *after* circles, so an inert rule (a glyph's whisker) sits above a sibling's handle and would swallow its drag. Don't "optimize" this away.
 

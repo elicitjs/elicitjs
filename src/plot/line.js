@@ -1,6 +1,6 @@
 // @ts-check
 import { isBand } from '../core/scales.js';
-import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel, orderFieldOf, resolveValueAxis, orderSeries, seriesKeyOf, hasAnyEdit, inkOf, missingValue } from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, handlesAreAffordance, markCommon, rawChannel, orderFieldOf, resolveValueAxis, orderSeries, seriesKeyOf, hasAnyEdit, inkOf, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
 // line: a connected-path mark over an ordered set of points. It is deliberately
@@ -86,8 +86,9 @@ function buildLine(options, defaultConnect = 'domain') {
             // Handles draw only when something can grab them. Decided HERE, from the
             // feature as the engine holds it — a composite merges its edits into a
             // part after the factory ran, so a factory-time answer missed them.
-            const handles = handlesOpt !== undefined ? handlesOpt
-                : hasAnyEdit({ edits: this && this.edits, channels: (this && this.channels) || channels });
+            const editsNow = { edits: this && this.edits, channels: (this && this.channels) || channels };
+            const handles = handlesOpt !== undefined ? handlesOpt : hasAnyEdit(editsNow);
+            const rowHandle = handlesAreAffordance(handlesOpt, editsNow);
             const { x: xScale, y: yScale } = scales;
 
             // Which axis carries the value (the point's editable position)?
@@ -196,6 +197,9 @@ function buildLine(options, defaultConnect = 'domain') {
                     data: d,
                     index: i,
                     series,
+                    // Drawn to be grabbed: the engine drops it on a row no live
+                    // edit can reach (a locked or context row, a later stage).
+                    rowHandle,
                     // The domain axis a you-draw-it sweep measures distance along.
                     sweepAxis: domainAxis
                 });

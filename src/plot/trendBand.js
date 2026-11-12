@@ -45,7 +45,7 @@
 // would run twice per gesture — see warnDuplicatePlaneEdits. Declare the edit on
 // the mark the reader grabs; the band re-derives on the next render.
 
-import { resolveStyle, normalizeMarkOptions, markDefaults, themeOf, encodeValue, positionalKeys, resolveHandles, markCommon, missingValue } from './mark.js';
+import { resolveStyle, normalizeMarkOptions, markDefaults, themeOf, encodeValue, positionalKeys, resolveHandles, handlesAreAffordance, markCommon, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 import {
     paramChannels, readParams, anchorsOf, valueAt,
@@ -94,6 +94,8 @@ export function trendBand(options = {}) {
         slope: { field: 'slope' }
     });
     const anchors = { anchor: anchorOpt, probe: probeOpt };
+    // Spread grips are row handles unless an inert band asks for them as ink.
+    const rowHandle = handlesAreAffordance(opts.handles, { edits, channels });
 
     return {
         ...markCommon(opts),
@@ -240,7 +242,8 @@ export function trendBand(options = {}) {
                         // The mark's anchor/probe and grip ride along, so the spread
                         // edits pivot where the handle sits and read the gesture the way
                         // that handle affords — see plot/trend.js.
-                        data: d, index: i, channel, anchor, probe, grip
+                        data: d, index: i, channel, anchor, probe, grip,
+                        rowHandle, // dropped where no live edit reaches the row
                     });
                 };
 

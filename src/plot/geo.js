@@ -410,6 +410,10 @@ export function geoLine(options = {}) {
     // Per-row lines own their vertices; a connected scatter's dots belong to a
     // sibling geoPoint (so they can be dragged independently).
     const showVertices = opts.showVertices != null ? opts.showVertices : !rowMode;
+    // Defaulted vertices are a grab AFFORDANCE, so they are row handles the engine
+    // drops where no live edit reaches the row; `showVertices: true` asks for them
+    // as INK (a route's stops) and they always draw.
+    const vertexHandles = opts.showVertices == null;
 
     if (rowMode) {
         return {
@@ -508,6 +512,7 @@ export function geoLine(options = {}) {
                             strokeWidth: 1,
                             data: p.d,
                             index: p.i,
+                            rowHandle: vertexHandles,
                         });
                     });
                 }
@@ -582,6 +587,7 @@ export function geoLine(options = {}) {
                             index: i,
                             channel: 'vertex',
                             vertexIndex: vi,
+                            rowHandle: vertexHandles,
                         });
                     });
                 }

@@ -392,6 +392,20 @@ export function hasAnyEdit(opts) {
 }
 
 /**
+ * Are a mark's handle dots an AFFORDANCE — drawn so a row can be grabbed — and so
+ * row handles (`node.rowHandle`) the engine drops wherever no live edit can reach
+ * the row? Yes when the mark carries an edit, and yes when `handles` was left to
+ * its default. An explicit `handles: true` on a mark with NO edit asks for the
+ * dots as INK (points on a reference line), and those always draw.
+ * @param {any} handlesOpt the mark's `handles` option as the author wrote it
+ * @param {{ edits?: any, channels?: Record<string, any> }} opts the edits and channels to read
+ * @returns {boolean}
+ */
+export function handlesAreAffordance(handlesOpt, opts) {
+    return handlesOpt === undefined || hasAnyEdit(opts);
+}
+
+/**
  * Resolve a mark's handle options into the paint every handle node needs.
  *
  * @param {import('../types').ScaleMap} scales the scale map (carries the theme)

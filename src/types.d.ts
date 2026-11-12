@@ -1999,6 +1999,13 @@ export interface FeatureNode {
   // something to take hold of. Tagged `data-hit` by the D3 renderer, so a selector
   // can tell it from a part it sits under.
   hit?: boolean;
+  // A ROW HANDLE: a node the mark draws only so its row can be grabbed (a line's
+  // vertex dot, a band's edge dot, a trend's grips), never the data's own ink. The
+  // engine drops it from the scene wherever no ACTIVE edit can reach the row — a
+  // locked or context row, or a stage whose edits are not yet live — so a dot is
+  // never drawn that a drag cannot move. The mark's own shapes (a point's circle,
+  // a bar's rect) are not row handles: they ARE the data and always draw.
+  rowHandle?: boolean;
   // Runtime tags set by marks for the pick/driver layer: `series` groups a line's
   // nodes; `sweepAxis`/`bandAxis` name the axis proximity measures along; `cursor`
   // overrides the interactive cursor (e.g. a tick's ew-resize); `channel` tags one
@@ -2099,7 +2106,9 @@ export interface Session {
   lastX?: number | null;
   lastY?: number | null;
   // sweep driver: the EDGE (a handle's `channel`, y1/y2) a band sweep locked
-  // onto at dragstart, so each tick paints that edge alone.
+  // onto at dragstart, so each tick paints that edge alone. Set on hover too (the
+  // edge a press there WOULD lock), so the engine's hover effect outlines that
+  // edge's handle rather than the row's first node.
   channel?: string | null;
   // brush driver: the dragstart-locked grab zone (+ which field an edge zone
   // targets), forced to 'canonicalize' for the one-time dragend cleanup tick.

@@ -84,7 +84,7 @@
 // exists to state, and a default that cannot be turned off is not a default. Staging
 // goes on the edit (`edit.trend.slope({ stage: 1 })`), like every other edit's stage.
 
-import { resolveStyle, normalizeMarkOptions, markDefaults, encodeValue, positionalKeys, resolveHandles, markCommon, missingValue } from './mark.js';
+import { resolveStyle, normalizeMarkOptions, markDefaults, encodeValue, positionalKeys, resolveHandles, handlesAreAffordance, markCommon, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 import { paramChannels, readParams, anchorsOf, lineSegment, segmentEnds, valueAt } from './trendGeometry.js';
 import { warn } from '../core/dev.js';
@@ -123,6 +123,9 @@ export function trend(options = {}) {
         slope: { field: 'slope' }
     });
     const anchors = { anchor: anchorOpt, probe: probeOpt };
+    // Grips are row handles (dropped where no live edit reaches the row) unless an
+    // inert trend states `handles: true` to draw them as ink.
+    const rowHandle = handlesAreAffordance(opts.handles, { edits, channels });
 
     return {
         ...markCommon(opts),
@@ -195,7 +198,8 @@ export function trend(options = {}) {
                         r: handleStyle.size,
                         fill: handleStyle.visible ? (style.fill || handleStyle.fill) : 'transparent',
                         data: d, index: i, channel,
-                        anchor, probe, grip
+                        anchor, probe, grip,
+                        rowHandle, // dropped where no live edit reaches the row
                     });
                 };
 

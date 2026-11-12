@@ -1,7 +1,7 @@
 // @ts-check
 import { isBand, baselineOf } from '../core/scales.js';
 import { claimEdge } from '../edit/shared.js';
-import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, rawChannel, resolveValueAxis, orderSeries, seriesKeyOf, hasAnyEdit, inkOf, missingValue } from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, handlesAreAffordance, markCommon, rawChannel, resolveValueAxis, orderSeries, seriesKeyOf, hasAnyEdit, inkOf, missingValue } from './mark.js';
 import { areaGenerator } from '../core/curves.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
@@ -112,8 +112,9 @@ function buildArea(options) {
             // Handles draw only when something can grab them. Decided HERE, from the
             // feature as the engine holds it — a composite merges its edits into a
             // part after the factory ran, so a factory-time answer missed them.
-            const handles = handlesOpt !== undefined ? handlesOpt
-                : hasAnyEdit({ edits: this && this.edits, channels: (this && this.channels) || channels });
+            const editsNow = { edits: this && this.edits, channels: (this && this.channels) || channels };
+            const handles = handlesOpt !== undefined ? handlesOpt : hasAnyEdit(editsNow);
+            const rowHandle = handlesAreAffordance(handlesOpt, editsNow);
             const { x: xScale, y: yScale } = scales;
             // A declared y1/y2 pair IS the value (the band's two edges), so its axis
             // is the value axis — extent: 'value', where a tick's pair is its chord.
@@ -282,6 +283,7 @@ function buildArea(options) {
                                 index: i,
                                 channel: ch,
                                 series: series === SINGLE ? undefined : series,
+                                rowHandle, // dropped where no live edit reaches the row
                             });
                         }
                     });
