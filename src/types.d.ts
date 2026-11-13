@@ -2680,6 +2680,14 @@ export interface RenderContext {
   width: number;
   height: number;
   margins: { top: number; right: number; bottom: number; left: number };
+  /** The resolved scales this frame was built with, keyed as marks read them
+   *  (`x`, `y`, and `scaleKey(channel, field)` for non-positional encodings). A
+   *  positional scale's `encode(value)` gives a plot-local pixel, the space a
+   *  gesture's `x`/`y` are reported in, so a renderer or test harness can place a
+   *  synthetic gesture at a data value. Read-only: the engine rebuilds it each frame. */
+  scales: ScaleMap;
+  /** The spec the chart was built from, as the author passed it. Read-only. */
+  spec: ElicitSpec;
   // True when active edits are plane-driven (sweep/draw/nearest): the renderer must
   // route all gestures as plane events (no node) rather than hit-testing marks.
   planeOnTop?: boolean;
@@ -2748,6 +2756,10 @@ export interface EditControl {
   // edit (drag/resize/rotate/rank) forward-encodes it to a pointer and self-closes
   // its undo txn (one entry). Pass a scalar for a single-channel edit, or a
   // { channelName: value } / { field: value } map for a multi-channel one (2-D drag).
+  // Works on a direct edit and on a plane edit whose pick only chooses the row
+  // (`nearest`, `sweep`): the row is the one this control names. A plane edit that
+  // needs a pointer path or position (a draw, a brush, a create) warns and does
+  // nothing; drive it with `el.emit({ type, x, y })`.
   set(value: any): void;
   // Bracket a LIVE drag so many `.set()` ticks collapse into ONE undo entry, exactly
   // like a pointer drag's dragstart..dragend.

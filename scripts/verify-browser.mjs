@@ -2400,6 +2400,23 @@ async function main() {
         check('external: rotate driven by an angle value lands on it',
             Math.abs(theta - 90) < 1.5, `theta=${theta}`);
 
+        // A sweep edit driven by a ROW: the control names the row, so the sweep's
+        // target search is skipped and year i is written, through the real <input>.
+        await open('/editing/external-controls', '#plane .chart svg path');
+        const plEl = '#plane .chart > div';
+        const plData = () => page.$eval(plEl, (e) => e.getData());
+        const plBefore = await plData();
+        await page.fill('#plane input[type=number] >> nth=3', '82');
+        await page.press('#plane input[type=number] >> nth=3', 'Enter');
+        await page.locator('#plane input[type=number] >> nth=0').focus();
+        let pl = await plData();
+        check('external: an input drives a sweep edit on its own row',
+            Math.abs(pl[3].v - 82) < 0.5 && pl.every((d, i) => i === 3 || d.v === plBefore[i].v),
+            JSON.stringify(pl.map((d) => Math.round(d.v))));
+        await page.$eval(plEl, (e) => e.undo());
+        pl = await plData();
+        check('external: one undo reverts the controlled sweep write', pl[3].v === plBefore[3].v, `v=${pl[3].v}`);
+
         // Face params: accepts() reports the schema range; set() writes the field.
         await open('/editing/external-controls', '#face .chart svg');
         const faceEl = '#face .chart > div';

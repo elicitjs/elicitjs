@@ -18,6 +18,8 @@ export const sweepDriver = {
     name: 'sweep',
     sessionKeys: ['px', 'py', 'threshold', 'hoverIndex', 'activeIndex', 'series', 'channel', 'lastX', 'lastY'],
     selects: true,
+    // The edit's apply is an ordinary per-row write; this driver only finds the row.
+    targetsRow: true,
     onEvent({ event, edits, marks, session, runEdit }) {
         const threshold = pickThreshold(edits[0]);
         // The channels the sweep governs: one positional axis -> paint that value

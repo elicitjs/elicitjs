@@ -2036,6 +2036,15 @@ export function Elicit(spec) {
         return ok;
     };
 
+    // Can an edit run on a row the caller already names? A direct edit always can;
+    // a plane edit can when its driver's only job is choosing the row.
+    /** @param {import('../types').Edit} edit @returns {boolean} */
+    const rowTargeted = (edit) => {
+        if (edit.pick === 'direct') return true;
+        const d = /** @type {any} */ (driverFor(edit));
+        return !!(d && d.targetsRow);
+    };
+
     // Direct-pick edits: the gesture landed on a mark (event.node). Fan the
     // gesture out to every direct edit whose `gesture` matches; `when` arbitrates
     // between edits sharing a gesture (plain-drag move vs Shift-drag resize).
@@ -2070,8 +2079,16 @@ export function Elicit(spec) {
         if (lifecycle.length && runDrivers(feature, event, lifecycle, index)) changed = true;
 
         if (index == null) return changed;
-        direct
-            .filter(e => e.gesture === event.type && !driverFor(e))
+        // An event that ADDRESSES an edit by name (`el.control(name, index)`) also
+        // names the row it acts on. For a plane edit whose driver only chooses a
+        // row (`targetsRow` — a nearest or sweep pick), that choice is already made,
+        // so the edit runs on this row like a direct one. Other plane edits need
+        // their driver's lifecycle, and `control()` reports them instead.
+        const addressed = event.editName
+            ? activeEdits(feature).filter(e => e.pick !== 'direct' && e.name === event.editName && rowTargeted(e))
+            : [];
+        [...direct.filter(e => !driverFor(e)), ...addressed]
+            .filter(e => e.gesture === event.type)
             .forEach(edit => { if (runEdit(feature, edit, event, index)) changed = true; });
         return changed;
     };
@@ -2753,6 +2770,20 @@ export function Elicit(spec) {
         // one-shot `nudge` drag (which would close the txn every tick).
         let live = false;
 
+        // A plane edit whose driver needs more than a row — a draw's stroke, a
+        // brush's zone, a creator's pointer — can't be driven by naming a row.
+        // Report it rather than dispatch a gesture that silently does nothing.
+        /**
+         * @param {{ feature: any, edit: any } | null} found @param {string} method
+         * @returns {found is { feature: any, edit: any }}
+         */
+        const drivable = (found, method) => {
+            if (!found) return false;
+            if (rowTargeted(found.edit)) return true;
+            warn(`control:plane:${name}`, `el.control("${name}").${method}(): this edit has pick: "${found.edit.pick}", which finds its target from the pointer, so a row index cannot drive it. Send the gesture with el.emit({ type, x, y }) in inner pixels instead.`);
+            return false;
+        };
+
         const handle = {
             // One-shot write. Commit-gesture edits (set/editText) carry the value whole
             // in `ctx.value`; drag-gesture edits forward-encode it to a pointer. Outside
@@ -2760,7 +2791,7 @@ export function Elicit(spec) {
             // undo entry); inside one, it stays a plain `drag` so the session collapses.
             set(/** @type {any} */ value) {
                 const found = findNamedEdit(name);
-                if (!found) return;
+                if (!drivable(found, 'set')) return;
                 const { feature, edit } = found;
                 const node = nodeAt(feature, rowOf(feature));
                 // editName addresses THIS edit, so a sibling edit sharing the gesture
@@ -2778,7 +2809,7 @@ export function Elicit(spec) {
             // into ONE undo entry (exactly like a pointer drag's dragstart..dragend).
             begin() {
                 const found = findNamedEdit(name);
-                if (!found) return;
+                if (!drivable(found, 'begin')) return;
                 live = true;
                 el.emit({ type: 'dragstart', node: nodeAt(found.feature, rowOf(found.feature)), editName: name });
             },
@@ -2793,11 +2824,11 @@ export function Elicit(spec) {
             // external button drives it: `control(name).fire()` dispatches the edit's
             // own gesture (a click/dblclick) on the datum's node. Pass a gesture to
             // override. This is the counterpart of `.set` for the click/dblclick edits
-            // — `.set` covers commit/drag, `.fire` covers the rest. (Plane-pick edits
-            // like create need coordinates; use `.emit({ type, x, y })` for those.)
+            // — `.set` covers commit/drag, `.fire` covers the rest. A plane edit that
+            // needs a pointer position (create) warns; use `el.emit({ type, x, y })`.
             fire(/** @type {string} */ gesture) {
                 const found = findNamedEdit(name);
-                if (!found) return;
+                if (!drivable(found, 'fire')) return;
                 const g = gesture || found.edit.gesture || 'click';
                 el.emit({ type: g, node: nodeAt(found.feature, rowOf(found.feature)), editName: name });
             },

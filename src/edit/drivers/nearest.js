@@ -12,6 +12,8 @@ export const nearestDriver = {
     name: 'nearest',
     sessionKeys: ['px', 'py', 'threshold', 'hoverIndex', 'activeIndex'],
     selects: true,
+    // The edit's apply is an ordinary per-row write; this driver only finds the row.
+    targetsRow: true,
     onEvent({ event, edits, marks, session, runEdit }) {
         const threshold = pickThreshold(edits[0]);
         let changed = false;

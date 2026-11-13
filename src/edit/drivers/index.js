@@ -13,7 +13,7 @@
 // — so a lifecycle edit can sit on a glyph part beside other direct edits.
 //
 // A driver is:
-//   { name, wants?(edit) -> bool, sessionKeys, onEvent(ctx) -> boolean changed, selects? }
+//   { name, wants?(edit) -> bool, sessionKeys, onEvent(ctx) -> boolean changed, selects?, targetsRow? }
 //
 // WHICH driver serves an edit is decided in ONE place, `driverFor`, and every edit
 // reaches exactly one driver: an exact `name === edit.pick` match first, then the
@@ -32,6 +32,14 @@
 // (hoverIndex/activeIndex, and optionally px/py/threshold) — which is what lets an
 // edit with `guide: true` draw the `select` effect (snap ring + mark highlight)
 // without guide.js keeping its own list of which picks do that.
+// `targetsRow: true` declares that choosing WHICH row an edit runs on is the
+// driver's whole job: once it has a row, it runs the edit's ordinary per-row
+// `apply` on it, and keeps no other state the edit needs. An event that already
+// names its row and its edit — `el.control(name, index)` — can then run that
+// edit on the row directly, the target search skipped, the same way a relative
+// slide's driver is handed `ctx.index`. A driver whose edit needs more than a
+// row (a brush's zone, a draw's stroke, a creator's pointer) leaves it unset, and
+// `control()` warns rather than dispatching a gesture that would do nothing.
 // where ctx = { feature, event, edits, marks, data, scales, session, preview,
 //               stage, runEdit, previewEdit, reachable }:
 //   edits       the feature's edits this driver wants (already filtered)
@@ -105,6 +113,8 @@ import { panDriver } from './pan.js';
  * @property {(ctx: DriverContext) => boolean} onEvent
  * @property {boolean} [selects] writes a selection into its session (see above),
  *   so an edit with `guide: true` can draw the `select` effect for it.
+ * @property {boolean} [targetsRow] choosing the row is all it does (see above),
+ *   so `el.control(name, index)` can run its edits on a named row directly.
  */
 
 /** @type {Driver[]} */

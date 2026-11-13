@@ -429,6 +429,17 @@ that IS the data's ink (a point's circle, a needle's hub), and read
 
 **Multi-event lifecycles are drivers, not engine branches.** If you're adding an interaction mode that needs `hover`/`dragstart`/`drag`/`dragend` state (like `nearest`, `sweep`, `draw`), write a new file in `src/edit/drivers/` implementing `{ name, wants(edit), onEvent(ctx) }` and register it in `drivers/index.js`. **Never** add a new `if (pick === '...')` branch inside `core/elicit.js`'s dispatch — that's the god-module pattern the drivers refactor eliminated. The engine must stay ignorant of specific modes. A driver is not the same thing as a raised plane: it may claim a **direct**-pick edit by CAPABILITY (`wants: e => e.type === 'slide' && e.mode === 'relative'`), and then `runDrivers` hands it `ctx.index` — the datum the gesture landed on — so it skips target selection and `needsPlaneOnTop` stays false. That is what lets a lifecycle edit sit on a glyph part beside the other direct edits; a relative `slide` needs a dragstart ANCHOR, not a target search, and conflating the two once forced every jump-free drag onto the plane.
 
+**`el.control(name, index)` drives a plane edit only when its driver merely
+CHOOSES A ROW.** A driver declares `targetsRow: true` (`nearest`, `sweep`) when
+finding the row is its whole job and the edit is an ordinary per-row `apply`; an
+event that addresses that edit by name already names the row, so
+`dispatchDirectEdits` runs it there like a direct edit. Every other plane edit (a
+draw's stroke, a brush's zone, a creator's pointer) needs its driver's lifecycle,
+and `control()` WARNS instead of dispatching. It used to emit a direct drag that no
+plane edit ever saw: a silent no-op. Never emulate the plane with a node-less
+gesture at the row's pixel — a `nearest` search would take whichever row sits
+closest to the target value and write the wrong one.
+
 **A plane gesture no plane edit ACCEPTS falls back to the mark under the pointer.**
 With the plane raised, every press arrives as a plane gesture — including one that
 landed on a mark whose direct edit should have it (`move({ when: when.shift })`

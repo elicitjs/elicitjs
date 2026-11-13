@@ -1598,6 +1598,11 @@ export type Driver = {
      * so an edit with `guide: true` can draw the `select` effect for it.
      */
     selects?: boolean | undefined;
+    /**
+     * choosing the row is all it does (see above),
+     * so `el.control(name, index)` can run its edits on a named row directly.
+     */
+    targetsRow?: boolean | undefined;
 };
 /**
  * Register a custom driver (or replace a built-in by the same `name`). The engine
