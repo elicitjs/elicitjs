@@ -65,6 +65,7 @@ import type {
   LinkOptions,
   MaintainSumOptions,
   Mark,
+  HierarchyNestOptions,
   MatrixOptions,
   MonotonicOptions,
   MoveOptions,
@@ -317,6 +318,12 @@ export const edit: {
     connect(options?: NetworkConnectOptions): Edit;
     rewire(options?: EditOptions): Edit;
     reverse(options?: NetworkEndpointOptions): Edit;
+  };
+  /** The gestures that build a hierarchy's CONTAINMENT. Moving a container is the
+   *  plain `move` (its contents are carried), and a node is made and deleted by
+   *  plain `create`/`remove`. */
+  hierarchy: {
+    nest(options?: HierarchyNestOptions): Edit;
   };
   /** Placed through the chart's `projection`. */
   geo: {

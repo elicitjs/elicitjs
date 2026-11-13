@@ -146,6 +146,14 @@ export const network = {
     connect: networkConnect, rewire: networkRewire, reverse: networkReverse,
 };
 
+import { nest as hierarchyNest } from './hierarchy.js';
+
+// The gestures that build a hierarchy's CONTAINMENT. Like `network.connect`, `nest`
+// goes on ordinary node marks, so it declares no scope. Moving a container is the
+// plain `move` (the engine carries its contents), and a node is made and deleted by
+// plain `create`/`remove`.
+export const hierarchy = { nest: hierarchyNest };
+
 import {
     move as geoMove,
     create as geoCreate,

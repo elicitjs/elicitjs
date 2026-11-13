@@ -40,7 +40,7 @@
 import { makeEdit, mintDatum } from './shared.js';
 import { HANDLE_DEFAULTS } from '../plot/mark.js';
 import { pickThreshold, HIT_TOLERANCE } from './pick.js';
-import { nodeBoxesOf } from '../plot/nodeBox.js';
+import { nodeBoxesOf, boxAt } from '../plot/nodeBox.js';
 import { anchorOn, LINK_SIDES } from '../plot/linkRouter.js';
 import { roleAllows, portKey } from '../plot/port.js';
 import { isDirected, linkRulesOf } from '../core/schema.js';
@@ -175,18 +175,14 @@ function landingOf(ctx, nodes, end, exclude, self = null) {
     // Then a body: inside the box, nearest centre wins where boxes overlap. A node
     // whose ports allow this end nowhere is not a target at all.
     if (geo.boxed) {
-        geo.boxes.forEach((box, i) => {
-            if (!box || bodyOff(i)) return;
-            const sides = allowedSides(geo.roles[i], end);
-            if (sides && !sides.length) return;
-            if (Math.abs(p.x - box.cx) > box.hw || Math.abs(p.y - box.cy) > box.hh) return;
-            const d = Math.hypot(box.cx - p.x, box.cy - p.y);
-            if (d < bestDist) {
-                bestDist = d;
-                best = { row: nodes.rows[i], index: i, side: null };
-            }
+        const inside = boxAt(p, nodes.rows, (_, i) => geo.boxes[i], {
+            accepts: (i) => {
+                if (bodyOff(i)) return false;
+                const sides = allowedSides(geo.roles[i], end);
+                return !(sides && !sides.length);
+            },
         });
-        if (best) return best;
+        if (inside !== null) return { row: nodes.rows[inside], index: inside, side: null };
     }
     // A dot network with no box: the centre within reach.
     const threshold = pickThreshold(ctx.edit, CONNECT_THRESHOLD);

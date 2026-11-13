@@ -117,12 +117,14 @@ export type Schema = Record<string, FieldSchema>;
 //
 //   'table'   (the default)  one table, role `data`
 //   'network'                roles `nodes` and `links`
+//   'hierarchy'              roles `nodes` and `nesting` (one row = "child is inside
+//                            parent", two `ref` columns), plus an optional `links`
 //
 // The NAME is the data key; the ROLE is what the structure means by it. Marks and
 // edits resolve a table by ROLE, which is what lets an argument map call its tables
 // `claims` / `supports` with no `table:` written anywhere. See core/schema.js for
 // the role table (STRUCTURES) — adding a structure is a row there and nowhere else.
-export type Structure = 'table' | 'network';
+export type Structure = 'table' | 'network' | 'hierarchy';
 
 // A table in the author's LONG form. `role` is only needed when the table's NAME
 // differs from the role it fills; a bare `Schema` in its place is the short form.
@@ -374,6 +376,9 @@ export interface EditContext {
   // The node table's box rule (see `Mark.nodeBox`), for an edit that tests the
   // pointer against a node's edges (connect, rewire). Null when no mark declares one.
   nodeBox?: NodeBoxRule | null;
+  // Which rows of a hierarchy's node table may HOLD others — the node marks'
+  // `contains` channel, read per row. Null when no mark states one.
+  contains?: ((row: Datum, index: number, rows: Datum[]) => boolean) | null;
   // For an edit that writes a table its own mark doesn't draw (`connect` writes a
   // link row from a node's ports): the channel map of the mark that DRAWS that
   // table. Its channels name the columns the edit writes, so a column is named in
@@ -782,6 +787,16 @@ export type ChannelFn = (d: Datum, i?: number, data?: Datum[]) => any;
 // stays an opaque constant, never invoked.
 export interface ChannelSpec {
   field?: string;
+  // On a SIZE channel of a mark drawing a hierarchy's nodes (`width`, `height`,
+  // `size`, `rx`, `ry`, or a span's `x1`/`x2`/`y1`/`y2`): for a row that holds
+  // others, this column is DERIVED from them — the union of its contents plus the
+  // `contains` padding — and the engine writes it (core/fit.js), so the drawing,
+  // the links and `getData()` agree. Needs a `field`. No gesture may write a
+  // fitted column on a row with contents; a leaf's stays editable.
+  fit?: boolean;
+  // On the `contains` channel only: the gap in px between a fitted container's
+  // edge and its contents (default 10).
+  padding?: number;
   value?: any;
   datum?: any;
   // Derived channel: computed per datum in VISUAL space (result used as-is, never
@@ -1190,6 +1205,11 @@ export interface StickerOptions extends MarkOptions {
 // `link` mark's `source` / `target` / `sourceSide` / `targetSide` channels name.
 // The descriptor-level `target` (a write destination) is omitted: the link table
 // is always the destination.
+// `edit.hierarchy.nest` — drop a node into the container under the pointer, or out
+// of one. Put it on the mark you drag, beside a `move`. `defaults` seeds any further
+// columns of the nesting row it writes.
+export interface HierarchyNestOptions extends Omit<CreateOptions, 'target'> {}
+
 export interface NetworkConnectOptions extends Omit<CreateOptions, 'target'> {
   // How near the pointer must come to a node for the drag to land on it. Whether a
   // second link between one pair, or a link from a node to itself, may be made is
@@ -1749,6 +1769,12 @@ export interface Mark {
    * this flag first.
    */
   labelBox?: boolean;
+  /**
+   * Set by the ENGINE from the mark's `contains` channel (under a hierarchy): which
+   * of its rows may hold others, and the padding a fitted one keeps. A mark never
+   * reads it — like `ports`, it is a statement about the node the engine acts on.
+   */
+  contains?: ChannelSpec;
   nodeBox?(
     row: Datum,
     index: number,
@@ -2181,7 +2207,7 @@ export type DeepPartial<T> = {
  * transcribed from its presets.
  */
 export type ThemeName =
-  | 'default' | 'survey' | 'dark'
+  | 'default' | 'survey' | 'dark' | 'dd'
   | 'nyt' | 'economist' | 'swiss' | 'nature' | 'mckinsey' | 'datawrapper'
   | 'powerbi' | 'powerbiLight' | 'pop' | 'cartoon' | 'apple' | 'deStijl' | 'bbc' | 'material';
 
@@ -2381,6 +2407,9 @@ export interface EffectsSpec {
   hovered?: false | string | EffectStyle;
   /** Row is in `ui.selection`. */
   selected?: false | string | EffectStyle;
+  /** Where the thing being dragged would LAND if released now — a container of a
+   *  hierarchy about to take the node in flight. */
+  target?: false | string | EffectStyle;
   /** An active drag is holding this mark. */
   grabbed?: false | string | EffectStyle;
 }
@@ -2399,10 +2428,20 @@ export interface EffectStyle {
   strokeWidth?: number;
   cursor?: string;
   outline?: {
-    color?: string;
+    /** `'auto'` (default): the mark's own fill — or its stroke when the fill is
+     *  missing or near-white — darkened by `darken`. `'fill'` / `'stroke'` pick that
+     *  paint. A CSS colour is used as is. A function `(color, node) => string`
+     *  receives the darkened mark colour and returns the one to paint. */
+    color?: 'auto' | 'fill' | 'stroke' | (string & {}) | ((color: string, node: any) => string);
+    /** How much darker than the mark a derived colour is (d3 `color.darker(k)`);
+     *  negative lightens. Ignored for a fixed colour. Default 0.6 hovered, 1.5 selected. */
+    darken?: number;
+    /** The colour when no paint can be read off the mark (a gradient, none). */
+    fallback?: string;
     width?: number;
+    /** Gap between the mark's edge and the outline, px. 0 (default) traces the edge. */
     pad?: number;
-    dash?: string;
+    dash?: string | null;
     opacity?: number;
   };
 }

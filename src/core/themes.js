@@ -621,6 +621,26 @@ const material = fromFlint({
     legend: { swatch: 'circle' },
 });
 
+/** The Data & Dialogue Lab palette (`themes.dd`, `scheme: 'dd'`). `teal` and `blue`
+ *  are the two logo colours; every other hue is chosen to sit beside them. Each hue
+ *  has a `*Dark` partner for the stroke that goes with it. */
+export const DD = {
+    teal: '#50AEB7', tealDark: '#37919B',
+    blue: '#2B5D87', blueDark: '#1D4467',
+    coral: '#EE7B5E', coralDark: '#CC5B3F',
+    gold: '#F2B94B', goldDark: '#C99128',
+    violet: '#8A78C0', violetDark: '#6B5AA2',
+    leaf: '#7DB86B', leafDark: '#5C9A4B',
+    rose: '#D9638A', roseDark: '#B8446B',
+    slate: '#8497A8', slateDark: '#64788A',
+    // Blue-tinted neutrals, light to dark.
+    grey50: '#F6F9FB', grey100: '#EAF0F4', grey200: '#D9E2E9', grey300: '#BCC9D4',
+    grey400: '#94A5B3', grey500: '#6F8294', grey600: '#46596B', grey900: '#14283A',
+    categorical: ['#50AEB7', '#2B5D87', '#EE7B5E', '#F2B94B', '#8A78C0', '#7DB86B', '#D9638A', '#8497A8'],
+    sequential: ['#E6F4F5', '#A6D6DB', '#50AEB7', '#2F7F9E', '#2B5D87', '#173553'],
+    diverging: ['#2B5D87', '#7FB1CB', '#F5F3EE', '#F4B49E', '#D8593B']
+};
+
 /** @type {Record<import('../types').ThemeName, import('../types').DeepPartial<import('../types').Theme> & { extends?: string }>} */
 export const themes = {
     // The identity theme — resolves to DEFAULT_THEME unchanged.
@@ -681,6 +701,50 @@ export const themes = {
             cellStroke: '#334155',
             label: '#cbd5e1',
             question: '#f1f5f9',
+            labelSize: 12,
+            questionSize: 13,
+            radius: 11
+        }
+    },
+
+    // Data & Dialogue Lab. Built from the lab's two logo colours — the teal
+    // (#50AEB7) is the ink, the blue (#2B5D87) the accent that handles, answers and
+    // chrome take — with a warm coral and gold as the contrast hues and a blue-tinted
+    // grey for every neutral. Shapes carry no stroke by default; a stroke, where a
+    // mark wants one, is the same hue a step darker (the `*Dark` ramp in `DD`).
+    dd: {
+        ink: DD.teal,
+        accent: DD.blue,
+        muted: DD.grey400,
+        handle: DD.blue,
+        handleStroke: '#fff',
+        palette: DD.categorical,
+        ramp: DD.sequential,
+        diverging: DD.diverging,
+        axis: { stroke: DD.grey300, labelFill: DD.grey600, fontSize: 10, handle: DD.blue },
+        grid: { stroke: DD.grey100 },
+        bandPadding: 0.22,
+        guide: {
+            rule: { stroke: DD.grey400, strokeDash: '5 4' },
+            region: { fill: DD.blue, opacity: 0.08 },
+            legend: { stroke: DD.grey600, labelFill: DD.grey600, fontSize: 11, currentStroke: DD.grey900, swatchRadius: 3 }
+        },
+        constraint: { color: DD.coral },
+        // Hover and selection keep the built-in `color: 'auto'` trace, so each mark
+        // lights up in a darker shade of its own colour; only the drop target is
+        // fixed, in the lab's blue.
+        effects: {
+            target: { outline: { color: DD.blue, width: 2.5, pad: 3, opacity: 0.9 } }
+        },
+        marks: { bar: { rx: 3 }, rect: { rx: 2 } },
+        widget: {
+            accent: DD.blue,
+            ring: DD.grey200,
+            track: DD.grey100,
+            cellFill: DD.grey50,
+            cellStroke: DD.grey200,
+            label: DD.grey600,
+            question: DD.grey900,
             labelSize: 12,
             questionSize: 13,
             radius: 11

@@ -24,12 +24,14 @@ import {
     normalizeSchema, denormalizeSchema, normalizeData, isBareForm, enforceRefs, isDirected,
 } from './schema.js';
 import { axisOf, pointerForChannel } from './encoding.js';
+import { nestingOf, treeOf, treeProblems, enforceTree } from './hierarchy.js';
+import { settleHierarchy, fitChannelsOf } from './fit.js';
 import { warn } from './dev.js';
 import { applyConstraint } from '../constraints/define.js';
 import {
     markLabel, constraintLabel, describe,
     warnScaleRequirements, warnScopeMismatch, warnProjectionCartesianMix,
-    warnDuplicatePlaneEdits, warnUnreachableLegendRow, warnConnectConflict,
+    warnDuplicatePlaneEdits, warnUnreachableLegendRow, warnConnectConflict, warnNestAlone,
     warnCreateOnNonMark, warnCreateEmptyExtent, warnDeadEditChannels, warnMissingEditChannels, warnHiddenHandles,
     warnUnknownSpecKeys, warnUnclaimedPick, warnUnknownEditOptions,
 } from './guards.js';
@@ -349,6 +351,53 @@ export function Elicit(spec) {
         features.splice(at, 0, portFeature(host, spec));
     }
 
+    // ── Containers: two statements in the channel map ──────────────────────────
+    // Under a hierarchy, a mark drawing the nodes says which rows may HOLD others
+    // (`contains`: a constant, a field or a fn — the `ports` precedent: a per-row
+    // capability the ENGINE reads, never the mark) and which of its size channels
+    // follow from a row's contents (`fit: true` — see core/fit.js). `contains` is
+    // taken off the channel map here so no scale is built for it; `fit` stays, a
+    // flag beside the channel's field.
+    const hierarchyNodes = nestingOf(schemaSpec) ? nodesTableName : null;
+    for (const f of features) {
+        if (!f || f.views === 'scale' || f.portHost || !f.channels) continue;
+        const contains = f.channels.contains;
+        const fitted = Object.keys(f.channels).filter((ch) => f.channels[ch] && f.channels[ch].fit === true);
+        if (!contains && !fitted.length) continue;
+        if (contains) delete f.channels.contains;
+        if (!hierarchyNodes || f.table !== hierarchyNodes) {
+            warn(
+                `${markLabel(f)}:contains:table`,
+                `mark ${markLabel(f)} states ${contains ? '`contains`' : '`fit`'}, but it does not ` +
+                'draw the nodes of a hierarchy, so nothing can be nested in its rows. Declare ' +
+                'schema: { structure: "hierarchy", tables: { nodes, nesting } } and put it on ' +
+                'the mark drawing the nodes.'
+            );
+            for (const ch of fitted) delete f.channels[ch].fit;
+            continue;
+        }
+        if (typeof f.nodeBox !== 'function') {
+            warn(
+                `${markLabel(f)}:contains:box`,
+                `mark ${markLabel(f)} states ${contains ? '`contains`' : '`fit`'}, but it does not ` +
+                'declare the box it draws, so it has no inside. Use a mark that draws a node ' +
+                'shape: point, rect, ellipse, shape, or a composite.'
+            );
+            continue;
+        }
+        if (contains) f.contains = contains === true ? { value: true } : contains;
+        for (const ch of fitted) {
+            if (f.channels[ch].field != null) continue;
+            warn(
+                `${markLabel(f)}:fit:${ch}`,
+                `mark ${markLabel(f)} marks channel "${ch}" \`fit: true\` but names no field. ` +
+                'A fitted size is written to a column — that is what keeps the drawing, the ' +
+                `links and getData() in agreement. Name one: ${ch}: { field: '…', fit: true }.`
+            );
+            delete f.channels[ch].fit;
+        }
+    }
+
     // The node table's two RULES, stated by the marks that draw the nodes and handed
     // to every reader: the BOX (where a node's edges are — `Mark.nodeBox`) and the
     // PORTS (which edges a link may use). `link` docks to the first, the network
@@ -373,6 +422,13 @@ export function Elicit(spec) {
         : [];
     const boxHost = portsFeature ? portsFeature.portHost
         : boxed.find((f) => !f.labelBox) || boxed[0] || null;
+    // Every shape over the node table, the chosen host first. A row the host draws
+    // nothing for (a missing value) may be drawn by another mark — a rect for the
+    // groups beside a point for the items — and its box is then that mark's.
+    const boxHosts = boxHost
+        ? [boxHost, ...boxed.filter((f) => f !== boxHost && !f.labelBox)]
+        : [];
+    const finiteBox = (/** @type {any} */ b) => !!b && [b.cx, b.cy, b.hw, b.hh].every(Number.isFinite);
     /** @type {import('../types').NodeBoxRule | null} */
     let boxRuleMemo = null;
     /** @type {any[]} */
@@ -389,7 +445,15 @@ export function Elicit(spec) {
             const s = scales;
             const w = innerWidth;
             const h = innerHeight;
-            boxRuleMemo = (row, i, rows) => boxHost.nodeBox(row, i, rows, s, w, h);
+            boxRuleMemo = (row, i, rows) => {
+                const first = boxHost.nodeBox(row, i, rows, s, w, h);
+                if (finiteBox(first)) return first;
+                for (let k = 1; k < boxHosts.length; k++) {
+                    const box = boxHosts[k].nodeBox(row, i, rows, s, w, h);
+                    if (finiteBox(box)) return box;
+                }
+                return first;
+            };
             boxRuleKey = key;
         }
         return boxRuleMemo;
@@ -401,6 +465,63 @@ export function Elicit(spec) {
         )
         : null;
 
+    // Which rows may HOLD others: any node mark's `contains`, read raw per row.
+    /** @type {((row: any, i: number, rows: any[]) => boolean) | null} */
+    const containsRule = hierarchyNodes && boxHosts.some((f) => f.contains)
+        ? (row, i, rows) => boxHosts.some((f) => f.contains
+            && !!rawChannel({ contains: f.contains }, 'contains', row, false, i, rows))
+        : null;
+    /**
+     * Settle the hierarchy's node rows after something changed them: place, carry,
+     * fit (core/fit.js). A no-op for every other structure.
+     * @param {any[] | null} [before] the node rows as last committed (for carry)
+     * @param {Set<number> | null} [frozen] rows whose box must hold still
+     * @returns {void}
+     */
+    const settleNodes = (before = null, frozen = heldStill()) => {
+        if (!hierarchyNodes || !boxHosts.length) return;
+        tables[hierarchyNodes] = settledNodes(tables, before, frozen);
+    };
+    /**
+     * The settled node rows for a dataset — the committed one, or a proposal's
+     * overlay (a preview asks what a drop WOULD make without writing it).
+     * @param {Record<string, any[]>} from
+     * @param {any[] | null} before @param {Set<number> | null} frozen
+     * @returns {any[]}
+     */
+    const settledNodes = (from, before, frozen) => settleHierarchy({
+        spec: schemaSpec, tables: from, hosts: boxHosts, scales,
+        width: innerWidth, height: innerHeight,
+        before, frozen, locked: isLockedIn(/** @type {string} */ (hierarchyNodes)),
+    });
+    /**
+     * The node rows a nest drag has IN FLIGHT (`session.nestFrom`, the nest
+     * driver's one key), or null. Read for three things that all follow from "this
+     * row is being carried": its ancestors hold still, it paints above the rest,
+     * and it reads as grabbed along with everything inside it.
+     * @returns {number[] | null}
+     */
+    const inFlight = () => {
+        if (!hierarchyNodes) return null;
+        /** @type {number[] | null} */
+        let out = null;
+        for (const s of Object.values(ui.session || {})) {
+            if (s && s.nestFrom != null) (out || (out = [])).push(s.nestFrom);
+        }
+        return out;
+    };
+    /**
+     * The containers that must not re-fit this tick: every ancestor of a row in
+     * flight. A fitted container follows its contents, so without this it would
+     * follow the child being dragged out of it and could never be left.
+     * @returns {Set<number> | null}
+     */
+    const heldStill = () => {
+        const flying = inFlight();
+        if (!flying) return null;
+        const tree = treeOf(schemaSpec, tables);
+        return new Set(flying.flatMap((i) => tree.ancestorsOf(i)));
+    };
     // The channel map of the mark that DRAWS a table, for an edit that writes a table
     // its own mark doesn't draw (connect, on a node's ports, writes a link row). The
     // link's channels name the columns, so a column is named in one place only.
@@ -472,6 +593,10 @@ export function Elicit(spec) {
     // can originate: an edit mints from schemaDefaults and writes through a channel's
     // own field, so it cannot introduce an undeclared column.
     validateTables(schemaSpec, tables);
+    // A hierarchy's nesting rows must describe a TREE. validateTables has just said
+    // which seeded rows do not; drop them, so nothing downstream meets a node with
+    // two parents. (A no-op for every other structure.)
+    enforceTree(schemaSpec, tables);
     // The resolver sees the RESOLVED theme (not the raw spec.theme partial), so its
     // colour-scale range fallback can read theme.palette/ramp/diverging.
     const liveSpec = { ...spec, schema, schemaSpec, theme };
@@ -613,7 +738,7 @@ export function Elicit(spec) {
     // than being painted by the renderer straight off d3.drag — that split is why
     // `grabbed` used to honour `filter` and silently ignore the rest of its vocabulary
     // (and never drew an outline at all).
-    /** @type {{ session: Record<string, any>, preview: Record<string, { table: string, rows: any[], pointer?: { x: number, y: number } }> | null, selection: Set<string>, hover: { featureId: string, index: number, node?: any } | null, grab: { featureId: string, index: number } | null, pointer: { x: number, y: number } | null, hit: { featureId: string, index: number, node: any } | null, hits: { featureId: string, index: number, node: any }[] }} */
+    /** @type {{ session: Record<string, any>, preview: Record<string, { table: string, rows: any[], pointer?: { x: number, y: number }, dropInto?: number | null }> | null, selection: Set<string>, hover: { featureId: string, index: number, node?: any } | null, grab: { featureId: string, index: number } | null, pointer: { x: number, y: number } | null, hit: { featureId: string, index: number, node: any } | null, hits: { featureId: string, index: number, node: any }[] }} */
     // `pointer` is where the pointer is over the plot (scene coordinates), and
     // `hit` the row under it whether or not it is editable — recorded only when
     // a guide reads them (`tracksPointer`), and never dispatched: a tip or a
@@ -886,6 +1011,9 @@ export function Elicit(spec) {
     //    channels are absent.
     const dims = { width: innerWidth, height: innerHeight };
     let scales = resolveScales(features, tables, liveSpec, dims);
+    // Settle a seeded hierarchy now, against the declared size, so `getData()` is
+    // already exact before the first (deferred) render.
+    settleNodes();
 
     // Set up container. 'fixed' pins pixel dims; the responsive modes fill the
     // parent's width (the SVG scales via viewBox in 'scale', or is redrawn at the
@@ -1001,6 +1129,11 @@ export function Elicit(spec) {
         // DOMAIN of a frame channel is the field's — which only the schema knows.
         /** @type {any} */ (scales).schema = schema;
         warnProjectionCartesianMix(features, scales);
+        // Data from outside a gesture (setData) and a resized plot both change what
+        // a container's contents measure, so every render settles the hierarchy
+        // against the scales it is about to draw with. It returns the same rows when
+        // nothing moved, so the common render costs one pass over the tree.
+        settleNodes();
 
         // Plane-on-top mode: when an ACTIVE edit resolves its target from an
         // arbitrary pointer position (nearest/sweep/draw/brush), the plane must sit
@@ -1073,6 +1206,7 @@ export function Elicit(spec) {
             warnMissingEditChannels(feature, declaredEdits);
             warnHiddenHandles(feature, declaredEdits);
             warnConnectConflict(feature, declaredEdits);
+            warnNestAlone(feature, declaredEdits);
             warnUnclaimedPick(feature, declaredEdits);
             warnUnknownEditOptions(feature, declaredEdits);
 
@@ -1123,8 +1257,20 @@ export function Elicit(spec) {
             // A node over a LOCKED row is inert for the same reason, one level down:
             // its row is read-only, so it is not grabbable, shows no editable cursor,
             // and pick.js skips it when resolving a proximity target.
+            const tree = feature.table === hierarchyNodes ? treeOf(schemaSpec, tables) : null;
+            const carried = tree ? inFlight() : null;
+            const lifted = tree && carried
+                ? new Set(carried.flatMap((i) => [i, ...tree.descendantsOf(i)]))
+                : null;
             nodes.forEach((/** @type {any} */ node) => {
                 node.featureId = feature.id;
+                // A container paints beneath what it holds, whichever mark draws
+                // either and wherever their rows sit in the table (see paintOrder).
+                if (tree && typeof node.index === 'number') {
+                    node.depth = tree.depthOf(node.index);
+                    // What is being carried paints above everything it passes over.
+                    if (lifted && lifted.has(node.index)) node.raise = true;
+                }
                 // A chart element draws a SCALE in the chart's chrome (an axis
                 // handle on the edge, a legend in the margin): the mark clip is
                 // for the data, never for these. A mark opts out with `clip:
@@ -1383,6 +1529,16 @@ export function Elicit(spec) {
             }
         }
 
+        /** @type {Set<number>} */
+        const dropInto = new Set();
+        for (const p of Object.values(ui.preview || {})) {
+            if (p && p.dropInto != null) dropInto.add(p.dropInto);
+        }
+        const flyingRoots = inFlight();
+        const flying = flyingRoots
+            ? new Set(flyingRoots.flatMap((i) => [i, ...treeOf(schemaSpec, tables).descendantsOf(i)]))
+            : null;
+
         for (const feature of features) {
             if (feature.views === 'scale') continue;
             const selected = selectedByTable[feature.table]
@@ -1406,11 +1562,24 @@ export function Elicit(spec) {
             if (ui.grab && ui.grab.featureId === feature.id && ui.grab.index != null) {
                 grabbed.add(ui.grab.index);
             }
+            // A node in flight takes its contents with it, so they are held too —
+            // on whichever marks draw them.
+            if (flying && feature.table === hierarchyNodes) {
+                for (const i of flying) grabbed.add(i);
+            }
+            // Where a release now would put the node in flight: the container a
+            // parked nesting proposal names. Only a drop the trial commit ACCEPTED
+            // is ever parked, so a refused container never lights.
+            /** @type {Set<number>} */
+            // Lit on the SHAPE that receives it (a box host), not on a label drawn
+            // over the same rows.
+            const target = boxHosts.includes(feature) ? dropInto : new Set();
 
             /** @type {[Set<number>, any][]} */
             const byState = [
                 [hovered, effects.hovered],
                 [selected, effects.selected],
+                [target, effects.target],
                 [grabbed, effects.grabbed],
             ];
 
@@ -1547,7 +1716,7 @@ export function Elicit(spec) {
      *   yet — that it must never commit; the flag is how it tells the two apart.
      * @param {any} [sessionOverride] a session to run against instead of the
      *   feature's own — a trial commit asking "could a drag from HERE land?"
-     * @returns {{ ctx: any, targetTable: string, currentData: any[], resolved: any[] }}
+     * @returns {{ ctx: any, targetTable: string, currentData: any[], resolved: any[], derivedOnly: boolean }}
      */
     const editContext = (feature, edit, event, index, preview = false, sessionOverride = undefined) => {
         // WHERE the gesture landed and WHAT it writes are usually the same table, and
@@ -1568,7 +1737,19 @@ export function Elicit(spec) {
         // dispatch branch. A plane-pick gesture carries no node, so fall back to the
         // framed node for this datum.
         const editScales = frameScalesFor(feature, event.node, index) || scales;
-        const resolved = resolveChannels(edit.channels, markChannels, editScales, feature);
+        let resolved = resolveChannels(edit.channels, markChannels, editScales, feature);
+        let derivedOnly = false;
+        // A container's FITTED size is derived from its contents, so no gesture may
+        // write it: an edit loses those channels on a row that holds others, and an
+        // edit left with none does nothing. A leaf's size — and a container's
+        // position, which carries its contents along — stay editable.
+        if (hierarchyNodes && feature.table === hierarchyNodes && index != null && resolved.length
+            && treeOf(schemaSpec, tables).hasChildren(index)) {
+            const derived = fitChannelsOf(markChannels).filter((ch) => axisOf(ch) !== 'x' && axisOf(ch) !== 'y');
+            const free = resolved.filter((ch) => !derived.includes(ch.name));
+            derivedOnly = !free.length;
+            resolved = free;
+        }
         const ctx = {
             // The rows the proposal is ABOUT (apply returns rows for this table)...
             data: currentData,
@@ -1642,6 +1823,9 @@ export function Elicit(spec) {
             // table this edit writes (when that is not its own mark's table).
             nodeBox: nodeBoxRule(),
             nodePorts: nodePortsRule,
+            // Which node rows may HOLD others (a node mark's `contains` channel),
+            // for an edit that drops one node into another.
+            contains: containsRule,
             targetChannels: targetTable !== feature.table ? channelsDrawing(targetTable) : null,
             // The primary selected datum index (transient pipeline state), so an
             // edit's apply/when can target or arbitrate on the selection — e.g. a
@@ -1653,7 +1837,7 @@ export function Elicit(spec) {
             edit,
             preview,
         };
-        return { ctx, targetTable, currentData, resolved };
+        return { ctx, targetTable, currentData, resolved, derivedOnly };
     };
 
     // Does this edit's `when` accept the gesture? Asked BEFORE a plane gesture is
@@ -1680,7 +1864,9 @@ export function Elicit(spec) {
      * @returns {import('../types').EditResult | null}
      */
     const computeEdit = (feature, edit, event, index, preview = false, sessionOverride = undefined) => {
-        const { ctx, targetTable, currentData, resolved } = editContext(feature, edit, event, index, preview, sessionOverride);
+        const { ctx, targetTable, currentData, resolved, derivedOnly } = editContext(feature, edit, event, index, preview, sessionOverride);
+        // Every column this edit writes is derived from the row's contents.
+        if (derivedOnly) return null;
         const markChannels = ctx.markChannels;
         if (edit.when && !edit.when(ctx)) return null; // arbitration
 
@@ -1821,7 +2007,15 @@ export function Elicit(spec) {
             : currentData.map((d, i) => (i === index ? result : d));
 
         const rows = runInvariants(newData);
-        return rows ? { kind: 'rows', rows } : null;
+        if (!rows) return null;
+        // Tree-ness is the SCHEMA's statement about a nesting table, so the engine
+        // holds it for every edit that writes one, the way it holds a `ref`: a
+        // proposal giving a node a second parent, or nesting it inside its own
+        // descendant, is refused. Refused HERE, not repaired after the commit, so a
+        // trial commit refuses it too and such a drop is never offered as a target.
+        if (targetTable === schemaSpec.byRole.nesting
+            && treeProblems(schemaSpec, { ...tables, [targetTable]: rows }).length) return null;
+        return { kind: 'rows', rows };
     };
 
     // Commit an edit: compute its proposal, write it to the belief store, drop any
@@ -1848,11 +2042,16 @@ export function Elicit(spec) {
         // A proposal replaces the table the EDIT targets, which is not always the
         // table its mark draws (see computeEdit). Getting this wrong would overwrite
         // the wrong table wholesale, so the target is resolved the one way, there.
+        const nodesBefore = hierarchyNodes ? tables[hierarchyNodes] : null;
         tables[targetTableOf(feature, edit)] = proposed.rows;
         // Deleting a row can strand REFERENCES to it in another table, which no
         // single-table constraint can see or repair. The schema already declares the
         // rule (`type: 'ref'`), so the engine enforces it — see enforceRefs.
         enforceRefs(schemaSpec, tables);
+        // A hierarchy's geometry follows from its contents: a moved container takes
+        // its subtree along, and every fitted container re-fits. Same standing as
+        // enforceRefs — the schema's rule, repaired across rows after the commit.
+        settleNodes(nodesBefore);
         ui.preview = null;
         notifyChange();
         return true;
@@ -1956,13 +2155,30 @@ export function Elicit(spec) {
         // drawn toward the pointer, with no target yet), and the mark that ghosts
         // it needs to know where that end is.
         if (!ui.preview) ui.preview = {};
-        ui.preview[feature.id] = {
-            table: targetTableOf(feature, edit),
-            rows: newData,
-            pointer: typeof event.x === 'number' && typeof event.y === 'number'
-                ? { x: event.x, y: event.y }
-                : undefined,
-        };
+        const pointer = typeof event.x === 'number' && typeof event.y === 'number'
+            ? { x: event.x, y: event.y }
+            : undefined;
+        const table = targetTableOf(feature, edit);
+        // A proposal about a hierarchy's NESTING has nothing of its own to draw: a
+        // membership is not a shape. What it changes is the containers — the one
+        // about to take the node grows to hold it, the one losing it draws in — so
+        // the proposal parked is the NODE rows that nesting implies, settled exactly
+        // as the commit would settle them (nothing held still: this is the picture
+        // after the drop). The ghost pass then redraws the rows that differ. The
+        // container that would receive the node rides along as `dropInto`, for the
+        // `target` effect.
+        if (hierarchyNodes && table === schemaSpec.byRole.nesting && boxHosts.length) {
+            const overlay = { ...tables, [table]: newData };
+            const tree = treeOf(schemaSpec, overlay);
+            ui.preview[feature.id] = {
+                table: hierarchyNodes,
+                rows: settledNodes(overlay, null, null),
+                pointer,
+                dropInto: index != null ? tree.parentOf(index) : null,
+            };
+            return true;
+        }
+        ui.preview[feature.id] = { table, rows: newData, pointer };
         return true;
     };
 
@@ -1985,7 +2201,7 @@ export function Elicit(spec) {
         const table = targetTableOf(feature, edit);
         const probeCtx = /** @type {any} */ ({
             scales, schemaSpec, tables, table, data: tables[table] || [],
-            nodeBox: nodeBoxRule(), nodePorts: nodePortsRule,
+            nodeBox: nodeBoxRule(), nodePorts: nodePortsRule, contains: containsRule,
             width: innerWidth, height: innerHeight,
             node: node || null, edit, pointer: { x: 0, y: 0 },
             // The row the drag started on, and the feature's own channel map: a
@@ -2494,6 +2710,19 @@ export function Elicit(spec) {
             if (event.type === 'dragend') strokeLive = {};
         }
 
+        // A stroke that carried a node held its ancestors still (see heldStill). The
+        // release lets them go, whether or not the node changed container, and that
+        // last fit is part of the same gesture: one undo entry, one `change`.
+        if (event.type === 'dragend' && hierarchyNodes && boxHosts.length) {
+            const settled = settledNodes(tables, null, heldStill());
+            if (settled !== tables[hierarchyNodes]) {
+                recordHistory();
+                tables[hierarchyNodes] = settled;
+                notifyChange();
+                shouldRender = true;
+            }
+        }
+
         // Keep the transaction open only for the duration of a stroke. A nudge's
         // synthetic drag is a complete gesture on its own, so it closes too —
         // otherwise it would stay open and swallow whatever gesture came next.
@@ -2535,6 +2764,14 @@ export function Elicit(spec) {
         tables = next;
         // A reseed is new seed data, so it gets the same contract check as spec.data.
         validateTables(schemaSpec, tables, 'setData()');
+        // Under a hierarchy an outside caller (a program, a model) re-parents by
+        // writing nesting rows, so its data gets the repairs a gesture's commit
+        // gets: a membership naming a missing node goes, and so does one that
+        // breaks the tree. Scoped to hierarchies so no existing chart changes.
+        if (nestingOf(schemaSpec)) {
+            enforceRefs(schemaSpec, tables);
+            enforceTree(schemaSpec, tables);
+        }
         seedCounts = {};
         for (const name of Object.keys(tables)) seedCounts[name] = tables[name].length;
         ui.preview = null;

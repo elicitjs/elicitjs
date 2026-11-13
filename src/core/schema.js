@@ -66,6 +66,7 @@
 
 import { warn } from './dev.js';
 import { inferMeasureType, inferDomainFromValues } from './encoding.js';
+import { nestingOf, treeProblems } from './hierarchy.js';
 
 // Rows scanned when checking columns/types/domains. A schema violation is a
 // property of the dataset, not of a particular row, so a bounded scan finds it just
@@ -75,16 +76,20 @@ const SAMPLE_ROWS = 200;
 // ── Structures ──────────────────────────────────────────────────────────────
 // A structure is nothing but a ROLE LIST plus which role is primary. That is the
 // whole extension point: a new structure is a row in this table, not a branch
-// anywhere else. (A role list of one is an ordinary single-table schema, which is
-// why a future `hierarchy` — a self-`ref` on a `parent` column — needs no second
-// table and no new machinery.)
+// anywhere else. (A role list of one is an ordinary single-table schema.)
+//
+// `optional` lists the roles a dataset of this structure may leave out. A
+// `hierarchy` is nodes that sit inside each other (`nesting`: one row per "child is
+// in parent" — see core/hierarchy.js) and MAY also be linked, so its `links` table
+// is optional, where a network without links is not a network.
 //
 // Values are singular nouns naming the data's STRUCTURE, never the visual:
 // `network` rather than `graph`, because "graph" means "chart" in a viz library.
-/** @type {Record<string, { roles: string[], primary: string }>} */
+/** @type {Record<string, { roles: string[], primary: string, optional?: string[] }>} */
 export const STRUCTURES = {
     table: { roles: ['data'], primary: 'data' },
     network: { roles: ['nodes', 'links'], primary: 'nodes' },
+    hierarchy: { roles: ['nodes', 'nesting', 'links'], optional: ['links'], primary: 'nodes' },
 };
 
 /** The structure assumed when a schema declares none — one table, named `data`. */
@@ -369,7 +374,8 @@ export function normalizeSchema(schema) {
         tables[name] = table;
     }
 
-    const missing = def.roles.filter((r) => !byRole[r]);
+    const optional = def.optional || [];
+    const missing = def.roles.filter((r) => !byRole[r] && !optional.includes(r));
     if (missing.length) {
         throw new Error(
             `[elicit] structure "${structure}" needs a table for ` +
@@ -948,6 +954,42 @@ export function validateTables(spec, tables, label = 'data') {
         validateDataset(spec.tables[name].fields, tables[name] || [], scoped);
         validateRefs(spec, tables, name, scoped);
         if (spec.tables[name].role === 'links') validatePairs(spec, tables, name, scoped);
+    }
+    validateTree(spec, tables, label);
+}
+
+/**
+ * What a hierarchy's nesting table must be to describe a tree: two `ref` columns,
+ * one parent per child, nothing inside itself. The engine drops the offending rows
+ * (`enforceTree`); this is what tells the author it did.
+ * @param {import('../types').SchemaSpec} spec
+ * @param {Record<string, import('../types').Datum[]>} tables
+ * @param {string} label
+ * @returns {void}
+ */
+function validateTree(spec, tables, label) {
+    const name = spec.byRole.nesting;
+    if (!name) return;
+    if (!nestingOf(spec)) {
+        warn(
+            `schema:nesting:${name}`,
+            `table "${name}" fills the "nesting" role, which needs two \`ref\` columns (the ` +
+            `contained node, then its container) and a \`key: true\` column on the nodes ` +
+            `table for them to name. Nothing can be nested until then.`
+        );
+        return;
+    }
+    const WHY = {
+        'second-parent': 'already has a parent. A node sits inside at most one other',
+        self: 'is nested inside itself',
+        cycle: 'would sit inside one of its own descendants',
+    };
+    for (const p of treeProblems(spec, tables)) {
+        warn(
+            `schema:tree:${name}:${p.kind}`,
+            `${label}.${name} nests ${JSON.stringify(p.child)} in ${JSON.stringify(p.parent)}, ` +
+            `but ${JSON.stringify(p.child)} ${WHY[p.kind]}. The row is ignored.`
+        );
     }
 }
 

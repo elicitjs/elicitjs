@@ -186,6 +186,7 @@ export const EDIT_OPTIONS = {
     'network.connect': [],
     'network.rewire': [],
     'network.reverse': [],
+    'hierarchy.nest': [],
     'geo.move': [],
     'geo.create': [],
     'geo.dragVertex': [],

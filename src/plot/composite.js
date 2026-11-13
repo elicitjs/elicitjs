@@ -155,7 +155,10 @@ const FRAME_KEYS = ['x', 'y', 'size'];
 // feature, never trickling to every part (each part would grow its own set of
 // ports). In box mode that is the box, whose circle is the glyph's extent; in plain
 // mode, the first part that declares the box it draws.
-const GLYPH_KEYS = ['ports'];
+//
+// `contains` (may a row of a hierarchy hold others — see core/fit.js) is the same
+// kind of statement: about the glyph as one node, so it goes to the same feature.
+const GLYPH_KEYS = ['ports', 'contains'];
 
 // Counts composite CALLS, so every glyph gets its own paint group. See the
 // `glyph` key below and `paintOrder` in core/scene.js.
@@ -433,11 +436,13 @@ export function composite(options = {}) {
         if (GLYPH_KEYS.includes(key)) continue;
         trickle[key] = spec;
     }
-    if (!boxed && groupChannels.ports) {
+    if (!boxed && GLYPH_KEYS.some((key) => groupChannels[key])) {
         // The glyph's SHAPE, not its label: a `node()`'s dot, not the name above it.
         const boxed = parts.filter((/** @type {any} */ p) => typeof p.nodeBox === 'function');
         const host = boxed.find((/** @type {any} */ p) => !p.labelBox) || boxed[0] || parts[0];
-        if (host) (host.channels || (host.channels = {})).ports = groupChannels.ports;
+        for (const key of GLYPH_KEYS) {
+            if (host && groupChannels[key]) (host.channels || (host.channels = {}))[key] = groupChannels[key];
+        }
     }
 
     const wrapped = parts.map((/** @type {any} */ part, /** @type {number} */ i) => {
@@ -559,7 +564,7 @@ export function composite(options = {}) {
         if (!spec || frameSpecOf(spec)) continue;
         boxChannels[key] = spec;
     }
-    if (groupChannels.ports) boxChannels.ports = groupChannels.ports;
+    for (const key of GLYPH_KEYS) if (groupChannels[key]) boxChannels[key] = groupChannels[key];
 
     // Whether the box is something you can GRAB. A hit node is set up only when an
     // edit names one of the box's own columns; otherwise the node is left for the

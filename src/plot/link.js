@@ -58,6 +58,7 @@
 // `Mark.nodeBox` rule), never from an option here, so a link end, a node's port and
 // a drop target agree on where every edge is.
 
+import { treeOf } from '../core/hierarchy.js';
 import {
     encodeChannel, resolveStyle, normalizeMarkOptions, themeOf, markDefaults, resolveHandles, markCommon, rawChannel,} from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
@@ -537,7 +538,14 @@ export function link(options = {}) {
                 const built = nodeBoxesOf(
                     scales, channels, nodesTable, join.rows, rule, extentW, extentH, width, height
                 );
-                obstacles = /** @type {import('./linkRouter.js').LinkBox[]} */ (built.filter(Boolean));
+                // A CONTAINER (a hierarchy row holding others) is not something to
+                // detour around: a link from inside it has to cross its edge, and its
+                // contents are obstacles in their own right. `treeOf` is flat for
+                // every other structure, so a network keeps all of its boxes.
+                const tree = treeOf(spec, /** @type {any} */ (context).tables);
+                obstacles = /** @type {import('./linkRouter.js').LinkBox[]} */ (
+                    built.filter((box, i) => box && !tree.hasChildren(i))
+                );
                 grid = routingGrid(obstacles);
                 boxes = built;
                 return built;

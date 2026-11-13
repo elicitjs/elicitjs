@@ -1,4 +1,5 @@
 // @ts-check
+import { color as d3color } from 'd3';
 // effects.js — the interaction-EFFECTS layer: transient visual feedback for the
 // STATE of an interaction, kept deliberately separate from a mark's STYLE channels
 // (fill/stroke/opacity/…) and from its GUIDES.
@@ -76,18 +77,27 @@
 export const ELEMENT_EFFECT_PROPS = ['filter', 'opacity', 'fill', 'stroke', 'strokeWidth', 'cursor'];
 
 /** The interaction states, in the order a mark in several of them resolves. */
-export const EFFECT_STATES = ['hovered', 'selected', 'grabbed'];
+export const EFFECT_STATES = ['hovered', 'selected', 'target', 'grabbed'];
 
 /** @type {any} */
 export const DEFAULT_EFFECTS = {
-    // Pre-press: a light outline saying which mark a gesture would take. Deliberately
-    // lighter than `selected` — hover is a question, selection is an answer.
+    // Pre-press: an outline traced ON the mark's edge (pad 0), in a darker shade of
+    // the mark's own colour (`color: 'auto'`), so a teal bar lights up in deep teal
+    // and a coral dot in deep coral rather than every mark in one signal orange.
+    // Deliberately lighter than `selected` — hover is a question, selection is an
+    // answer — so it is a shallower shade and a hair thinner.
     hovered: {
-        outline: { color: '#ff9800', width: 2, pad: 5, dash: null, opacity: 0.65 },
+        outline: { color: 'auto', darken: 0.6, width: 3, pad: 0, dash: null, opacity: 1 },
     },
-    // Committed selection.
+    // Committed selection: the same trace, a deeper shade and thicker.
     selected: {
-        outline: { color: '#ff9800', width: 2.5, pad: 5, dash: null, opacity: 0.95 },
+        outline: { color: 'auto', darken: 1.5, width: 3.5, pad: 0, dash: null, opacity: 1 },
+    },
+    // Where the thing in flight would LAND if released now — a container about to
+    // take the node being dragged into it. Distinct from hover (which mark a press
+    // would take) and from selection, so it has its own colour.
+    target: {
+        outline: { color: '#2563eb', width: 2.5, pad: 3, dash: null, opacity: 0.9 },
     },
     // Mid-drag. An element effect, so it survives the re-render each drag tick
     // triggers without being re-derived from scene state.
@@ -140,7 +150,9 @@ export function resolveEffects(user = {}, base = DEFAULT_EFFECTS) {
     /** @type {any} */
     const out = {};
     for (const state of EFFECT_STATES) {
-        out[state] = resolveState(spec[state], d[state]);
+        // A theme written before a state existed states nothing for it; the
+        // built-in look stands in, or a new state would be invisible under a theme.
+        out[state] = resolveState(spec[state], d[state] || DEFAULT_EFFECTS[state]);
     }
     return out;
 }
@@ -185,6 +197,59 @@ export function effectStyleFor(states) {
     return any ? out : null;
 }
 
+/** The outline colour used when nothing on the mark can be read (a gradient fill, a
+ *  CSS variable, no paint at all). A neutral slate, legible on any data colour. */
+export const OUTLINE_FALLBACK = '#475569';
+
+/** A parsed, visible colour, or null for none / transparent / unparseable paint
+ *  (`url(#gradient)`, `var(--x)`, `currentColor`).
+ * @param {any} paint */
+function readColor(paint) {
+    if (typeof paint !== 'string' || paint === 'none' || paint === 'transparent') return null;
+    const c = d3color(paint);
+    return c && (c.opacity == null || c.opacity > 0) ? c : null;
+}
+
+/** Is this colour so pale that a ring in it (or a shade of it) would not read as the
+ *  mark? A white-filled hollow dot should take its stroke, not its fill.
+ * @param {any} c a d3 colour */
+function isPale(c) {
+    const { r, g, b } = c.rgb();
+    return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 > 0.93;
+}
+
+/**
+ * The colour an outline paints a node in.
+ *
+ *   'auto'    the mark's own colour: its fill, or its stroke when the fill is missing
+ *             or near-white (a hollow dot, a line, a tick) — then darkened by
+ *             `darken`. This is the default, so the highlight belongs to the mark.
+ *   'fill'    the mark's fill, darkened.      'stroke'  the mark's stroke, darkened.
+ *   a colour  used as is (`darken` does not apply): the fixed look.
+ *   a fn      `(color, node) => string`, given the darkened mark colour (or the
+ *             fallback) and the node, for any other rule. Spec-only — a theme is data.
+ *
+ * `darken` is d3's `color.darker(k)` amount; a negative value lightens instead (for
+ * dark marks on a dark surface). `fallback` is used when no paint can be read.
+ * @param {any} node the scene node being outlined
+ * @param {any} outline the resolved outline config
+ * @returns {string}
+ */
+export function outlineColor(node, outline) {
+    const { color = 'auto', darken = 0.6, fallback = OUTLINE_FALLBACK } = outline || {};
+    if (typeof color === 'string' && !['auto', 'fill', 'stroke'].includes(color)) return color;
+    const fill = readColor(node && node.fill);
+    const stroke = readColor(node && node.stroke);
+    let base = null;
+    if (color === 'fill') base = fill;
+    else if (color === 'stroke') base = stroke;
+    else base = fill && !(isPale(fill) && stroke) ? fill : (stroke || fill);
+    const shaded = base
+        ? (darken >= 0 ? base.darker(darken) : base.brighter(-darken)).formatHex()
+        : fallback;
+    return typeof color === 'function' ? color(shaded, node) : shaded;
+}
+
 /**
  * An outline overlay around one scene node, in a state's appearance.
  *
@@ -208,16 +273,27 @@ export function outlineNodes(mark, state) {
     // same cases below (and carries the mark's rotation with it). It never declares
     // one of its own, so this recurses exactly once.
     if (mark.effectShape) {
+        // The declared shape carries no paint of its own; it reads the mark's, so an
+        // `auto` outline still takes the colour of the datum it rings.
         return outlineNodes(
-            { ...mark.effectShape, ...(mark.angle ? { angle: mark.angle } : {}) },
+            {
+                fill: mark.fill, stroke: mark.stroke,
+                ...mark.effectShape, ...(mark.angle ? { angle: mark.angle } : {}),
+            },
             state,
         );
     }
-    const { color, width, pad, dash, opacity } = state.outline;
+    const { width, dash, opacity } = state.outline;
+    const pad = state.outline.pad || 0;
+    // A stroked-only node (a line, a tick, an unfilled path) is outlined by
+    // re-stroking it WIDER than itself, so the trace engulfs the stroke rather than
+    // running down its middle; a filled shape takes the plain width on its edge.
+    const strokeOnly = !readColor(mark.fill) && mark.type !== 'text';
+    const ownWidth = Number(mark.strokeWidth) || 1;
     // `effect: true` pins these into the topmost paint layer (above marks and
     // guides); `guide: true` keeps them on the engine's non-interactive path.
     const paint = {
-        fill: 'none', stroke: color, strokeWidth: width, opacity,
+        fill: 'none', stroke: outlineColor(mark, state.outline), strokeWidth: width, opacity,
         ...(dash ? { strokeDasharray: dash } : {}),
         // Carry the mark's rotation. Both renderers rotate a node by -angle about
         // `markCenter`, and every overlay below is CONCENTRIC with its source — a
@@ -246,14 +322,27 @@ export function outlineNodes(mark, state) {
         }];
     }
     if (mark.type === 'rect') {
+        // Keep the mark's corner radius (grown by the pad), so a rounded bar is traced
+        // with rounded corners rather than boxed.
+        const rx = mark.rx != null ? mark.rx + pad : null;
+        const ry = mark.ry != null ? mark.ry + pad : rx;
         return [{
             type: 'rect', x: mark.x - pad, y: mark.y - pad,
-            width: mark.width + pad * 2, height: mark.height + pad * 2, ...paint,
+            width: mark.width + pad * 2, height: mark.height + pad * 2,
+            ...(rx != null ? { rx, ry } : {}), ...paint,
         }];
     }
     if (mark.type === 'line') {
-        // A tick is a line: outline its span (a thin padded box around the segment),
-        // so a selected tick reads the same as a highlighted bar.
+        // On the shape (no pad): re-stroke the segment itself, wider than the mark,
+        // so a diagonal line is traced along its length rather than boxed.
+        if (!pad) {
+            return [{
+                type: 'line', x1: mark.x1, y1: mark.y1, x2: mark.x2, y2: mark.y2,
+                ...paint, strokeWidth: ownWidth + width, strokeLinecap: 'round',
+            }];
+        }
+        // Padded: outline its span (a thin padded box around the segment), so a
+        // selected tick reads the same as a highlighted bar.
         const lx = Math.min(mark.x1, mark.x2);
         const ly = Math.min(mark.y1, mark.y2);
         return [{
@@ -267,7 +356,9 @@ export function outlineNodes(mark, state) {
         // re-stroke the SAME `d` rather than inventing a box around it: the outline
         // then traces the actual shape, which is the only reading that makes sense
         // for a slice or a polygon.
-        return mark.d ? [{ type: 'path', d: mark.d, ...paint }] : [];
+        return mark.d
+            ? [{ type: 'path', d: mark.d, ...paint, ...(strokeOnly ? { strokeWidth: ownWidth + width, strokeLinecap: 'round' } : {}) }]
+            : [];
     }
     if (mark.type === 'text') {
         // No measured text metrics here, so outline a ring at the label's anchor —

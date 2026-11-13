@@ -30,6 +30,37 @@ export function nodeChannelsOf(channels, nodes) {
 }
 
 /**
+ * The row whose box a point is inside, or null. Only a DECLARED box counts — a
+ * guessed extent is not something a pointer can be "inside".
+ *
+ * `accepts` says which rows may be answered at all; `rank` breaks a tie between
+ * boxes that both contain the point, highest first (the innermost of two nested
+ * containers), and the nearer centre wins among equals — the rule a link's body
+ * drop has always used.
+ * @param {{ x: number, y: number }} point
+ * @param {any[]} rows
+ * @param {import('../types').NodeBoxRule} rule
+ * @param {{ accepts?: (i: number) => boolean, rank?: (i: number) => number }} [options]
+ * @returns {number | null} the row's index
+ */
+export function boxAt(point, rows, rule, { accepts, rank } = {}) {
+    /** @type {number | null} */
+    let best = null;
+    let bestRank = -Infinity;
+    let bestDist = Infinity;
+    rows.forEach((row, i) => {
+        if (!row || (accepts && !accepts(i))) return;
+        const box = rule(row, i, rows);
+        if (!box || ![box.cx, box.cy, box.hw, box.hh].every(Number.isFinite)) return;
+        if (Math.abs(point.x - box.cx) > box.hw || Math.abs(point.y - box.cy) > box.hh) return;
+        const r = rank ? rank(i) : 0;
+        const d = Math.hypot(box.cx - point.x, box.cy - point.y);
+        if (r > bestRank || (r === bestRank && d < bestDist)) { best = i; bestRank = r; bestDist = d; }
+    });
+    return best;
+}
+
+/**
  * Every node's box, in scene coordinates, aligned by row index (null for a null
  * row). The declared rule wins; without one, the node's encoded position with a
  * `w`×`h` box about it.

@@ -249,6 +249,26 @@ export function warnUnreachableLegendRow(features, editsOf, rowsOf) {
     }
 }
 
+/**
+ * `edit.hierarchy.nest` reads where a node is RELEASED; something else has to carry
+ * it there. On a mark with no drag edit of its own the node never leaves its spot,
+ * so the pointer is the only thing that moves and the drop reads as a teleport.
+ * @param {any} feature
+ * @param {import('../types').Edit[]} edits
+ * @returns {void}
+ */
+export function warnNestAlone(feature, edits) {
+    if (!edits.some(e => e.type === 'hierarchy.nest')) return;
+    if (edits.some(e => e.type !== 'hierarchy.nest' && e.gesture === 'drag')) return;
+    warn(
+        `nestalone:${markLabel(feature)}`,
+        `mark ${markLabel(feature)} carries edit.hierarchy.nest() and no drag edit beside it. ` +
+        'nest decides where a node lands when it is released; a move is what carries it ' +
+        "there. Add edit.move({ channels: ['x', 'y'], mode: 'relative' })."
+    );
+}
+
+
 // `connect` resolves its TARGET by finding the node nearest the pointer when the
 // drag ends. Any other unarbitrated drag edit on the same mark defeats that
 // completely: `move` drags the SOURCE node along under the pointer, so the nearest

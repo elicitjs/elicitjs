@@ -78,6 +78,18 @@ export function paintOrder(built) {
         });
         out.push(...group);
     }
+    // A hierarchy's nodes carry their DEPTH (stamped by the engine's tagging pass),
+    // and a container must paint beneath its contents whichever feature draws either
+    // and wherever their rows fall. Reordered among THEMSELVES, in the slots they
+    // already hold, so every other mark keeps its place; stable, so one row's glyph
+    // still paints whole and in its parts' order.
+    if (out.some((n) => n && typeof n.depth === 'number')) {
+        /** @type {number[]} */
+        const slots = [];
+        out.forEach((n, i) => { if (n && typeof n.depth === 'number') slots.push(i); });
+        const byDepth = slots.map((i) => out[i]).sort((a, b) => a.depth - b.depth);
+        slots.forEach((slot, k) => { out[slot] = byDepth[k]; });
+    }
     // A RAISED node (a link's end handle) sits on another mark's edge, so it paints
     // above every mark — and it is a visible handle, shown only while its row is lit,
     // not a hit overlay that could outrank a node really drawn there.

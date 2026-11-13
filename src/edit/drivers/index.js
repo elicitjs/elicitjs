@@ -64,6 +64,7 @@ import { axisDragDriver } from './axisDrag.js';
 import { slideDriver } from './slide.js';
 import { moveDriver } from './move.js';
 import { connectDriver } from './connect.js';
+import { nestDriver } from './nest.js';
 import { panDriver } from './pan.js';
 
 /**
@@ -118,7 +119,7 @@ import { panDriver } from './pan.js';
  */
 
 /** @type {Driver[]} */
-export const drivers = [planeDriver, nearestDriver, sweepDriver, drawDriver, brushDriver, brushRectDriver, geoBrushDriver, probeDriver, axisDragDriver, slideDriver, moveDriver, connectDriver, panDriver];
+export const drivers = [planeDriver, nearestDriver, sweepDriver, drawDriver, brushDriver, brushRectDriver, geoBrushDriver, probeDriver, axisDragDriver, slideDriver, moveDriver, connectDriver, nestDriver, panDriver];
 
 /**
  * Register a custom driver (or replace a built-in by the same `name`). The engine

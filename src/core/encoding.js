@@ -29,6 +29,7 @@
 // output ranges that resolver needs.
 
 import * as d3 from 'd3';
+import { DD } from './themes.js';
 
 // Default categorical palette — 10 distinct hues (Tableau-style) so a domain of
 // up to ten categories gets its own colour before an ordinal scale recycles.
@@ -72,6 +73,8 @@ const CATEGORICAL_SCHEMES = {
     category10: d3.schemeCategory10,
     tableau10: d3.schemeTableau10,
     observable10: d3.schemeObservable10,
+    // Data & Dialogue Lab: the two logo colours, then coral, gold, violet, leaf, rose, slate.
+    dd: DD.categorical,
     accent: d3.schemeAccent,
     dark2: d3.schemeDark2,
     paired: d3.schemePaired,
@@ -116,6 +119,9 @@ const RAMP_SCHEMES = {
     inferno: d3.interpolateInferno,
     plasma: d3.interpolatePlasma,
     cividis: d3.interpolateCividis,
+    // Data & Dialogue Lab ramps: pale teal -> teal -> blue -> navy, and blue -> coral.
+    ddramp: d3.piecewise(d3.interpolateRgb, DD.sequential),
+    dddiverging: d3.piecewise(d3.interpolateRgb, DD.diverging),
     turbo: d3.interpolateTurbo,
     warm: d3.interpolateWarm,
     cool: d3.interpolateCool,
