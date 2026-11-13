@@ -506,3 +506,143 @@ describe('a nesting table declared like any other table', () => {
         expect(Object.keys(el.getData())).toEqual(['cards', 'memberships']);
     });
 });
+
+// ── Padding and spacing ──────────────────────────────────────────────────────
+describe('container padding', () => {
+    const mark = (contains, fit = true, extra = {}) => plot.rect({
+        id: 'boxes',
+        channels: {
+            x: { field: 'x' }, y: { field: 'y' },
+            width: { field: 'w', scale: null, fit }, height: { field: 'h', scale: null, fit },
+            contains, ...extra,
+        },
+        edits: extra.edits || [],
+    });
+    const chart = (data, m) => {
+        const el = Elicit({
+            width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false,
+            schema: boxSchema, data, marks: [m],
+        });
+        document.body.appendChild(el);
+        return el;
+    };
+
+    it('takes a side each, so a fitted container leaves room for a title', () => {
+        const el = chart(
+            { nodes: [box('g', 0, 0), box('a', 100, 100)], nesting: [nest('a', 'g')] },
+            mark({ value: true, padding: { top: 30, left: 4 } })
+        );
+        const g = byId(el).g;
+        expect(g.w).toBeCloseTo(40 + 4 + 10, 5);   // right takes the default
+        expect(g.h).toBeCloseTo(20 + 30 + 10, 5);
+        expect(g.x).toBeCloseTo(100 + (10 - 4) / 2, 5);
+        expect(g.y).toBeCloseTo(100 + (30 - 10) / 2, 5); // data y runs up: the extra room is above
+    });
+
+    it('keeps the contents of a fixed-size container inside its padding', () => {
+        const el = chart(
+            { nodes: [box('g', 200, 150, 200, 100), box('a', 105, 150), box('b', 200, 300)], nesting: [nest('a', 'g'), nest('b', 'g')] },
+            mark({ value: true, padding: 12 }, false)
+        );
+        const d = byId(el);
+        expect(d.g.w).toBe(200);
+        expect(d.a.x).toBeCloseTo(100 + 12 + 20, 5);
+        expect(d.b.y).toBeCloseTo(200 - 12 - 10, 5);
+    });
+});
+
+describe('dodge', () => {
+    const mark = (edits = [], dodge = true, fit = true) => plot.rect({
+        id: 'boxes',
+        channels: {
+            x: { field: 'x' }, y: { field: 'y' },
+            width: { field: 'w', scale: null, fit }, height: { field: 'h', scale: null, fit },
+            contains: { fn: (d) => d.id.startsWith('g') }, dodge,
+        },
+        edits,
+    });
+    const chart = (data, m) => {
+        const el = Elicit({
+            width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false,
+            schema: boxSchema, data, marks: [m],
+        });
+        document.body.appendChild(el);
+        return el;
+    };
+    const clear = (a, b, gap = 0) => Math.abs(a.x - b.x) >= (a.w + b.w) / 2 + gap - 0.02
+        || Math.abs(a.y - b.y) >= (a.h + b.h) / 2 + gap - 0.02;
+    const allClear = (rows, gap) => rows.every((a, i) => rows.slice(i + 1).every((b) => clear(a, b, gap)));
+
+    it('separates seeded siblings, inside a container and at the top level', () => {
+        const el = chart({
+            nodes: [box('g1', 0, 0), box('a', 100, 100), box('b', 110, 104), box('c', 105, 96), box('g2', 0, 0), box('d', 130, 100)],
+            nesting: [nest('a', 'g1'), nest('b', 'g1'), nest('c', 'g1'), nest('d', 'g2')],
+        }, mark());
+        const d = byId(el);
+        expect(allClear([d.a, d.b, d.c], 8)).toBe(true);
+        expect(allClear([d.g1, d.g2], 8)).toBe(true);
+        // settled: another render moves nothing
+        const once = el.getData();
+        el.setData(once);
+        expect(el.getData()).toEqual(once);
+    });
+
+    it('is off unless a mark asks, and honours `gap` and a per-row fn', () => {
+        const data = () => ({ nodes: [box('a', 100, 100), box('b', 110, 100), box('c', 104, 100)], nesting: [] });
+        expect(chart(data(), mark([], false)).getData().nodes).toEqual(data().nodes);
+        const wide = byId(chart(data(), mark([], { value: true, gap: 30 })));
+        expect(allClear([wide.a, wide.b, wide.c], 30)).toBe(true);
+        const some = byId(chart(data(), mark([], { fn: (d) => d.id !== 'c' })));
+        expect(some.c.x).toBe(104);
+        expect(clear(some.a, some.b, 8)).toBe(true);
+    });
+
+    it('waits for the release, then makes room around the node that was dropped', () => {
+        const el = chart(
+            { nodes: [box('a', 100, 100), box('b', 300, 100)], nesting: [] },
+            mark([edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()])
+        );
+        const node = { index: 0, featureId: 'boxes' };
+        el.emit({ type: 'dragstart', node, x: 100, y: 200 });
+        el.emit({ type: 'drag', node, x: 290, y: 200 });
+        expect(byId(el).b.x).toBe(300); // nothing scatters mid-drag
+        el.emit({ type: 'dragend', node, x: 290, y: 200 });
+        const d = byId(el);
+        expect(d.a.x).toBeCloseTo(290, 5); // the dropped node stays where it was put
+        expect(clear(d.a, d.b, 8)).toBe(true);
+        el.undo();
+        expect(byId(el).b.x).toBe(300);
+        expect(byId(el).a.x).toBe(100);
+    });
+
+    it('pushes a neighbouring container away when one grows to take a drop', () => {
+        const el = chart({
+            nodes: [box('g1', 0, 0), box('a', 100, 150), box('g2', 0, 0), box('b', 170, 150), box('c', 100, 40)],
+            nesting: [nest('a', 'g1'), nest('b', 'g2')],
+        }, mark([edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()]));
+        const before = byId(el);
+        const node = { index: 4, featureId: 'boxes' };
+        // drop c in g1's right-hand padding, so g1 grows toward g2
+        const to = { x: before.g1.x + before.g1.w / 2 - 3, y: 300 - before.g1.y };
+        el.emit({ type: 'dragstart', node, x: 100, y: 260 });
+        el.emit({ type: 'drag', node, ...to });
+        el.emit({ type: 'dragend', node, ...to });
+        const d = byId(el);
+        expect(el.getData().nesting).toContainEqual(nest('c', 'g1'));
+        expect(allClear([d.a, d.c], 8)).toBe(true);
+        expect(allClear([d.g1, d.g2], 8)).toBe(true);
+        // g2 gave way and took its contents along
+        expect(d.b.x - d.g2.x).toBeCloseTo(before.b.x - before.g2.x, 5);
+    });
+
+    it('spaces children an outside caller adds with no position', () => {
+        const el = chart({ nodes: [box('g', 200, 150), box('a', 200, 150)], nesting: [nest('a', 'g')] }, mark());
+        const data = el.getData();
+        el.setData({
+            nodes: [...data.nodes, { id: 'n1', w: 40, h: 20 }, { id: 'n2', w: 40, h: 20 }, { id: 'n3', w: 40, h: 20 }],
+            nesting: [...data.nesting, nest('n1', 'g'), nest('n2', 'g'), nest('n3', 'g')],
+        });
+        const d = byId(el);
+        expect(allClear([d.a, d.n1, d.n2, d.n3], 8)).toBe(true);
+    });
+});

@@ -794,9 +794,14 @@ export interface ChannelSpec {
   // the links and `getData()` agree. Needs a `field`. No gesture may write a
   // fitted column on a row with contents; a leaf's stays editable.
   fit?: boolean;
-  // On the `contains` channel only: the gap in px between a fitted container's
-  // edge and its contents (default 10).
-  padding?: number;
+  // On the `contains` channel only: the room in px a container keeps between its
+  // edge and its contents (default 10) — one number, or a side each (a side left
+  // out takes the default). A fitted container is sized to leave it; one with a
+  // size of its own keeps its contents inside it.
+  padding?: number | { top?: number; right?: number; bottom?: number; left?: number };
+  // On the `dodge` channel only: the space in px a row keeps from its siblings
+  // (default 8).
+  gap?: number;
   value?: any;
   datum?: any;
   // Derived channel: computed per datum in VISUAL space (result used as-is, never
@@ -1775,6 +1780,13 @@ export interface Mark {
    * reads it — like `ports`, it is a statement about the node the engine acts on.
    */
   contains?: ChannelSpec;
+  /**
+   * Set by the ENGINE from the mark's `dodge` channel (under a hierarchy): which
+   * of its rows keep clear of their siblings, and the `gap` they keep. Overlapping
+   * rows are pushed apart when a gesture ends and when data arrives from outside,
+   * never while a drag is in progress.
+   */
+  dodge?: ChannelSpec;
   nodeBox?(
     row: Datum,
     index: number,

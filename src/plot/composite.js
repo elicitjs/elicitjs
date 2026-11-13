@@ -158,7 +158,8 @@ const FRAME_KEYS = ['x', 'y', 'size'];
 //
 // `contains` (may a row of a hierarchy hold others — see core/fit.js) is the same
 // kind of statement: about the glyph as one node, so it goes to the same feature.
-const GLYPH_KEYS = ['ports', 'contains'];
+// So is `dodge` (does a row keep clear of its siblings).
+const GLYPH_KEYS = ['ports', 'contains', 'dodge'];
 
 // Counts composite CALLS, so every glyph gets its own paint group. See the
 // `glyph` key below and `paintOrder` in core/scene.js.

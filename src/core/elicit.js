@@ -25,7 +25,7 @@ import {
 } from './schema.js';
 import { axisOf, pointerForChannel } from './encoding.js';
 import { nestingOf, treeOf, treeProblems, enforceTree } from './hierarchy.js';
-import { settleHierarchy, fitChannelsOf } from './fit.js';
+import { settleHierarchy, fitChannelsOf, DEFAULT_GAP } from './fit.js';
 import { warn } from './dev.js';
 import { applyConstraint } from '../constraints/define.js';
 import {
@@ -357,18 +357,21 @@ export function Elicit(spec) {
     // capability the ENGINE reads, never the mark) and which of its size channels
     // follow from a row's contents (`fit: true` — see core/fit.js). `contains` is
     // taken off the channel map here so no scale is built for it; `fit` stays, a
-    // flag beside the channel's field.
+    // flag beside the channel's field. `dodge` is the third: which rows keep clear
+    // of their siblings (and by what `gap`), read the same way.
     const hierarchyNodes = nestingOf(schemaSpec) ? nodesTableName : null;
     for (const f of features) {
         if (!f || f.views === 'scale' || f.portHost || !f.channels) continue;
         const contains = f.channels.contains;
+        const dodge = f.channels.dodge;
         const fitted = Object.keys(f.channels).filter((ch) => f.channels[ch] && f.channels[ch].fit === true);
-        if (!contains && !fitted.length) continue;
+        if (!contains && !dodge && !fitted.length) continue;
         if (contains) delete f.channels.contains;
+        if (dodge) delete f.channels.dodge;
         if (!hierarchyNodes || f.table !== hierarchyNodes) {
             warn(
                 `${markLabel(f)}:contains:table`,
-                `mark ${markLabel(f)} states ${contains ? '`contains`' : '`fit`'}, but it does not ` +
+                `mark ${markLabel(f)} states ${contains ? '`contains`' : dodge ? '`dodge`' : '`fit`'}, but it does not ` +
                 'draw the nodes of a hierarchy, so nothing can be nested in its rows. Declare ' +
                 'schema: { structure: "hierarchy", tables: { nodes, nesting } } and put it on ' +
                 'the mark drawing the nodes.'
@@ -379,13 +382,14 @@ export function Elicit(spec) {
         if (typeof f.nodeBox !== 'function') {
             warn(
                 `${markLabel(f)}:contains:box`,
-                `mark ${markLabel(f)} states ${contains ? '`contains`' : '`fit`'}, but it does not ` +
+                `mark ${markLabel(f)} states ${contains ? '`contains`' : dodge ? '`dodge`' : '`fit`'}, but it does not ` +
                 'declare the box it draws, so it has no inside. Use a mark that draws a node ' +
                 'shape: point, rect, ellipse, shape, or a composite.'
             );
             continue;
         }
         if (contains) f.contains = contains === true ? { value: true } : contains;
+        if (dodge) f.dodge = dodge === true ? { value: true } : dodge;
         for (const ch of fitted) {
             if (f.channels[ch].field != null) continue;
             warn(
@@ -471,28 +475,55 @@ export function Elicit(spec) {
         ? (row, i, rows) => boxHosts.some((f) => f.contains
             && !!rawChannel({ contains: f.contains }, 'contains', row, false, i, rows))
         : null;
+    // Which rows keep clear of their siblings, and by how much: any node mark's
+    // `dodge`, read raw per row like `contains`. A row no mark dodges is left where
+    // it is and nothing makes room for it.
+    /** @type {((row: any, i: number, rows: any[]) => number | null) | null} */
+    const dodgeRule = hierarchyNodes && boxHosts.some((f) => f.dodge)
+        ? (row, i, rows) => {
+            for (const f of boxHosts) {
+                if (!f.dodge || !rawChannel({ dodge: f.dodge }, 'dodge', row, false, i, rows)) continue;
+                return typeof f.dodge.gap === 'number' ? Math.max(0, f.dodge.gap) : DEFAULT_GAP;
+            }
+            return null;
+        }
+        : null;
+    // A stroke in progress pushes nothing apart: a node carried across the chart
+    // would scatter every row it passed over. The release spaces the rows once,
+    // around whatever the stroke moved — so the stroke remembers where they began.
+    let stroking = false;
+    /** @type {any[] | null} */
+    let strokeNodes = null;
+    // Data from outside a gesture (the seed, setData) is spaced on its next settle.
+    let spaceNext = true;
     /**
      * Settle the hierarchy's node rows after something changed them: place, carry,
-     * fit (core/fit.js). A no-op for every other structure.
+     * space, fit (core/fit.js). A no-op for every other structure.
      * @param {any[] | null} [before] the node rows as last committed (for carry)
      * @param {Set<number> | null} [frozen] rows whose box must hold still
+     * @param {{ since?: any[] | null, anchors?: number[] | null, preview?: boolean } | null} [dodge]
+     *   push overlapping rows apart, around the rows that changed `since`
      * @returns {void}
      */
-    const settleNodes = (before = null, frozen = heldStill()) => {
+    const settleNodes = (before = null, frozen = heldStill(), dodge = null) => {
         if (!hierarchyNodes || !boxHosts.length) return;
-        tables[hierarchyNodes] = settledNodes(tables, before, frozen);
+        tables[hierarchyNodes] = settledNodes(tables, before, frozen, dodge);
     };
     /**
      * The settled node rows for a dataset — the committed one, or a proposal's
      * overlay (a preview asks what a drop WOULD make without writing it).
      * @param {Record<string, any[]>} from
      * @param {any[] | null} before @param {Set<number> | null} frozen
+     * @param {{ since?: any[] | null, anchors?: number[] | null, preview?: boolean } | null} [dodge]
      * @returns {any[]}
      */
-    const settledNodes = (from, before, frozen) => settleHierarchy({
+    const settledNodes = (from, before, frozen, dodge = null) => settleHierarchy({
         spec: schemaSpec, tables: from, hosts: boxHosts, scales,
         width: innerWidth, height: innerHeight,
         before, frozen, locked: isLockedIn(/** @type {string} */ (hierarchyNodes)),
+        dodges: dodge && (!stroking || dodge.preview) ? dodgeRule : null,
+        since: dodge ? dodge.since : null,
+        anchors: dodge ? dodge.anchors : null,
     });
     /**
      * The node rows a nest drag has IN FLIGHT (`session.nestFrom`, the nest
@@ -1013,7 +1044,8 @@ export function Elicit(spec) {
     let scales = resolveScales(features, tables, liveSpec, dims);
     // Settle a seeded hierarchy now, against the declared size, so `getData()` is
     // already exact before the first (deferred) render.
-    settleNodes();
+    settleNodes(null, null, {});
+    spaceNext = false;
 
     // Set up container. 'fixed' pins pixel dims; the responsive modes fill the
     // parent's width (the SVG scales via viewBox in 'scale', or is redrawn at the
@@ -1132,8 +1164,11 @@ export function Elicit(spec) {
         // Data from outside a gesture (setData) and a resized plot both change what
         // a container's contents measure, so every render settles the hierarchy
         // against the scales it is about to draw with. It returns the same rows when
-        // nothing moved, so the common render costs one pass over the tree.
-        settleNodes();
+        // nothing moved, so the common render costs one pass over the tree. Rows are
+        // pushed apart only for data that just arrived from outside: a re-render
+        // (a hover, a resize) must never move an answer.
+        settleNodes(null, heldStill(), spaceNext && !stroking ? {} : null);
+        if (!stroking) spaceNext = false;
 
         // Plane-on-top mode: when an ACTIVE edit resolves its target from an
         // arbitrary pointer position (nearest/sweep/draw/brush), the plane must sit
@@ -2051,7 +2086,7 @@ export function Elicit(spec) {
         // A hierarchy's geometry follows from its contents: a moved container takes
         // its subtree along, and every fitted container re-fits. Same standing as
         // enforceRefs — the schema's rule, repaired across rows after the commit.
-        settleNodes(nodesBefore);
+        settleNodes(nodesBefore, heldStill(), { since: strokeNodes || nodesBefore });
         ui.preview = null;
         notifyChange();
         return true;
@@ -2172,7 +2207,7 @@ export function Elicit(spec) {
             const tree = treeOf(schemaSpec, overlay);
             ui.preview[feature.id] = {
                 table: hierarchyNodes,
-                rows: settledNodes(overlay, null, null),
+                rows: settledNodes(overlay, null, null, { anchors: index != null ? [index] : null, preview: true }),
                 pointer,
                 dropInto: index != null ? tree.parentOf(index) : null,
             };
@@ -2665,6 +2700,13 @@ export function Elicit(spec) {
         } else if (event.type === 'dragstart') { endTxn(); beginTxn(); }
         else if (!txn) beginTxn();
 
+        // A hierarchy's rows are pushed apart at the END of a stroke, around what it
+        // moved (see `stroking`). A nudge's synthetic drag is a whole gesture.
+        if (hierarchyNodes && !event.nudge) {
+            if (event.type === 'dragstart') { stroking = true; strokeNodes = tables[hierarchyNodes]; }
+            else if (event.type === 'drag') stroking = true;
+        }
+
         // Grab state rides the SAME bracket as the transaction — one stroke, one
         // grabbed row — so the state pass can draw `grabbed` beside the other two
         // instead of the renderer painting it privately off d3.drag. Force a render
@@ -2714,7 +2756,9 @@ export function Elicit(spec) {
         // release lets them go, whether or not the node changed container, and that
         // last fit is part of the same gesture: one undo entry, one `change`.
         if (event.type === 'dragend' && hierarchyNodes && boxHosts.length) {
-            const settled = settledNodes(tables, null, heldStill());
+            stroking = false;
+            const settled = settledNodes(tables, null, heldStill(), { since: strokeNodes });
+            strokeNodes = null;
             if (settled !== tables[hierarchyNodes]) {
                 recordHistory();
                 tables[hierarchyNodes] = settled;
@@ -2771,6 +2815,9 @@ export function Elicit(spec) {
         if (nestingOf(schemaSpec)) {
             enforceRefs(schemaSpec, tables);
             enforceTree(schemaSpec, tables);
+            spaceNext = true;
+            stroking = false;
+            strokeNodes = null;
         }
         seedCounts = {};
         for (const name of Object.keys(tables)) seedCounts[name] = tables[name].length;
