@@ -132,6 +132,7 @@ export function cut(options = {}) {
         // Writes domain and rows; constraints still run over the rows.
         target: 'domain',
         ...rest,
+        grabs: (/** @type {any} */ node) => !!(node.stack && !node.edge),
         // A segment body, not a boundary handle.
         when: andWhen((/** @type {import('../types').EditContext} */ ctx) =>
             !!(ctx.node && ctx.node.stack && !ctx.node.edge), userWhen),
@@ -215,6 +216,7 @@ export function edge(options = {}) {
         pick: 'direct',
         scope: 'stack',
         ...rest,
+        grabs: (/** @type {any} */ node) => !!(node.edge && node.stack),
         when: andWhen((/** @type {import('../types').EditContext} */ ctx) =>
             !!(ctx.node && ctx.node.edge && ctx.node.stack), userWhen),
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
@@ -260,6 +262,7 @@ export function merge(options = {}) {
         scope: 'stack',
         cardinality: 'delete',
         ...rest,
+        grabs: (/** @type {any} */ node) => !!(node.edge && node.stack),
         when: andWhen((/** @type {import('../types').EditContext} */ ctx) =>
             !!(ctx.node && ctx.node.edge && ctx.node.stack), userWhen),
         apply: (/** @type {import('../types').EditContext} */ ctx) => {

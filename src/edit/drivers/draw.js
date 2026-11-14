@@ -8,6 +8,7 @@ import { nearestSeries, pickThreshold } from '../pick.js';
 /** @type {import('./index.js').Driver} */
 export const drawDriver = {
     name: 'draw',
+    cursor: 'crosshair',
     // `drawIndex` is geo draw's row for this stroke; cleared so the next stroke starts fresh.
     sessionKeys: ['mode', 'drawSeries', 'drawContinue', 'drawIndex', 'lastDomain', 'lastX', 'lastY', 'px', 'py'],
     onEvent({ feature, event, edits, marks, data, session, runEdit }) {

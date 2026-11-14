@@ -1252,7 +1252,7 @@ export class D3Renderer {
       .call(keys);
     this._geomRect(rectSel);
     this._applyStyle(rectSel, { fill: "black" });
-    this._applyEffectStyle(rectSel, "ns-resize");
+    this._applyEffectStyle(rectSel, "move");
 
     // A zero-area rect can't be hit, so an editable collapsed bar gets a transparent
     // min-sized hit rect (rectHitBox) with the same drag/click. Keys stay on the bar.
@@ -1269,7 +1269,7 @@ export class D3Renderer {
       .attr("class", "mark-hit")
       .style("pointer-events", "all")
       .style("fill", "transparent")
-      .style("cursor", (/** @type {any} */ d) => d.cursor || "ns-resize")
+      .style("cursor", (/** @type {any} */ d) => d.cursor || "move")
       .attr("x", (/** @type {any} */ d) => rectHitBox(d).x)
       .attr("y", (/** @type {any} */ d) => rectHitBox(d).y)
       .attr("width", (/** @type {any} */ d) => rectHitBox(d).w)

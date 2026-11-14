@@ -228,7 +228,7 @@ export function bar(options = {}) {
                             cy: valueChannel === 'x' ? centre : at,
                             r: handleStyle.size,
                             ...handlePaint(handleStyle),
-                            cursor: 'grab',
+                            cursor: valueChannel === 'x' ? 'ew-resize' : 'ns-resize',
                             data: currentData[gi],
                             index: gi,
                             // Read by edit.stack.edge / .merge.

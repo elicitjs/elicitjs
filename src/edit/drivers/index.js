@@ -88,6 +88,8 @@ import { panDriver } from './pan.js';
  *   edits get a catchment guide
  * @property {boolean} [targetsRow] only chooses the row, so
  *   `el.control(name, index)` can run its edits on a named row directly
+ * @property {string} [cursor] the raised plane's resting cursor while this
+ *   driver's edits are active; a session `cursor` overrides it per hover
  */
 
 /** @type {Driver[]} */

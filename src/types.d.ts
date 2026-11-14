@@ -495,6 +495,11 @@ export interface Edit {
   threshold: number;
   // anchor()/draw(): which line a new point joins.
   into?: 'nearest' | 'new';
+  // The author's CSS cursor; null lets the engine read one from the edit (edit/cursor.js).
+  cursor?: string | null;
+  // Which of the mark's nodes this edit acts on (a boundary handle, a vertex). The
+  // cursor heuristic counts the edit only there. Absent = every node.
+  grabs?: (node: FeatureNode) => boolean;
   // Edit-scoped constraint SUGAR (runs only on this edit's commit). The canonical
   // home for invariants is the dataset's `constraints` (plural), which hold for
   // every edit; `constrain` (singular) is a guard you want on just this one.
@@ -611,6 +616,10 @@ export interface EditOptions {
   target?: 'domain' | 'selection';
   inline?: boolean;
   multiline?: boolean;
+  // CSS cursor over this edit's marks (or the plot, for a plane pick). Defaults to
+  // one read from the edit: a drag along x → 'ew-resize', along y → 'ns-resize',
+  // both → 'move'; a click → 'pointer'; a typed edit → 'text'.
+  cursor?: string;
   // CLOSED: a factory's own knobs are typed on its options interface (SlideOptions,
   // BrushRectOptions, …), and `edit.custom` alone takes an open bag for a custom
   // driver's knobs. An unknown key here is a typo, which `makeEdit` also reports.
@@ -2046,7 +2055,7 @@ export interface FeatureNode {
   rowHandle?: boolean;
   // Runtime tags set by marks for the pick/driver layer: `series` groups a line's
   // nodes; `sweepAxis`/`bandAxis` name the axis proximity measures along; `cursor`
-  // overrides the interactive cursor (e.g. a tick's ew-resize); `channel` tags one
+  // sets a handle's cursor over the one the edits imply (e.g. a needle's grab); `channel` tags one
   // of a mark's several handles, so that handle's edit `when` claims only this node.
   // Needed only when one FEATURE emits multiple handles over one datum — see
   // plot/trend.js (intercept vs slope). Marks split across features don't need it:

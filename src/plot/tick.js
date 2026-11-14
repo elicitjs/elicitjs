@@ -119,7 +119,6 @@ export function tick(options = {}) {
                         data: d,
                         index: i,
                         bandAxis: 'y', // proximity measures distance along y (rows)
-                        cursor: 'ew-resize',
                         ...(angle ? { angle } : {}),
                     };
                 }
@@ -137,7 +136,6 @@ export function tick(options = {}) {
                     data: d,
                     index: i,
                     bandAxis: 'x', // proximity measures distance along x (columns)
-                    cursor: 'ns-resize',
                     ...(angle ? { angle } : {}),
                 };
             }

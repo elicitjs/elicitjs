@@ -14,6 +14,7 @@ import { reserveLegends } from '../legends.js';
 import { reserveTitles, titleNodes } from '../titles.js';
 import { treeOf } from '../hierarchy.js';
 import { fieldsOf } from '../schema.js';
+import { cursorFor, planeCursorFor } from '../../edit/cursor.js';
 import {
     markLabel,
     warnScaleRequirements, warnScopeMismatch, warnProjectionCartesianMix,
@@ -215,7 +216,12 @@ export function createRender(chart, deps) {
         const planeOnTop = features.some(feature => needsPlaneOnTop(activeEdits(feature)));
         const hasWheel = features.some(feature => activeEdits(feature).some(e => e.gesture === 'wheel'));
         chart.planeRaised = planeOnTop;
-        let planeCursor = 'pointer';
+        // Resting cursor from the plane-picked edits; a hover or session overrides it.
+        let planeCursor = planeOnTop
+            ? planeCursorFor(features.map(feature => ({
+                feature, edits: activeEdits(feature).filter(e => e.pick !== 'direct'),
+            })), chart.scales)
+            : 'pointer';
         // Over a grabbable mark, show its cursor; else a driver's session cursor hint.
         const hoveredNode = planeOnTop && ui.hover && ui.hover.node;
         if (hoveredNode && hoveredNode.editable) planeCursor = hoveredNode.cursor || 'move';
@@ -267,7 +273,12 @@ export function createRender(chart, deps) {
             warnUnknownEditOptions(feature, declaredEdits);
 
             // Only direct-pick edits make nodes editable; plane picks own the cursor.
-            const editable = activeEdits(feature).some(e => e.pick === 'direct');
+            const directEdits = activeEdits(feature).filter(e => e.pick === 'direct');
+            const editable = directEdits.length > 0;
+            // The cursor the edits imply. Per node only when an edit `grabs` some nodes.
+            const perNode = directEdits.some(e => typeof e.grabs === 'function');
+            const authored = directEdits.some(e => e.cursor);
+            const sharedCursor = perNode ? null : cursorFor(directEdits, feature, chart.scales);
             // A host whose only edit lives on its ports still answers hover (not drag).
             const portHosted = features.some((f) => f.portHost === feature);
 
@@ -300,7 +311,13 @@ export function createRender(chart, deps) {
                 if ((feature.views === 'scale' || feature.clip === false) && node.unclipped == null) node.unclipped = true;
                 const locked = isLocked && isNodeLocked(node, feature, currentData, isLocked);
                 if (locked) node.locked = true;
-                if (editable && !locked) node.editable = true;
+                if (editable && !locked) {
+                    node.editable = true;
+                    // An edit's own cursor, then the node's, then the heuristic.
+                    const implied = perNode ? cursorFor(directEdits, feature, chart.scales, node) : sharedCursor;
+                    if (authored && implied) node.cursor = implied;
+                    else if (!node.cursor) node.cursor = implied || 'default';
+                }
                 else if (portHosted && !locked && node.pointerEvents == null) node.hoverable = true;
                 else if (node.pointerEvents == null) node.pointerEvents = 'none';
                 if (inlineEdit && !locked) {

@@ -230,6 +230,7 @@ elicitjs/
 │   │   ├── when.js         # Arbitration predicates
 │   │   ├── pick.js         # Target selection (nearest / proximity)
 │   │   ├── route.js        # collectEdits / resolveChannels
+│   │   ├── cursor.js       # Default cursor read from a mark's edits
 │   │   ├── guide.js        # An edit's self-drawn guide (bounds + snap ring)
 │   │   ├── shared.js       # makeEdit + datum/series helpers
 │   │   └── drivers/        # Self-describing interaction modes (plane/nearest/sweep/draw/brush/brushRect/geoBrush/probe/axisDrag/slide)

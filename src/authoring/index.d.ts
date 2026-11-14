@@ -1243,6 +1243,11 @@ export type Driver = {
      * `el.control(name, index)` can run its edits on a named row directly
      */
     targetsRow?: boolean | undefined;
+    /**
+     * the raised plane's resting cursor while this
+     * driver's edits are active; a session `cursor` overrides it per hover
+     */
+    cursor?: string | undefined;
 };
 /**
  * Register a custom driver, or replace a built-in with the same `name`.

@@ -103,6 +103,7 @@ export function dragVertex(options = {}) {
         pick: 'direct',
         scope: 'geo',
         ...options,
+        grabs: (/** @type {any} */ node) => node.channel === 'vertex',
         when: andWhen(onVertex, options.when),
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
             if (!ctx.datum || !ctx.node) return undefined;
@@ -134,6 +135,7 @@ export function removeVertex(options = {}) {
         pick: 'direct',
         scope: 'geo',
         ...rest,
+        grabs: (/** @type {any} */ node) => node.channel === 'vertex',
         when: andWhen(onVertex, options.when),
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
             if (!ctx.datum || !ctx.node) return undefined;

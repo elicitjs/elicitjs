@@ -56,6 +56,13 @@ paths:
 - `move` defaults to absolute (required for plane/nearest picks); `move({ mode: 'relative' })` for marks with area, anchored per field at dragstart by the `move` driver, forcing `pick: 'direct'`. Never make relative the default.
 - `slide` defaults to relative: the driver freezes `{ startPx, startValue }` per `${axis}:${field}` (`slideAnchorKey`). `extent` defaults to the frame's `frameExtent` inside a composite box.
 
+## Cursors
+
+- The cursor comes from the edits, never the node's shape (`edit/cursor.js`): a drag along x → `ew-resize`, along y → `ns-resize`, both or unknown → `move`; click → `pointer`; typed → `text`. The axis is the edit's travel `axis` (slide), else its resolved channels.
+- Order on a node: the author's `cursor` option, the node's own `cursor` (a handle the mark knows better: a needle's `grab`), then the heuristic.
+- An edit that acts on some of the mark's nodes declares `grabs(node)`, so the other nodes don't show its cursor.
+- The raised plane's resting cursor: an edit's `cursor`, its `Driver.cursor` (draw → `crosshair`), the travel axis of row-targeting drags, else `pointer`. A session `cursor` overrides per hover.
+
 ## Axis edits, zoom, pan
 
 - `edit.axis.scale` is `pick: 'direct'`, claimed by the `axisDrag` driver by type; the plane stays down.

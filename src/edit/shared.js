@@ -106,6 +106,8 @@ export function makeEdit(spec) {
         inverts: spec.inverts === 'domain' ? 'domain' : !!spec.inverts,
         // Moves a positional domain as a window (zoom, pan); turns on clipping.
         viewport: !!spec.viewport,
+        // CSS cursor over this edit's marks; null lets the engine pick (edit/cursor.js).
+        cursor: spec.cursor || null,
         apply: spec.apply
     };
 }
@@ -122,6 +124,7 @@ export function claimEdge(edit, name) {
     const inner = edit.when;
     return {
         ...edit,
+        grabs: (/** @type {any} */ node) => node.channel == null || node.channel === name,
         when: (/** @type {import('../types').EditContext} */ ctx) => {
             const ch = ctx.node && ctx.node.channel;
             if (ch != null && ch !== name) return false;

@@ -117,7 +117,7 @@ export const EDIT_UNIVERSAL_OPTIONS = [
     'type', 'name', 'gesture', 'channel', 'channels', 'when', 'pick', 'threshold',
     'scope', 'into', 'constrain', 'guide', 'stage', 'advance', 'target',
     'cardinality', 'inverts', 'viewport', 'spans', 'table', 'inline', 'multiline', 'defaults', 'apply',
-    'targets',
+    'targets', 'cursor', 'grabs',
 ];
 
 /** Each edit's options beyond `EDIT_UNIVERSAL_OPTIONS`, keyed by its dotted `type`.
