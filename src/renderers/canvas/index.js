@@ -1,22 +1,8 @@
 // @ts-check
-// CanvasRenderer — a second implementation of the renderer contract (D3Renderer is
-// the reference). It exists to prove the seam is real: marks, edits, scales, guides,
-// constraints and the engine are all renderer-agnostic, so a whole different drawing
-// backend drops in through `spec.renderer` with no changes upstream.
-//
-// The contract, mirrored from D3Renderer:
-//   - `render(context)` where context carries { container, scene, width, height,
-//     margins, planeOnTop, planeCursor, responsive, overflow, focusOutline,
-//     effects, onEvent, ... }. (focusOutline is SVG-only; ignored here — canvas
-//     has no keyboard focus path yet.)
-//   - Emits renderer events back through `context.onEvent` (see events.js).
-//
-// Retained-mode SVG diffs a scene graph; a canvas has nothing to retain, so each
-// render is a full clear-and-repaint. That fits the engine, which already rebuilds
-// every node each update — the SVG data-join was only ever a DOM optimisation.
-//
-// Deferred (documented gaps, not blockers): keyboard `nudge`, the inline text-edit
-// overlay, and the grab/proximity effect visuals.
+// CanvasRenderer: the renderer contract (`render(context)`, events via
+// `context.onEvent`) drawn on a canvas. Each render is a full clear-and-repaint.
+// Not yet supported: keyboard `nudge`, focusOutline, the inline text editor, and
+// the grab/proximity effect visuals.
 import { paintScene } from './draw.js';
 import { bindCanvasEvents } from './events.js';
 
@@ -26,12 +12,10 @@ export class CanvasRenderer {
         this._canvas = null;
         /** @type {CanvasRenderingContext2D | null} */
         this._2d = null;
-        // Latest render context, read live by the event listeners (which are bound
-        // once and must survive the engine's re-render on every drag-move).
+        // Latest render context, read live by the event listeners.
         /** @type {any} */
         this._ctx = null;
-        // href -> { img, ready }: raster tiles persist across renders so a basemap
-        // that stays on screen never re-fetches (the canvas analogue of a keyed join).
+        // href -> { img, ready }: raster tiles cached across renders.
         /** @type {Map<string, any>} */
         this._images = new Map();
     }
@@ -40,21 +24,15 @@ export class CanvasRenderer {
      * @param {any} context
      */
     render(context) {
-        const { container, scene, width, height, margins } = context;
+        const { container, width, height } = context;
         const responsive = context.responsive || 'fixed';
 
         this._ensure(container);
-        // Stash for the event listeners + the async-image repaint.
         this._ctx = context;
 
-        // Chart backdrop (theme.background; null => transparent). A CSS background on
-        // the canvas element, matching the D3 renderer's svg background — it sits
-        // under the cleared/painted pixels, so a dark theme fills the whole chart.
-        const canvasEl = /** @type {HTMLCanvasElement} */ (this._canvas);
-        canvasEl.style.background = (context.theme && context.theme.background) || '';
-
+        // Chart backdrop (theme.background) as a CSS background under the pixels.
         const canvas = /** @type {HTMLCanvasElement} */ (this._canvas);
-        const ctx = /** @type {CanvasRenderingContext2D} */ (this._2d);
+        canvas.style.background = (context.theme && context.theme.background) || '';
 
         // Back the canvas at device pixels for crisp output, present it at CSS px.
         const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
@@ -65,8 +43,7 @@ export class CanvasRenderer {
             canvas.height = bh;
         }
         if (responsive === 'scale') {
-            // Stretch to the parent (aspect ratio preserved); pointer mapping divides
-            // by the displayed/design ratio (see events.js toInner).
+            // Stretch to the parent; events.js toInner maps the pointer back.
             canvas.style.width = '100%';
             canvas.style.height = 'auto';
         } else {
@@ -74,25 +51,11 @@ export class CanvasRenderer {
             canvas.style.height = `${height}px`;
         }
 
-        // Enter inner scene space: DPR scale, then the margins translate (the SVG
-        // renderer's <g transform="translate(left,top)">).
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        ctx.clearRect(0, 0, width, height);
-        ctx.translate(margins.left, margins.top);
-
-        paintScene(ctx, scene.children, {
-            images: this._images,
-            theme: context.theme,
-            requestRepaint: () => this._repaint(),
-            clip: context.clip || null,
-            innerWidth: width - margins.left - margins.right,
-            innerHeight: height - margins.top - margins.bottom,
-        });
+        this._repaint();
     }
 
     /**
-     * Idempotent scaffolding: one <canvas> in the container, event listeners bound
-     * once. Mirrors D3Renderer._ensureScene.
+     * Create the <canvas> and bind its listeners, once per container.
      * @param {HTMLElement} container
      */
     _ensure(container) {
@@ -106,9 +69,7 @@ export class CanvasRenderer {
     }
 
     /**
-     * Repaint from the last render context, without the engine driving it — used when
-     * an async raster tile finishes loading. Re-runs the same transform + paint the
-     * last `render` used, so it stays in lockstep with the engine's current scene.
+     * Paint the last render context; also called when a raster tile loads.
      */
     _repaint() {
         const context = this._ctx;
@@ -116,6 +77,7 @@ export class CanvasRenderer {
         if (!context || !ctx) return;
         const { scene, width, height, margins } = context;
         const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+        // Inner scene space: DPR scale, then the margins.
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, width, height);
         ctx.translate(margins.left, margins.top);

@@ -1,43 +1,26 @@
 // @ts-check
 import { baselineOf } from '../core/scales.js';
-import { encodeChannel, encodeValue, categorySlot, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, markCommon, resolveValueAxis, orientationOf, missingValue } from './mark.js';
+import { encodeChannel, encodeValue, categorySlot, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, handlePaint, markCommon, resolveValueAxis, orientationOf, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 import { groupByPosition, stackLayout, stackDescriptor } from './stack.js';
 
-// bar: a rectangular mark that composes across orientations. The band axis is
-// the categorical/position axis (sets the bar's position + thickness) and the
-// linear axis is the value/length axis (sets the bar's length from a baseline).
+// bar: a rect per row. The category axis sets position and thickness; the value
+// axis sets length from the baseline.
 //
 //   x: band,   y: linear  -> vertical bars   (barY)
 //   x: linear, y: band     -> horizontal bars (barX)
 //
-// `bar` auto-detects orientation from the scale types (or takes an explicit
-// `orientation`); `barY` / `barX` force one. In all cases the mark reads the
-// x-channel via the `x` accessor and the y-channel via `y`, so which channel is
-// the "value" and which is the "category" follows the scales — matching the spec.
+// `bar` resolves orientation through `resolveValueAxis` (span channels, then a
+// band-kind scale, then which of x/y is bound) unless `orientation` is given.
 //
-// The value axis also accepts an explicit SPAN instead of a single value: two
-// endpoint channels (x1/x2 for barX, y1/y2 for barY) place the bar between them
-// rather than from the baseline — e.g. a Gantt-style "years active" span per
-// category. x1/x2 share the same resolved scale as x (and y1/y2 as y — see
-// core/resolve.js's axis aliasing), so they're read through encodeChannel exactly
-// like the single-value form.
-//
-// Optional `stack: true` stacks bars that share a category: each segment sits on
-// the cumulative sum of prior series in that band. WHICH rows form a series is the
-// `series` channel's job (falling back to fill's / stroke's field), not this
-// option's — `stack` used to accept a field name too, which made it a second place
-// a mark could name a column. Declare a schema domain that covers the stacked
-// total. Span mode and stack are mutually exclusive (span wins).
+// A span (x1/x2 or y1/y2) places the bar between two values instead of from the
+// baseline. `stack: true` stacks rows that share a category; the `series` channel
+// decides the grouping. Span wins over stack.
 
 /**
- * Stack order within one band. Data order by default; a series field sorts by
- * first-seen series key, so the same category sits at the same height in every band
- * — which is also where a segment an edit mints belongs, since the key it was given
- * decides its place rather than which band it was cut in.
- *
- * Ties keep data order (Array#sort is stable), and an unseen key sorts LAST rather
- * than to the front — which is what `indexOf`'s -1 would otherwise do to it.
+ * Stack order within one band: data order, or first-seen series key order when
+ * there is a series field, so a series sits at the same height in every band.
+ * Ties keep data order; an unseen key sorts last.
  * @param {number[]} members global row indices, in data order
  * @param {any[]} data
  * @param {string | null} seriesField
@@ -59,15 +42,9 @@ function orderMembers(members, data, seriesField) {
 }
 
 /**
- * Cumulative data-space baselines for stacked bars, keyed by datum index — plus the
- * band's membership, so a segment can stamp what an edit needs to invert the stack.
- *
- * The grouping and the cumulative walk both come from plot/stack.js, shared with
- * `arc`: rows are bucketed by the category CHANNEL (through `categoryOf`, so a
- * `{ fn }`/`{ datum }` channel groups the way it draws — this used to read
- * `datum[catKey]` raw and silently ignore both forms), and each band's shares are
- * accumulated in DATA units, which `build` then puts through `encodeValue`.
- *
+ * Cumulative data-space bounds for stacked bars, keyed by row index, plus each
+ * band's members so a segment can stamp what a stack edit needs. Grouping and
+ * accumulation come from plot/stack.js.
  * @param {any[]} data
  * @param {Record<string, any>} channels
  * @param {'x' | 'y'} catChannel the band axis
@@ -79,8 +56,7 @@ function orderMembers(members, data, seriesField) {
 function stackOffsets(data, channels, catChannel, catKey, valueKey, seriesField) {
     /** @type {Map<number, { y0: number, y1: number, members: number[], local: number }>} */
     const out = new Map();
-    // A nested offset is part of the position, so it is part of the grouping: a
-    // stacked AND grouped bar stacks within each sub-band, not across a category.
+    // A nested offset is part of the grouping: a stacked grouped bar stacks per sub-band.
     const grouping = [catChannel, catChannel === 'x' ? 'xOffset' : 'yOffset'];
     for (const group of groupByPosition(data, channels, grouping, { [catChannel]: catKey })) {
         const members = orderMembers(group.members, data, seriesField);
@@ -93,54 +69,40 @@ function stackOffsets(data, channels, catChannel, catKey, valueKey, seriesField)
 }
 
 /**
- * @param {any} options
+ * @param {any} [options]
  * @returns {import('../types').Mark}
  */
-function buildBar(options) {
-    // Desugar top-level style shorthands (e.g. the legacy `fill: 'steelblue'`)
-    // into the channels as constant channels, so bar reads style the same way
-    // every mark does. Explicit `channels.fill` still wins.
+export function bar(options = {}) {
     const opts = normalizeMarkOptions(options, {
         mark: 'bar',
         allow: MARK_OPTIONS.bar,
     });
     const {
         channels = {},
-        id,
         edits,
         orientation: orientationOption,
         stack,
-        // Affordance: a dot on each interior boundary between two stacked segments
-        // (node.edge), which edit.stack.* grabs. handles: true|false|'hit' is the
-        // shared contract. Only emitted when a stack edit is wired — a mark is inert
-        // until an edit names the column it writes.
+        // Dots on the interior boundaries between stacked segments (node.edge),
+        // grabbed by edit.stack.*. Drawn only when a stack edit is wired.
         handles = true,
         handleSize,
         handleColor,
-        // A gradient fill ({ stops, direction }), stamped on each bar's rect as
-        // `fillGradient` for the renderers' <defs> / createLinearGradient.
+        // { stops, direction }, stamped on each rect as `fillGradient`.
         gradient,
-        // Corner radius in px, on every bar (each segment of a stack too). Unset,
-        // it is the theme's `marks.bar.rx` — a rounded house style is one token.
+        // Corner radius in px; defaults to the theme's `marks.bar.rx`.
         rx: rxOpt,
     } = opts;
 
-    // Channel-native: read the x/y field from the channels, falling back to the
-    // legacy x/y accessor options. Either way the scale for each channel is the
-    // global one the engine resolves and passes in as scales.x / scales.y.
     const { xKey, yKey } = positionalKeys(channels);
-    // Span mode: both endpoint channels declared on that axis. Decided once per
-    // mark (not per datum) — the missing form (baseline+value) stays the default.
+    // Span mode: both endpoint channels declared on that axis.
     const hasXSpan = !!(channels.x1 && channels.x2);
     const hasYSpan = !!(channels.y1 && channels.y2);
-    // The grouping comes from the `series` channel, exactly as it does on every
-    // other series-grouping mark. `stack` says only WHETHER to stack.
+    // The `series` channel groups the stack; `stack` only switches it on.
     const seriesField = stack ? seriesFieldOf(channels) : null;
     const doStack = !!stack && !hasXSpan && !hasYSpan;
 
     const markEdits = edits || [];
-    // Boundary handles are for the stack edits only: they address a row PAIR
-    // (loIndex/hiIndex), which no other edit knows what to do with.
+    // Boundary handles address a row pair (loIndex/hiIndex), so only stack edits use them.
     const hasStackEdit = markEdits.some((/** @type {any} */ e) => e && e.scope === 'stack');
 
     return {
@@ -150,11 +112,8 @@ function buildBar(options) {
         // The grouping key is read off the datum, never scaled.
         rawChannels: ['series'],
         edits: markEdits,
-        // Capability flag: what edit.stack.* needs to work (see SCOPE_CAPABILITY).
-        // Only a STACKED bar partitions a total — an unstacked one is a set of
-        // independent lengths, with no boundary between two rows to cut or drag.
+        // Capability for edit.stack.*: only a stacked bar partitions a total.
         supportsStack: doStack,
-        // A bar's categorical axis wants the band interval (its thickness).
         discreteScale: 'band',
         xKey,
         yKey,
@@ -168,39 +127,29 @@ function buildBar(options) {
 
             const orientation = orientationOf(resolveValueAxis(channels, scales, { orientation: orientationOption }));
 
-            // Which axis carries the category, and which the magnitude. Named once
-            // here because the stack layout, the node stamp and the boundary handles
-            // all need the same answer.
-            const catChannel = orientation === 'horizontal' ? 'y' : 'x';
-            const valueChannel = orientation === 'horizontal' ? 'x' : 'y';
-            const catKey = orientation === 'horizontal' ? yKey : xKey;
-            const valueKey = orientation === 'horizontal' ? xKey : yKey;
+            const horizontal = orientation === 'horizontal';
+            const catChannel = horizontal ? 'y' : 'x';
+            const valueChannel = horizontal ? 'x' : 'y';
+            const catKey = horizontal ? yKey : xKey;
+            const valueKey = horizontal ? xKey : yKey;
+            const hasSpan = horizontal ? hasXSpan : hasYSpan;
+            const baseline = baselineOf(horizontal ? xScale : yScale);
 
             const stacks = doStack
                 ? stackOffsets(currentData, channels, catChannel, catKey, valueKey, seriesField)
                 : null;
 
-            // Default ink from the theme (classic steelblue unless the theme's `ink`
-            // or a `marks.bar` override changes it); a per-datum fill channel still
-            // wins. Resolved once — the tokens don't vary per row.
-            // A stacked bar also gets a seam stroke, so two abutting segments read as
-            // two even in one hue — a cut has to be visible the moment it happens.
-            // Through markDefaults (themeable, overridable by a stroke channel), never
-            // as a literal.
+            // Theme defaults. A stacked bar also gets a seam stroke so abutting
+            // segments of one hue stay distinct.
             const barDefaults = markDefaults(scales, 'bar', doStack
                 ? { fill: themeOf(scales).ink, stroke: themeOf(scales).handleStroke, strokeWidth: 1 }
                 : { fill: themeOf(scales).ink });
             const rx = rxOpt ?? barDefaults.rx;
 
-            // One handle contract for every mark that draws one: shared radius
-            // default, one meaning per `handles` value, paint from the theme.
             const handleStyle = resolveHandles(scales, { handles, handleSize, handleColor });
 
-            // How a pointer becomes a position along this stack: straight through the
-            // value scale, because a stack's baseline is 0 and so its cumulative total
-            // IS the axis value. Pure data — edit/stack.js re-derives the magnitudes
-            // from the live dataset and inverts through the same scale that encoded
-            // them, which is why nothing here is a closure.
+            // Pointer -> cumulative value goes straight through the value scale.
+            // Pure data, not a closure: edit/stack.js re-derives from live data.
             /** @type {any} */
             const geometry = { kind: 'linear', axis: valueChannel };
             /** @param {number} i @returns {any} */
@@ -211,80 +160,30 @@ function buildBar(options) {
 
             /** @type {import('../types').FeatureNode[]} */
             const nodes = currentData.flatMap((d, i) => {
-                // A row with no category has no band to sit in: draw no bar (it fell
-                // to the first band's start). A missing VALUE keeps its zero-height
-                // bar at the baseline, which a nearest pick can still lift.
+                // No category (or no nested offset category): draw no bar. A missing
+                // value keeps a zero-height bar at the baseline that a nearest pick can lift.
                 if (missingValue(channels, catChannel, d)) return [];
-                // Nor does a row whose nested category (`xOffset`) is missing: it has
-                // a band but no sub-band, and filling the whole band would read as a
-                // value for every group.
                 if (missingValue(channels, catChannel === 'x' ? 'xOffset' : 'yOffset', d)) return [];
-                // Standard style surface (fill/stroke/opacity/…), resolved per
-                // datum through the same channels every mark uses.
                 const style = resolveStyle(scales, channels, d, barDefaults, i, currentData);
                 const stamp = stampOf(i);
 
-                if (orientation === 'horizontal') {
-                    // Category on y (band geometry), value/length on x. The value
-                    // axis resolves through encodeChannel like every other mark; the
-                    // band axis keeps its interval geometry (start + thickness).
-                    // The slot is the category's band, or its sub-band under a `yOffset`.
-                    const { start: bandStart, width: thickness } = categorySlot(scales, channels, 'y', d, yKey, i, currentData);
-                    const baseline = baselineOf(xScale);
-                    let lo, hi;
-                    if (hasXSpan) {
-                        const v1 = encodeChannel(scales, channels, 'x1', d, baseline, i, currentData);
-                        const v2 = encodeChannel(scales, channels, 'x2', d, baseline, i, currentData);
-                        lo = Math.min(v1, v2);
-                        hi = Math.max(v1, v2);
-                    } else if (stacks) {
-                        // Stack baselines are derived data-space values, not channel
-                        // reads — encodeValue runs them through the same scale path.
-                        const { y0, y1 } = stacks.get(i) || { y0: 0, y1: d[xKey] };
-                        const p0 = encodeValue(scales, channels, 'x', y0, baseline);
-                        const p1 = encodeValue(scales, channels, 'x', y1, baseline);
-                        lo = Math.min(p0, p1);
-                        hi = Math.max(p0, p1);
-                    } else {
-                        const valuePos = encodeChannel(scales, channels, 'x', d, baseline, i, currentData);
-                        lo = Math.min(valuePos, baseline);
-                        hi = Math.max(valuePos, baseline);
-                    }
-                    return {
-                        type: 'rect',
-                        ...(gradient ? { fillGradient: gradient } : {}),
-                        ...(rx ? { rx } : {}),
-                        x: lo,
-                        y: bandStart,
-                        width: hi - lo,
-                        height: thickness,
-                        ...style,
-                        data: d,
-                        index: i,
-                        orientation,
-                        bandAxis: 'y', // proximity measures distance along y (rows)
-                        ...(stamp ? { stack: stamp } : {})
-                    };
-                }
-
-                // Vertical: category on x (band geometry), value/length on y. Value
-                // via encodeChannel (as every mark); band axis keeps its interval.
-                const { start: bandStart, width: thickness } = categorySlot(scales, channels, 'x', d, xKey, i, currentData);
-                const baseline = baselineOf(yScale);
+                // The category's band, or its sub-band under an offset.
+                const { start: bandStart, width: thickness } = categorySlot(scales, channels, catChannel, d, catKey, i, currentData);
                 let lo, hi;
-                if (hasYSpan) {
-                    const v1 = encodeChannel(scales, channels, 'y1', d, baseline, i, currentData);
-                    const v2 = encodeChannel(scales, channels, 'y2', d, baseline, i, currentData);
+                if (hasSpan) {
+                    const v1 = encodeChannel(scales, channels, `${valueChannel}1`, d, baseline, i, currentData);
+                    const v2 = encodeChannel(scales, channels, `${valueChannel}2`, d, baseline, i, currentData);
                     lo = Math.min(v1, v2);
                     hi = Math.max(v1, v2);
                 } else if (stacks) {
-                    const { y0, y1 } = stacks.get(i) || { y0: 0, y1: d[yKey] };
-                    const p0 = encodeValue(scales, channels, 'y', y0, baseline);
-                    const p1 = encodeValue(scales, channels, 'y', y1, baseline);
+                    // Stack bounds are data-space values, encoded through the value scale.
+                    const { y0, y1 } = stacks.get(i) || { y0: 0, y1: d[valueKey] };
+                    const p0 = encodeValue(scales, channels, valueChannel, y0, baseline);
+                    const p1 = encodeValue(scales, channels, valueChannel, y1, baseline);
                     lo = Math.min(p0, p1);
                     hi = Math.max(p0, p1);
                 } else {
-                    const valuePos = encodeChannel(scales, channels, 'y', d, baseline, i, currentData);
+                    const valuePos = encodeChannel(scales, channels, valueChannel, d, baseline, i, currentData);
                     lo = Math.min(valuePos, baseline);
                     hi = Math.max(valuePos, baseline);
                 }
@@ -292,33 +191,21 @@ function buildBar(options) {
                     type: 'rect',
                     ...(gradient ? { fillGradient: gradient } : {}),
                     ...(rx ? { rx } : {}),
-                    x: bandStart,
-                    y: lo,
-                    width: thickness,
-                    height: hi - lo,
+                    ...(horizontal
+                        ? { x: lo, y: bandStart, width: hi - lo, height: thickness }
+                        : { x: bandStart, y: lo, width: thickness, height: hi - lo }),
                     ...style,
                     data: d,
                     index: i,
                     orientation,
-                    bandAxis: 'x', // proximity measures distance along x (columns)
+                    bandAxis: catChannel, // proximity measures distance along the category axis
                     ...(stamp ? { stack: stamp } : {})
                 };
             });
 
-            // ── Boundary handles ────────────────────────────────────────────────
-            // One dot per movable INTERIOR boundary of each band: n segments have
-            // n−1 of them, because the outer two ends are the stack's baseline and
-            // its total, not a division between two rows. Same rule as an arc's rim
-            // handles, where the full-circle seam is the fixed anchor.
-            //
-            // The handle carries the pair it separates (loIndex/hiIndex) plus the
-            // same `stack` stamp its segments have, so edit.stack.edge re-derives the
-            // band's layout from `members` alone and its pair-shift touches no other
-            // band.
+            // Boundary handles: n-1 per band of n segments (the baseline and total
+            // are not boundaries). Each carries the pair it separates and the stack stamp.
             if (stacks && hasStackEdit && handleStyle.grabbable) {
-                const valueScale = valueChannel === 'x' ? xScale : yScale;
-                const baseline = baselineOf(valueScale);
-
                 /** @type {Set<number[]>} */
                 const seen = new Set();
                 for (const entry of stacks.values()) {
@@ -340,13 +227,11 @@ function buildBar(options) {
                             cx: valueChannel === 'x' ? at : centre,
                             cy: valueChannel === 'x' ? centre : at,
                             r: handleStyle.size,
-                            fill: handleStyle.visible ? handleStyle.fill : 'transparent',
-                            stroke: handleStyle.visible ? handleStyle.stroke : 'none',
-                            strokeWidth: handleStyle.visible ? handleStyle.strokeWidth : 0,
+                            ...handlePaint(handleStyle),
                             cursor: 'grab',
                             data: currentData[gi],
                             index: gi,
-                            // Edge payload, read by edit.stack.edge / .merge.
+                            // Read by edit.stack.edge / .merge.
                             edge: true,
                             loIndex: gi,
                             hiIndex: members[local + 1],
@@ -359,14 +244,6 @@ function buildBar(options) {
             return nodes;
         }
     };
-}
-
-/**
- * @param {any} [options]
- * @returns {import('../types').Mark}
- */
-export function bar(options = {}) {
-    return buildBar(options);
 }
 
 /**

@@ -1,41 +1,15 @@
 // @ts-check
-// scale.js — the edits that reshape a SCALE'S DOMAIN, from whichever chart element
-// draws that scale.
-//
-// A chart element (`views: 'scale'` — axis, grid, legend) draws a scale rather than
-// columns, and a domain is a property of the scale. So a domain edit is the one kind
-// that is NATIVE to an element: `edit.legend.category()` writes a row and only
-// borrows the legend as a surface, but `edit.scale.categories()` writes the thing
-// the element is already showing.
-//
-// It used to live under `edit.axis.*` and check `isAxis`, so the identical gesture
-// was unavailable on a legend — you could rename a category on a categorical x-axis
-// but not on the colour key beside it, though a legend swatch already carries the
-// `node.category` the rename reads. `scope: 'scale'` is the capability both share.
-// `edit.axis.scale()` stays axis-only: it drags a positional RANGE, which a legend
-// has no equivalent of.
-//
-// Unlike every other edit these carry `target: 'domain'` and return
-// { domains, data?, tables?, resize? } for the engine's domain-commit path. The
-// domain is the data's own property, so reshaping it IS the edit — grids, guides
-// and marks then reflow from it on the next render.
+// scale.js — edits that reshape the domain of the scale an axis or legend draws
+// (scope 'scale'). They carry `target: 'domain'` and return
+// { domains, data?, tables?, resize? } for the engine's domain commit.
 
 import { makeEdit, andWhen } from './shared.js';
 import { axisOf } from '../core/encoding.js';
+import { DEFAULT_MARGINS } from '../core/scene.js';
 
 /**
- * The (table, field) pairs a domain edit writes.
- *
- * A field NAME is not unique across tables — a network chart can put `kind` on both
- * `nodes` and `links` with one `fill` scale over the pair — so renaming a category
- * by name alone writes one schema and leaves the other on the old value, splitting
- * one vocabulary in two. `scale.fieldRefs` (stamped by resolveScales) is the list
- * qualified by table; `scale.fields` is the same names flat, kept for readers that
- * only need names.
- *
- * An explicit `field` pins the column but not the table, so it still resolves
- * against the refs — a pinned name that appears in two tables is written in both,
- * which is the same "one vocabulary" rule.
+ * The (table, field) pairs a domain edit writes, from `scale.fieldRefs`. A pinned
+ * `field` still matches every table that has it.
  * @param {any} scale
  * @param {string | undefined} field
  * @param {string} fallbackTable the element's own table, for a scale with no refs
@@ -66,8 +40,7 @@ function splitByTable(refs, domainFor, rowsFor, ownTable, tables) {
     const out = { domains: {} };
     /** @type {Record<string, any>} */
     const others = {};
-    // Group first, so a table with two fields on the scale gets ONE row pass that
-    // sees both — rewriting rows once per field would drop all but the last.
+    // Group by table so each table's rows are threaded through every field.
     /** @type {Record<string, string[]>} */
     const byTable = {};
     for (const r of refs) (byTable[r.table] || (byTable[r.table] = [])).push(r.field);
@@ -94,13 +67,9 @@ function splitByTable(refs, domainFor, rowsFor, ownTable, tables) {
 }
 
 /**
- * Grow-mode resize for a category count change: keep each band the same pixel size
- * and let the chart grow/shrink by whole steps instead. For a band/point scale the
- * padding terms are constant, so adding one category adds exactly one `step()` of
- * axis length. Returns undefined when the scale has no step (not discrete), when the
- * axis would collapse, or when the channel is NON-POSITIONAL — growing the chart to
- * fit one more colour swatch is meaningless, and reading `axisOf('fill')` as an
- * x-axis would resize the width for a legend edit.
+ * Grow-mode resize: change the chart size by `delta` steps so bands keep their
+ * pixel size. Undefined for a non-positional channel, a scale with no step, or an
+ * axis that would collapse.
  * @param {import('../types').EditContext} ctx @param {number} delta signed count change
  * @returns {{ width?: number, height?: number } | undefined}
  */
@@ -111,7 +80,7 @@ function stepResize(ctx, delta) {
     const scale = /** @type {any} */ (ch && ch.scale);
     const step = scale && typeof scale.step === 'function' ? scale.step() : null;
     if (!step) return undefined;
-    const m = ctx.margins || { top: 20, right: 20, bottom: 30, left: 40 };
+    const m = ctx.margins || DEFAULT_MARGINS;
     if (axis === 'y') {
         const inner = (ctx.height || 0) + delta * step;
         return inner > step ? { height: inner + m.top + m.bottom } : undefined;
@@ -121,29 +90,16 @@ function stepResize(ctx, delta) {
 }
 
 /**
- * edit.scale.categories — reshape a categorical/ordinal scale's domain (its ordered
- * category list) by direct gestures on the element's affordance nodes, reusing the
- * renderer's inline-typing lifecycle. Three edits, arbitrated by `when` on the node
- * the gesture landed on:
+ * edit.scale.categories — edit a categorical scale's domain through the element's
+ * affordance nodes. Returns three direct-pick edits, each guarded by node kind:
  *   add    (commit on the "+" node)      — append the typed name to the domain
- *   rename (commit on a label / swatch)  — relabel the category AND rewrite matching rows
- *   remove (click on a "×" node)         — drop the category AND delete matching rows
- * Add/rename come in as a `commit` gesture (double-click a node -> inline input ->
- * Enter), carrying the typed string in ctx.value. All three are direct-pick so the
- * plane isn't raised over the labels.
+ *   rename (commit on a label / swatch)  — relabel the category and matching rows
+ *   remove (click on a "×" node)         — drop the category and delete matching rows
+ * Rename and remove write every field on the scale, in every table it spans.
  *
- * Rename and remove write EVERY field on the scale, in every table it spans — the
- * domain and the rows together. A category is one vocabulary however many columns
- * share it, so renaming it in the schema and in only one column's rows would leave
- * the rest pointing at a value that no longer exists.
- *
- * `mode` mirrors edit.axis.scale(): 'rescale' (default) keeps the chart size, so the
- * bands re-divide it (thinner as you add); 'grow' keeps each band the same pixel
- * size and grows/shrinks the CHART by a step per category — the right feel for
- * extending a Likert scale from 5 points to 7. Positional scales only.
- * Options other than `field`/`mode` (`stage`, `guide`, `name`, `constrain`, `when`)
- * are forwarded to all three edits. Each keeps its own structural guard — which node
- * kind it fires on — and an author `when` narrows rather than replaces it (andWhen).
+ * `mode`: 'rescale' (default) keeps the chart size; 'grow' keeps band size and
+ * resizes the chart by a step per category (positional scales only).
+ * Other options are forwarded to all three edits; `when` narrows each guard.
  * @param {any} [options]
  * @returns {import('../types').Edit[]}
  */
@@ -210,9 +166,7 @@ export function categories(options = {}) {
             return splitByTable(
                 refs,
                 () => renamed,
-                // Relabel every row on the renamed category so data + schema stay in
-                // step — for THIS field, over rows a previous field may already have
-                // rewritten (splitByTable threads them).
+                // Relabel matching rows for this field.
                 ({ field: f }, rows) => rows.map((/** @type {any} */ d) => (d[f] === from ? { ...d, [f]: to } : d)),
                 /** @type {any} */ (ctx).table, tablesOf(ctx)
             );
@@ -238,8 +192,7 @@ export function categories(options = {}) {
             const result = splitByTable(
                 refs,
                 () => kept,
-                // Removing a category also deletes its rows (the user's choice), so no
-                // datum is left orphaned at an undefined band position.
+                // Delete rows in the removed category.
                 ({ field: f }, rows) => rows.filter((/** @type {any} */ d) => d[f] !== cat),
                 /** @type {any} */ (ctx).table, tablesOf(ctx)
             );

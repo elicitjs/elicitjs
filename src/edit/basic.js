@@ -1,18 +1,7 @@
 // @ts-check
-// basic.js — the universal edits: every one applies to any mark with the
-// channels it governs. The simple transforms name what happens to the object:
-// `move` translates a position, `resize` scales a magnitude (radially), `slide`
-// scales it (linearly), `rotate` turns it, `cycle` advances a discrete channel.
-// `create` mints a datum, `remove` deletes one, and `custom` is the escape
-// hatch. Line-scoped authoring edits live in line.js.
-//
-// An edit is the inverse of encoding: where `encode` maps data -> visual, an
-// edit's apply() maps a gesture -> that channel's data, through the SAME scale.
-// The named factories below are just presets over `makeEdit` (shared.js): each
-// fixes a `gesture` (what the hand does — 'drag'/'click') and an `apply` (the
-// inversion geometry that turns the gesture back into data). The transform name
-// is the object outcome; the gesture string is the physical action — they differ
-// deliberately (a `move` is driven by a 'drag').
+// basic.js — the universal edits, usable on any mark with the channels they govern.
+// Each factory is a preset over `makeEdit` that fixes a `gesture` and an `apply`
+// mapping the gesture back to data through the channel's scale.
 
 import { makeEdit, markCenter, resolveMarkNode, invertChannel, recenterSpan, mintDatum, linearInvert, channelDomain, discreteDomain, claimPick } from './shared.js';
 import { axisOf, pointerDegrees, unwrapDegrees } from '../core/encoding.js';
@@ -20,23 +9,14 @@ import { warn } from '../core/dev.js';
 import { coerceToType } from '../core/schema.js';
 
 /**
- * move — position transform. Inversion: cartesian — invert the pointer
- * coordinate on each positional channel. On x AND y it's a 2D move; on y alone
- * it's a bar drag. Works on any invertible scale (linear pixel, band -> nearest
- * category) via scale.invertValue. Driven by a 'drag' gesture.
+ * move — inverts the pointer on each positional channel through its scale.
  *
- * Two modes, the same inversion, different anchor — the pair `slide` already
- * draws, for the same reason:
- *   - `absolute` (default): the pointer's POSITION is the value. Stateless, and
- *     right whenever the mark is about as big as the pointer's reach — a point, a
- *     handle, a bar's edge — and required by a plane/nearest pick, where the
- *     gesture may begin nowhere near the datum it moves.
- *   - `relative`: the value moves by the drag DELTA from where you grabbed, so the
- *     grab OFFSET is preserved and pressing the mark changes nothing. That is what
- *     a mark with real AREA needs: press a 140x40 sticker near its corner and an
- *     absolute move teleports its centre to the pointer. It needs a dragstart
- *     snapshot, which the `move` driver stashes in the feature's session, so it is
- *     direct-pick by construction.
+ * Modes:
+ *   - `absolute` (default): the pointer's position is the value. Required by
+ *     plane/nearest picks.
+ *   - `relative`: the value moves by the drag delta from the grab, so the grab
+ *     offset is kept. For marks with area. The `move` driver anchors it at
+ *     dragstart, so it is always direct-pick.
  * @param {import('../types').MoveOptions} [options]
  * @returns {import('../types').Edit}
  */
@@ -61,11 +41,8 @@ export function move(options = {}) {
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
             const next = { ...ctx.datum };
             const center = markCenter(resolveMarkNode(ctx));
-            // The driver froze the grab pixel and each field's value at dragstart.
-            // Re-encode that value and add the pointer's displacement, rather than
-            // doing arithmetic in data units: the inversion still runs through the
-            // channel's own scale, so a relative move onto a band axis still lands
-            // on a category the same way an absolute one does.
+            // Relative: re-encode the dragstart value, add the pointer's displacement
+            // in pixels, and invert through the scale (so band axes still snap).
             const lock = relative ? (/** @type {any} */ (ctx.session || {}).move) : null;
             const anchor = lock && lock.anchors;
             for (const ch of ctx.channels) {
@@ -90,12 +67,8 @@ export function move(options = {}) {
 }
 
 /**
- * moveSpan — whole-span translate: move a PAIR of endpoint channels (x1+x2 or
- * y1+y2) together, preserving the distance between them, so grabbing a span
- * bar's body shifts both ends rather than editing one. Stateless like `move`:
- * each tick recenters the mark's CURRENT pixel span on the pointer (no
- * dragstart/delta tracking) — the same "gesture sets the absolute value"
- * model `move` already uses, just applied to two fields at once.
+ * moveSpan — moves a pair of endpoint channels (x1+x2 or y1+y2) together, keeping
+ * their distance. Each tick recenters the mark's current pixel span on the pointer.
  * @param {import('../types').EditOptions} [options]
  * @returns {import('../types').Edit}
  */
@@ -116,39 +89,23 @@ export function moveSpan(options = {}) {
 }
 
 /**
- * brushSpan — the combined Gantt-bar interaction: grabbing near one endpoint
- * resizes THAT edge only (like a lone `move()` on that channel); grabbing the
- * body translates both together (like `moveSpan`). Which zone a gesture means
- * is resolved once, at dragstart, by the `brush` driver (src/edit/drivers/
- * brush.js) — this apply() is stateless per tick, just branching on the
- * driver's lock (`ctx.session.zone`), exactly how `draw()` (line.js) reads
- * its own driver-set `ctx.session` to pick edit-vs-draw behavior.
+ * brushSpan — grab near an endpoint to resize that edge, or the body to move both.
+ * The `brush` driver picks the zone at dragstart and stores it in `ctx.session.zone`.
  *
- * x1 is not guaranteed to stay the smaller of the pair mid-gesture (dragging
- * an edge past the other is allowed, and renders fine — bar.js's rect always
- * takes min/max of the two, so it never cares which field is which). Only at
- * `dragend` does the driver re-invoke this with `zone: 'canonicalize'`, which
- * swaps the two field VALUES if they ended up inverted — a one-time, purely
- * data-side cleanup that changes nothing on screen (rendering is already
- * order-agnostic), so it can't cause the mid-drag jump a per-tick sort would.
+ * The pair may invert mid-drag. Only at dragend does the driver call
+ * `zone: 'canonicalize'` to swap them back; sorting per tick would overwrite an edge.
  * @param {import('../types').BrushSpanOptions} [options]
  * @returns {import('../types').Edit}
  */
 export function brushSpan(options = {}) {
-    // `pick` is dropped, not just defaulted: brushSpan only works with the brush
-    // driver (it reads ctx.session.zone, which only that driver sets), so
-    // unlike other edits it can't be repointed at a different pick strategy.
-    // `edgeInset` is a driver-only knob: makeEdit passes it through onto the
-    // descriptor, where the brush driver reads it (edgeInsetOf), the same way
-    // pickThreshold reads edit.threshold.
+    // Only the brush driver sets the zone, so `pick` is fixed. `edgeInset` passes
+    // through onto the descriptor for the driver.
     const rest = claimPick(options, 'brushSpan', 'brush');
     return makeEdit({
         type: 'brushSpan',
         inverts: true,
         gesture: 'drag',
-        // Reads a positional SPAN PAIR. With no `channels` named, collectEdits
-        // supplies the mark's own pair (x1/x2 or y1/y2) — `brushSpan()` on a rect
-        // used to resolve no channel at all and drag nothing, in silence.
+        // With no `channels`, collectEdits supplies the mark's span pair.
         spans: true,
         ...rest,
         pick: 'brush',
@@ -185,37 +142,23 @@ export function brushSpan(options = {}) {
 }
 
 /**
- * brushRect — the 2-D sibling of brushSpan: composable edge / corner / body editing
- * of a rect's four extents (x1/x2 AND y1/y2 spans). Grab near an EDGE to resize
- * that one side, near a CORNER to resize two extents at once, or the BODY to move
- * the whole rect. Which zone a gesture means is classified ONCE at dragstart by the
- * brushRect driver (src/edit/drivers/brushRect.js) and locked in the feature's
- * session for the gesture — this apply() is stateless per tick, branching on the
- * driver's lock (`ctx.session.zone` + `ctx.session.fields`), exactly like
- * brushSpan reads its 1-D lock.
+ * brushRect — 2-D brushSpan: grab an edge to resize one side, a corner to resize
+ * two, or the body to move the rect. The brushRect driver locks the zone at
+ * dragstart in `ctx.session.zone` / `ctx.session.fields`.
  *
- * Editing is OPT-IN and composable, via two options the driver reads directly (the
- * same way it reads `edgeInset`):
- *   resize — 'both' (default) | 'x' | 'y' | 'none'. Which axes' edges/corners are
- *            live. 'x'/'y' resize only that axis; 'none' disables resize (move-only).
- *   move   — true (default) | false. Whether a body drag translates the whole rect.
- * A disabled resize zone degrades to `body` (when `move`), so brushRect({ resize:'x' })
- * behaves like a per-axis brushSpan, brushRect({ resize:'none' }) is a pure 2-D move,
- * and brushRect({ move:false }) is resize-only.
+ * Options (read by the driver):
+ *   resize — 'both' (default) | 'x' | 'y' | 'none'. Which axes resize.
+ *   move   — true (default) | false. Whether a body drag moves the rect.
+ * A disabled resize zone falls back to `body` when `move` is on.
  *
- * Like brushSpan, the endpoint fields aren't guaranteed to stay ordered mid-gesture
- * (dragging an edge past its partner is fine — rect.js always takes min/max). At
- * dragend the driver re-invokes with `zone:'canonicalize'`, a one-time data cleanup
- * that swaps any inverted pair's VALUES (on both axes) with no visual change.
+ * As with brushSpan, inverted pairs are swapped back only at dragend
+ * (`zone: 'canonicalize'`).
  * @param {import('../types').BrushRectOptions} [options]
  * @returns {import('../types').Edit}
  */
 export function brushRect(options = {}) {
-    // `pick` is dropped (brushRect only works with its driver, which sets the
-    // zone lock). `resize`/`move`/`edgeInset` are driver-only knobs: makeEdit
-    // passes them through onto the descriptor, where the driver reads them
-    // (like edgeInsetOf does). `resize`/`move` are re-stated so their defaults
-    // land on the descriptor even when the caller omits them.
+    // `pick` is fixed to the driver. `resize`/`move` are restated so their
+    // defaults land on the descriptor, where the driver reads them.
     const { resize = 'both', move = true, ...rest } = claimPick(options, 'brushRect', 'brushRect');
     return makeEdit({
         type: 'brushRect',
@@ -251,7 +194,7 @@ export function brushRect(options = {}) {
             }
 
             if (zone === 'body') {
-                // Recenter BOTH spans on the pointer — the 2-D whole-rect move.
+                // Recenter both spans on the pointer.
                 const out = { ...datum };
                 let placed = false;
                 for (const [a, b] of [xPair, yPair]) {
@@ -281,11 +224,7 @@ export function brushRect(options = {}) {
     });
 }
 
-// Which pixel of a pointer an axis reads, and whether the value grows toward
-// smaller pixels. The defaults are the screen's natural directions — `right` on
-// x and `up` on y (up is smaller y on screen) — so a right-drag increases, as it
-// does on every slider. (`x` used to default to `left`, so a right-drag
-// DECREASED the value; every gallery author set `increase` by hand.)
+// Whether the value grows toward smaller pixels. Defaults: `right` on x, `up` on y.
 /** @param {'x'|'y'} axis @param {string|undefined} increase */
 function slideAxis(axis, increase) {
     const inc = increase || (axis === 'x' ? 'right' : 'up');
@@ -293,11 +232,8 @@ function slideAxis(axis, increase) {
 }
 
 /**
- * How far the pointer travels to sweep the whole domain. An explicit `extent`
- * wins; otherwise a channel resolved in a composite's local FRAME sweeps in one
- * glyph-radius, so the gesture scales with the glyph instead of being a pixel
- * constant that is enormous on a small face and tiny on a large one. 120px is the
- * plain-chart fallback.
+ * Pixels of travel that sweep the whole domain: `extent`, else the composite
+ * frame's `frameExtent`, else 120.
  * @param {number | undefined} extent @param {any} ch @returns {number}
  */
 function slideExtent(extent, ch) {
@@ -307,48 +243,33 @@ function slideExtent(extent, ch) {
 }
 
 /**
- * Where a relative slide's dragstart anchor lives in the feature's session. Keyed
- * by axis + field so several relative slides on ONE feature (an eye's `rx` and
- * `ry`) keep separate anchors instead of clobbering each other.
+ * Session key for a relative slide's dragstart anchor. Keyed by axis + field so
+ * several slides on one feature keep separate anchors.
  * @param {'x'|'y'} axis @param {string} field @returns {string}
  */
 export const slideAnchorKey = (axis, field) => `${axis}:${field}`;
 
 /**
- * slide — magnitude transform. Inversion: linear — the value tracks how far
- * the pointer has moved along one axis, mapped through the channel's domain. It is
- * the linear alternative to `resize` (which reads the pointer's RADIUS from the
- * centre — "outside grows, inside shrinks"), and the recommended edit for a
- * magnitude channel like `size`.
+ * slide — maps pointer travel along one axis linearly across the channel's domain.
+ * The recommended edit for a magnitude channel like `size`. Always direct-pick.
  *
- * Two modes, same mapping, different anchor. Both are DIRECT-pick — the thing you
- * grabbed is the thing you adjust — so either coexists with a mark's other direct
- * edits, which is what a glyph handle needs.
- *   - `relative` (default): the value changes by how far the pointer has moved
- *     SINCE the grab. No jump, and the mark may move under the gesture without
- *     feeding back into it. It needs a dragstart snapshot, which the `slide`
- *     driver stashes in the feature's session.
- *   - `absolute`: a fixed track centred on the mark, ±`extent` px along `axis`;
- *     the value is read off the pointer's POSITION on that track. Stateless, but
- *     it only reads right when the handle already sits at its value's place on
- *     that track (a dot on a rail). Otherwise pressing the mark teleports the
- *     value — grabbing a mark centre snaps it to the middle of the domain — which
- *     is why it is no longer the default.
+ * Modes:
+ *   - `relative` (default): the value changes by the travel since the grab. The
+ *     `slide` driver anchors it at dragstart.
+ *   - `absolute`: the pointer's position on a track of ±`extent` px centred on
+ *     the mark is the value.
  *
- * `increase` names the direction that raises the value: `'left'|'right'` for
- * `axis:'x'`, `'up'|'down'` for `axis:'y'` (default `'left'`/`'up'`). `extent`
- * is the pixel span that traverses the full domain (see `slideExtent`).
+ * `increase` is the direction that raises the value: `'left'|'right'` on x,
+ * `'up'|'down'` on y (default `'right'` / `'up'`). `extent` is the pixel span of
+ * the full domain (see `slideExtent`).
  * @param {import('../types').EditOptions & { axis?: 'x'|'y', increase?: 'left'|'right'|'up'|'down', extent?: number, mode?: 'absolute'|'relative' }} [options]
  * @returns {import('../types').Edit}
  */
 export function slide(options = {}) {
     const { axis = 'x', increase, extent, mode = 'relative', ...rest } = options;
     const { towardSmaller } = slideAxis(axis, increase);
-    // A relative slide reads the dragstart anchor the SLIDE driver froze, so it is
-    // served by that driver alone — as a direct pick (the common case: a glyph part
-    // grabbed by its own node) or by name (`pick: 'slide'`, the plane form). Under
-    // any other pick the edit reached its driver by name AND slide's by capability,
-    // and was run and committed twice per tick. Say so and drop the pick.
+    // A relative slide needs the slide driver's anchor: only `direct` or `slide`
+    // picks work. Any other pick would run it twice per tick, so drop it.
     if (mode === 'relative' && rest.pick != null && rest.pick !== 'direct' && rest.pick !== 'slide') {
         warn(
             'slide:relative:pick',
@@ -360,19 +281,13 @@ export function slide(options = {}) {
     }
     return makeEdit({
         type: 'slide',
-        // A slide reads the pointer's TRAVEL and interpolates across the channel's
-        // DOMAIN — it never runs a pixel back through the scale's invert — so it
-        // works on a colour ramp. `'domain'` says so, and keeps the dead-channel
-        // guard (which asks whether the scale can invert) off it.
+        // Interpolates across the domain without the scale's invert, so it works
+        // on a colour ramp. A string, not `true`: the dead-channel guard skips it.
         inverts: 'domain',
         gesture: 'drag',
-        // Direct in both modes. Relative still needs the driver's dragstart anchor,
-        // but the driver claims it by CAPABILITY (type + mode) from either dispatch
-        // path — so it gets its lifecycle without the plane being raised, and a
-        // glyph's parts each stay independently grabbable.
+        // The slide driver claims relative mode by capability, so the plane stays down.
         pick: 'direct',
-        // Knobs ride onto the descriptor (makeEdit passes unknown keys through) so
-        // both the apply below and the slide driver read the same configuration.
+        // makeEdit passes unknown keys through, so the driver reads these too.
         axis, increase, extent, mode,
         ...rest,
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
@@ -383,8 +298,7 @@ export function slide(options = {}) {
             const span = slideExtent(extent, ch);
 
             if (mode === 'relative') {
-                // The driver froze the grab pixel + starting value at dragstart; the
-                // value moves proportionally from there, so there is no grab jump.
+                // Move proportionally from the dragstart anchor.
                 const anchors = /** @type {any} */ (ctx.session || {}).slide;
                 const a = anchors && anchors[slideAnchorKey(axis, ch.field)];
                 if (!a || typeof a.startValue !== 'number') return undefined;
@@ -395,8 +309,7 @@ export function slide(options = {}) {
                 return { ...ctx.datum, [ch.field]: v };
             }
 
-            // absolute: a track centred on the mark, oriented so `increase` grows
-            // the value; the pointer's position on it maps through the domain.
+            // absolute: a track centred on the mark, oriented so `increase` grows the value.
             const c = markCenter(resolveMarkNode(ctx));
             if (!c) return undefined;
             const centre = axis === 'x' ? c.cx : c.cy;
@@ -410,11 +323,8 @@ export function slide(options = {}) {
 }
 
 /**
- * resize — magnitude transform. Inversion: radial — the gesture's radius
- * (distance from the mark centre) inverts back to the channel's value, mirroring
- * how the channel encodes value -> radius. The radial counterpart to `slide`
- * ("outside grows, inside shrinks"); prefer `slide` for a magnitude channel — it
- * reads as a linear drag. Usually placed on `size`.
+ * resize — inverts the pointer's distance from the mark centre to the channel's
+ * value. The radial counterpart to `slide`, which is usually preferred.
  * @param {import('../types').EditOptions} [options]
  * @returns {import('../types').Edit}
  */
@@ -426,10 +336,7 @@ export function resize(options = {}) {
         ...options,
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
             const ch = ctx.channels[0];
-            // resolveMarkNode, not ctx.node: a plane-pick gesture (nearest/sweep)
-            // carries no node, so reading ctx.node directly made this universal
-            // edit silently dead under any pick but 'direct'. move() and rotate()
-            // resolve the same way.
+            // resolveMarkNode, not ctx.node: a plane pick carries no node.
             const c = markCenter(resolveMarkNode(ctx));
             if (!ch || !ch.scale || !ch.scale.invertible || !c) return undefined;
             const radius = Math.hypot(ctx.pointer.x - c.cx, ctx.pointer.y - c.cy);
@@ -439,23 +346,16 @@ export function resize(options = {}) {
 }
 
 /**
- * rotate — angular transform. Inversion: angular — the pointer's ANGLE about a
- * pivot inverts back to the channel's value, mirroring how the channel encodes
- * value -> degrees. It is the angular sibling of `resize` (which inverts the
- * pointer's radius): the
- * gesture-geometry half is atan2; the data half goes through the SAME channel
- * scale (its `range` is in degrees), so encode and edit stay exact inverses.
+ * rotate — inverts the pointer's angle about a pivot through the channel's scale
+ * (whose range is in degrees).
  *
  * Options:
  *   pivot: 'plot' (default) — plot centre; 'mark' — markCentre of the hit node
- *   fold:  true (default) — fold into (-90, 90] for direction-agnostic lines
- *          (a fold-agnostic line); false — full-circle degrees for gauges/dials
+ *   fold:  true (default) — fold into (-90, 90] for direction-agnostic lines;
+ *          false — full-circle degrees for gauges/dials
  *   pick:  'plane' (default) updates the whole dataset; 'direct' updates the
  *          hit datum only (needle handle); 'probe' keeps the hover/click flow
- *
- * `relativeTo` names another angular channel and makes the gesture measure the
- * ABSOLUTE angular distance from that channel's current angle — the "open the
- * cone" spread gesture.
+ *   relativeTo: another angular channel; the value is the absolute angle from it.
  * @param {import('../types').RotateOptions} [options]
  * @returns {import('../types').Edit}
  */
@@ -474,9 +374,8 @@ export function rotate(options = {}) {
             if (deg > 90) deg -= 180;
             else if (deg <= -90) deg += 180;
         } else {
-            // Gauge/dial (unfolded): unwrap the raw atan2 angle onto the channel's
-            // authored degree span so dragging past an endpoint clamps to THAT end
-            // instead of wrapping across the ±180° seam to the far value.
+            // Unwrap onto the channel's degree span so dragging past an end clamps
+            // there instead of wrapping across ±180°.
             const scale = /** @type {any} */ (ctx.channels[0] && ctx.channels[0].scale);
             const range = scale && typeof scale.range === 'function' ? scale.range() : null;
             if (range && range.length >= 2
@@ -520,14 +419,9 @@ export function rotate(options = {}) {
 }
 
 /**
- * cycle — discrete transform. Inversion: step — advance the channel to the next
- * value in its domain. Driven by a 'click'. Usually placed on an ordinal
- * `fill`. Needs a stable domain (see notes).
- *
- * The domain comes from `discreteDomain` (shared.js): the channel's scale when it
- * has one, the field's SCHEMA domain when it doesn't — a `scale: null` colour
- * column or a raw channel a mark reads itself resolves no scale, and stepping only
- * `ch.scale.domain()` made the click a silent no-op on exactly those.
+ * cycle — on click, advance the channel to the next value in its domain.
+ * The domain comes from `discreteDomain`, which falls back to the schema when
+ * the channel has no scale.
  * @param {import('../types').EditOptions} [options]
  * @returns {import('../types').Edit}
  */
@@ -548,33 +442,19 @@ export function cycle(options = {}) {
 }
 
 // ── The creator contract ────────────────────────────────────────────────────
-// Creation is mark-agnostic: a datum is generated from the scales/axes, appended
-// to the one dataset, and every mark that views those rows encodes it. Each
-// creator (`create`, `toggle`, `edit.line.anchor`/`newSeries`/`draw`,
-// `edit.geo.create`/`createRect`/`draw`) is a THIN WRAPPER over one shared core,
-// `mintDatum` (shared.js). To add a new creator, copy the pattern — don't grow a
-// mega-function:
-//   1. pick the gesture ('click' / 'dblclick' / 'drag') and `pick`
-//      ('plane' / 'draw'); set `scope: 'line'` if it needs series grouping.
-//   2. resolve the target: none (create), the nearest series (anchor), or a fresh
-//      key (newSeries). Auxiliary fields (a series key) go in `mintDatum`'s
-//      `defaults`; an already-resolved POSITION (geo's lon/lat, a bbox) goes in
-//      `seed` (only `seed` counts toward "did we place a position?").
+// Every creator is a thin wrapper over `mintDatum` (shared.js):
+//   1. Pick the gesture and `pick`; set `scope: 'line'` for series grouping.
+//   2. Auxiliary fields (a series key) go in `defaults`; an already-resolved
+//      position goes in `seed`. Only `seed` counts as a placed position.
 //   3. `const datum = mintDatum(ctx, { defaults, seed });`
-//   4. `return datum ? [...ctx.data, datum] : undefined;` — undefined is the "this
-//      mark can't create here" no-op (a guide/derived mark; warnCreateOnNonMark
-//      names it in dev). Set `cardinality: 'append'` when the gesture mints ONE
-//      row (so a constraint resolves around it); leave it null when it seeds many.
+//   4. `return datum ? [...ctx.data, datum] : undefined;`
+// Set `cardinality: 'append'` only when the gesture mints a single row.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * create — its own declaration (not a channel edit): a plane gesture that mints a
- * NEW datum. It reuses the exact same scale inverses as `drag` — the clicked
- * pixel is inverted through each positional channel — plus `defaults` for the
- * non-positional fields (group, mag, …). Editing the created mark afterwards
- * routes through the channel edits like any other mark, so create and edit share
- * one bidirectional model. `gesture` picks the plane gesture ('click' default,
- * or 'dblclick' to keep create distinct from a plane drag).
+ * create — a plane gesture that mints a new datum: the pointer is inverted through
+ * each positional channel, and `defaults` fill the other fields. `gesture` is
+ * 'click' (default) or 'dblclick'.
  * @param {import('../types').CreateOptions} [options]
  * @returns {import('../types').Edit}
  */
@@ -583,23 +463,15 @@ export function create(options = {}) {
     return makeEdit({
         type: 'create',
         gesture: 'click',
-        // Default to the positional channels; resolveChannels drops any the
-        // feature doesn't encode (so a 1D likert create just omits the missing y).
-        // A nested offset is part of the position: on a grouped chart the click
-        // names a category AND a sub-category, and the minted row takes both.
+        // resolveChannels drops any the feature doesn't encode.
         channels: ['x', 'y', 'xOffset', 'yOffset'],
         pick: 'plane',
-        // The minted row is the one a constraint should resolve around.
         cardinality: 'append',
-        // Rides the descriptor so the create guards can see what fields the author
-        // seeds (warnCreateEmptyExtent checks a rect's span endpoints against it).
+        // On the descriptor for the create guards.
         defaults,
         ...rest,
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
-            // The whole of create is one call to the shared minting core: seed the
-            // schema, overlay `defaults`, invert the pointer onto the positional
-            // channels. undefined => no positionable channel, so there is nothing to
-            // append (a guide/derived mark — see warnCreateOnNonMark).
+            // undefined => no positionable channel, nothing to append.
             const datum = mintDatum(ctx, { defaults });
             return datum ? [...ctx.data, datum] : undefined;
         }
@@ -607,19 +479,9 @@ export function create(options = {}) {
 }
 
 /**
- * toggle — slot edit: the pointer names a slot (each governed channel inverted to
- * its data value); if a datum already occupies that slot it is removed, otherwise
- * one is minted there. It is `create` and `remove` folded into the one gesture a
- * checkbox has, which is why the multiple-choice and matrix widgets are built on
- * it: click an empty option to pick it, click your pick to take it back.
- *
- * Slot identity is the tuple of the governed channels' fields, so a 1-D scale
- * (`channels: ['x']`) toggles an option and a 2-D grid (`channels: ['x', 'y']`)
- * toggles a cell. Pairs naturally with `unique` (one pick per row) and `count`
- * (a cap on picks) — both reject or replace the minted datum as usual.
- *
- * `pick: 'plane'` by default (a click in empty space). Give it `pick: 'probe'` and
- * the hover previews the toggle before the click commits it.
+ * toggle — the pointer names a slot; a datum in that slot is removed, otherwise
+ * one is minted there. A slot is the tuple of the governed channels' values.
+ * `pick: 'probe'` previews the toggle on hover.
  * @param {import('../types').ToggleOptions} [options]
  * @returns {import('../types').Edit}
  */
@@ -628,22 +490,16 @@ export function toggle(options = {}) {
     return makeEdit({
         type: 'toggle',
         gesture: 'click',
-        // A slot on x is a category, and on a grouped chart a sub-category too.
         channels: ['x', 'xOffset'],
         pick: 'plane',
-        // Mints OR drops a row per click: a creator, with no single active datum.
+        // Mints or drops a row per click, so there is no single active datum.
         cardinality: 'toggle',
-        // No `cardinality`: this gesture mints on an empty slot and drops on a full
-        // one, so "the row the gesture touched" has no single answer. Left null,
-        // which resolves nothing around it — the honest reading for a slot edit.
         defaults, // exposed on the descriptor for the create guards (see create)
         ...rest,
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
-            // Mint the datum the pointer names — the same inversion `create` does.
             const datum = mintDatum(ctx, { defaults });
             if (!datum) return undefined; // no positionable channel: no slot named
 
-            // The slot's identity is the governed fields' tuple.
             const keys = ctx.channels.map((ch) => ch.field);
             const occupant = ctx.data.findIndex((d) => keys.every((k) => d[k] === datum[k]));
             return occupant >= 0
@@ -654,16 +510,9 @@ export function toggle(options = {}) {
 }
 
 /**
- * remove — deletes the targeted datum. Like every other edit it is just a
- * { gesture, when, pick } descriptor, so it shares the dispatch and arbitration:
- * `when` decides whether it (vs. a sibling edit on the same gesture) claims the
- * event, and `pick` selects the target — 'direct' (the mark clicked) or 'nearest'
- * (the closest mark within threshold, deletable from empty space).
- *
- * The gesture defaults to a plain click. When another click edit already lives on the
- * mark (e.g. `cycle` recolour), pair them with a modifier so they don't both
- * fire: `cycle({ when: when.noAlt })` + `remove({ when: when.alt })` — Alt-click
- * to delete, plain click to recolour.
+ * remove — deletes the targeted datum. `pick` is 'direct' (the clicked mark) or
+ * 'nearest'. When another click edit is on the mark, split them with `when`
+ * (e.g. `cycle({ when: when.noAlt })` + `remove({ when: when.alt })`).
  * @param {import('../types').EditOptions} [options]
  * @returns {import('../types').Edit}
  */
@@ -671,7 +520,6 @@ export function remove(options = {}) {
     return makeEdit({
         type: 'remove',
         gesture: 'click',
-        // The row is gone; no datum is active for a constraint to resolve around.
         cardinality: 'delete',
         ...options,
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
@@ -682,37 +530,24 @@ export function remove(options = {}) {
 }
 
 /**
- * The one apply `set` and `editText` share: write the value carried in `ctx.value`
- * into the first channel's field. There is no pixel to invert — the value arrives
- * whole (a typed string, a picked category, a slider number), via the `commit`
- * gesture. Factored so "write a value into a field" has one implementation.
+ * The apply shared by `set` and `editText`: write `ctx.value` into the first
+ * channel's field.
  * @param {import('../types').EditContext} ctx
  * @returns {any}
  */
 function writeValue(ctx) {
     const ch = ctx.channels[0];
     if (!ch || !ch.field || ctx.value === undefined || !ctx.datum) return undefined;
-    // The value arrives in whatever form the gesture produced — a typed STRING,
-    // for editText — and the column's declared measure says what it stores. A
-    // quantitative field takes the parsed number; a value the measure cannot
-    // hold (letters in a number column) refuses the write, so no edit can quietly
-    // turn a numeric column into strings that still draw.
+    // Coerce to the field's measure; refuse a value the measure can't hold.
     const value = coerceToType(ctx.value, ctx.schema ? ctx.schema[ch.field] : undefined);
     if (value === undefined) return undefined;
     return { ...ctx.datum, [ch.field]: value };
 }
 
 /**
- * set — the universal value edit: write `ctx.value` into the channel's field,
- * whatever the field's TYPE (quantitative, colour, categorical, temporal). Unlike
- * the positional edits its input isn't a pixel to invert — it's the value itself,
- * carried on the `commit` gesture in `ctx.value`. This is the edit an EXTERNAL
- * controller drives with `el.control(name).set(value)`: a picker sets a category,
- * a swatch sets a colour, a number field sets a magnitude — all through the same
- * `commit` path `editText` uses, so the engine treats it as an ordinary direct
- * gesture (no new pick/driver). The channel's scale still declares what values are
- * ACCEPTED (`el.control(name).accepts()` reads that domain), so the UI can offer
- * only valid choices.
+ * set — write the value carried on the `commit` gesture (`ctx.value`) into the
+ * channel's field. External controls drive it with `el.control(name).set(value)`;
+ * `el.control(name).accepts()` reads the scale's domain for valid choices.
  *
  * Placed on any channel (`fill: { field:'group', edit: set() }`) or at mark level
  * (`edits: [set({ channels:['fill'] })]`).
@@ -730,29 +565,18 @@ export function set(options = {}) {
 }
 
 /**
- * editText — content edit: write a typed string back into the text channel's field.
- * The text specialization of `set`: same `commit`/`ctx.value` write, but named and
- * defaulted for text so the renderer's inline-keyboard lifecycle (double-click a
- * text mark → inline input → Enter/blur commits, Esc cancels) reads clearly. The
- * renderer owns that lifecycle and emits a single `commit` gesture carrying the
- * value in `ctx.value`; this edit just stores it, so the engine treats `commit` as
- * an ordinary direct gesture (no new pick/driver), staying ignorant of the mode.
+ * editText — write a typed string into the text channel's field. The renderer runs
+ * the inline editor (double-click, Enter/blur commits, Esc cancels) and emits one
+ * `commit` gesture with the value in `ctx.value`.
  *
  * Placed on the text channel (`text: { field:'label', edit: editText() }`) or at
  * mark level (`edits: [editText({ channels:['text'] })]`).
  *
- * `inline: true` is the CAPABILITY that opens the editor: the engine's tagging pass
- * flags every node of a feature carrying such an edit, so which shape becomes
- * typable follows from where the edit was placed. Put it on a `text` mark and you
- * type on the label; put it on the `rect` of a sticker and you type on the body,
- * with the label left inert — which is the right way round for anything whose
- * typable surface is a box.
+ * `inline: true` opens the editor on every node of the feature carrying the edit,
+ * so the typable shape is wherever the edit is placed.
  *
- * `multiline: true` makes the editor a textarea in which Enter inserts a newline
- * (Cmd/Ctrl+Enter, blur or clicking away commits; Escape still cancels). It is
- * declared here rather than sniffed from the shape's height, because "can this hold
- * a paragraph" is a statement about the data being elicited, not about how big the
- * box happens to be drawn.
+ * `multiline: true` uses a textarea where Enter inserts a newline
+ * (Cmd/Ctrl+Enter or blur commits; Escape cancels).
  * @param {import('../types').EditOptions} [options]
  * @returns {import('../types').Edit}
  */
@@ -769,11 +593,9 @@ export function editText(options = {}) {
 }
 
 /**
- * rank — reorder by dragging along a discrete (band/point) or quantitative rank
- * axis. Inverts the pointer to a rank slot, then SWAPS with whoever currently
- * occupies that slot so ranks stay unique. Returns a full dataset (whole-dataset
- * edit). Place on the rank channel: `y: { field: 'rank', edit: rank() }` or
- * `edits: [rank({ channels: ['y'] })]`.
+ * rank — reorder by dragging along a rank axis. Inverts the pointer to a slot and
+ * shifts the rows in between by one place, so ranks stay unique. Returns the full
+ * dataset. Place on the rank channel: `y: { field: 'rank', edit: rank() }`.
  * @param {import('../types').EditOptions} [options]
  * @returns {import('../types').Edit}
  */
@@ -786,18 +608,14 @@ export function rank(options = {}) {
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
             const ch = ctx.channels[0];
             if (!ch || !ctx.datum || ctx.index == null) return undefined;
-            // The field comes from the channel — the only place a field is named.
             const f = ch.field;
             if (!f) return undefined;
             const nextRank = invertChannel(ch, ctx.pointer);
             if (nextRank === undefined) return undefined;
             const oldRank = ctx.datum[f];
             if (oldRank === nextRank) return undefined;
-            // SHIFT the rows between the old slot and the new one by one place, so a
-            // drag across several slots reads as "insert here" whatever its speed.
-            // Swapping with the slot's occupant gave a different permutation per
-            // tick — a slow drag inserted, a fast one swapped. The slot order is the
-            // declared domain (a band/point rank), else the ranks in play, sorted.
+            // Shift, not swap, so the result doesn't depend on drag speed. Slot
+            // order is the declared domain, else the ranks in play, sorted.
             const declared = discreteDomain(ch, ctx.schema);
             const order = declared && declared.length
                 ? declared
@@ -825,28 +643,15 @@ export function rank(options = {}) {
 }
 
 /**
- * select — a SELECTION edit: click a mark to make it the chart's selected row.
- * Selection is transient PIPELINE state the engine owns (ui.selection), NOT a
- * `selected` data column — the same status a hover/preview has. apply() writes no
- * dataset row; it returns a `{ index, exclusive, toggle }` descriptor under `target: 'selection'`,
- * which the engine routes to its selection commit exactly the way an axis edit's
- * `{ domains }` routes to the schema. So no `change` fires, nothing lands in undo,
- * and the dataset stays clean.
+ * select — click a mark to make it the selected row. Selection is engine state
+ * (ui.selection), not a data column: apply() returns `{ index, exclusive, toggle }`
+ * under `target: 'selection'`, so no `change` fires and nothing enters undo.
  *
- * Single-exclusive by default: selecting a row clears the rest, and clicking the
- * already-selected row toggles it back off. `toggle: false` makes a click always
- * select (never deselect); `exclusive: false` adds to the selection instead of
- * replacing it, every time.
+ * By default a click replaces the selection and clicking the selected row clears
+ * it. `toggle: false` never deselects; `exclusive: false` always adds.
+ * `multi: true` adds on shift- or meta-click and replaces on a plain click.
  *
- * `multi: true` is the usual way to want that — the standard modifier idiom rather
- * than a mode. A plain click replaces the selection; a shift- (or meta-) click adds
- * to it. That keeps "click something else" meaning what it always did, so turning
- * multi-select on never changes what an existing gesture does.
- *
- * Pairs with a selection-aware target: `elements.legend({ edit:
- * edit.legend.category() })` defaults its target row to the selection, so "click a
- * bar, then click a legend swatch" edits the bar you picked — no `selected` field
- * in the data.
+ * `edit.legend.category()` targets the selected row by default.
  * @param {import('../types').SelectEditOptions} [options]
  * @returns {import('../types').Edit}
  */
@@ -860,8 +665,7 @@ export function select(options = {}) {
         ...rest,
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
             if (ctx.index == null) return undefined;
-            // Under `multi`, the modifier decides per CLICK; `exclusive` stays the
-            // flat override for a chart that is always additive.
+            // Under `multi`, the modifier decides per click.
             const e = /** @type {any} */ (ctx.event) || {};
             const additive = multi && !!(e.shiftKey || e.metaKey);
             return { index: ctx.index, exclusive: additive ? false : exclusive, toggle };
@@ -870,9 +674,7 @@ export function select(options = {}) {
 }
 
 /**
- * custom — the escape hatch: an arbitrary apply over the full EditContext (the
- * datum, event, pointer, resolved channels, … are all on `ctx`), with the same
- * one-argument shape every built-in apply has.
+ * custom — an arbitrary apply over the full EditContext.
  * @param {(ctx: import('../types').EditContext) => any} fn
  * @param {import('../types').EditOptions} [options]
  * @returns {import('../types').Edit}

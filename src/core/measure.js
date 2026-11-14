@@ -1,42 +1,18 @@
 // @ts-check
-// measure.js — how wide is this string, and where does it wrap?
-//
-// The library had no text measurement at all before this. Everything that needed
-// to know a label's size guessed: `edit/pick.js` treats a text node as a disc of
-// radius `fontSize + 4`, the inline editor is a hardcoded 140px box, and
-// `symbolNode` sizes a glyph as `size * 2`. Those guesses are fine for a label
-// hanging off a dot. They are not fine for a shape whose GEOMETRY is the text —
-// a sticker's box has to be the size of what you typed.
+// measure.js — text width and wrapping, available at build time.
 //
 //   measureText('hello', { fontSize: 14, fontFamily: 'Inter' })   // -> 31.2
 //   wrapText('a longer sentence', { maxWidth: 90, fontSize: 14 }) // -> ['a longer', 'sentence']
 //
-// ── Why a canvas, and why lazily ────────────────────────────────────────────
-// A 2D context's `measureText` is the only measurement available at BUILD time:
-// `getBBox`/`getComputedTextLength` need the glyphs to already be in the document,
-// and a mark's `build()` runs before anything is drawn — and runs at all under the
-// canvas renderer, where there is no SVG to ask.
-//
-// The context is created ON FIRST CALL and guarded, never at module scope. This is
-// load-bearing, not defensive: the docs site imports the library at module scope
-// from a client component and Next.js SERVER-renders those, so a top-level
-// `document.createElement` throws in Node — and `check:warnings` would report that
-// as a PASS, because it only listens for `[elicit]` console output and a page that
-// died server-side emits none. A guard here is the difference between a gate that
-// works and a gate that lies.
-//
-// With no DOM we fall back to an average-advance estimate rather than returning
-// NaN, so a server-rendered pass produces plausible geometry and the first client
-// render corrects it.
+// Uses a 2D canvas context created lazily behind `typeof document`, never at module
+// scope: the docs site server-renders, and a top-level `document.createElement`
+// would crash in Node where `check:warnings` cannot see it. With no DOM, widths
+// fall back to an average-advance estimate.
 
-// Mean glyph advance as a fraction of font size, for the no-DOM fallback. Measured
-// off a proportional sans at mixed case; wrong for any specific string, but wrong
-// by a stable factor rather than by an order of magnitude.
+// Mean glyph advance as a fraction of font size, for the no-DOM fallback.
 const AVERAGE_ADVANCE = 0.52;
 
-// The cache is keyed by the full font description AND the string, because the font
-// comes from the theme — `setTheme()` mid-session must not hand back widths
-// measured in the old one.
+// The cache key includes the font, so a theme change never returns stale widths.
 const CACHE_LIMIT = 4096;
 
 /** @type {Map<string, number>} */
@@ -108,13 +84,9 @@ export function measureText(text, font = {}) {
 }
 
 /**
- * Break a string into lines that each fit `maxWidth`. Greedy word wrap, honouring
- * newlines the author (or the user) typed, and hard-breaking a single word that is
- * too long for the box on its own — a word that cannot fit still has to be drawn
- * somewhere, and overflowing the shape is worse than a mid-word break.
- *
- * With no `maxWidth` the text still splits on its own newlines, so a multi-line
- * string works before any wrapping is asked for.
+ * Break a string into lines that fit `maxWidth`: greedy word wrap, honouring typed
+ * newlines, hard-breaking a word too long for the box. With no `maxWidth` it only
+ * splits on newlines.
  *
  * @param {string} text
  * @param {{ maxWidth?: number, fontSize?: number, fontFamily?: string, fontWeight?: string | number }} [opts]
@@ -177,21 +149,13 @@ export function measureBlock(text, opts = {}) {
 }
 
 /**
- * The BOX a padded note of text occupies — `measureBlock` plus the padding and the
- * floors that turn a measurement into a drawn rectangle.
- *
- * This is `sticker`'s own sizing rule, lifted here so it has a name. A sticker's box
- * is measured rather than declared, which means nothing outside that mark could
- * know how big a note is — and a connector that docks to a node's EDGE has to. The
- * alternative, `link` asking the sticker what it drew, is a mark reading another
- * feature's geometry, which nothing here may do. So the rule lives in the one
- * measurement module and both callers go through it:
+ * The box a padded note of text occupies: `measureBlock` plus padding and minimums.
+ * This is `sticker`'s sizing rule, shared so a link can dock to a note's edge
+ * without reading another mark's geometry:
  *
  *   link({ channels: { nodeWidth: { fn: d => noteBox(d.label).width } } })
  *
- * The defaults deliberately match `sticker`'s, so a caller who states nothing gets
- * the same box the sticker draws. State the same options on both if you change them
- * there — that repetition is the honest cost of not coupling the two marks.
+ * Defaults match `sticker`'s; change both together.
  *
  * @param {string} text
  * @param {{ padding?: number, maxWidth?: number, minWidth?: number, minHeight?: number,

@@ -3,29 +3,24 @@ import * as d3 from "d3";
 import { DEFAULT_EFFECTS, ELEMENT_EFFECT_PROPS } from "../../core/effects.js";
 import { markCenter } from "../../edit/shared.js";
 import { rectHitBox, MIN_GRAB } from "../../edit/pick.js";
-import { resolveCurve, lineGenerator, STYLE_FIELDS, partitionScene, frameThrottle, MODIFIER_KEYS } from "../shared.js";
+import { lineGenerator, STYLE_FIELDS, partitionScene, frameThrottle, MODIFIER_KEYS } from "../shared.js";
 
-// A camelCase effect property -> its CSS property name (strokeWidth ->
-// stroke-width). Effects are applied as CSS PROPERTIES rather than SVG
-// presentation attributes, so they override the mark's own paint while set and
-// vanish cleanly when removed — see core/effects.js.
+// camelCase effect property -> CSS property name. Effects are CSS properties,
+// not SVG attributes, so removing one restores the mark's own paint.
 const cssProp = (/** @type {string} */ k) =>
   k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
 
 export class D3Renderer {
   constructor() {
-    // The standard paint surface: node field -> [SVG attribute, base default].
-    // Every shape draw runs `_applyStyle`, which reads these off the node.
-    // The channel list is shared with every other renderer (see STYLE_FIELDS in
-    // renderers/shared.js) — ADDING A STYLE CHANNEL IS ONE ROW THERE.
+    // node field -> [SVG attribute, base default], read by `_applyStyle`.
+    // From STYLE_FIELDS in renderers/shared.js.
     /** @type {[string, string, any][]} */
     this.STYLE_ATTRS = STYLE_FIELDS.map(({ field, svgAttr, base }) => [
       field,
       svgAttr,
       base,
     ]);
-    // Plane gesture state. It lives on the renderer, not the DOM, so it survives
-    // the re-render the engine runs on every commit mid-drag.
+    // Plane gesture state lives on the renderer so it survives mid-drag re-renders.
     /** @type {any} */
     this._planeGesture = null;
     /** @type {{ move: (e: any) => void, end: (e: any) => void } | null} */
@@ -76,19 +71,15 @@ export class D3Renderer {
       clip: context.clip || null,
     });
 
-    // Stashed for the text mark's content-edit overlay (_editText), which is
-    // spawned from a node's dblclick handler outside this closure.
+    // Stashed for _editText, which runs outside this closure.
     this._sceneG = g;
     this._onEvent = onEvent;
-    // The chart's resolved theme (stashed for the draw helpers' font-size fallback).
-    // When the theme names a font family, emit it on the root svg so every SVG text
-    // inherits it; a null family (the default look) leaves the host page's font.
+    // The theme's font family goes on the root svg; null keeps the host page's font.
     this._theme = context.theme || null;
     const themeFont = this._theme && this._theme.font;
     d3.select(container).select("svg")
       .style("font-family", (themeFont && themeFont.family) || null)
-      // The chart backdrop (null => transparent). Covers the margin band, so a
-      // dark theme's labels sit on the dark background too.
+      // The chart backdrop, margins included (null => transparent).
       .style("background", (this._theme && this._theme.background) || null);
 
     /** @param {any} event */
@@ -99,25 +90,18 @@ export class D3Renderer {
     this._bindWheel(d3.select(container).select("svg"), pointer, onEvent, !!context.hasWheel);
 
     const drag = this._makeDrag(onEvent);
-    // Hover rides along with drag: the same nodes, so anything you can grab
-    // responds before you press it. See _makeHover.
+    // Hover and keyboard bind to the same nodes as drag.
     const hover = this._makeHover(onEvent, effects.hovered);
-    // Keyboard access rides along with drag: same nodes, same edits.
-    // focusOutline gates only the native ring — tabindex / nudge stay on.
+    // focusOutline gates only the native focus ring.
     const keys = this._makeKeyboard(onEvent, focusOutline);
-    // A mark-scoped click (routed to the mark's click edits, e.g. cycle /
-    // remove). d3.drag suppresses the click after a real drag, so this only
-    // fires on a click without movement — drag moves, click edits.
+    // A click on a mark. d3.drag suppresses the click after a real drag.
     /** @param {any} event @param {any} d */
     const markClick = (event, d) => {
       const [px, py] = pointer(event);
       onEvent({ type: "click", x: px, y: py, node: d, rawEvent: event });
     };
-    // A mark-scoped double click (edit.stack.merge, or any direct edit that takes
-    // `gesture: 'dblclick'`). Without this the gesture existed only on the PLANE,
-    // so a dblclick edit on a node could never fire — and stopPropagation is what
-    // keeps it from also reaching the plane, where a create edit would mint a row
-    // on top of it.
+    // A double click on a mark. stopPropagation keeps it off the plane, where a
+    // create edit would add a row.
     /** @param {any} event @param {any} d */
     const markDblClick = (event, d) => {
       event.preventDefault();
@@ -126,9 +110,7 @@ export class D3Renderer {
       onEvent({ type: "dblclick", x: px, y: py, node: d, rawEvent: event });
     };
 
-    // Role layers are fixed (background → guide regions → marks → guide
-    // front → effects). Within the mark layer, features/parts array order is
-    // z-order — type joins still bind by shape, then we reorder DOM.
+    // Role layers are fixed; within the mark layer, scene order is z-order.
     const { background, guideRegions, marks, chrome, guideFront, effects: effectNodes, effectsChrome } =
       partitionScene(scene.children, { clip: !!context.clip });
     /** @param {any[]} list @param {string} t */
@@ -137,60 +119,20 @@ export class D3Renderer {
 
     const layers = this._sceneLayers(g);
 
-    this._drawBackground(
-      layers.bg,
-      ofType(background, "image"),
-      ofType(background, "path"),
-      ofType(background, "line"),
-      ofType(background, "text"),
-      ofType(background, "rect"),
-      ofType(background, "circle"),
-      background,
-    );
+    this._drawBackground(layers.bg, background);
 
     this._drawGuideRegions(layers.guideBack, guideRegions);
 
-    // Type joins into mark-layer (binding / events); z-order fixed after.
-    this._drawPaths(layers.marks, ofType(marks, "path"), {
-      drag,
-      markClick,
-      markDblClick,
-      keys,
-      hover,
-    });
-    this._drawMarks(
-      layers.marks,
-      ofType(marks, "rect"),
-      ofType(marks, "circle"),
-      { drag, markClick, markDblClick, keys, hover },
-    );
-    this._drawEllipses(layers.marks, ofType(marks, "ellipse"), {
-      drag,
-      markClick,
-      markDblClick,
-      keys,
-      hover,
-    });
-    this._drawLines(layers.marks, ofType(marks, "line"), {
-      drag,
-      markClick,
-      markDblClick,
-      keys,
-      hover,
-    });
-    this._drawTextMarks(layers.marks, ofType(marks, "text"), {
-      drag,
-      markClick,
-      markDblClick,
-      keys,
-      hover,
-    });
+    // Join by shape type, then reorder to scene order.
+    const io = { drag, markClick, markDblClick, keys, hover };
+    this._drawPaths(layers.marks, ofType(marks, "path"), io);
+    this._drawMarks(layers.marks, ofType(marks, "rect"), ofType(marks, "circle"), io);
+    this._drawEllipses(layers.marks, ofType(marks, "ellipse"), io);
+    this._drawLines(layers.marks, ofType(marks, "line"), io);
+    this._drawTextMarks(layers.marks, ofType(marks, "text"), io);
     this._orderMarkLayer(layers.marks, marks);
 
-    // A chart element's interactive chrome (an axis handle on the plot edge, an
-    // interactive legend) — empty unless the marks are clipped, when it paints
-    // here, above them and outside the clip.
-    const io = { drag, markClick, markDblClick, keys, hover };
+    // Unclipped chrome (axis handles, interactive legends); empty without `clip`.
     this._drawPaths(layers.chrome, ofType(chrome, "path"), io);
     this._drawMarks(layers.chrome, ofType(chrome, "rect"), ofType(chrome, "circle"), io);
     this._drawEllipses(layers.chrome, ofType(chrome, "ellipse"), io);
@@ -201,26 +143,17 @@ export class D3Renderer {
     // Rules / constraint ticks / guide labels — in front of marks.
     this._drawGuideFront(layers.guideFront, guideFront);
 
-    // Interaction overlays (proximity ring, select outline) — above everything.
-    // Two groups inside the one effects layer, so the plane-on-top stacking
-    // below still sees a single topmost layer: the data's effects (clipped with
-    // the marks) and chrome's (not).
+    // Effect overlays: clipped data effects and unclipped chrome effects, as two
+    // groups in the one topmost effects layer.
     this._drawEffects(this._subLayer(layers.effects, "effects-data"), effectNodes);
     this._drawEffects(this._subLayer(layers.effects, "effects-chrome"), effectsChrome);
 
-    // In plane-on-top (proximity) mode the plane must sit above the marks and
-    // own all pointer events; the marks become purely visual. Guides/effects
-    // already use pointer-events:none, so they remain visible through the plane.
+    // Plane-on-top (proximity) mode: the plane sits above the marks and owns
+    // every pointer event.
     if (planeOnTop) {
-      // Silence the grab overlays too (.mark-hit): in proximity mode the plane owns
-      // every gesture, and a leftover hit rect would swallow it just like a mark.
       g.selectAll(".mark, .mark-hit").style("pointer-events", "none");
-      // The target order is [..., plane, effects] — the plane above every mark,
-      // and the (pointer-transparent) effect overlays above the plane. Skip the
-      // DOM move when it already holds, the same rule _orderMarkLayer follows:
-      // `raise()` is an unconditional appendChild, and re-inserting a node drops
-      // any pointer capture on it and blurs it. The engine re-renders on every
-      // drag commit, so this ran continuously mid-gesture.
+      // Target order [..., plane, effects]. Skip the DOM move when it already
+      // holds: re-insertion drops pointer capture and blurs.
       const planeNode = plane.node();
       const effectsNode = layers.effects.node();
       const parent = planeNode && planeNode.parentNode;
@@ -234,12 +167,8 @@ export class D3Renderer {
       }
       plane.style("cursor", planeCursor || "pointer");
     } else {
-      // The mode flips BACK too — a stage advances past the last plane-pick edit —
-      // and the plane must drop under the marks again or every direct edit the
-      // new stage armed sits unreachable beneath it. The per-node pointer-events
-      // are re-stated by every mark join on each render, so only the plane's
-      // position is stale. Same "skip the DOM move when it already holds" rule as
-      // above: `lower()` is an unconditional insertBefore.
+      // Lower the plane again when the mode flips back, or it blocks direct edits.
+      // Skip the DOM move when it already holds.
       const planeNode = plane.node();
       const parent = planeNode && planeNode.parentNode;
       if (parent && parent.firstElementChild !== planeNode) plane.lower();
@@ -248,10 +177,8 @@ export class D3Renderer {
   }
 
   /**
-   * The id of the <linearGradient> for a gradient spec, created in the svg's
-   * <defs> on first use. Keyed by the spec's JSON, so every bar sharing one
-   * gradient shares one element; prefixed per renderer instance so two charts on
-   * a page never collide.
+   * The id of the <linearGradient> for a gradient spec, created in <defs> on
+   * first use. Keyed by the spec's JSON; prefixed per renderer instance.
    * @param {{ stops: [number, string][], direction?: 'vertical' | 'horizontal' }} spec
    * @returns {string}
    */
@@ -286,12 +213,10 @@ export class D3Renderer {
   // -- setup ---------------------------------------------------------------
 
   /**
-   * Once-only scaffolding: the svg, the translated scene group, the transparent
-   * interaction plane, and the background layer (behind every mark). Idempotent
-   * — on re-render it just returns the existing nodes.
+   * Create (once) and size the svg, scene group and interaction plane.
    * @param {any} container
    * @param {{ width: number, height: number, margins: any, innerWidth: number, innerHeight: number, responsive?: string, overflow?: string, clip?: { x: number, y: number, width: number, height: number } | null }} dims
-   * @returns {{ svg: any, g: any, plane: any }}
+   * @returns {{ g: any, plane: any }}
    */
   _ensureScene(
     container,
@@ -317,33 +242,16 @@ export class D3Renderer {
 
       const g = svg.append("g").attr("class", "scene-container");
 
-      // Transparent background plane, behind everything, that captures
-      // interactions on empty space (used by plane-pick edits, e.g. create).
+      // Transparent plane that catches gestures on empty space (plane-pick edits).
       g.append("rect")
         .attr("class", "plane")
         .attr("x", 0)
         .attr("y", 0)
         .style("fill", "transparent")
         .style("pointer-events", "all");
-
-      // Background layer, right above the plane and behind every mark. Axes
-      // and gridlines (composable marks emitting `background:true` nodes,
-      // see plot/axis.js) render here so marks always sit on top of them.
-      g.append("g").attr("class", "bg-layer");
-      // Guide regions behind marks; mark-layer holds ordinary marks in array
-      // z-order; guide-front holds rules / guide labels; effects hold
-      // interaction overlays (proximity ring / select outline) on top of all.
-      g.append("g").attr("class", "guide-back-layer");
-      g.append("g").attr("class", "mark-layer");
-      g.append("g").attr("class", "guide-front-layer");
-      g.append("g").attr("class", "effects-layer");
     }
 
-    // Sizing runs every render (not just on create) so 'reflow' picks up new
-    // pixel dims and 'scale' keeps its viewBox. In 'scale' the SVG carries a
-    // viewBox and stretches to 100% of the parent (aspect ratio preserved); the
-    // other modes size the SVG in real pixels. `d3.pointer(_, g)` reads through
-    // getScreenCTM, so gestures map correctly under a viewBox too.
+    // 'scale' uses a viewBox at 100% width; other modes size in pixels.
     if (responsive === "scale") {
       svg
         .attr("viewBox", `0 0 ${width} ${height}`)
@@ -361,12 +269,8 @@ export class D3Renderer {
         .style("height", null);
     }
 
-    // Let marks draw into the margin band (radial/gauge labels) when asked; the
-    // default keeps the historical clip to the SVG viewport.
     svg.style("overflow", overflow === "visible" ? "visible" : null);
-    // `clip` confines the MARKS to its rect — the plot rect, grown by any `pad`
-    // (a zoomed-in line would otherwise run across the axes into the margins);
-    // chrome and guides stay.
+    // `clip` confines the marks (not chrome or guides) to its rect.
     if (clip) {
       let defs = svg.select("defs");
       if (defs.empty()) defs = /** @type {any} */ (svg).insert("defs", ":first-child");
@@ -377,8 +281,7 @@ export class D3Renderer {
       if (r.empty()) r = cp.append("rect");
       r.attr("x", clip.x).attr("y", clip.y).attr("width", clip.width).attr("height", clip.height);
     }
-    // Clipped: the data's marks and their effects. Unclipped: chrome-layer and
-    // effects-chrome. Applied below, once _sceneLayers has made sure they exist.
+    // Applied to the mark layer and data effects; chrome stays unclipped.
     this._clipUrl = clip ? `url(#${this._clipId})` : null;
 
     const g = svg
@@ -387,19 +290,16 @@ export class D3Renderer {
     g.select("rect.plane")
       .attr("width", innerWidth)
       .attr("height", innerHeight);
-    // Ensure role layers exist (fresh svg creates them above; a long-lived
-    // container from before mark-layer existed still needs the groups).
     const layers = this._sceneLayers(g);
     layers.marks.attr("clip-path", this._clipUrl);
     this._subLayer(layers.effects, "effects-data").attr("clip-path", this._clipUrl);
-    return { svg, g, plane: g.select("rect.plane") };
+    return { g, plane: g.select("rect.plane") };
   }
 
   /**
-   * Role-layer groups under the scene container. Order in the DOM is the
-   * paint stack: plane → bg → guide-back → marks → chrome → guide-front → effects.
-   * Only mutates the layer list when a group is first created — re-appending
-   * every frame would move focused mark nodes and break keyboard editing.
+   * Role-layer groups, in paint order:
+   * plane → bg → guide-back → marks → chrome → guide-front → effects.
+   * Reorders only when a group is created; re-appending would blur a focused mark.
    * @param {any} g scene container
    * @returns {{ bg: any, guideBack: any, marks: any, chrome: any, guideFront: any, effects: any }}
    */
@@ -422,8 +322,7 @@ export class D3Renderer {
     const chrome = ensure("chrome-layer");
     const guideFront = ensure("guide-front-layer");
     const effects = ensure("effects-layer");
-    // Pre-layer renderers joined marks as direct children of `g`. Drop those
-    // orphans once when the mark-layer is introduced so they can't ghost.
+    // Drop marks joined directly under `g` before the mark layer existed.
     if (!hadMarkLayer) {
       g.selectAll(
         ":scope > .mark, :scope > path.mark-line, :scope > .guide-region, :scope > .guide-circle, :scope > .guide-label",
@@ -459,10 +358,26 @@ export class D3Renderer {
   }
 
   /**
-   * Reorder mark-layer children so DOM z-order matches `marks` (scene order).
-   * Type joins append in path→rect→circle→line→text call order; this undoes
-   * that so later features/parts paint on top. Restores focus if sort moved
-   * the active element (keyboard editing keeps a mark focused across redraws).
+   * Sort a layer's joined elements into the order their nodes have in `nodes`.
+   * @param {any} sel the elements of every type join in the layer
+   * @param {any[]} nodes the layer's nodes, in scene order
+   */
+  _sceneOrder(sel, nodes) {
+    const order = new Map(
+      nodes.map((/** @type {any} */ n, /** @type {number} */ i) => [n, i]),
+    );
+    sel
+      .filter((/** @type {any} */ d) => order.has(d))
+      .sort(
+        (/** @type {any} */ a, /** @type {any} */ b) =>
+          /** @type {number} */ (order.get(a)) -
+          /** @type {number} */ (order.get(b)),
+      );
+  }
+
+  /**
+   * Reorder mark-layer children to scene order. Restores focus if the sort
+   * moved the active element.
    * @param {any} markLayer
    * @param {any[]} marks
    */
@@ -473,8 +388,7 @@ export class D3Renderer {
     const sel = markLayer
       .selectAll(".mark, path.mark-line")
       .filter((/** @type {any} */ d) => order.has(d));
-    // Skip the DOM move when already sorted — appendChild on a focused node
-    // blurs it and breaks arrow-key editing mid-gesture.
+    // Skip the DOM move when already sorted: re-insertion blurs a focused node.
     const nodes = /** @type {Element[]} */ (sel.nodes());
     let prev = -1;
     let needsSort = false;
@@ -508,11 +422,9 @@ export class D3Renderer {
   }
 
   /**
-   * Wire plane gestures. `click`/`dblclick` are always available (create). In
-   * plane-on-top mode we additionally drive hover + drag manually (rather than
-   * via d3.drag, whose preventDefault suppresses dblclick), distinguishing a
-   * click from a drag ourselves and keeping gesture state on the renderer so it
-   * survives re-renders mid-drag.
+   * Wire plane gestures. `click`/`dblclick` are always bound. In plane-on-top
+   * mode hover and drag are tracked by hand, not d3.drag (whose preventDefault
+   * suppresses dblclick).
    * @param {any} plane
    * @param {(event: any) => [number, number]} pointer
    * @param {(e: any) => void} onEvent
@@ -521,10 +433,7 @@ export class D3Renderer {
   _bindPlaneGestures(plane, pointer, onEvent, planeOnTop) {
     plane
       .on("click", (/** @type {any} */ event) => {
-        // A plane drag (below) ends with a native `click` on the same element.
-        // Swallow that one so a drag-to-edit doesn't also fire a click-gesture
-        // edit (e.g. create/anchor minting a point where the drag released).
-        // A click without a preceding drag passes through untouched.
+        // Swallow the native click that follows a plane drag.
         if (this._suppressClick) {
           this._suppressClick = false;
           return;
@@ -538,17 +447,14 @@ export class D3Renderer {
       });
 
     if (!planeOnTop) {
-      // The mode can flip between renders (an edit is added, a stage advances).
-      // Leaving the press handlers bound would keep a dead plane drag alive, and
-      // an in-flight gesture has no listener left to end it — abandon it here.
+      // The mode can flip between renders: abandon any in-flight plane gesture.
       this._abortPlaneGesture();
       this._unwatchModifiers();
       plane.on("pointerdown", null).on("pointermove", null).on("pointerleave", null);
       return;
     }
 
-    // Read live from `this` by the window-level handlers below, which outlive any
-    // one render (see _trackPlaneGesture).
+    // Read by the window handlers, which outlive one render.
     this._planePointer = pointer;
     this._planeNode = plane.node();
 
@@ -562,20 +468,12 @@ export class D3Renderer {
           dragging: false,
           pointerId: event.pointerId,
         };
-        // NO setPointerCapture. It was here to keep move/up flowing once the
-        // pointer left the plane, and it did not work: the engine re-renders on
-        // every commit, `render()` calls `plane.raise()` in plane-on-top mode, and
-        // moving a node in the DOM implicitly releases its capture. The very first
-        // drag commit dropped it, so releasing the button anywhere off the plane
-        // never delivered `pointerup` here — the gesture stayed `down: true`
-        // forever and the next plain pointermove over the chart resumed painting
-        // data with no button held. The window listeners below are what d3.drag
-        // does, and they survive re-render, a DOM move and the pointer leaving.
+        // No setPointerCapture: `plane.raise()` on re-render releases it. Window
+        // listeners track the gesture instead.
         this._trackPlaneGesture();
       })
       .on("pointermove", (/** @type {any} */ event) => {
-        // While a gesture is live the window handler owns movement (it sees the
-        // pointer off-plane too); this element-level one would double-report.
+        // During a gesture the window handler owns movement.
         if (this._planeGesture) return;
         const [px, py] = pointer(event);
         this._watchModifiers(px, py, onEvent);
@@ -588,12 +486,8 @@ export class D3Renderer {
   }
 
   /**
-   * Re-report the plane hover when a MODIFIER changes under a still pointer. An
-   * edit gated `when: when.shift` accepts a hover only while Shift is down, and
-   * pressing or releasing Shift moves nothing, so without this the engine never
-   * re-arbitrates and the gated edit's hover ring outlives the key. The listener
-   * lives only while the pointer is over the plane, so a chart that is gone
-   * leaves nothing behind.
+   * Re-report the plane hover when a modifier key changes under a still pointer,
+   * so `when`-gated edits re-arbitrate. Bound only while over the plane.
    * @param {number} px @param {number} py
    * @param {(e: any) => void} onEvent
    */
@@ -618,10 +512,8 @@ export class D3Renderer {
   }
 
   /**
-   * Report the pointer's POSITION over the chart, from the svg root, whatever
-   * sits under it — for the guides that follow it (a tip, a crosshair). Bound
-   * only when a guide asks (`tracksPointer`), throttled to one report per frame,
-   * and never a gesture: the engine records it as state and dispatches nothing.
+   * Report the pointer position from the svg root, once per frame, for guides
+   * that follow it. Bound only when `tracksPointer`; not a gesture.
    * @param {any} svg
    * @param {(event: any) => [number, number]} pointer
    * @param {(e: any) => void} onEvent
@@ -642,9 +534,8 @@ export class D3Renderer {
   }
 
   /**
-   * Report the wheel over the chart as a `wheel` gesture (edit.axis.zoom). Bound
-   * only when an active edit listens, and only then is the page scroll prevented.
-   * `deltaY` is normalized to pixels (a line-mode or page-mode wheel is scaled).
+   * Report the wheel as a `wheel` gesture, deltas in pixels. Bound (and page
+   * scroll prevented) only when an active edit listens.
    * @param {any} svg
    * @param {(event: any) => [number, number]} pointer
    * @param {(e: any) => void} onEvent
@@ -672,17 +563,15 @@ export class D3Renderer {
   }
 
   /**
-   * Follow a live plane drag on the WINDOW until the pointer is released or
-   * cancelled. Bound once per gesture and torn down on release, so nothing
-   * accumulates across the many re-renders a drag causes.
+   * Follow a live plane drag on the window until release or cancel. Bound once
+   * per gesture, removed on release.
    */
   _trackPlaneGesture() {
     if (this._planeTracking || typeof window === "undefined") return;
     const move = (/** @type {any} */ event) => this._planeMoved(event);
     const end = (/** @type {any} */ event) => this._planeReleased(event);
     this._planeTracking = { move, end };
-    // Capture phase: the plane's own listeners are guarded against a live
-    // gesture, but this also beats anything else on the page to the release.
+    // Capture phase, so this sees the release before anything else on the page.
     window.addEventListener("pointermove", move, true);
     window.addEventListener("pointerup", end, true);
     window.addEventListener("pointercancel", end, true);
@@ -708,9 +597,7 @@ export class D3Renderer {
     const gesture = this._planeGesture;
     if (!gesture || !this._planePointer || !this._onEvent) return;
     if (gesture.pointerId != null && event.pointerId !== gesture.pointerId) return;
-    // No button held: the release was never delivered (let go outside the browser
-    // window, or the window lost focus). Close the gesture where it stands rather
-    // than resuming a drag the reader is no longer making.
+    // No button held: the release was missed. Close the gesture here.
     if (event.pointerType === "mouse" && event.buttons === 0) {
       return this._planeReleased(event);
     }
@@ -746,8 +633,7 @@ export class D3Renderer {
       // Suppress the native click the browser fires next (see 'click').
       this._suppressClick = true;
     }
-    // Released off the chart: the plane's own pointerleave was suppressed while
-    // the button was down, so nothing else will retire the hover session.
+    // Released off the chart: pointerleave was suppressed during the drag, so end hover here.
     if (!this._pointerOverPlane(event)) {
       this._onEvent({ type: "hoverout", rawEvent: event });
     }
@@ -767,20 +653,9 @@ export class D3Renderer {
   }
 
   /**
-   * Keyboard access to a mark, attached wherever `drag` is. A pointer is not the
-   * only way to mean "this value, please": tab to a mark and arrow-key it.
-   *
-   * The renderer owns the keyboard lifecycle here for the same reason it owns
-   * editText's inline input — it keeps the engine ignorant of the mode. It emits a
-   * `nudge`, a semantic "one step this way", NOT a pixel delta: how far a step goes
-   * is a question only the scale can answer (a fixed pixel nudge is a no-op on a
-   * band axis until it happens to cross an edge), and the engine resolves it into
-   * the ordinary drag every edit already understands.
-   *
-   * Only `editable` nodes take focus: a node with no direct-pick edit has nothing
-   * a keypress could do, so putting it in the tab order would be a dead stop for
-   * anyone tabbing through. `focusOutline` (default false) is the native browser
-   * ring — off suppresses it; keyboard nudge still works either way.
+   * Keyboard access to a mark, attached wherever `drag` is. Arrow keys emit a
+   * `nudge` (one step, not a pixel delta); the engine sizes the step from the scale.
+   * Only `editable` nodes take focus. `focusOutline` shows the native focus ring.
    * @param {(e: any) => void} onEvent
    * @param {boolean} [focusOutline]
    * @returns {(sel: any) => void}
@@ -788,8 +663,7 @@ export class D3Renderer {
   _makeKeyboard(onEvent, focusOutline = false) {
     /** @type {Record<string, [-1 | 0 | 1, -1 | 0 | 1]>} */
     const ARROWS = {
-      // [dx, dy] in PIXEL space — ArrowUp is negative y, which is why it reads
-      // as "up" on screen and (on a conventional y axis) as "more".
+      // [dx, dy] in pixel space: ArrowUp is negative y.
       ArrowLeft: [-1, 0],
       ArrowRight: [1, 0],
       ArrowUp: [0, -1],
@@ -799,8 +673,7 @@ export class D3Renderer {
       sel
         .attr("tabindex", (/** @type {any} */ d) => (d.editable ? 0 : null))
         .attr("role", (/** @type {any} */ d) => (d.editable ? "button" : null))
-        // Suppress the browser's default focus ring unless the chart asked for it.
-        // Cleared (null) when on so the UA stylesheet paints its usual outline.
+        // Hide the browser focus ring unless `focusOutline`.
         .style("outline", focusOutline ? null : "none")
         .on("keydown", (/** @type {any} */ event, /** @type {any} */ d) => {
           if (!d || !d.editable) return;
@@ -821,29 +694,8 @@ export class D3Renderer {
   }
 
   /**
-   * The drag behaviour attached to every interactive mark. clickDistance lets a
-   * press that moves < N px still count as a click (d3 otherwise suppresses the
-   * click on any movement), so mark-click editors fire reliably alongside drag.
-   * @param {(e: any) => void} onEvent
-   * @param {any} [grab] the resolved `grab` effect ({ filter } | null-filter to disable)
-   * @returns {any}
-   */
-  /**
-   * Hover feedback on a MARK. The counterpart to _makeDrag, attached to exactly the
-   * same nodes, so anything grabbable answers the pointer before it is pressed.
-   *
-   * Before this, hover existed only in plane-on-top mode (a proximity/sweep driver
-   * needs pointer tracking over the whole plane), which meant a direct-pick mark —
-   * a draggable bar, a trend handle — gave no pre-press signal at all. A cursor
-   * change was the entire vocabulary.
-   *
-   * This REPORTS, it does not paint. `pointerover`/`pointerout` go to the engine,
-   * which records ui.hover and decides both halves of the effect in its state pass —
-   * the outline overlay AND the mark's own restyle, which arrives back here as
-   * `node.effectStyle` for `_applyEffectStyle` to apply. The renderer used to paint
-   * the element half itself, straight off these two events; that was a second painter
-   * with a different source of truth, so `hovered: { fill }` lit up under a direct
-   * pick and stayed dark under a proximity driver's hover of the very same row.
+   * Report hover on a mark (same nodes as _makeDrag). It does not paint: the
+   * engine resolves the `hovered` effect and returns it as `node.effectStyle`.
    * @param {(e: any) => void} onEvent
    * @param {any} hovered the resolved `hovered` effect config
    * @returns {(sel: any) => void}
@@ -864,38 +716,18 @@ export class D3Renderer {
   }
 
   /**
+   * The drag behaviour for every interactive mark. dragstart/dragend bracket the
+   * stroke so undo steps back a whole drag. Grab feedback is the engine's
+   * `grabbed` effect, not painted here. clickDistance lets a small move still click.
    * @param {(e: any) => void} onEvent
    * @returns {any}
    */
   _makeDrag(onEvent) {
-    // Grab feedback is NOT painted here. dragstart/dragend tell the engine where the
-    // gesture is, it records ui.grab, and the state pass resolves `grabbed` beside
-    // `hovered`/`selected` — arriving back as `node.effectStyle` (and, now, an
-    // outline, which this path could never draw). Painting it here read only
-    // `grabbed.filter` and silently dropped the other five properties of a
-    // vocabulary core/effects.js documents as uniform across the three states.
-    //
-    // dragstart/dragend bracket the stroke. No edit declares them as a `gesture`
-    // (they match nothing in dispatch), but they tell the engine where one
-    // continuous gesture begins and ends — which is what lets undo step back a
-    // whole drag instead of one pointermove at a time. The plane drag already
-    // emits the same three; this makes the mark drag's lifecycle match it.
     return d3
       .drag()
       .clickDistance(4)
-      // THE POINTER, not the node. d3.drag's default subject is the bound datum,
-      // and it then reports `event.x/y` as `subject.x + (pointer - grabPointer)` —
-      // so on any node that happens to carry `x`/`y` the gesture arrives shifted by
-      // that node's own coordinate. A circle has cx/cy, so `s.x - p[0] || 0` fell
-      // to 0 and the whole library looked correct; a rect carries its TOP-LEFT, so
-      // every drag on one reported a pointer half a box up and to the left, and
-      // `move` wrote that as the centre — a sticker jumped (-w/2, -h/2) the moment
-      // you pressed it. It is not only `move`: ctx.pointer is what every edit
-      // inverts, what pick.js measures distance with, and what a driver anchors to.
-      // The canvas renderer sends the raw scene coordinate (renderers/canvas/
-      // events.js), so this was also the two renderers disagreeing about what a
-      // drag means. Stating the subject makes dx/dy zero: `event.x/y` is the
-      // pointer in scene coordinates, on every node type, in both renderers.
+      // Subject is the pointer, not the datum: the default subject offsets a rect
+      // drag by its top-left. `event.x/y` is the pointer in scene coordinates.
       .subject((/** @type {any} */ event) => ({ x: event.x, y: event.y }))
       .on("start", (/** @type {any} */ event, /** @type {any} */ d) => {
         this._markDragLive = true;
@@ -908,12 +740,8 @@ export class D3Renderer {
         });
       })
       .on("drag", (/** @type {any} */ event, /** @type {any} */ d) => {
-        // A move with NO button held means the release was never delivered — the
-        // pointer was let go outside the browser window, or the window lost focus
-        // mid-drag. d3.drag keeps its window listeners until a mouseup it will
-        // never see, so the next time the pointer crosses the page the gesture
-        // resumes and the mark tracks a cursor nobody is pressing. Retire it here,
-        // once; d3's own `end` is then a no-op (see _endMarkDrag).
+        // No button held: the release was missed (let go outside the window).
+        // End the stroke here; d3's own `end` is then a no-op.
         const src = event.sourceEvent;
         if (src && src.type === "mousemove" && src.buttons === 0) {
           this._endMarkDrag(onEvent, event, d);
@@ -935,8 +763,7 @@ export class D3Renderer {
   }
 
   /**
-   * Close a mark drag exactly once, whether it ended on a real release or was
-   * abandoned (see the `buttons === 0` guard in _makeDrag).
+   * Close a mark drag exactly once (real release or missed release).
    * @param {(e: any) => void} onEvent
    * @param {any} event
    * @param {any} d
@@ -956,9 +783,7 @@ export class D3Renderer {
   // -- style + geometry primitives -----------------------------------------
 
   /**
-   * Apply the standard paint surface (STYLE_ATTRS) to a selection. Per-node
-   * value wins; otherwise the caller's `defaults[field]` if given, else the
-   * table's base default. This is the single place a style channel is applied.
+   * Apply STYLE_ATTRS to a selection: node value, else `defaults[field]`, else base.
    * @param {any} sel
    * @param {Record<string, any>} [defaults]
    * @returns {any}
@@ -970,40 +795,20 @@ export class D3Renderer {
         d[field] != null ? d[field] : def,
       );
     }
-    // A GRADIENT fill (a mark's `gradient` option): one <linearGradient> per
-    // distinct spec in the svg's <defs>, referenced by url(). An effect restyle
-    // still wins, since it is a CSS property over this attribute.
+    // Gradient fill via url(); an effect restyle still wins.
     sel.filter((/** @type {any} */ d) => !!(d && d.fillGradient))
       .attr("fill", (/** @type {any} */ d) => `url(#${this._gradientId(d.fillGradient)})`);
-    // Mark a probe ghost-preview node so a test (and a stylesheet) can find it. The
-    // single place every mark shape's paint flows through, so one line covers all.
+    // DOM tags for tests and stylesheets: ghost preview, hit-only node, handle channel.
     sel.attr("data-ghost", (/** @type {any} */ d) => (d.ghost ? "" : null));
-    // Same idea for a HIT-ONLY node: a composite's box draws an invisible circle
-    // over the whole glyph so an edit on the composite's own x/y/size has something
-    // to grab. It paints nothing, so without a tag it is indistinguishable in the
-    // DOM from a mark that happens to be transparent — and a `circle.mark` selector
-    // silently picks it up ahead of the part it sits under.
     sel.attr("data-hit", (/** @type {any} */ d) => (d.hit ? "" : null));
-    // A HANDLE's tag (`port`, a link's `source`/`target` end, an area's edge…), so a
-    // test or a stylesheet can tell a port from the link end sitting on top of it.
     sel.attr("data-channel", (/** @type {any} */ d) => (d.channel != null ? d.channel : null));
     return sel;
   }
 
   /**
-   * Apply the interaction-effect restyle the engine's state pass stamped on a node
-   * (`node.effectStyle` — see core/effects.js). Call it right after `_applyStyle` on
-   * every interactive mark join.
-   *
-   * Two things make this safe to run on every node, every render:
-   *   · CSS style PROPERTIES, never attributes. `_applyStyle` writes the mark's real
-   *     paint to attributes, so a property beats it while the effect is on and the
-   *     data's own paint reappears the instant it comes off.
-   *   · every property resolves to `null` when the node is in no state, which is what
-   *     REMOVES it. There is no teardown path that can fall out of sync with the
-   *     set-up path, because there is only one path.
-   * `cursor` is the exception: the joins already set it from the mark's own `cursor`,
-   * so the effect layers OVER that rather than nulling it back to nothing.
+   * Apply `node.effectStyle` as CSS properties, after `_applyStyle`. Properties
+   * override the paint attributes; a null value removes the property. `cursor`
+   * falls back to the mark's own.
    * @param {any} sel
    * @param {string} [cursorDefault] the join's own cursor for an editable node
    * @returns {any}
@@ -1023,9 +828,8 @@ export class D3Renderer {
   }
 
   /**
-   * SVG transform for a node that carries math-degree `angle` (0° = +x, CCW).
-   * SVG's rotate() is clockwise in y-down space, so we negate. Pivot is the
-   * mark's own centre (rect bbox, line midpoint, text anchor, …).
+   * SVG rotate for a node's math-degree `angle` (CCW), negated for SVG's
+   * clockwise rotate. Pivots on markCenter.
    * @param {any} d
    * @returns {string | null}
    */
@@ -1043,9 +847,7 @@ export class D3Renderer {
       .attr("y", (/** @type {any} */ d) => d.y)
       .attr("width", (/** @type {any} */ d) => d.width)
       .attr("height", (/** @type {any} */ d) => Math.max(0, d.height)) // no negative height
-      // Corner radius. GEOMETRY, not paint — it belongs here rather than in the
-      // style sweep, which is colours and stroke only. `ry` follows `rx` unless
-      // stated, so one number rounds a corner the way it reads.
+      // Corner radius; `ry` defaults to `rx`.
       .attr("rx", (/** @type {any} */ d) => (d.rx != null ? d.rx : null))
       .attr("ry", (/** @type {any} */ d) =>
         d.ry != null ? d.ry : d.rx != null ? d.rx : null,
@@ -1088,7 +890,7 @@ export class D3Renderer {
    * @param {string} [anchorDefault]
    */
   _geomText(sel, anchorDefault = "start") {
-    // A stroke on text is a HALO behind the glyphs, not an outline over them.
+    // A stroke on text is a halo behind the glyphs.
     sel.style("paint-order", "stroke");
     sel
       .attr("x", (/** @type {any} */ d) => d.x)
@@ -1097,8 +899,7 @@ export class D3Renderer {
         "text-anchor",
         (/** @type {any} */ d) => d.textAnchor || anchorDefault,
       )
-      // Vertical anchor (text mark's `lineAnchor` → dominant-baseline). Axis
-      // tick labels leave this unset and keep the SVG default.
+      // Vertical anchor (`lineAnchor` → dominant-baseline).
       .attr(
         "dominant-baseline",
         (/** @type {any} */ d) => d.dominantBaseline || null,
@@ -1107,16 +908,13 @@ export class D3Renderer {
         d.fontSize != null ? d.fontSize : this._themeFontSize(),
       )
       .attr("font-weight", (/** @type {any} */ d) => (d.fontWeight != null ? d.fontWeight : null))
-      // A per-node family / style (a serif headline, an italic caption); unset
-      // inherits the root svg's theme family.
+      // Unset inherits the root svg's theme family.
       .attr("font-family", (/** @type {any} */ d) => (d.fontFamily != null ? d.fontFamily : null))
       .attr("font-style", (/** @type {any} */ d) => (d.fontStyle != null ? d.fontStyle : null))
       // Math degrees on the node; _angleTransform converts to SVG rotate.
       .attr("transform", (/** @type {any} */ d) => this._angleTransform(d));
 
-    // Content. A WRAPPED label carries its painted lines in `lines` while `text`
-    // stays the whole string — so the single-line path below is the common case
-    // and the inline editor is still seeded with the paragraph, not one line.
+    // A wrapped label paints `lines` as tspans; `text` stays the whole string.
     sel.each(/** @this {SVGTextElement} */ function (/** @type {any} */ d) {
       const node = d3.select(this);
       const lines = Array.isArray(d.lines) ? d.lines : null;
@@ -1127,10 +925,8 @@ export class D3Renderer {
       }
       const size = d.fontSize != null ? d.fontSize : 12;
       const step = d.lineHeight != null ? d.lineHeight : Math.round(size * 1.35);
-      // Where the block sits about the node's own y follows `lineAnchor`: `top`
-      // hangs it below the anchor, `bottom` stacks it above, else it is centred
-      // (the anchor means the same thing whether one line or five are painted).
-      // Matches the box plot/text.js's nodeBox reports.
+      // Block placement follows `lineAnchor` (top / bottom / centred); matches
+      // nodeBox in plot/text.js.
       const first = d.lineAnchor === "top" ? 0
         : d.lineAnchor === "bottom" ? -(lines.length - 1) * step
         : (-(lines.length - 1) * step) / 2;
@@ -1150,30 +946,20 @@ export class D3Renderer {
   // -- semantic draws ------------------------------------------------------
 
   /**
-   * Raster tiles, axis spines/ticks, gridlines, axis labels, legend swatches/
-   * ramps, and vector basemap paths — into the dedicated layer behind the marks.
-   * Non-interactive.
-   *
-   * Images are joined FIRST (and keyed by {z}/{x}/{y}), so they sit at the back
-   * of the layer: a tile basemap is the floor of the chart. The key is what makes
-   * panning/zooming cheap — a tile that stays on screen keeps its <image> and
-   * never re-fetches. Legend rects/circles (colour chips, size dots, ramp slices)
-   * and axis lines/labels follow; background paths (geoBasemap, radial chrome)
-   * are last so they sit above grids the way they did when all paths shared the
-   * mark path pass.
-   *
+   * Non-interactive background nodes (tiles, axes, grids, legends, basemaps)
+   * behind the marks. Image tiles are keyed and lowered to the back; the rest
+   * are sorted to scene order.
    * @param {any} bgLayer
-   * @param {any[]} bgImages
-   * @param {any[]} bgPaths
-   * @param {any[]} bgLines
-   * @param {any[]} bgTexts
-   * @param {any[]} [bgRects]
-   * @param {any[]} [bgCircles]
+   * @param {any[]} nodes the background nodes, in scene order
    */
-  _drawBackground(bgLayer, bgImages, bgPaths, bgLines, bgTexts, bgRects = [], bgCircles = [], /** @type {any[]} */ bgAll = []) {
+  _drawBackground(bgLayer, nodes) {
+    /** @param {string} t */
+    const ofType = (t) =>
+      nodes.filter((/** @type {any} */ n) => n.type === t);
+
     const imgSel = bgLayer
       .selectAll("image")
-      .data(bgImages, (/** @type {any} */ d) => d.key)
+      .data(ofType("image"), (/** @type {any} */ d) => d.key)
       .join("image")
       .style("pointer-events", "none")
       .attr("x", (/** @type {any} */ d) => d.x)
@@ -1181,8 +967,6 @@ export class D3Renderer {
       .attr("width", (/** @type {any} */ d) => d.width)
       .attr("height", (/** @type {any} */ d) => d.height)
       .attr("transform", (/** @type {any} */ d) => this._angleTransform(d))
-      // Tiles are photographic: let the browser smooth them when a fitted
-      // (fractional) zoom scales them off their native 256px.
       .attr("preserveAspectRatio", "none")
       .attr("href", (/** @type {any} */ d) => d.href)
       .attr("opacity", (/** @type {any} */ d) =>
@@ -1190,21 +974,20 @@ export class D3Renderer {
       );
     imgSel.lower();
 
-    // Legend colour chips / ramp slices / opacity swatches. Painted before axis
-    // lines so a side legend's labels (bg texts) sit on top of its chips.
+    // Legend chips / ramp slices.
     const rectSel = bgLayer
       .selectAll("rect.bg-rect")
-      .data(bgRects)
+      .data(ofType("rect"))
       .join("rect")
       .attr("class", "bg-rect")
       .style("pointer-events", "none");
     this._geomRect(rectSel);
     this._applyStyle(rectSel, { fill: "none", stroke: "none", strokeWidth: 1, opacity: 1 });
 
-    // Legend size dots (a size channel encodes to a radius, drawn as a circle).
+    // Legend size dots.
     const circleSel = bgLayer
       .selectAll("circle.bg-circle")
-      .data(bgCircles)
+      .data(ofType("circle"))
       .join("circle")
       .attr("class", "bg-circle")
       .style("pointer-events", "none");
@@ -1213,7 +996,7 @@ export class D3Renderer {
 
     const lineSel = bgLayer
       .selectAll("line")
-      .data(bgLines)
+      .data(ofType("line"))
       .join("line")
       .style("pointer-events", "none");
     this._geomLine(lineSel);
@@ -1225,7 +1008,7 @@ export class D3Renderer {
 
     const textSel = bgLayer
       .selectAll("text")
-      .data(bgTexts)
+      .data(ofType("text"))
       .join("text")
       .style("pointer-events", "none");
     this._geomText(textSel, "middle");
@@ -1233,7 +1016,7 @@ export class D3Renderer {
 
     const pathSel = bgLayer
       .selectAll("path.bg-path")
-      .data(bgPaths)
+      .data(ofType("path"))
       .join("path")
       .attr("class", "bg-path")
       .style("pointer-events", "none")
@@ -1248,21 +1031,8 @@ export class D3Renderer {
       opacity: 1,
     });
 
-    // Type joins append in call order, which put every line under every path
-    // and every text over every rect whatever the scene said. Restore scene
-    // order among the non-image background nodes (images stay the floor), the
-    // same way _drawGuideFront does for its layer.
-    const order = new Map(
-      bgAll.map((/** @type {any} */ n, /** @type {number} */ i) => [n, i]),
-    );
-    bgLayer
-      .selectAll("rect.bg-rect, circle.bg-circle, line, text, path.bg-path")
-      .filter((/** @type {any} */ d) => order.has(d))
-      .sort(
-        (/** @type {any} */ a, /** @type {any} */ b) =>
-          /** @type {number} */ (order.get(a)) -
-          /** @type {number} */ (order.get(b)),
-      );
+    // Joins append by type; restore scene order (images stay at the back).
+    this._sceneOrder(bgLayer.selectAll("rect.bg-rect, circle.bg-circle, line, text, path.bg-path"), nodes);
   }
 
   /**
@@ -1287,10 +1057,7 @@ export class D3Renderer {
   }
 
   /**
-   * Non-interactive guide annotations in front of marks: lines (rules /
-   * constraint ticks), paths, and text labels. Drawn in `guideFront` scene
-   * order so a rule's line stays with its label. Interaction overlays
-   * (proximity ring / select outline) live in the effects layer instead.
+   * Non-interactive guide nodes in front of marks, in scene order.
    * @param {any} layer
    * @param {any[]} nodes
    */
@@ -1299,7 +1066,7 @@ export class D3Renderer {
     const ofType = (t) =>
       nodes.filter((/** @type {any} */ n) => n.type === t);
 
-    // Boxes that sit ABOVE the marks (a tip's background, a readout's backing).
+    // Boxes above the marks (a tip's background).
     const rectSel = layer
       .selectAll("rect.guide-rect")
       .data(ofType("rect"))
@@ -1362,36 +1129,16 @@ export class D3Renderer {
     this._geomText(textSel, "start");
     this._applyStyle(textSel, { fill: "black", opacity: 1 });
 
-    // Type joins append in call order; restore scene order among guide-front
-    // siblings so a rule's stroke isn't covered by an earlier circle.
-    const order = new Map(
-      nodes.map((/** @type {any} */ n, /** @type {number} */ i) => [n, i]),
+    // Joins append by type; restore scene order.
+    this._sceneOrder(
+      layer.selectAll("rect.guide-rect, line.guide-line, circle.guide-circle, path.guide-path, text.guide-label"),
+      nodes,
     );
-    layer
-      .selectAll(
-        "rect.guide-rect, line.guide-line, circle.guide-circle, path.guide-path, text.guide-label",
-      )
-      .filter((/** @type {any} */ d) => order.has(d))
-      .sort(
-        (/** @type {any} */ a, /** @type {any} */ b) =>
-          /** @type {number} */ (order.get(a)) -
-          /** @type {number} */ (order.get(b)),
-      );
   }
 
   /**
-   * Interaction-effect overlays (proximity snap ring, state outlines). Topmost
-   * paint layer — above marks and guides; always pointer-transparent.
-   *
-   * Every shape `outlineNodes` can emit is joined here. Only circle and rect were
-   * before, so an outline built for a `path` (an arc slice, a geo polygon, a needle)
-   * or an `ellipse` was constructed by the effects layer and then silently dropped on
-   * the floor — the mark simply didn't respond to hover or selection, which reads as
-   * a broken interaction rather than an unimplemented one.
-   *
-   * The geometry helpers apply `_angleTransform`, so a rotated mark's outline rotates
-   * with it as long as the overlay carries the source's `angle` (it does — see
-   * outlineNodes). Paths need no transform: a path node bakes its rotation into `d`.
+   * Effect overlays (proximity ring, state outlines), topmost and pointer-transparent.
+   * Joins every shape `outlineNodes` can emit; rotation follows the overlay's `angle`.
    * @param {any} layer
    * @param {any[]} nodes
    */
@@ -1453,39 +1200,23 @@ export class D3Renderer {
       );
     this._applyStyle(pathSel, effectPaint);
 
-    // Type joins append in call order; restore scene order (ring under outline).
-    const order = new Map(
-      nodes.map((/** @type {any} */ n, /** @type {number} */ i) => [n, i]),
+    // Joins append by type; restore scene order.
+    this._sceneOrder(
+      layer.selectAll("circle.effect, rect.effect, ellipse.effect, line.effect, path.effect"),
+      nodes,
     );
-    layer
-      .selectAll(
-        "circle.effect, rect.effect, ellipse.effect, line.effect, path.effect",
-      )
-      .filter((/** @type {any} */ d) => order.has(d))
-      .sort(
-        (/** @type {any} */ a, /** @type {any} */ b) =>
-          /** @type {number} */ (order.get(a)) -
-          /** @type {number} */ (order.get(b)),
-      );
   }
 
   /**
-   * The dblclick handler for a mark node: open the inline content editor when the
-   * node opted in, else the caller's ordinary handler.
-   *
-   * Routed by the FLAG, not by the node's shape. `editText` used to be a text-mark
-   * affair, so only `<text>` could be typed into — which is wrong for anything whose
-   * typable surface is a BOX (a sticker's body, a labelled rect), and forced such a
-   * glyph to put the edit on its glyphs, where the pick layer's `fontSize`-radius
-   * hit disc sits dead centre and swallows the drag that should move it.
+   * The dblclick handler for a mark: the inline editor when the node has
+   * `editText` (any shape), else the caller's handler.
    * @param {((e: any, d: any) => void) | undefined} markDblClick
    * @returns {(e: any, d: any) => void}
    */
   _dblClick(markDblClick) {
     return (/** @type {any} */ event, /** @type {any} */ d) => {
       if (d && d.editText) {
-        // Stop the browser's synthetic click/drag noise and keep dblclick from
-        // racing a dragstart when drag + editText share one mark.
+        // Keep dblclick from racing a dragstart on the same mark.
         event.preventDefault();
         event.stopPropagation();
         this._editText(event, d);
@@ -1496,20 +1227,15 @@ export class D3Renderer {
   }
 
   /**
-   * Interactive marks: rects (bars) and circles (dots). Both get the click +
-   * drag wiring; only nodes flagged `editable` (their feature has a direct-pick
-   * edit) show an interactive cursor — d3.drag/click is inert on the rest.
-   * DOM z-order among mark types is fixed later by `_orderMarkLayer`.
+   * Interactive rects and circles. Only `editable` nodes show a drag cursor;
+   * z-order is fixed later by `_orderMarkLayer`.
    * @param {any} layer
    * @param {any[]} markRects
    * @param {any[]} markCircles
    * @param {{ drag: any, markClick: (e: any, d: any) => void, markDblClick?: (e: any, d: any) => void, keys: (sel: any) => void, hover: (sel: any) => void }} io
    */
   _drawMarks(layer, markRects, markCircles, { drag, markClick, markDblClick, keys, hover }) {
-    // A mark may opt OUT of the pointer (pointerEvents: 'none') — a ghost/affordance
-    // node, or a glyph part that must not swallow the plane's hover/click. Without
-    // this a decorative circle would eat the gesture the plane driver needs, the
-    // same way line marks and paths already honour the flag.
+    // Honour `pointerEvents: 'none'` so inert nodes don't swallow plane gestures.
     const rectSel = layer
       .selectAll("rect.mark")
       .data(markRects)
@@ -1518,9 +1244,6 @@ export class D3Renderer {
       .style(
         "pointer-events",
         (/** @type {any} */ d) => d.pointerEvents || "visible",
-      )
-      .style("cursor", (/** @type {any} */ d) =>
-        d.editable ? d.cursor || "ns-resize" : "default",
       )
       .on("click", markClick)
       .on("dblclick", this._dblClick(markDblClick))
@@ -1531,13 +1254,8 @@ export class D3Renderer {
     this._applyStyle(rectSel, { fill: "black" });
     this._applyEffectStyle(rectSel, "ns-resize");
 
-    // Grab overlay for collapsed bars. A rect whose value sits at the baseline is
-    // drawn at zero height (or width) and so takes NO pointer events — the browser
-    // can't hit a zero-area <rect>, so a bar you just emptied becomes ungrabbable.
-    // Lay a transparent, min-sized hit rect (the same floored box the canvas
-    // hit-tester uses via rectHitBox) over each editable, degenerate bar, wired to
-    // the SAME drag/click. Focus/keys stay on the visible rect (still focusable at
-    // zero area), so this adds no duplicate tab stop — it only restores the pointer.
+    // A zero-area rect can't be hit, so an editable collapsed bar gets a transparent
+    // min-sized hit rect (rectHitBox) with the same drag/click. Keys stay on the bar.
     const hitRects = markRects.filter(
       (/** @type {any} */ d) =>
         d.editable &&
@@ -1556,21 +1274,14 @@ export class D3Renderer {
       .attr("y", (/** @type {any} */ d) => rectHitBox(d).y)
       .attr("width", (/** @type {any} */ d) => rectHitBox(d).w)
       .attr("height", (/** @type {any} */ d) => rectHitBox(d).h)
-      // Follow the bar's own rotation. rectHitBox is the UNROTATED box (it is the
-      // same one the canvas hit-tester unrotates the pointer into), so without this
-      // a tilted collapsed bar hands its grab area to the wrong patch of the plane.
+      // rectHitBox is unrotated; follow the bar's rotation.
       .attr("transform", (/** @type {any} */ d) => this._angleTransform(d))
       .on("click", markClick)
       .on("dblclick", this._dblClick(markDblClick))
       .call(drag)
       .call(hover);
-    // BOTTOM of the mark layer, not the top. A hit rect is a FALLBACK grab target —
-    // it exists only where the drawn shape has no area to hit — so it must never
-    // outrank a node that really is drawn there. Raised, it did: collapse one segment
-    // of a stacked bar and its floored box covered the boundary handles sitting at
-    // that same height, which silently swallowed every gesture on them. Nothing else
-    // overlaps it (the degenerate rect it stands in for has no area, and sibling bars
-    // are in adjacent bands), so lowering costs it nothing.
+    // Keep the hit rect at the bottom: it is a fallback and must not cover real
+    // nodes (e.g. stack boundary handles). Never raise() it.
     hitSel.lower();
 
     const circleSel = layer
@@ -1581,13 +1292,6 @@ export class D3Renderer {
       .style(
         "pointer-events",
         (/** @type {any} */ d) => d.pointerEvents || "visible",
-      )
-      // `d.cursor` is honoured here like it is on every other node type. Circles
-      // alone hard-coded "move", so a mark that set a cursor to say what its handle
-      // does — face's 'grab', an axis end's 'ew-resize' — was ignored on exactly the
-      // shape most handles are drawn as.
-      .style("cursor", (/** @type {any} */ d) =>
-        d.editable ? d.cursor || "move" : "default",
       )
       .on("click", markClick)
       .on("dblclick", this._dblClick(markDblClick))
@@ -1600,10 +1304,7 @@ export class D3Renderer {
   }
 
   /**
-   * Interactive ellipses. Same wiring as the circle branch of `_drawMarks` — an
-   * ellipse is a circle whose two radii are independent channels, so each is its
-   * own draggable magnitude (an eye that widens on x and squints on y). Kept a
-   * separate join because SVG binds shape to element type.
+   * Interactive ellipses. Same wiring as the circles in `_drawMarks`.
    * @param {any} layer
    * @param {any[]} ellipses
    * @param {{ drag: any, markClick: (e: any, d: any) => void, markDblClick?: (e: any, d: any) => void, keys: (sel: any) => void, hover: (sel: any) => void }} io
@@ -1618,9 +1319,6 @@ export class D3Renderer {
         "pointer-events",
         (/** @type {any} */ d) => d.pointerEvents || "auto",
       )
-      .style("cursor", (/** @type {any} */ d) =>
-        d.editable ? d.cursor || "move" : "default",
-      )
       .on("click", markClick)
       .on("dblclick", this._dblClick(markDblClick))
       .call(drag)
@@ -1632,12 +1330,7 @@ export class D3Renderer {
   }
 
   /**
-   * Foreground lines. Two roles share one draw:
-   *   - reference rules / guide boundaries: non-interactive (often
-   *     pointerEvents:'none') — drawn as before.
-   *   - interactive line marks (ticks): flagged `editable`, so they get the same
-   *     click + drag wiring as rect/circle marks. Only editable nodes show an
-   *     interactive cursor; d3.drag is inert on the rest.
+   * Line marks, interactive or not. Only `editable` nodes show a drag cursor.
    * @param {any} layer
    * @param {any[]} lines
    * @param {{ drag: any, markClick: (e: any, d: any) => void, markDblClick?: (e: any, d: any) => void, keys: (sel: any) => void, hover: (sel: any) => void }} io
@@ -1652,9 +1345,6 @@ export class D3Renderer {
         "pointer-events",
         (/** @type {any} */ d) => d.pointerEvents || "auto",
       )
-      .style("cursor", (/** @type {any} */ d) =>
-        d.editable ? d.cursor || "move" : "default",
-      )
       .on("click", markClick)
       .on("dblclick", this._dblClick(markDblClick))
       .call(drag)
@@ -1666,13 +1356,10 @@ export class D3Renderer {
   }
 
   /**
-   * Path marks: connecting lines (points + curve) OR authored SVG `d` strings
-   * (arcs, needles, pie slices). Non-interactive by default — line connectors
-   * are edited through handle dots — but an `editable` path (needle, pie slice)
-   * gets the same click + drag wiring as other marks.
+   * Path marks: points + curve, or an SVG `d` string. Inert unless `editable`.
    * @param {any} layer
    * @param {any[]} paths
-   * @param {{ drag: any, markClick: (e: any, d: any) => void, markDblClick?: (e: any, d: any) => void, keys: (sel: any) => void, hover: (sel: any) => void }} [io]
+   * @param {{ drag: any, markClick: (e: any, d: any) => void, markDblClick?: (e: any, d: any) => void, keys: (sel: any) => void, hover: (sel: any) => void }} io
    */
   _drawPaths(layer, paths, io) {
     const sel = layer
@@ -1685,9 +1372,6 @@ export class D3Renderer {
         (/** @type {any} */ d) =>
           d.pointerEvents || (d.editable ? "auto" : "none"),
       )
-      .style("cursor", (/** @type {any} */ d) =>
-        d.editable ? d.cursor || "pointer" : "default",
-      )
       .attr("d", (/** @type {any} */ d) => {
         if (d.d) return d.d;
         return lineGenerator(d.curve)(d.points || []);
@@ -1699,20 +1383,16 @@ export class D3Renderer {
       opacity: 1,
     });
     this._applyEffectStyle(sel, "pointer");
-    if (io) {
-      sel
-        .on("click", io.markClick)
-        .on("dblclick", this._dblClick(io.markDblClick))
-        .call(io.drag)
-        .call(io.hover)
-        .call(io.keys);
-    }
+    sel
+      .on("click", io.markClick)
+      .on("dblclick", this._dblClick(io.markDblClick))
+      .call(io.drag)
+      .call(io.hover)
+      .call(io.keys);
   }
 
   /**
-   * Text marks (editable or inert). Mirrors _drawMarks: click + drag wiring,
-   * cursor only when editable, honoring a mark's pointerEvents opt-out.
-   * Double-click opens an inline editor for content editing (see _editText).
+   * Text marks. Same wiring as _drawMarks; dblclick may open _editText.
    * @param {any} layer
    * @param {any[]} texts
    * @param {{ drag: any, markClick: (e: any, d: any) => void, markDblClick?: (e: any, d: any) => void, keys: (sel: any) => void, hover: (sel: any) => void }} io
@@ -1727,12 +1407,7 @@ export class D3Renderer {
         "pointer-events",
         (/** @type {any} */ d) => d.pointerEvents || "auto",
       )
-      .style("cursor", (/** @type {any} */ d) =>
-        d.editable ? d.cursor || "move" : "default",
-      )
       .on("click", markClick)
-      // Opens the inline editor on a node that opted in; a text mark carrying an
-      // ordinary dblclick edit now reaches it, which it could not before.
       .on("dblclick", this._dblClick(markDblClick))
       .call(drag)
       .call(hover)
@@ -1743,11 +1418,8 @@ export class D3Renderer {
   }
 
   /**
-   * Inline content editor for a text mark. On double-click of a node that opted in
-   * (`editText: true`, set by the mark when an editText edit is wired) mount a
-   * `<foreignObject>` input over the label; Enter/blur emits a `commit` gesture
-   * carrying the typed string (the editText edit stores it), Esc cancels. The
-   * renderer owns the keyboard lifecycle so the engine stays pointer/mode-agnostic.
+   * Inline content editor for a node with `editText`: a `<foreignObject>` input.
+   * Enter/blur emits a `commit` gesture with the typed string; Esc cancels.
    * @param {any} event
    * @param {any} d the text node
    */
@@ -1761,10 +1433,7 @@ export class D3Renderer {
     g.selectAll("foreignObject.text-editor").remove();
 
     const size = d.fontSize != null ? d.fontSize : 12;
-    // Where the editor sits, in three steps down. A node may state it outright
-    // (`editBox`); a RECT already is a box, so it needs no second statement of its
-    // own geometry; anything else falls back to the literal that has always been
-    // here, which is sized for a label hanging off a dot rather than for a shape.
+    // Editor box: `editBox`, else a rect's own box, else a default label-sized box.
     const box =
       d.editBox ||
       (d.type === "rect" && d.width != null
@@ -1797,11 +1466,7 @@ export class D3Renderer {
         .style("resize", multiline ? "none" : null)
         .node()
     );
-    // Open with what is ALREADY there, so typing amends the note rather than
-    // replacing it. A node that paints text carries the string; one that only OWNS
-    // the edit (a sticker's box, whose label is a sibling mark) carries `editValue`,
-    // the engine's read of the column the edit writes. Painted text wins where both
-    // exist, so a formatted label still opens showing exactly what it displays.
+    // Seed with the painted text, else `editValue` (the column the edit writes).
     input.value =
       d.text != null
         ? String(d.text)
@@ -1809,10 +1474,7 @@ export class D3Renderer {
           ? String(d.editValue)
           : "";
     input.focus();
-    // Where the caret lands. A single-line editor holds a NAME you replace (an axis
-    // category, a short label), so it opens selected — double-click-to-rename. A
-    // multi-line one holds a paragraph you AMEND, where select-all means the first
-    // keystroke wipes the note, so the caret goes to the end instead.
+    // Single-line opens selected (rename); multi-line puts the caret at the end (amend).
     if (multiline) input.setSelectionRange(input.value.length, input.value.length);
     else input.select();
 
@@ -1838,9 +1500,7 @@ export class D3Renderer {
     };
     input.addEventListener("keydown", (/** @type {any} */ e) => {
       if (e.key === "Enter") {
-        // In a multi-line box Enter is a newline — the only way to type a second
-        // line — so committing takes a modifier, blur, or Escape's sibling. On a
-        // single-line editor Enter commits, exactly as it always has.
+        // Multi-line: Enter is a newline; Cmd/Ctrl+Enter commits.
         if (!multiline || e.metaKey || e.ctrlKey) {
           e.preventDefault();
           commit();

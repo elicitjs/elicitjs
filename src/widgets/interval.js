@@ -1,8 +1,7 @@
 // @ts-check
-// interval.js — uncertainty interval (mean + lo/hi caps) as a composite glyph.
-// Plain-chart twin: composite of an inert whisker + point + ticks, each handle a
-// plain move(), coupled by DECLARED constraints — follow (the interval travels
-// with its mean), ordering (lo ≤ mean ≤ hi), clamp, and symmetric on request.
+// interval.js: an uncertainty interval (mean + lo/hi caps) as a composite glyph.
+// Plain-chart twin: an inert whisker + point + ticks, each handle a move(),
+// coupled by follow, ordering, clamp and (optionally) symmetric constraints.
 
 import { composite, point, ruleY, tick } from '../plot/index.js';
 import { move } from '../edit/index.js';
@@ -11,11 +10,8 @@ import { prompt } from './theme.js';
 import { widgetTheme } from './shared.js';
 
 /**
- * The glyph's coupling is DECLARED, as dataset invariants: `follow` carries the
- * interval with its mean (the range moves as a unit), `ordering` keeps lo ≤ mean
- * ≤ hi whichever handle is grabbed, and `symmetric: true` mirrors one end's drag
- * about the mean. The handles are ordinary `move()`s — nothing here is a custom
- * edit — so the same three lines couple any mean-with-interval glyph.
+ * `follow` moves the interval with its mean, `ordering` keeps lo ≤ mean ≤ hi, and
+ * `symmetric: true` mirrors one end's drag about the mean.
  * @param {import('../types').WidgetOptions & { category?: string, mean?: number, lo?: number, hi?: number,
  *   domain?: [number, number], symmetric?: boolean }} [opts]
  * @returns {import('../types').ElicitSpec}
@@ -61,8 +57,7 @@ export function interval(opts = {}) {
             composite({
                 id: 'ci',
                 parts: [
-                    // Inert whisker — no edit, so it stays pointer-transparent and
-                    // cannot swallow a cap or mean drag.
+                    // Inert whisker: no edit, so it never swallows a handle's drag.
                     ruleY({
                         stroke: t.widget.accent,
                         strokeWidth: 2,

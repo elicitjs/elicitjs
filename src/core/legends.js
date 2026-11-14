@@ -1,54 +1,34 @@
 // @ts-check
-// legends.js — the layout-negotiation step for legends, kept out of the engine
-// the same way core/axes.js keeps the axis desugar out of elicit.js.
-//
-// Legends are the first chrome in this codebase that RESERVES space: a legend on
-// a side shrinks the plot so it never overlaps the marks. Nothing else does this —
-// margins are otherwise a fixed author input, and axes merely draw into the slack
-// the author already left. So this module measures every legend, sums the space
-// each side needs, and hands back per-side band sizes the engine adds to the
-// author margins (effective margins). It also stamps each legend's `_place` with
-// where its band landed, so the mark's build() can position itself there without a
-// widened signature (the same mutable-object transport `_place` documents).
+// legends.js — builds legends from the encodings marks declare, and reserves their
+// space: each side's band is added to the author margins, and each legend's
+// `_place` is stamped with where its band landed.
 
 import { legend } from '../plot/legend.js';
 import { elementEdits } from '../plot/mark.js';
 import { warn } from './dev.js';
 import { frameSpecOf } from './encoding.js';
-import { scaleKey } from './scales.js';
+import { scaleFor } from './scales.js';
+import { flattenFeatures } from './axes.js';
 
 /** @typedef {{ top: number, right: number, bottom: number, left: number }} Sides */
 
 /**
  * The channels a legend can describe: the non-positional ones a reader needs a key
- * for. x/y are excluded because an AXIS is the key for those.
+ * for. x/y are excluded because an axis is the key for those.
  * @type {string[]}
  */
-// `theta` is legendable (a fan of spokes at their bearings); `angle` is NOT — a
-// mark's rotation in place is not an encoding a reader looks up.
+// `theta` is legendable (a fan of spokes); `angle`, a rotation in place, is not.
 export const LEGENDABLE = ['fill', 'stroke', 'size', 'symbol', 'opacity', 'theta', 'strokeWidth', 'strokeDash'];
 
 /**
- * Every ENCODING a legend could be a key for: one entry per (channel, field) pair
- * a data mark declares, in first-seen order, carrying the table it came from and
- * whatever the channel said about a legend.
- *
- * This is the list the whole module works from, because a legend is a key for one
- * ENCODING and not for a channel. Keyed by channel alone, two marks colouring by
- * different fields shared one legend that listed the union of both vocabularies
- * and could not say which it belonged to.
- *
- * Channels that resolve NO global scale are skipped: a constant (nothing to
- * explain), a composite's local `frame` geometry (its scale is per-datum, and
- * `autoLegends` used to mint a phantom legend for one), `scale: null`, and a raw
- * channel the mark reads itself.
+ * Every encoding a legend could be a key for: one entry per (channel, field) a
+ * data mark declares, in first-seen order, with its table and the channel's legend
+ * request. Skips channels with no global scale (constant, `frame`, `scale: null`, raw).
  * @param {any[]} features the user's marks and elements (unflattened)
  * @returns {{ channel: string, field: string, table: any, tableRole: any, spec: any, feature: any }[]}
  */
 function encodingsOf(features) {
-    const flat = /** @type {any[]} */ (features || []).flat(Infinity).filter(
-        (f) => f && typeof f === 'object'
-    );
+    const flat = flattenFeatures(features);
     /** @type {any[]} */
     const out = [];
     for (const f of flat) {
@@ -60,15 +40,13 @@ function encodingsOf(features) {
             if (chSpec.scale === null || raw.has(channel) || frameSpecOf(chSpec)) continue;
             const prior = out.find((e) => e.channel === channel && e.field === chSpec.field);
             if (prior) {
-                // A mark that names no table draws the primary one; prefer it over a
-                // mark that named another, so an editable legend writes the rows the
-                // chart elicits by default.
+                // Prefer a mark that names no table (the primary one), so an
+                // editable legend writes the chart's default rows.
                 if (prior.table != null && f.table == null) {
                     prior.table = f.table; prior.tableRole = f.tableRole; prior.feature = f;
                 }
-                // Two marks stating ONE encoding share its legend; a later mark's
-                // `legend` options merge into it (its edit, anchor, title), rather
-                // than being dropped because the first mark got there first.
+                // Two marks stating one encoding share its legend; a later mark's
+                // `legend` options merge in.
                 if (chSpec.legend && typeof chSpec.legend === 'object') {
                     const base = prior.spec.legend && typeof prior.spec.legend === 'object' ? prior.spec.legend : {};
                     prior.spec = { ...prior.spec, legend: { ...base, ...chSpec.legend } };
@@ -88,44 +66,25 @@ function encodingsOf(features) {
 }
 
 /**
- * Build the chart's legends from the ENCODINGS its marks declare.
- *
- * Replaces the two passes that used to do this by channel — `autoLegends` (the
- * `legends:` key) and `relocateLegendEdits` (an edit declared on a mark's channel,
- * moved to that channel's legend). Both are now the same act: a legend is minted
- * for an encoding, and it is asked for in one of three places, most specific first.
- *
- *   1. an ELEMENT the author composed — `legendColor({ field: 'group' })`
- *   2. the CHANNEL — `fill: { field: 'group', legend: { anchor: 'bottom' } }`
- *   3. the chart — `legends: true`
- *
- * An element wins for its encoding and suppresses the minted one, exactly as an
- * explicit `axisX()` wins over the injected axis; the channel's options and any
- * legend-scoped edit merge INTO it, so the mark says what is edited and the element
- * says how it looks. `legend: false | null` on the channel suppresses, whatever the
- * chart-level key says.
- *
- * A legend-scoped edit is STRIPPED from the channel on the way out. Left there it
- * would make the mark's own nodes pointer-active and fire on a click that landed on
- * a bar, where `node.category` is undefined and the apply bails — a mark that eats
- * gestures and does nothing.
+ * Build the chart's legends from the encodings its marks declare. A legend is
+ * requested by, most specific first: a composed element, the channel
+ * (`fill: { field, legend: {…} }`), or `legends: true`. An element wins for its
+ * encoding and takes the channel's options and edits. `legend: false | null` on
+ * the channel suppresses. A legend-scoped edit is stripped from the channel so the
+ * mark's own nodes stay inert. See .claude/rules/elements-and-legends.md.
  *
  * @param {any[]} features the user's marks and elements (unflattened)
  * @param {any} legendsOpt the `legends` spec key
  * @returns {any[]} the legend features to append
  */
 export function legendsFromChannels(features, legendsOpt) {
-    const flat = /** @type {any[]} */ (features || []).flat(Infinity).filter(
-        (f) => f && typeof f === 'object'
-    );
+    const flat = flattenFeatures(features);
     const encodings = encodingsOf(features);
     /** @param {string} ch */
     const onChannel = (ch) => encodings.filter((e) => e.channel === ch);
 
-    // Bind every composed element to an ENCODING. One that names a field says which;
-    // one that doesn't can only be unambiguous when the channel carries a single
-    // encoding — and now that each is its own scale, the engine KNOWS when it isn't,
-    // so this is a precise message rather than the old silent `scale.fields[0]` pick.
+    // Bind each composed element with no `field` to its channel's sole encoding;
+    // with several, warn and take the first.
     const elements = flat.filter((f) => f.isLegend);
     for (const el of elements) {
         if (el.field != null) continue;
@@ -155,10 +114,8 @@ export function legendsFromChannels(features, legendsOpt) {
         const asked = spec.legend;
         if (asked === false || asked === null) continue;   // suppressed at the channel
 
-        // A legend-scoped edit written straight on the channel — `fill: { field,
-        // edit: edit.legend.category() }` — is itself a request for a legend: the
-        // gesture happens on a legend, so one has to exist. Resolved BEFORE the
-        // "is a legend wanted" question, because it can answer it.
+        // A legend-scoped edit on the channel is itself a request for a legend, so
+        // it is resolved first.
         const list = [spec.edit].flat(Infinity).filter(
             (e) => e && typeof (/** @type {any} */ (e).apply) === 'function'
         );
@@ -176,14 +133,13 @@ export function legendsFromChannels(features, legendsOpt) {
             const perChannel = legendsOpt === true ? undefined : legendsOpt[channel];
             if (perChannel === false) continue;
             if (legendsOpt !== true && perChannel === undefined) continue;
-            // `legends: true` means "keys for everything that has one", so a channel
-            // with no legend FORM is skipped in silence — asking for all the keys is
-            // not asking for a wrong one. Naming it explicitly does warn, below.
+            // `legends: true` skips a channel with no legend form silently; naming
+            // one explicitly warns below.
             if (!LEGENDABLE.includes(channel)) continue;
             cfg = perChannel || {};
         }
 
-        // An explicitly requested legend on a channel with no SHAPE would draw a
+        // An explicitly requested legend on a channel with no shape would draw a
         // misleading grey bar; say so instead of drawing one.
         if (!LEGENDABLE.includes(channel)) {
             warn(
@@ -195,9 +151,8 @@ export function legendsFromChannels(features, legendsOpt) {
             continue;
         }
 
-        // The edit travels to the legend and is STRIPPED from the channel, or the
-        // mark's own nodes go pointer-active and eat a click where the edit's node
-        // geometry (a swatch's `category`) is undefined and the apply bails.
+        // Strip the edit from the channel, or the mark's nodes go pointer-active and
+        // eat clicks the edit cannot apply.
         if (moving.length) {
             const staying = list.filter((e) => /** @type {any} */ (e).scope !== 'legend');
             const next = { ...spec };
@@ -208,16 +163,10 @@ export function legendsFromChannels(features, legendsOpt) {
 
         const existing = explicitFor(channel, field);
         if (existing) {
-            // The element already draws this encoding: merge what the channel said
-            // INTO it rather than minting a second key for one scale. The mark says
-            // WHAT is edited, the element says how it looks — so the element's own
-            // options win and only unstated ones are filled in.
-            //
-            // Edits go through `elementEdits`, never through the option merge:
-            // `legend()` folds `edit`/`edits` into its `edits` list at construction,
-            // so assigning `existing.edit` afterwards would be read by nothing. That
-            // is both the channel's `legend: { edit }` and a legend-scoped edit
-            // written directly on the channel.
+            // The element already draws this encoding: fill in only the options it
+            // leaves unstated. Edits go through `elementEdits`, never the option
+            // merge: `legend()` folds `edit`/`edits` at construction, so assigning
+            // `existing.edit` now would be read by nothing.
             const fromChannel = [...moving, ...elementEdits(cfg, channel)];
             if (fromChannel.length) {
                 existing.edits = [...(existing.edits || []), ...elementEdits({ edits: fromChannel }, channel)];
@@ -228,17 +177,14 @@ export function legendsFromChannels(features, legendsOpt) {
             }
             continue;
         }
-        // Both spellings of "this legend is editable" merge into one list: the edit
-        // inside `legend: { edit }`, and a legend-scoped edit written directly on the
-        // channel. Passing `edit: moving` alone would silently drop the first.
+        // Merge both spellings of an editable legend: `legend: { edit }` and a
+        // legend-scoped edit on the channel.
         const { edit: _e, edits: _es, ...look } = cfg;
         const lg = legend({
             ...look, channel, field, table: enc.table,
             edits: [...elementEdits(cfg, channel), ...moving],
         });
-        // Not an option (a legend has no role of its own) — carried so the engine's
-        // binding pass lands the legend on the same table as the mark that declared
-        // the encoding, whatever that table is named.
+        // Not an option; carried so the binding pass puts the legend on the mark's table.
         lg.tableRole = enc.tableRole;
         minted.push(lg);
     }
@@ -277,16 +223,12 @@ export function reserveLegends(features, scales, authorMargins, gap = 8, dims = 
 
     for (const lg of legends) {
         const side = /** @type {keyof Sides} */ (lg.anchor || 'right');
-        // May be absent at runtime (channel not bound to a field); the ScaleMap
-        // index type says otherwise, so read it loosely.
-        // A legend is a key for one ENCODING, so its scale is found by
-        // (channel, field) — the same lookup its build() does, or the band it
-        // reserves would not be the legend it draws.
-        const scale = /** @type {any} */ (scales)[scaleKey(lg.channel, lg.field)]
-            || /** @type {any} */ (scales)[lg.channel];
+        // Found by (channel, field), the same lookup build() does, so the reserved
+        // band matches the drawn legend.
+        const scale = scaleFor(scales, lg.channel, lg.field);
         const box = scale ? lg.measure(scales, dims) : null;
         if (!box) { lg._place.offset = 0; lg._place.size = 0; continue; }
-        // A vertical legend reserves its WIDTH on the side; a horizontal one its HEIGHT.
+        // A vertical legend reserves its width on the side; a horizontal one its height.
         const across = lg.orient === 'vertical' ? box.width : box.height;
         lg._place.offset = offset[side];
         lg._place.size = across;

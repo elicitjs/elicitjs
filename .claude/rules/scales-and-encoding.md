@@ -16,7 +16,7 @@ paths:
 - Control flow reads the flags `createScale`/`adoptScale` stamp: `kind` (`band` | `point` | `continuous` | `discrete`), `temporal`, `invertible`. A user-supplied `d3.scaleBand()` has no `type`, so a type allowlist marks it non-invertible and every edit on that channel silently dies.
 - `resolveScales` picks a scale via `scaleTypeFor(channel, measure, discretePref)`.
 - Positional channels union by axis (`axisOf`). Non-positional channels get one scale per encoding: `bucketOf` = `axisOf(ch) || scaleKey(ch, field)`, and `scaleKey` is the one place that key is spelled. Two marks stating the same encoding share one scale.
-- Lookup is `scales[scaleKey(ch, field)] || scales[ch]` in `encodeChannel`, `resolveChannels` (`edit/route.js`) and `domainOfField` (`constraints/define.js`). The bare-channel alias is a deliberate, first-wins safety net (`tsc` can't see a missed key) — don't remove it or make it last-wins. `frameScales` (`plot/composite.js`) must publish under both keys.
+- Lookup is `scaleFor(scales, ch, field)` (`core/scales.js`), i.e. `scales[scaleKey(ch, field)] || scales[ch]`. Use it everywhere a channel's scale is read. The bare-channel alias is a deliberate, first-wins safety net (`tsc` can't see a missed key) — don't remove it or make it last-wins. `frameScales` (`plot/composite.js`) must publish under both keys.
 - Never use `scale.fields[0]` to disambiguate.
 
 ## Colour

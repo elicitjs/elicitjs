@@ -1,7 +1,5 @@
 // @ts-check
-// text.js — a per-datum label mark (Observable Plot's text). It places a string at
-// a positional (x, y) and reads its label, size, anchor and rotation from channels,
-// so a label is data like every other mark's encoding:
+// text.js — one label per row at (x, y).
 //
 //   elicit.plot.text({
 //     channels: {
@@ -14,20 +12,8 @@
 //     format: '.1f',                  // d3-format string (or a function)
 //   })
 //
-// x/y resolve positionally through the GLOBAL scales (encodeChannel), exactly like
-// point. `text`/`fontSize`/`textAnchor`/`lineAnchor`/`dx`/`dy` are NON-positional
-// — there is no scale for them — so the mark reads them raw (a field's value, or
-// a `{ value }`/shorthand constant). `angle` is degrees: read through its scale
-// when one is declared (so a rotate() edit can map a gesture back through the
-// same scale), else raw. `format` is a mark-level option (string | fn), display-
-// only — the underlying field stays the raw value.
-//
-// A text mark is EDITABLE like any other: a direct-pick edit on it makes the label
-// interactive (the renderer wires drag + click and, on the content-edit path,
-// double-click to retype). `move({ channels:['x','y'] })` repositions it; a value
-// channel carrying the same field as `text` turns it into a draggable numeric
-// readout; `cycle()` advances a categorical label; `rotate()` on `angle` spins it;
-// `editText()` (edit/basic.js) retypes its content.
+// x/y go through the scales; `text`, the font channels, the anchors and dx/dy are
+// raw channels (unscaled). `format` only changes the display.
 //
 //   text  — position from x AND y
 //   textX — value on x, y parked at the vertical centre (a 1-D label along x)
@@ -36,7 +22,6 @@
 import { encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions, rawChannel, markDefaults, positionalKeys, markCommon, themeOf, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 import { measureBlock } from '../core/measure.js';
-import { warn } from '../core/dev.js';
 import { resolveFormat } from '../format.js';
 
 /**
@@ -55,33 +40,17 @@ function dominantBaselineOf(anchor) {
 
 
 /**
- * A text FeatureNode at an ALREADY-RESOLVED pixel position. Everything about a
- * label except where it sits — the string, font, anchors, rotation, dx/dy nudge,
- * wrapping, the style sweep — is positional-system agnostic, so it is defined once
- * here. `text` resolves (px, py) through the global x/y scales; `geoText` projects
- * lon/lat through the chart projection and hands the pixels in.
+ * A text node at an already-resolved pixel position. Shared by `text` (x/y
+ * scales) and `geoText` (projection). dx/dy are visual offsets added after
+ * positioning.
  *
- * dx/dy are visual-only offsets applied AFTER positioning (a drag still inverts
- * the raw pointer, so a nudged label doesn't poison its own edit).
- *
- * `wrap` breaks the string into `lines` the renderer paints, while `text` stays
- * the WHOLE string — one node either way. That is what keeps the inline editor
- * seeded with the paragraph rather than a line of it, and what keeps a wrapped
- * label to one tab stop, one hit area, and one effect outline.
- *
- * Note what is NOT here any more: the editText opt-in. Whether a node is typable
- * follows from its feature carrying an `inline` edit, which the engine stamps —
- * so a mark no longer has to inspect its own edit list to find out.
+ * `wrap` (px, or a function of the row so it can match a per-row box width)
+ * splits the string into `lines`; `text` stays the whole string, one node.
  *
  * @param {import('../types').ScaleMap} scales
  * @param {Record<string, any>} channels
  * @param {any} d the datum
  * @param {number} i its index in the dataset
- * `wrap` is a pixel width, or a function of the row — the per-datum form exists
- * because a box CAN be sized per row (a sticker with a `width` channel), and the
- * width the text wraps at has to be the width of the box it is sitting in, or a
- * resized note overflows its own paper.
- *
  * @param {number} px @param {number} py resolved position, before dx/dy
  * @param {{ format?: (v: any) => any, data?: import('../types').Datum[], wrap?: number | ((d: any, i: number, data: any[]) => number), lineHeight?: number }} [opts]
  * @returns {import('../types').FeatureNode}
@@ -94,22 +63,18 @@ export function textNodeAt(scales, channels, d, i, px, py, opts = {}) {
     const dx = +rawChannel(channels, 'dx', d, 0, i, data) || 0;
     const dy = +rawChannel(channels, 'dy', d, 0, i, data) || 0;
 
-    // Angle: math degrees via the shared encodeAngle path (scaled when a scale
-    // exists so rotate() is an exact inverse; else raw). The renderer converts
-    // to SVG with rotate(-deg) about the label's anchor.
+    // Angle in math degrees, scaled when a scale exists so rotate() inverts it.
     const angle = encodeAngle(scales, channels, 'angle', d, 0, i, data);
 
     const lineAnchor = rawChannel(channels, 'lineAnchor', d, 'middle', i, data);
     const fontSize = rawChannel(channels, 'fontSize', d, 12, i, data);
     const text = format(rawChannel(channels, 'text', d, '', i, data));
-    // Typography, per row or constant. Unset, a label inherits the chart's font
-    // (the theme's `font.family`, painted on the root) at the renderer's weight.
+    // Typography. Unset, a label inherits the chart's font.
     const fontWeight = rawChannel(channels, 'fontWeight', d, undefined, i, data);
     const fontStyle = rawChannel(channels, 'fontStyle', d, undefined, i, data);
     const fontFamily = rawChannel(channels, 'fontFamily', d, undefined, i, data);
 
-    // Only measured when the mark asked to wrap: measurement is cheap but not free,
-    // and every label in the library that isn't in a box wants its one line.
+    // Measure only when wrapping.
     const block = wrap || lineHeight
         ? measureBlock(text, {
             maxWidth: wrap,
@@ -150,26 +115,23 @@ export const TEXT_RAW_CHANNELS = [
 ];
 
 /**
- * @param {any} options
+ * @param {any} [options]
  * @returns {import('../types').Mark}
  */
-function buildText(options) {
+export function text(options = {}) {
     const opts = normalizeMarkOptions(options, {
         mark: 'text', allow: MARK_OPTIONS.text,
     });
-    const { channels = {}, id, edits, format: formatOpt, wrap, lineHeight } = opts;
+    const { channels = {}, format: formatOpt, wrap, lineHeight } = opts;
     const format = resolveFormat(formatOpt);
 
     return {
         ...markCommon(opts),
         type: 'text',
         channels,
-        // Channels this mark resolves ITSELF, with no scale — everything it reads
-        // through `rawChannel`. It declared NONE of them, so binding a field to any
-        // of them (`text: { field: 'label' }`) made the resolver build a global scale
-        // that nothing reads. See `link`, which has the same list for the same reason.
+        // Read through `rawChannel`, so the resolver builds no scale for them.
         rawChannels: TEXT_RAW_CHANNELS,
-        // A label sits AT a category (a tick, no interval) when an axis is discrete.
+        // A label sits at a category, not over an interval.
         discreteScale: 'point',
         ...positionalKeys(channels),
 
@@ -182,8 +144,7 @@ function buildText(options) {
          */
         build: (currentData, scales, width, height) => {
             return currentData.flatMap((d, i) => {
-                // A row with no x or y value has no position: no label (it sat at
-                // the centre of the plot, which reads as a label that belongs there).
+                // A row with no x or y value has no position: no label.
                 if (missingValue(channels, 'x', d) || missingValue(channels, 'y', d)) return [];
                 const { x, y } = anchorOf(d, i, currentData, scales, width, height);
                 return [textNodeAt(scales, channels, d, i, x, y, {
@@ -195,10 +156,8 @@ function buildText(options) {
         // A label's box: another shape over the same rows is the node, if there is one.
         labelBox: true,
         /**
-         * The block this row's text occupies, so a lone label — an emoji, a word —
-         * can be a network node. Measured the way the text is drawn: anchored by
-         * `textAnchor` / `lineAnchor`, shifted by `dx` / `dy`. A rotated label keeps
-         * its unrotated box.
+         * The block this row's text occupies, so a label can be a network node.
+         * Anchored and shifted the way the text is drawn; rotation is ignored.
          * @param {any} d @param {number} i @param {any[]} rows
          * @param {import('../types').ScaleMap} scales @param {number} width @param {number} height
          * @returns {import('../types').NodeBox}
@@ -245,14 +204,6 @@ function buildText(options) {
             y: forcedAxis === 'x' ? height / 2 : encodeChannel(scales, channels, 'y', d, height / 2, i, rows),
         };
     }
-}
-
-/**
- * @param {any} [options]
- * @returns {import('../types').Mark}
- */
-export function text(options = {}) {
-    return buildText(options);
 }
 
 /**

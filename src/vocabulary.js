@@ -1,27 +1,10 @@
 // @ts-check
-// vocabulary.js — every factory's OPTION VOCABULARY, in one file that imports
-// nothing.
-//
-// A factory validates the options it is handed against a list (marks through
-// `normalizeMarkOptions`, elements through `warnUnknownElementOptions`, guides
-// through `warnUnknownGuideOptions`, edits through `makeEdit`), and that list used
-// to be an inline array at each call site — 28 of them for marks alone — so it was
-// unreachable by anything else. The same list is what the typings, the docs API
-// tables and the planned JSON schema have to agree with, and a list that can only
-// be read by the one function that consumes it cannot be checked against them.
-//
-// So the lists live here and the factories import them. This module has NO
-// imports, which is what lets both a mark and the export gate read it without a
-// cycle. A key is either in a factory's list or the factory does not read it; the
-// unit suite (`allow-lists.test.js`) and `check:exports` hold both directions.
-//
-// The keys every factory of a kind accepts (`channels`/`id`/`edits`/`table` on a
-// mark, the style shorthands, `channel`/`when`/`stage`/… on an edit) are NOT
-// repeated per entry — they are the kind's universal set, declared once beside
-// the validator that applies it.
+// vocabulary.js: every factory's option list. Factories validate against these.
+// This module imports nothing, so any module can read it without a cycle.
+// `allow-lists.test.js` and `check:exports` keep the lists, types and factories
+// in agreement. Each kind's universal options are listed once, not per entry.
 
-/** Options EVERY mark accepts, whatever it draws. (`constraints` is deliberately
- *  absent: a constraint is a DATASET invariant and belongs on the spec.)
+/** Options every mark accepts. (`constraints` belongs on the spec, not a mark.)
  *  @type {string[]} */
 export const MARK_UNIVERSAL_OPTIONS = ['channels', 'id', 'edits', 'table', 'tip', 'clip'];
 
@@ -36,17 +19,15 @@ export const MARK_SHORTHANDS = [
     'angle',
 ];
 
-/** Options every chart element accepts. `field` and `table` say WHAT an edit on
- *  the element writes; an element has no channel map to say it otherwise.
+/** Options every chart element accepts. `field` and `table` name what its edits write.
  *  @type {string[]} */
 export const ELEMENT_UNIVERSAL_OPTIONS = ['id', 'edit', 'edits', 'field', 'table'];
 
 /** Options every guide accepts. @type {string[]} */
 export const GUIDE_UNIVERSAL_OPTIONS = ['id'];
 
-/** Mark factories: the options each reads on top of the universal mark options
- *  and the style shorthands (see `normalizeMarkOptions`, plot/mark.js). Keyed by
- *  the mark keyword; the `…X`/`…Y` variants share their bare mark's entry.
+/** Each mark's options beyond the universal ones and the shorthands. `…X`/`…Y`
+ *  variants share their bare mark's entry.
  *  @type {Record<string, string[]>} */
 export const MARK_OPTIONS = {
     arc: ['outerRadius', 'innerRadius', 'padAngle', 'arc', 'start', 'end', 'handles', 'handleSize', 'handleColor'],
@@ -79,7 +60,7 @@ export const MARK_OPTIONS = {
     shape: ['path'],
     rect: ['orientation', 'width', 'height', 'rx', 'gradient'],
     rule: ['orientation', 'discreteScale'],
-    sticker: ['padding', 'radius', 'maxWidth', 'minWidth', 'minHeight', 'lineHeight', 'fontFamily', 'format'],
+    sticker: ['padding', 'radius', 'maxWidth', 'minWidth', 'minHeight', 'lineHeight', 'format'],
     text: ['orientation', 'format', 'wrap', 'lineHeight'],
     tick: ['orientation', 'inset', 'length'],
     trend: ['anchor', 'probe', 'grip', 'handles', 'handleSize', 'handleColor'],
@@ -87,8 +68,7 @@ export const MARK_OPTIONS = {
     waffle: ['orientation', 'unit', 'multiple', 'gap', 'shape', 'showEmpty', 'emptyFill'],
 };
 
-/** Chart elements: the options each reads on top of the universal element options
- *  (`id`/`edit`/`edits`/`field`/`table` — see `warnUnknownElementOptions`).
+/** Each chart element's options beyond the universal ones.
  *  @type {Record<string, string[]>} */
 export const ELEMENT_OPTIONS = {
     axis: [
@@ -111,14 +91,14 @@ export const ELEMENT_OPTIONS = {
     ],
 };
 
-/** Guides: the options each reads on top of the universal guide options (`id`).
+/** Each guide's options beyond the universal ones.
  *  @type {Record<string, string[]>} */
 export const GUIDE_OPTIONS = {
     rule: ['x', 'y', 'stroke', 'strokeDash', 'strokeWidth', 'opacity', 'label'],
     region: ['x', 'y', 'fill', 'opacity', 'stroke', 'label'],
     remaining: ['field', 'total', 'unit', 'format', 'anchor', 'label', 'fill', 'fontSize'],
     proximity: ['target', 'stroke', 'strokeDash', 'strokeWidth', 'opacity'],
-    // The survey-instrument affordances (widgets/theme.js) — grammar keywords too.
+    // Survey-instrument guides (widgets/theme.js).
     prompt: ['y'],
     optionRings: ['labelOffset', 'radius'],
     cellGrid: ['pad'],
@@ -127,12 +107,11 @@ export const GUIDE_OPTIONS = {
     // Pointer-following guides (guides/tip.js, guides/crosshair.js).
     tip: ['mark', 'text', 'anchor', 'dx', 'dy', 'fill', 'stroke', 'fontSize', 'format'],
     crosshair: ['x', 'y', 'readout', 'stroke', 'strokeDash', 'fontSize', 'format'],
-    custom: [],
+    custom: ['tracksPointer'],
 };
 
-/** The keys `makeEdit` (edit/shared.js) normalizes on EVERY edit — the universal
- *  edit options. Anything else a factory is handed is either in that factory's
- *  `EDIT_OPTIONS` entry, a knob its driver declares (`Driver.options`), or a typo.
+/** The options `makeEdit` reads on every edit. Others come from `EDIT_OPTIONS` or
+ *  a driver's `Driver.options`.
  *  @type {string[]} */
 export const EDIT_UNIVERSAL_OPTIONS = [
     'type', 'name', 'gesture', 'channel', 'channels', 'when', 'pick', 'threshold',
@@ -141,9 +120,8 @@ export const EDIT_UNIVERSAL_OPTIONS = [
     'targets',
 ];
 
-/** Edit factories: the options each reads on top of `EDIT_UNIVERSAL_OPTIONS`,
- *  keyed by the edit's `type` (its dotted path). A type with no entry is a custom
- *  edit built through `makeEdit` directly, and is not validated.
+/** Each edit's options beyond `EDIT_UNIVERSAL_OPTIONS`, keyed by its dotted `type`.
+ *  A type with no entry is not validated.
  *  @type {Record<string, string[]>} */
 export const EDIT_OPTIONS = {
     move: ['mode'],

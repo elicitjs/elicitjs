@@ -1,49 +1,33 @@
 // @ts-check
-// The canvas interaction layer. SVG got hit-testing and event routing for free:
-// the browser picks the element under the pointer, d3 hands back its bound node, and
-// pointer-events:none marks are skipped by CSS. A canvas is one opaque element, so
-// this module reconstructs that contract by hand — one pointer state machine over
-// the single canvas, resolving `direct`-pick targets geometrically (via pick.js's
-// hitTest) and emitting the SAME renderer events the engine already understands.
-//
-// It emits, verbatim to the engine's `onEvent`:
-//   click / dblclick         — plane (no node) or a mark (with node, on a still press)
-//   dragstart / drag / dragend — node present for a direct-pick drag, absent for plane
-//   hover / hoverout         — plane, plane-on-top only (mirrors the D3 plane gestures)
-// Keyboard nudge and the text-edit `commit` are deliberately not wired yet.
+// Canvas interaction: one pointer state machine that hit-tests nodes (pick.js)
+// and emits the same renderer events as the D3 renderer:
+//   click / dblclick           — plane (no node) or a mark (with node, on a still press)
+//   dragstart / drag / dragend — with node for a direct-pick drag, without for plane
+//   hover / hoverout           — plane, plane-on-top only
+// Keyboard nudge and the text-edit `commit` are not wired yet.
 import { hitTest, clipVisible } from '../../edit/pick.js';
 import { frameThrottle, MODIFIER_KEYS } from '../shared.js';
 
-// Movement (px) before a press becomes a drag. `direct` matches d3.drag's
-// clickDistance(4): a press that stays within it is a click, not a drag. `plane`
-// matches the D3 plane gesture's 3px threshold.
+// Movement (px) before a press becomes a drag, matching the D3 renderer.
 const DIRECT_CLICK_DISTANCE = 4;
 const PLANE_DRAG_THRESHOLD = 3;
 
 /**
- * Attach the pointer state machine to a canvas, once. All per-render inputs
- * (onEvent, planeOnTop, margins, scene, dims) are read live from `getCtx()`, so the
- * listeners survive the engine's re-render on every drag-move without rebinding —
- * the same reason the D3 renderer keeps its plane gesture state off the DOM.
+ * Attach the pointer state machine to a canvas, once. Per-render inputs are read
+ * live from `getCtx()`, so listeners survive re-renders without rebinding.
  * @param {HTMLCanvasElement} canvas
  * @param {() => any} getCtx returns the latest render context stashed by the renderer
  */
 export function bindCanvasEvents(canvas, getCtx) {
     /** @type {any} */
     let gesture = null;      // { mode, node?, sx, sy, dragging, moved }
-    // Which mark the pointer is currently over, as `featureId:index`. A canvas has
-    // no elements to hang pointerenter/leave on, so the enter/leave EDGE has to be
-    // derived: emit only when the hit test's answer changes, or the engine would get
-    // a pointerover on every pixel of movement.
+    // The hovered mark as `featureId:index`; pointerover/out fire only when it changes.
     /** @type {string | null} */
     let hoverKey = null;
     let suppressClick = false; // swallow the native click that trails a drag / mark-click
 
-    // Re-report the plane hover when a MODIFIER changes under a still pointer, so
-    // an edit gated `when: when.shift` is re-arbitrated without a move (its hover
-    // ring would otherwise outlive the key). Bound only while the pointer is over
-    // the plane, so a canvas that is gone leaves no window listener behind. The
-    // D3 renderer does the same (`_watchModifiers`).
+    // Re-report the plane hover when a modifier key changes under a still pointer,
+    // so `when`-gated edits re-arbitrate. Bound only while the pointer is over the plane.
     /** @type {{ x: number, y: number } | null} */
     let modifierHover = null;
     /** @param {KeyboardEvent} e */
@@ -68,10 +52,9 @@ export function bindCanvasEvents(canvas, getCtx) {
         modifierHover = null;
     };
 
-    // The editable mark under (x, y). Under `clip` a mark past the clip rect is
-    // not drawn, so it is not grabbed either — only chrome reaches out there.
-    /** @param {any} ctx @param {number} x @param {number} y */
-    const pick = (ctx, x, y) => hitTest(clipVisible(ctx.scene.children, x, y, ctx.clip || null), x, y);
+    // The editable mark under (x, y); marks clipped out of view are not hit.
+    /** @param {any} ctx @param {number} x @param {number} y @param {boolean} [hover] also a `hoverable` node */
+    const pick = (ctx, x, y, hover = false) => hitTest(clipVisible(ctx.scene.children, x, y, ctx.clip || null), x, y, hover);
 
     canvas.style.touchAction = 'none';
     canvas.style.userSelect = 'none';
@@ -80,8 +63,7 @@ export function bindCanvasEvents(canvas, getCtx) {
     const toInner = (e) => {
         const ctx = getCtx();
         const rect = canvas.getBoundingClientRect();
-        // In 'scale' mode the canvas is CSS-stretched, so map client px back through
-        // the design/displayed ratio; in fixed/reflow the ratio is 1.
+        // Undo CSS stretching in 'scale' mode.
         const sx = rect.width ? ctx.width / rect.width : 1;
         const sy = rect.height ? ctx.height / rect.height : 1;
         return [
@@ -91,10 +73,8 @@ export function bindCanvasEvents(canvas, getCtx) {
     };
 
     /**
-     * Close the open gesture, wherever the pointer is. `released` is false for an
-     * ABANDONED stroke (pointercancel, or a move with no button held): there is no
-     * native click trailing it, and a still press that was cancelled rather than
-     * released is not a click.
+     * Close the open gesture. `released` is false for an abandoned stroke
+     * (pointercancel, or a move with no button held), which is never a click.
      * @param {PointerEvent} e @param {number} x @param {number} y @param {boolean} [released]
      */
     const endGesture = (e, x, y, released = true) => {
@@ -102,9 +82,7 @@ export function bindCanvasEvents(canvas, getCtx) {
         if (gesture) {
             if (gesture.mode === 'direct') {
                 ctx.onEvent({ type: 'dragend', x, y, node: gesture.node, rawEvent: e });
-                // A still press is a mark click (routed to the node's click edits). d3
-                // gets this from the native click on the element; we synthesize it and
-                // suppress the plane click the canvas would otherwise fire.
+                // A still press is a mark click; the trailing native plane click is suppressed.
                 if (released && !gesture.moved) ctx.onEvent({ type: 'click', x, y, node: gesture.node, rawEvent: e });
                 if (released) suppressClick = true;
             } else if (gesture.dragging) {
@@ -114,8 +92,7 @@ export function bindCanvasEvents(canvas, getCtx) {
             // A plane tap that never dragged falls through to the native plane click.
         }
         gesture = null;
-        // Released off the canvas: `pointerleave` never fires while the pointer is
-        // captured, so nothing else retires the driver's hover session.
+        // Released off the canvas: `pointerleave` doesn't fire while captured, so end hover here.
         const r = canvas.getBoundingClientRect();
         const outside = e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
         if (outside) {
@@ -129,20 +106,16 @@ export function bindCanvasEvents(canvas, getCtx) {
         const [x, y] = toInner(e);
 
         if (ctx.planeOnTop) {
-            // Plane-driven modes (sweep / draw / nearest): never resolve a node; the
-            // driver picks its own target from the coordinates.
+            // Plane modes: the driver picks its own target from the coordinates.
             gesture = { mode: 'plane', sx: x, sy: y, dragging: false };
         } else {
-            // Direct pick: is there an editable mark under the pointer?
             const node = pick(ctx, x, y);
             if (node) {
-                // d3.drag fires 'start' on press (before any movement); mirror that so
-                // the engine's undo transaction brackets the whole stroke.
+                // dragstart on press, so the undo transaction brackets the whole stroke.
                 gesture = { mode: 'direct', node, sx: x, sy: y, moved: false };
                 ctx.onEvent({ type: 'dragstart', x, y, node, rawEvent: e });
             } else {
-                // Empty space with no plane drag bound (D3 binds none when !planeOnTop):
-                // let the native click below fire a plane click.
+                // Empty space: let the native click fire a plane click.
                 gesture = null;
                 return; // no capture, so the browser still fires click/dblclick
             }
@@ -151,9 +124,7 @@ export function bindCanvasEvents(canvas, getCtx) {
         try { canvas.setPointerCapture(e.pointerId); } catch { /* not fatal */ }
     });
 
-    // Pointer POSITION for the guides that follow it (tip, crosshair): reported
-    // whatever sits under the pointer, one report per frame, only when a guide
-    // asks (`tracksPointer`). State, never a gesture.
+    // Pointer position for `tracksPointer` guides, once per frame.
     const track = frameThrottle((/** @type {any} */ e, /** @type {number} */ x, /** @type {number} */ y) => {
         getCtx().onEvent({ type: 'pointermove', x, y, rawEvent: e });
     });
@@ -163,27 +134,18 @@ export function bindCanvasEvents(canvas, getCtx) {
         const [x, y] = toInner(e);
         if (ctx.tracksPointer) track(e, x, y);
 
-        // No button held while a gesture is open: the release was never delivered
-        // (let go outside the browser window, or the window lost focus). Without
-        // this the gesture stays live and the next move over the canvas — button
-        // up — resumes editing. The D3 renderer guards its plane drag the same way.
+        // No button held with a gesture open: the release was lost, so end the gesture.
         if (gesture && e.pointerType === 'mouse' && e.buttons === 0) { endGesture(e, x, y); return; }
 
         if (!gesture) {
             if (ctx.planeOnTop) {
-                // Plane-on-top: the plane owns the pointer, and `hover` is what a
-                // proximity / probe driver tracks.
+                // The plane owns the pointer; `hover` feeds proximity / probe drivers.
                 watchModifiers(x, y);
                 ctx.onEvent({ type: 'hover', x, y, rawEvent: e });
                 canvas.style.cursor = ctx.planeCursor || 'pointer';
             } else {
-                // Direct-pick: report which editable mark the pointer is over, as
-                // interaction STATE (pointerover/pointerout — never routed to an edit).
-                // Mirrors the D3 renderer's per-node pointerenter/leave; on a canvas
-                // there are no elements to bind to, so the hit test IS the enter/leave
-                // boundary. Without this a direct-pick mark had no pre-press signal at
-                // all beyond the cursor — see core/effects.js's `hovered` state.
-                const node = pick(ctx, x, y);
+                // Report the hovered mark as state (pointerover/out), never to an edit.
+                const node = pick(ctx, x, y, true);
                 const key = node ? `${node.featureId}:${node.index}` : null;
                 if (key !== hoverKey) {
                     hoverKey = key;
@@ -191,7 +153,7 @@ export function bindCanvasEvents(canvas, getCtx) {
                         ? { type: 'pointerover', node, rawEvent: e }
                         : { type: 'pointerout', rawEvent: e });
                 }
-                canvas.style.cursor = node ? (node.cursor || 'move') : 'default';
+                canvas.style.cursor = node && node.editable ? (node.cursor || 'move') : 'default';
             }
             return;
         }
@@ -213,9 +175,7 @@ export function bindCanvasEvents(canvas, getCtx) {
         endGesture(e, x, y);
     });
 
-    // A cancelled pointer (the browser took it over for a scroll/zoom, or the
-    // element lost capture) never delivers pointerup. Retire the stroke rather
-    // than leaving it live for the next move to resume.
+    // A cancelled pointer never delivers pointerup; end the stroke.
     canvas.addEventListener('pointercancel', (e) => {
         const [x, y] = toInner(e);
         endGesture(e, x, y, false);
@@ -234,8 +194,7 @@ export function bindCanvasEvents(canvas, getCtx) {
         }
     });
 
-    // The wheel, as a gesture (edit.axis.zoom) — only when an active edit listens,
-    // and only then is the page scroll prevented.
+    // The wheel gesture, only when an active edit listens (then page scroll is prevented).
     canvas.addEventListener('wheel', (e) => {
         const ctx = getCtx();
         if (!ctx.hasWheel) return;
@@ -255,11 +214,7 @@ export function bindCanvasEvents(canvas, getCtx) {
     canvas.addEventListener('dblclick', (e) => {
         const ctx = getCtx();
         const [x, y] = toInner(e);
-        // Route to the mark under the pointer when there is one, exactly as the
-        // click path does — a dblclick edit sits on a NODE (edit.stack.merge grabs a
-        // boundary handle) just as often as on the plane. Emitting only the plane
-        // form here meant such an edit could never fire on canvas, while `create`'s
-        // plane dblclick still worked, so the gesture looked half-implemented.
+        // Carry the mark under the pointer, if any; dblclick edits can sit on a node.
         const node = ctx.planeOnTop ? null : pick(ctx, x, y);
         ctx.onEvent({ type: 'dblclick', x, y, ...(node ? { node } : {}), rawEvent: e });
     });

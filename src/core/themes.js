@@ -1,40 +1,20 @@
 // @ts-check
-// themes.js — the built-in NAMED themes, exposed publicly as `elicit.themes`. Each
-// is a PARTIAL theme (deep-merged over DEFAULT_THEME by resolveTheme), so a theme
-// only names the tokens it changes and inherits the rest. A chart names one by
-// object or by string, and a partial can start from one with `extends`:
+// themes.js — the built-in named themes (`elicit.themes`). Each is a partial theme
+// deep-merged over DEFAULT_THEME, named by object, by string, or via `extends`:
 //
 //   Elicit({ ...spec, theme: themes.nyt })
 //   Elicit({ ...spec, theme: 'nyt' })
 //   Elicit({ ...spec, theme: { extends: 'nyt', ink: 'crimson' } })
 //   setTheme('economist')   // make it the app-wide default
 //
-// Three are ElicitJS's own: `default` (the identity), `survey` (a survey-instrument
-// look that restyles the whole widget family) and `dark`.
-//
-// The other fourteen are the named "house styles" of FLINT, Microsoft's chart
-// grammar (MIT licence):
-//
-//   Flint — https://github.com/microsoft/flint-chart
-//   Theme spec — https://github.com/microsoft/flint-chart/blob/main/docs/theme-spec.md
-//   Presets — packages/flint-js/src/core/theme/presets/*.ts
-//   Theme gallery — https://microsoft.github.io/flint-chart/#/themes
-//   Paper — https://arxiv.org/abs/2607.20775
-//
-// Each preset below is transcribed from its Flint source file in Flint's OWN
-// vocabulary — `surface`, `text`, `structure`, `series`, `type`, `axis`, `grid`,
-// `marks`, with Flint's presence words (`omit` / `hairline` / `quiet` / `full` /
-// `emphasised`) — and translated into ElicitJS theme tokens by `fromFlint`. The
-// hex values, font stacks, weights and proportions are Flint's. What a theme here
-// cannot carry, because ElicitJS has no such machinery, is left out and noted on
-// the preset: Flint's data-label placement, legend-at-line-end, chart furniture
-// (the Economist's red tab, the BBC's footer rule), value-axis placement and
-// conditional variants. Flint names its type sizes with design tokens (`text.100`
-// … `text.500`); `TYPE_SIZE` resolves them to the pixel sizes used here.
+// `default`, `survey`, `dark` and `dd` are ElicitJS's own. The other fourteen are
+// the house styles of Flint (https://github.com/microsoft/flint-chart, MIT),
+// transcribed in Flint's vocabulary and translated by `fromFlint`. What ElicitJS
+// cannot draw (data labels, chart furniture, axis placement, conditional variants)
+// is left out and noted on the preset.
 
-/** Flint's type-size tokens, resolved to px. Flint keeps the scale in a module this
- *  port does not read, so these follow its ordering (100 is the axis-label size)
- *  rather than its exact values. */
+/** Flint's type-size tokens, in px. These follow Flint's ordering (100 is the
+ *  axis-label size), not its exact values. */
 const TYPE_SIZE = { 'text.100': 11, 'text.200': 13, 'text.300': 16, 'text.400': 20, 'text.500': 24 };
 /** Flint's `TypeWeight` names, as CSS font-weights. */
 const TYPE_WEIGHT = { regular: 'normal', medium: 500, semibold: 600, bold: 'bold' };
@@ -47,12 +27,11 @@ const PRESENCE_WIDTH = { hairline: 0.5, quiet: 1, full: 1, emphasised: 2 };
 const sizeOf = (s) => (typeof s === 'number' ? s : s ? /** @type {any} */ (TYPE_SIZE)[s] : undefined);
 /** @param {any} w a Flint weight name or number */
 const weightOf = (w) => (w == null ? undefined : /** @type {any} */ (TYPE_WEIGHT)[w] ?? w);
-/** Flint's point `size` is an AREA in px²; an ElicitJS `size` is a radius.
+/** Flint's point `size` is an area in px²; an ElicitJS `size` is a radius.
  *  @param {number} area */
 const radiusOf = (area) => Math.round(Math.sqrt(area / Math.PI) * 10) / 10;
 
-/** Drop the undefined keys, so a translated preset names only what Flint stated
- *  (an `extends` chain must not have its base's tokens blanked by `undefined`).
+/** Drop undefined keys, so an `extends` chain never blanks its base's tokens.
  * @param {Record<string, any>} o */
 function defined(o) {
     /** @type {Record<string, any>} */
@@ -126,9 +105,7 @@ function fromFlint(f) {
         area: marks.strokeWeight != null ? { strokeWidth: marks.strokeWeight } : undefined,
     });
 
-    // Interaction state, in the house's own ink: a hovered or selected mark is
-    // outlined in the primary text colour (dark on a light house, light on a dark
-    // one), so the feedback reads as part of the style rather than a stray orange.
+    // Hover and selection outline in the house's primary text colour.
     const effects = text.primary ? {
         hovered: { outline: { color: text.primary } },
         selected: { outline: { color: text.primary } },
@@ -195,10 +172,8 @@ function fromFlint(f) {
 }
 
 // ----------------------------------------------------------------- Flint presets
-// Transcribed from microsoft/flint-chart, packages/flint-js/src/core/theme/presets.
-// Each `palette` is Flint's `categoricalExtended` where the preset has one (its
-// first entries ARE `categorical`), so a chart with many series keeps the house
-// colours rather than wrapping.
+// Transcribed from Flint's presets. `palette` is Flint's `categoricalExtended` where
+// the preset has one, so a chart with many series keeps the house colours.
 
 /** `nyt` — "New York Times": newsroom graphics. A serif headline that states the
  *  finding over sans-serif labels; no value-axis spine or ticks; a quiet value grid
@@ -646,9 +621,8 @@ export const themes = {
     // The identity theme — resolves to DEFAULT_THEME unchanged.
     default: {},
 
-    // A professional, Qualtrics-flavoured survey look. Neutral greys for chrome,
-    // an indigo accent for committed answers and handles, and slightly larger,
-    // softer type. The widget affordances (rings, cells, tracks) restyle with it.
+    // A Qualtrics-flavoured survey look: neutral chrome, an indigo accent, softer
+    // type. Restyles the widgets too.
     survey: {
         ink: '#4f46e5',
         accent: '#4f46e5',
@@ -676,10 +650,8 @@ export const themes = {
         }
     },
 
-    // A dark-mode look: a slate backdrop with light ink and chrome. `background` is
-    // the piece that makes it self-contained — the chart paints its own dark surface,
-    // so it reads on a dark page without any host CSS. Every token is chosen for
-    // contrast on the backdrop.
+    // Dark mode: a slate backdrop (`background`) with light ink and chrome, so it
+    // reads on a dark page without host CSS.
     dark: {
         background: '#0f172a',
         ink: '#38bdf8',
@@ -707,11 +679,8 @@ export const themes = {
         }
     },
 
-    // Data & Dialogue Lab. Built from the lab's two logo colours — the teal
-    // (#50AEB7) is the ink, the blue (#2B5D87) the accent that handles, answers and
-    // chrome take — with a warm coral and gold as the contrast hues and a blue-tinted
-    // grey for every neutral. Shapes carry no stroke by default; a stroke, where a
-    // mark wants one, is the same hue a step darker (the `*Dark` ramp in `DD`).
+    // Data & Dialogue Lab: teal ink, blue accent, coral and gold contrast hues,
+    // blue-tinted neutrals. No stroke by default; a stroke is the hue's `*Dark` partner.
     dd: {
         ink: DD.teal,
         accent: DD.blue,
@@ -730,9 +699,8 @@ export const themes = {
             legend: { stroke: DD.grey600, labelFill: DD.grey600, fontSize: 11, currentStroke: DD.grey900, swatchRadius: 3 }
         },
         constraint: { color: DD.coral },
-        // Hover and selection keep the built-in `color: 'auto'` trace, so each mark
-        // lights up in a darker shade of its own colour; only the drop target is
-        // fixed, in the lab's blue.
+        // Hover and selection keep the `color: 'auto'` trace; only the drop target
+        // is fixed, in the lab's blue.
         effects: {
             target: { outline: { color: DD.blue, width: 2.5, pad: 3, opacity: 0.9 } }
         },

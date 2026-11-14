@@ -3,15 +3,8 @@ import { defineConstraint, constraintOptions } from './define.js';
 import { warn } from '../core/dev.js';
 import { movedFields, numOf, shifted } from './shared.js';
 
-// symmetric: a pair of columns mirrored ABOUT a centre column — a data invariant.
-//
-// When exactly one of the pair moves, the other is set to the centre's
-// reflection of it (`2·about − moved`), so an interval dragged by one end stays
-// symmetric about its mean. When both moved (the centre moved and `follow`
-// carried them), or the centre itself moved, it does nothing — the pair is still
-// symmetric. Compose with `follow` for "the range moves with the mean, and stays
-// symmetric": `[follow({ field: ['lo','hi'], lead: 'mean' }), symmetric({ field:
-// ['lo','hi'], about: 'mean' })]`.
+// symmetric: when exactly one of a pair moves, sets the other to its mirror
+// about the centre column (`2·about − moved`). Does nothing if the centre moved.
 
 /**
  * @param {{ field?: string[], about?: string }} [options]

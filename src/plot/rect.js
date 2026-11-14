@@ -3,41 +3,23 @@ import { isBand, baselineOf, rangeExtent } from '../core/scales.js';
 import { encodeChannel, categorySlot, encodeAngle, resolveStyle, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
-// rect: the generalized bar. A bar fixes ONE axis to a categorical band (position
-// + thickness) and draws the OTHER as a length from a baseline (or an explicit
-// x1/x2 · y1/y2 span). A rect lifts that restriction: EACH axis independently
-// resolves its extent as a span, a band, or a baseline→value length, so a
-// rectangle can span both axes at once — Observable Plot's rect model (heatmap
-// cells, 2-D regions, binned histograms, annotation boxes).
+// rect: a rectangle whose extent on each axis is resolved independently (heatmap
+// cells, 2-D regions, histograms, annotation boxes).
 //
-//   rect  — span-or-band on both axes (x1/x2 AND y1/y2, or a band on either)
-//   rectX — force x to baseline→value (value on x, y a span/band) — a horizontal
-//           histogram bar
-//   rectY — force y to baseline→value (value on y, x a span/band) — a vertical
-//           histogram bar
+//   rect  — each axis resolves on its own
+//   rectX — force x to baseline→value (a horizontal histogram bar)
+//   rectY — force y to baseline→value (a vertical histogram bar)
 //
-// Per axis, the extent is picked by what the author declared (in order):
-//   1. SPAN     both endpoint channels present (x1&x2 / y1&y2) → min/max of the two
-//               encoded pixels. x1/x2 share x's resolved scale via resolve.js's axis
-//               aliasing, so they go through encodeChannel exactly like x.
-//   2. SIZE     an explicit pixel extent (width / height) → a fixed-size box centred
-//               on the x/y anchor (SVG-native). Overrides band/value, so a fixed box
-//               wins over the category interval; on a band axis the anchor is the
-//               category centre, so the box sits centred in its cell.
-//   3. VALUE    this axis is the forced value axis, OR only a single x/y field is
-//               given → baseline→value (like a bar's length).
-//   4. BAND     the axis's scale is a band → the category interval (start + bandwidth).
-//   5. EXTENT   nothing positional on this axis → span the full range (a rule-like
-//               fallback, so a 1-D rect still draws).
-//
-// Editing: x1/x2/y1/y2 are already registered positional channels, so move /
-// moveSpan / brushSpan work on a rect for free; brushRect() (edit/basic.js) adds
-// composable 2-D edge/corner/body editing over all four extents at once.
+// Per axis, the first that applies:
+//   1. SPAN     x1 and x2 (y1 and y2) both set → between the two
+//   2. SIZE     width / height set → a fixed px box centred on the x/y anchor
+//   3. BAND     a band scale, unless the axis is forced to value → the category interval
+//   4. VALUE    an x/y channel → baseline→value
+//   5. EXTENT   nothing on this axis → the full range
 
 /**
- * Resolve one axis's pixel extent for a datum. Returns [lo, hi] (lo ≤ hi) plus
- * whether this axis used band geometry (so the mark can flag `bandAxis` for the
- * proximity picker).
+ * Resolve one axis's pixel extent for a datum: [lo, hi] (lo ≤ hi) plus whether
+ * it used band geometry (for `bandAxis`).
  * @param {'x' | 'y'} axis
  * @param {Record<string, any>} channels
  * @param {import('../types').ScaleMap} scales
@@ -59,9 +41,7 @@ function resolveExtent(axis, channels, scales, scale, datum, key, forcedValue, f
         const v2 = encodeChannel(scales, channels, c2, datum, 0, index, data);
         return { lo: Math.min(v1, v2), hi: Math.max(v1, v2), band: false };
     }
-    // 2. SIZE — an explicit pixel extent centred on an x/y anchor (SVG-native w/h).
-    // Wins over band/value so a fixed-size box beats the category interval; the
-    // anchor goes through encodeChannel, so on a band axis it's the category centre.
+    // 2. SIZE — a fixed px extent centred on the x/y anchor.
     const sizeCh = axis === 'x' ? 'width' : 'height';
     if (channels[sizeCh]) {
         const size = encodeChannel(scales, channels, sizeCh, datum, 0, index, data);
@@ -75,45 +55,31 @@ function resolveExtent(axis, channels, scales, scale, datum, key, forcedValue, f
         const { start, width: thickness } = categorySlot(scales, channels, axis, datum, key, index, data);
         return { lo: start, hi: start + thickness, band: true };
     }
-    // 2. VALUE — a single field drawn from the baseline.
+    // 4. VALUE — a single field drawn from the baseline.
     if (channels[axis]) {
         const baseline = baselineOf(scale);
         const value = encodeChannel(scales, channels, axis, datum, baseline, index, data);
         return { lo: Math.min(value, baseline), hi: Math.max(value, baseline), band: false };
     }
-    // 4. EXTENT — nothing on this axis: span it fully.
+    // 5. EXTENT — nothing on this axis: span it fully.
     const [rlo, rhi] = scale ? rangeExtent(scale) : [0, fullLength];
     return { lo: Math.min(rlo, rhi), hi: Math.max(rlo, rhi), band: false };
 }
 
 /**
- * @param {any} options
+ * @param {any} [options]
  * @returns {import('../types').Mark}
  */
-function buildRect(options) {
-    // `width`/`height` are pixel EXTENTS (see resolveExtent's SIZE branch) and `rx`
-    // a corner radius — all three are read as channels, so they are listed here to
-    // let the top-level shorthand `rect({ width: 120 })` through rather than have it
-    // warn and be silently dropped. They are deliberately NOT style SHORTHANDS: a
-    // shorthand desugars to `{ value }` for every mark, and `width` means nothing on
-    // a point or a line.
+export function rect(options = {}) {
     const opts = normalizeMarkOptions(options, {
         mark: 'rect', allow: MARK_OPTIONS.rect,
     });
-    // A rect resolves each axis on its own (span / size / band / value / extent);
-    // `orientation` only FORCES one axis to baseline→value (rectY: the y axis).
+    // `orientation` forces one axis to baseline→value.
     const forcedValueAxis = opts.orientation === 'vertical' ? 'y'
         : opts.orientation === 'horizontal' ? 'x' : null;
-    const { channels = {}, id, edits, width: widthOpt, height: heightOpt, rx: rxOpt, gradient } = opts;
-    // `width` / `height` / `rx` are CHANNELS (resolved through encodeChannel below),
-    // and this is their constant SHORTHAND — the same relationship `fill: 'red'` has
-    // to `fill: { value: 'red' }`. They are listed in `allow` rather than in the
-    // shared SHORTHANDS table because a width means nothing on a point or a line, so
-    // desugaring them globally would let every mark accept them in silence.
-    //
-    // A top-level constant is visual space, exactly like a `{ value }` channel —
-    // and it must not become a `{ field }`, whose bucket scale would default to a
-    // [0, 1] range and draw a one-pixel box.
+    const { channels = {}, width: widthOpt, height: heightOpt, rx: rxOpt, gradient } = opts;
+    // `width` / `height` / `rx` options are px constants for those channels. They
+    // are rect-only, so they live in `allow`, not the shared SHORTHANDS.
     if (widthOpt !== undefined && !channels.width) channels.width = { value: widthOpt };
     if (heightOpt !== undefined && !channels.height) channels.height = { value: heightOpt };
     if (rxOpt !== undefined && !channels.rx) channels.rx = { value: rxOpt };
@@ -129,8 +95,7 @@ function buildRect(options) {
         xKey,
         yKey,
         /**
-         * The box this rect draws for one row — the same two extents build() reads,
-         * so a link docked to a sticker's body ends at the paper's edge.
+         * The box this rect draws for one row, from the same extents build() reads.
          * @param {any} d @param {number} i @param {any[]} rows
          * @param {import('../types').ScaleMap} scales @param {number} width @param {number} height
          * @returns {import('../types').NodeBox}
@@ -156,8 +121,7 @@ function buildRect(options) {
             const { x: xScale, y: yScale } = scales;
             const rectDefaults = markDefaults(scales, 'rect', { fill: themeOf(scales).ink });
 
-            // A dimension whose every positional field is missing on this row has
-            // no extent: draw no rect (it collapsed to a zero box at the origin).
+            // No rect when every positional field of a dimension is missing.
             /** @param {any} d @param {string[]} names */
             const noExtent = (d, names) => {
                 const bound = names.filter((n) => channels[n] && channels[n].field != null);
@@ -170,16 +134,14 @@ function buildRect(options) {
                 const xExt = resolveExtent('x', channels, scales, xScale, d, xKey, forcedValueAxis === 'x', width, i, currentData);
                 const yExt = resolveExtent('y', channels, scales, yScale, d, yKey, forcedValueAxis === 'y', height, i, currentData);
 
-                // If one axis is a band, proximity picking measures distance along
-                // the OTHER (value) axis' interval — mirror bar's bandAxis so a
-                // nearest-pick grabs the cell from anywhere in its band.
+                // With exactly one band axis, flag it for proximity picking.
                 /** @type {'x' | 'y' | undefined} */
                 let bandAxis;
                 if (xExt.band && !yExt.band) bandAxis = 'x';
                 else if (yExt.band && !xExt.band) bandAxis = 'y';
 
                 const angle = encodeAngle(scales, channels, 'angle', d, 0, i, currentData);
-                // Corner radius, in px like every other geometry channel here.
+                // Corner radius, in px.
                 const rx = channels.rx
                     ? encodeChannel(scales, channels, 'rx', d, 0, i, currentData)
                     : rectDefaults.rx;
@@ -201,14 +163,6 @@ function buildRect(options) {
             });
         }
     };
-}
-
-/**
- * @param {any} [options]
- * @returns {import('../types').Mark}
- */
-export function rect(options = {}) {
-    return buildRect(options);
 }
 
 /**

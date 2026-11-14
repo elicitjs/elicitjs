@@ -1,10 +1,9 @@
 // @ts-check
-// edit/geo.js — geo-scoped edits. Position goes through the chart projection's
-// apply/invert (the inverse of geo mark encoding), not through 1D x/y scales.
-// Namespaced as `edit.geo.*` with `scope: 'geo'` so the engine can warn when
-// these are attached to a non-geo mark.
+// edit/geo.js — geo edits (scope 'geo'). Position is inverted through the chart's
+// projection, not through x/y scales.
 
-import { makeEdit, mintDatum, claimPick } from './shared.js';
+import { makeEdit, mintDatum, claimPick, andWhen } from './shared.js';
+import { rectAt } from './pick.js';
 import { invertPoint } from '../core/projection.js';
 
 /**
@@ -27,19 +26,27 @@ function lonLatFields(markChannels) {
 }
 
 /**
+ * The field holding a geoLine's coordinates list (fallback: coordinates).
+ * @param {Record<string, any>} markChannels
+ * @returns {string}
+ */
+function coordsField(markChannels) {
+    return (markChannels.coordinates && markChannels.coordinates.field) || 'coordinates';
+}
+
+/**
  * move — move a geoPoint (or any lon/lat row) by inverting the pointer.
  * @param {any} [options]
  * @returns {import('../types').Edit}
  */
 export function move(options = {}) {
-    const { ...rest } = options;
     return makeEdit({
         type: 'geo.move',
         gesture: 'drag',
         channels: null,
         pick: 'direct',
         scope: 'geo',
-        ...rest,
+        ...options,
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
             if (!ctx.datum) return undefined;
             const ll = invertPoint(projectionOf(ctx), ctx.pointer);
@@ -69,10 +76,7 @@ export function create(options = {}) {
             const ll = invertPoint(projectionOf(ctx), ctx.pointer);
             if (!ll) return undefined;
             const keys = lonLatFields(ctx.markChannels || {});
-            // The same minting core, but geo's position comes from the PROJECTION,
-            // not a channel scale — so the inverted lon/lat go through `seed` (which
-            // counts as "placed"), while the pointer-invert loop finds no cartesian
-            // channel to add (geo declares channels: null).
+            // The projected lon/lat go in `seed`, which counts as placed.
             const datum = mintDatum(ctx, {
                 defaults,
                 seed: { [keys.lon]: ll.lon, [keys.lat]: ll.lat },
@@ -82,6 +86,9 @@ export function create(options = {}) {
     });
 }
 
+/** Is the gesture on a vertex handle? @param {import('../types').EditContext} ctx */
+const onVertex = (ctx) => !!(ctx.node && ctx.node.channel === 'vertex');
+
 /**
  * dragVertex — move one vertex of a geoLine's coordinates list. The touched
  * node must carry `channel: 'vertex'` and `vertexIndex` (emitted by geoLine).
@@ -89,23 +96,21 @@ export function create(options = {}) {
  * @returns {import('../types').Edit}
  */
 export function dragVertex(options = {}) {
-    const { ...rest } = options;
     return makeEdit({
         type: 'geo.dragVertex',
         gesture: 'drag',
         channels: null,
         pick: 'direct',
         scope: 'geo',
-        when: (/** @type {import('../types').EditContext} */ ctx) => !!(ctx.node && ctx.node.channel === 'vertex'),
-        ...rest,
+        ...options,
+        when: andWhen(onVertex, options.when),
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
             if (!ctx.datum || !ctx.node) return undefined;
             const vi = ctx.node.vertexIndex;
             if (vi == null) return undefined;
             const ll = invertPoint(projectionOf(ctx), ctx.pointer);
             if (!ll) return undefined;
-            const coordsKey = (ctx.markChannels.coordinates && ctx.markChannels.coordinates.field)
-                || 'coordinates';
+            const coordsKey = coordsField(ctx.markChannels);
             const prev = ctx.datum[coordsKey];
             if (!Array.isArray(prev) || !prev[vi]) return undefined;
             const next = prev.map((c, i) => (i === vi ? [ll.lon, ll.lat] : c.slice()));
@@ -115,18 +120,8 @@ export function dragVertex(options = {}) {
 }
 
 /**
- * removeVertex — drop one vertex from a geoLine's coordinates list: the inverse of
- * `dragVertex` (and of the vertex-appending `draw`), so a drawn path can be
- * simplified as well as reshaped. Same target contract as `dragVertex` — the
- * touched node carries `channel: 'vertex'` and `vertexIndex`.
- *
- * Defaults to a plain click. When `dragVertex` already lives on the same handle,
- * that's fine (drag and click are different gestures); pair with a modifier if a
- * sibling CLICK edit shares the mark: `removeVertex({ when: when.alt })`.
- *
- * A line needs two vertices to exist, so a removal that would leave fewer is
- * rejected (returns undefined) rather than silently degenerating the row — use
- * the ordinary `remove` to delete the whole line.
+ * removeVertex — click a vertex handle to drop it from a geoLine's coordinates.
+ * Refuses to go below `min` (default 2) vertices; use `remove` for the whole line.
  * @param {any} [options]
  * @returns {import('../types').Edit}
  */
@@ -138,14 +133,13 @@ export function removeVertex(options = {}) {
         channels: null,
         pick: 'direct',
         scope: 'geo',
-        when: (/** @type {import('../types').EditContext} */ ctx) => !!(ctx.node && ctx.node.channel === 'vertex'),
         ...rest,
+        when: andWhen(onVertex, options.when),
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
             if (!ctx.datum || !ctx.node) return undefined;
             const vi = ctx.node.vertexIndex;
             if (vi == null) return undefined;
-            const coordsKey = (ctx.markChannels.coordinates && ctx.markChannels.coordinates.field)
-                || 'coordinates';
+            const coordsKey = coordsField(ctx.markChannels);
             const prev = ctx.datum[coordsKey];
             if (!Array.isArray(prev) || !prev[vi]) return undefined;
             if (prev.length <= min) return undefined; // would degenerate the line
@@ -185,8 +179,7 @@ export function draw(options = {}) {
             if (!st) return undefined;
             const ll = invertPoint(projectionOf(ctx), ctx.pointer);
             if (!ll) return undefined;
-            const coordsKey = (ctx.markChannels.coordinates && ctx.markChannels.coordinates.field)
-                || 'coordinates';
+            const coordsKey = coordsField(ctx.markChannels);
 
             const px = ctx.pointer.x, py = ctx.pointer.y;
             if (st.lastX != null && st.lastY != null) {
@@ -204,9 +197,7 @@ export function draw(options = {}) {
                 return ctx.data.map((d, j) => (j === i ? { ...d, [coordsKey]: coords } : d));
             }
 
-            // First sample of a new stroke: mint a row (its `coordinates` list is the
-            // position, so it rides `seed`) and lock its index on the session object
-            // (same reference the driver holds for the gesture).
+            // First sample: mint a row and lock its index on the session.
             const datum = mintDatum(ctx, { defaults, seed: { [coordsKey]: [[ll.lon, ll.lat]] } });
             if (!datum) return undefined;
             const next = [...ctx.data, datum];
@@ -223,7 +214,7 @@ export function draw(options = {}) {
  * @param {Record<string, any>} mc
  * @returns {{ west: string, south: string, east: string, north: string }}
  */
-function boundsFields(mc) {
+export function boundsFields(mc) {
     return {
         west: (mc.west && mc.west.field) || 'west',
         south: (mc.south && mc.south.field) || 'south',
@@ -235,23 +226,15 @@ function boundsFields(mc) {
 /**
  * brush — resize or move a geoRect's west/south/east/north.
  *
- * Which zone a gesture means (edge / corner / body) is classified ONCE at
- * dragstart by the geoBrush driver (src/edit/drivers/geoBrush.js) and locked in
- * the feature's session for the whole gesture; this apply just reads the lock
- * (`ctx.session`), exactly like `brushRect` in basic.js. Re-deciding the zone
- * per tick is what made the old version resize when you meant to move.
- *
- * A body move translates by the geographic delta from the latched grab anchor,
- * so the box follows the cursor instead of snapping its center to it. On dragend
- * the driver re-invokes with zone 'canonicalize' to un-invert a crossed pair.
+ * The geoBrush driver locks the zone (edge / corner / body) at dragstart in
+ * `ctx.session`. A body move translates by the delta from the grab point. At
+ * dragend `zone: 'canonicalize'` swaps any inverted pair.
  *
  * @param {any} [options]
  * @returns {import('../types').Edit}
  */
 export function brush(options = {}) {
-    // `edgeInset` / `move` are driver-only knobs: makeEdit passes them through
-    // onto the descriptor, where the driver reads them (as edgeInsetOf does).
-    // `move` is re-stated so its default lands even when the caller omits it.
+    // `move` is restated so its default lands on the descriptor for the driver.
     const { move = true, ...rest } = claimPick(options, 'geo.brush', 'geoBrush');
     return makeEdit({
         type: 'geo.brush',
@@ -288,8 +271,7 @@ export function brush(options = {}) {
 
             if (zone === 'body') {
                 if (!move || !st.grab || !st.box0) return undefined;
-                // Translate the box as it stood at dragstart by the pointer's
-                // geographic delta — preserves the grab offset AND the span.
+                // Translate the dragstart box by the pointer's geographic delta.
                 const dLon = ll.lon - st.grab.lon;
                 const dLat = ll.lat - st.grab.lat;
                 west = st.box0.west + dLon;
@@ -317,27 +299,8 @@ export function brush(options = {}) {
 }
 
 /**
- * Is the pointer over an existing rect node (grown by `inset`)? A geoBrush chart
- * raises the plane above the marks, so a plane click fires even when it lands on
- * a box — without this, clicking a box to grab it would also mint a new one.
- * @param {import('../types').EditContext} ctx
- * @param {number} inset
- * @returns {boolean}
- */
-function overExistingRect(ctx, inset) {
-    const { x: px, y: py } = ctx.pointer;
-    return (ctx.marks || []).some((m) => {
-        if (m.type !== 'rect' || m.index == null) return false;
-        if (m.x == null || m.y == null || m.width == null || m.height == null) return false;
-        return px >= m.x - inset && px <= m.x + m.width + inset
-            && py >= m.y - inset && py <= m.y + m.height + inset;
-    });
-}
-
-/**
- * createRect — plane click mints a geographic bbox centered on the pointer.
- * `width` / `height` are spans in DEGREES (a city box is ~0.02°, not 10°), so
- * pass them explicitly for anything smaller than a continent.
+ * createRect — plane click mints a geographic bbox centred on the pointer.
+ * `width` / `height` are spans in degrees (default 10 × 6).
  * @param {any} [options]
  * @returns {import('../types').Edit}
  */
@@ -357,16 +320,18 @@ export function createRect(options = {}) {
         pick: 'plane',
         scope: 'geo',
         cardinality: 'append',
-        // Clicking an existing box means "grab it", not "make another".
-        when: (/** @type {import('../types').EditContext} */ ctx) => !overExistingRect(ctx, edgeInset),
         ...rest,
+        // Not on an existing box (the raised plane also receives those clicks).
+        when: andWhen(
+            (/** @type {import('../types').EditContext} */ ctx) => rectAt(ctx.marks || [], ctx.pointer.x, ctx.pointer.y, edgeInset) == null,
+            options.when,
+        ),
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
             const ll = invertPoint(projectionOf(ctx), ctx.pointer);
             if (!ll) return undefined;
             const f = boundsFields(ctx.markChannels || {});
             const hw = width / 2, hh = height / 2;
-            // An extent mark: its position IS the bbox, seeded from the projected
-            // point ± the default spans, so the box is never minted zero-size.
+            // Seed the bbox from the projected point ± half the spans.
             const datum = mintDatum(ctx, {
                 defaults,
                 seed: {

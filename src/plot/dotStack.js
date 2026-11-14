@@ -1,45 +1,23 @@
 // @ts-check
-// dotStack.js — a stacked dot plot (a dot histogram / token counter). Each datum
-// is ONE token (`[{ bin: 0.3 }, { bin: 0.3 }, ...]`); tokens sharing a category
-// stack into a countable column. It is the "drop circles into slots" elicitation:
-// a click on the plane mints a token in the nearest slot (edit.create), a click
-// on a token removes it (edit.remove), and the belief is just how many tokens sit
-// in each slot — `data.filter(d => d.bin === b).length`.
+// dotStack.js — a stacked dot plot. Each row is one token; tokens sharing a
+// category stack into a column, so the belief is the count per slot.
 //
-//   // Elicit({ schema: { bin: { type: 'ordinal', domain: bins } }, data: [], … })
 //   dotStack({
 //     size: 7,                                  // token radius
 //     channels: { x: { field: 'bin' } },
 //     edits: [ create({ gesture: 'click', channels: ['x'] }), remove() ],
 //   })
 //
-// The cap on how many tokens there may be is a DATASET invariant, so it goes on
-// the spec beside `data`, not on this mark:
-//   constraints: [ count({ max: 20 }), unique({ field: 'bin', max: 10 }) ]
-//
-// The category axis is a band/point scale over the discrete slots (its
-// domainConfig is the slot list the ghosts iterate). The OTHER axis is a pure
-// count of stacked tokens — fixed token geometry (2r + gap per token), not a
-// value scale — so there is exactly ONE field->pixel resolution here, the
-// category position through encodeChannel; the stack offset is derived count
-// geometry, the same class as a bar's band interval.
-//
-// `dotStackY` stacks upward with the category on x; `dotStackX` stacks rightward
-// with the category on y — the bare + X/Y pairing every directional mark in this
-// codebase follows. Bare `dotStack` reads the direction off the CHANNEL MAP (the
-// category's axis is the band, so tokens stack along the other one), and takes
-// `orientation: 'horizontal' | 'vertical'` — bar's and waffle's word for the same
-// choice. Like waffle's, it is resolved statically rather than from the scales,
-// because the derived count scale needs the direction before any build() runs.
+// The stack axis is a count: each token takes 2r + gap px. `dotStackY` stacks
+// upward (category on x), `dotStackX` rightward (category on y).
 
 import { encodeChannel, categoryOf, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, resolveValueAxis, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 import { offsetScaleOf } from '../core/scales.js';
 
 /**
- * The discrete slots along the category axis — the ghost/label layer iterates
- * these. Prefer the scale's declared domain (band/point categories); fall back to
- * the distinct values present in the data.
+ * The slots along the category axis: the scale's declared domain, else the
+ * distinct values in the data.
  * @param {any} scale
  * @param {string} key
  * @param {any[]} data
@@ -55,15 +33,13 @@ function slotsOf(scale, key, data) {
 }
 
 /**
- * @param {any} options
+ * @param {any} [options]
  * @returns {import('../types').Mark}
  */
-function buildDotStack(options) {
+export function dotStack(options = {}) {
     const opts = normalizeMarkOptions(options, { mark: 'dotStack', allow: MARK_OPTIONS.dotStack });
     const {
         channels = {},
-        id,
-        edits,
         orientation: orientationOption,
         gap = 2,
         ghost = true,
@@ -72,30 +48,19 @@ function buildDotStack(options) {
 
     const { xKey, yKey } = positionalKeys(channels);
 
-    // Which axis the tokens stack ALONG — the count direction, resolved from the
-    // CHANNEL MAP rather than from the scales. It has to be static: the derived
-    // count scale's range needs the direction before any build() runs (see
-    // core/resolve.js), and a dotStack binds exactly ONE positional channel (the
-    // slot), so the axis that channel sits on is the category and the other is the
-    // count's. `orientation` is bar's and waffle's word for the same choice, so it
-    // means the same thing here: 'horizontal' stacks rightward.
+    // The stack axis, read from the channel map at factory time (not the scales):
+    // the count scale's range needs it before any build() runs.
     const stackAxis = resolveValueAxis(channels, null, { orientation: orientationOption, single: 'other' });
 
-    // The token pitch, for the DERIVED count scale (core/resolve.js). A token is a
-    // unit of count, so every token shares one radius; `size` is a constant here by
-    // construction (build resolves it against a null datum), which is what makes the
-    // pitch knowable before there is any data.
+    // Token radius for the count scale's pitch. `size` is a constant here, so the
+    // pitch is known before there is any data.
     const tokenRadius = (channels.size && channels.size.value != null) ? +channels.size.value : 7;
 
     return {
         ...markCommon(opts),
         type: 'dotStack',
         channels,
-        // This mark COUNTS, so it has a count axis — but it declares no `count`
-        // channel, because one row IS one token and there is no column to encode.
-        // That asymmetry with `waffle` (which encodes its magnitude) is the data
-        // model, and it is why they are two marks. The pitch is what makes the axis
-        // exact: pixels -> count is linear, so the scale needs no data.
+        // A count axis with no `count` channel: one row is one token.
         countAxis: stackAxis,
         countPitch: 2 * tokenRadius + gap,
         // Tokens sit in discrete slots; a point scale gives each slot a tick.
@@ -110,22 +75,16 @@ function buildDotStack(options) {
          * @returns {import('../types').FeatureNode[]}
          */
         build: (currentData, scales, width, height) => {
-            // Token radius, from the `size` shorthand. A token is a unit of count,
-            // so the stack geometry needs ONE radius for every token — resolve it
-            // against no datum, which yields the constant (or the default).
+            // One radius for every token: resolve `size` against no datum.
             const r = encodeChannel(scales, channels, 'size', null, 7);
             const slot = 2 * r + gap;
             const categoryKey = stackAxis === 'y' ? xKey : yKey;
             const categoryChannel = stackAxis === 'y' ? 'x' : 'y';
-            // The token column grows from the axis floor: the bottom for a vertical
-            // stack, the left edge for a horizontal one.
+            // Columns grow from the bottom (vertical) or left edge (horizontal).
             const base = stackAxis === 'y' ? height : 0;
 
-            // Slot occupancy, resolved up front so the ghost rings can be emitted
-            // BEFORE the tokens (draw order == z-order: rings sit behind the stack).
-            // A nested `xOffset`/`yOffset` splits each slot into sub-slots, and a
-            // token stacks in its (category, sub-category) column. The position
-            // itself needs nothing here: encodeChannel adds the offset.
+            // Slot counts, computed first so ghost rings draw behind the tokens.
+            // A nested `xOffset`/`yOffset` splits each slot into sub-columns.
             const offsetChannel = categoryChannel === 'x' ? 'xOffset' : 'yOffset';
             const offsetSpec = channels[offsetChannel];
             const nested = offsetSpec && offsetSpec.field != null && offsetScaleOf(scales, channels, categoryChannel);
@@ -144,8 +103,7 @@ function buildDotStack(options) {
             /** @type {Map<any, number>} */
             const counts = new Map();
             currentData.forEach((d, i) => {
-                // A row with no category is a token in no slot: it counts nowhere
-                // and draws nothing (it stacked into the first slot).
+                // A row with no category counts nowhere and draws nothing.
                 if (missingValue(channels, categoryChannel, d)) return;
                 if (offsetField && missingValue(channels, offsetChannel, d)) return;
                 const key = columnOf(d, i);
@@ -153,8 +111,8 @@ function buildDotStack(options) {
             });
 
             /** The pixel of a slot's `n`-th token along the stack axis. */
-            const placeAt = (/** @type {any} */ datum, /** @type {number} */ n) => {
-                const along = encodeChannel(scales, channels, categoryChannel, datum, (stackAxis === 'y' ? width : height) / 2);
+            const placeAt = (/** @type {any} */ datum, /** @type {number} */ n, /** @type {number} */ i) => {
+                const along = encodeChannel(scales, channels, categoryChannel, datum, (stackAxis === 'y' ? width : height) / 2, i, currentData);
                 const offset = (n + 0.5) * slot;
                 return {
                     cx: stackAxis === 'y' ? along : base + offset,
@@ -165,15 +123,13 @@ function buildDotStack(options) {
             /** @type {import('../types').FeatureNode[]} */
             const nodes = [];
 
-            // Ghost affordance: a faint open circle at each slot's NEXT position, so
-            // an empty slot still reads as droppable (the open rings in the token
-            // reference). Non-interactive — the plane owns the create gesture, and a
-            // ring must never swallow the click or the hover preview beneath it.
+            // Ghost ring at each slot's next position. Non-interactive, so it never
+            // swallows the plane's create click.
             if (ghost) {
                 for (const at of columns()) {
                     nodes.push({
                         type: 'circle',
-                        ...placeAt(at, counts.get(columnOf(at, -1)) || 0),
+                        ...placeAt(at, counts.get(columnOf(at, -1)) || 0, -1),
                         r,
                         fill: 'none',
                         stroke: '#bbb',
@@ -183,6 +139,7 @@ function buildDotStack(options) {
                 }
             }
 
+            const tokenDefaults = markDefaults(scales, 'dotStack', { fill: themeOf(scales).ink });
             /** @type {Map<any, number>} */
             const seen = new Map();
             currentData.forEach((/** @type {any} */ d, i) => {
@@ -191,11 +148,9 @@ function buildDotStack(options) {
                 const key = columnOf(d, i);
                 const n = seen.get(key) || 0;
                 seen.set(key, n + 1);
-                const style = resolveStyle(scales, channels, d, markDefaults(scales, 'dotStack', { fill: themeOf(scales).ink }), i, currentData);
-                const pos = placeAt(d, n);
-                // A `symbol` channel renders each token as a glyph (an emoji token
-                // stack) instead of a circle; the ghost rings above stay circles as
-                // the drop affordance. Token radius `r` sets the glyph size.
+                const style = resolveStyle(scales, channels, d, tokenDefaults, i, currentData);
+                const pos = placeAt(d, n, i);
+                // A `symbol` channel draws each token as a glyph of radius `r`.
                 const glyph = resolveSymbol(scales, channels, d, i, currentData);
                 if (glyph !== undefined) {
                     nodes.push(symbolNode(glyph, pos.cx, pos.cy, r, { ...style, data: d, index: i }));
@@ -216,7 +171,7 @@ function buildDotStack(options) {
                 for (const synthetic of columns()) {
                     const n = counts.get(columnOf(synthetic, -1)) || 0;
                     if (n === 0) continue;
-                    const along = encodeChannel(scales, channels, categoryChannel, synthetic, (stackAxis === 'y' ? width : height) / 2);
+                    const along = encodeChannel(scales, channels, categoryChannel, synthetic, (stackAxis === 'y' ? width : height) / 2, -1, currentData);
                     const offset = (n + 1) * slot;
                     nodes.push({
                         type: 'text',
@@ -237,15 +192,7 @@ function buildDotStack(options) {
 }
 
 /**
- * @param {any} [options]
- * @returns {import('../types').Mark}
- */
-export function dotStack(options = {}) {
-    return buildDotStack(options);
-}
-
-/**
- * Stack tokens UPWARD (category on x).
+ * Stack tokens upward (category on x).
  * @param {any} [options]
  * @returns {import('../types').Mark}
  */
@@ -254,7 +201,7 @@ export function dotStackY(options = {}) {
 }
 
 /**
- * Stack tokens RIGHTWARD (category on y).
+ * Stack tokens rightward (category on y).
  * @param {any} [options]
  * @returns {import('../types').Mark}
  */

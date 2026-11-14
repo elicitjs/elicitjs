@@ -1,9 +1,7 @@
 // @ts-check
-// samples.js — resolve a set of anchor positions on a domain axis. Mark-agnostic,
-// used when authoring a line's points (newSeries seeding, sweep): "where along
-// the domain do the anchors sit?" The default reads the scale's own ticks, so a
-// drawn line lands on the same nice values an axis would show — even when no axis
-// is rendered. Overridable with a count, explicit positions, or a time interval.
+// samples.js — anchor positions along a domain axis, for authoring a line's points
+// (newSeries seeding, sweep). Defaults to the scale's own ticks; overridable with a
+// count, explicit positions, or a time interval.
 import * as d3 from 'd3';
 import { isDiscrete } from './scales.js';
 
@@ -21,12 +19,12 @@ const TIME_INTERVALS = {
 /**
  * @param {any} scale a domain-axis scale (from createScale)
  * @param {number | any[] | { every?: string, count?: number } | undefined} samples
- * @returns {any[]} anchor values in DATA space (feed each through scale.encode to place)
+ * @returns {any[]} anchor values in data space (feed each through scale.encode to place)
  */
 export function resolveSamples(scale, samples) {
     if (!scale) return [];
 
-    // Categorical domain: the categories ARE the samples. Read the capability
+    // Categorical domain: the categories are the samples. Read the capability
     // flag, not `type` — an adopted d3.scaleBand() carries no type at all.
     if (isDiscrete(scale) || scale.kind === 'discrete') {
         return [...scale.domain()];

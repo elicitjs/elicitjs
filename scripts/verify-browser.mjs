@@ -36,7 +36,7 @@ const BASE = `http://localhost:${PORT}`;
 // so it is a proxy for "this circle is a node", not an assertion about colour.
 // Named once so a palette change is one edit here rather than a scavenger hunt;
 // assertions that are genuinely ABOUT colour compare swatches to marks instead.
-const PALETTE_HEAD = '#4e79a7';
+const PALETTE_HEAD = '#50aeb7';
 
 let passed = 0;
 const failures = [];
@@ -314,7 +314,7 @@ async function main() {
             return m ? Number(m[1]) : null;
         });
         const filledCount = () => page.$$eval(`${sec} svg circle`,
-            (cs) => cs.filter((c) => (c.getAttribute('fill') || '').toLowerCase() === '#16a34a').length);
+            (cs) => cs.filter((c) => (c.getAttribute('fill') || '').toLowerCase() === '#7db86b').length);
 
         // Click specific cells (DOM order === cell ordinal) and assert the count is
         // exactly that cell, and the rendered fill matches value / unit. `locator`
@@ -410,7 +410,7 @@ async function main() {
         // The y range runs [height, 0], so the first category sits at the BOTTOM —
         // read the blocks bottom-up to get them in declared domain order.
         const hFilled = hBlocks
-            .map((cs) => cs.filter((c) => c.fill === '#4f46e5').length)
+            .map((cs) => cs.filter((c) => c.fill === '#50aeb7').length)
             .reverse();
         check('horizontal waffle: filled counts are value/unit per category',
             JSON.stringify(hFilled) === JSON.stringify([21, 20, 31, 4]),
@@ -585,6 +585,9 @@ async function main() {
             (el) => el.querySelectorAll('.effect').length).catch(() => 0);
         const fxIdle = await fxCount();
         check('hover: no effect overlay while the pointer is away', fxIdle === 0, `${fxIdle} nodes`);
+        const paintOf = () => page.$eval('#slide .chart svg circle.mark',
+            (el) => `${el.getAttribute('fill')}|${el.getAttribute('stroke')}`);
+        const paintBeforeHover = await paintOf();
         const hoverTarget = await centreOf(page.locator('#slide .chart svg circle.mark').first());
         await page.mouse.move(hoverTarget.x, hoverTarget.y);
         await page.waitForTimeout(120);
@@ -597,10 +600,9 @@ async function main() {
         check('hover: leaving the mark clears the outline', fxOut === 0, `${fxOut} nodes`);
         // The mark's own paint is untouched throughout — the whole reason an effect
         // is a CSS property / overlay rather than a style attribute.
-        const strokeAfterHover = await page.$eval('#slide .chart svg circle.mark',
-            (el) => el.getAttribute('stroke'));
-        check('hover: the mark\'s own stroke attribute is untouched',
-            strokeAfterHover != null, `stroke=${strokeAfterHover}`);
+        const paintAfterHover = await paintOf();
+        check('hover: the mark\'s own paint attributes are untouched',
+            paintAfterHover === paintBeforeHover, `${paintBeforeHover} -> ${paintAfterHover}`);
 
         // ---- effects follow a ROTATED mark (/marks/point #angle) -------------
         // An effect overlay is a NEW node built beside the mark, so it only lands on
@@ -1404,14 +1406,14 @@ async function main() {
         const fnRows = () => page.$eval('#derived .chart > div', (el) => el.getData());
         const fnFill = () => page.$eval('#derived .chart svg circle',
             (c) => (c.getAttribute('fill') || c.style.fill || '').toLowerCase());
-        check('fn: row 0 starts below the threshold and derives the blue fill', (await fnFill()) === '#2563eb');
+        check('fn: row 0 starts below the threshold and derives the blue fill', (await fnFill()) === '#50aeb7');
         let fr = await fnRows();
         await dragPath(fnAt(fr[0].x, fr[0].y), fnAt(85, fr[0].y));
         fr = await fnRows();
         check('fn: the drag wrote the source field across the threshold', fr[0].x > 50, `x=${fr[0].x}`);
-        check('fn: the fill re-derived to the above-threshold red', (await fnFill()) === '#dc2626');
+        check('fn: the fill re-derived to the above-threshold red', (await fnFill()) === '#ee7b5e');
         await dragPath(fnAt(fr[0].x, fr[0].y), fnAt(20, fr[0].y));
-        check('fn: dragging back below re-derives the original blue', (await fnFill()) === '#2563eb');
+        check('fn: dragging back below re-derives the original blue', (await fnFill()) === '#50aeb7');
 
         // ---- Arc: the `value` magnitude channel + boundary drag --------------
         // The magnitude channel is `value` (not `angle` — that means rotation
@@ -2911,11 +2913,11 @@ async function main() {
         await page.waitForTimeout(250);
         const xtBefore = await xtRoot.evaluate((el) => el.getData());
         check('legend: the cross-table chart seeds both tables with `team`',
-            xtBefore.people.map((d) => d.team).join(',') === 'red,blue,red'
-            && xtBefore.ties.map((d) => d.team).join(',') === 'red,blue',
+            xtBefore.people.map((d) => d.team).join(',') === '#EE7B5E,#50AEB7,#EE7B5E'
+            && xtBefore.ties.map((d) => d.team).join(',') === '#EE7B5E,#50AEB7',
             JSON.stringify(xtBefore));
 
-        // Rename "red" -> "crimson" from the legend.
+        // Rename "#EE7B5E" -> "crimson" from the legend.
         const xtSwatches = xtSvg.locator('rect.mark');
         await xtSwatches.first().dblclick();
         await page.waitForTimeout(200);
@@ -2924,10 +2926,10 @@ async function main() {
         await page.waitForTimeout(250);
         const xtAfter = await xtRoot.evaluate((el) => el.getData());
         check('legend: a cross-table rename writes the NODE table\'s rows',
-            xtAfter.people.map((d) => d.team).join(',') === 'crimson,blue,crimson',
+            xtAfter.people.map((d) => d.team).join(',') === 'crimson,#50AEB7,crimson',
             JSON.stringify(xtAfter.people.map((d) => d.team)));
         check('legend: a cross-table rename writes the LINK table\'s rows too',
-            xtAfter.ties.map((d) => d.team).join(',') === 'crimson,blue',
+            xtAfter.ties.map((d) => d.team).join(',') === 'crimson,#50AEB7',
             JSON.stringify(xtAfter.ties.map((d) => d.team)));
 
         // Continuous value picker: dragging the ramp handle DOWN (toward the low end
@@ -3056,12 +3058,12 @@ async function main() {
         console.log('\nTheming (/theming)');
         await open('/theming', '#tokens .chart svg rect');
         const inkFill = await page.$eval('#tokens .chart svg rect:not(.plane)', (r) => r.getAttribute('fill'));
-        check('theme: ink recolours the bars', inkFill === '#e11d48', `fill=${inkFill}`);
+        check('theme: ink recolours the bars', inkFill === '#EE7B5E', `fill=${inkFill}`);
         // Per-mark override: bars read `ink`, dots read theme.marks.point.
         const barFill = await page.$eval('#precedence .chart svg rect:not(.plane)', (r) => r.getAttribute('fill'));
         const dotFill = await page.$eval('#precedence .chart svg circle', (c) => c.getAttribute('fill'));
-        check('theme: ink colours the bars', barFill === '#0ea5e9', `fill=${barFill}`);
-        check('theme: marks.point overrides just the dots', dotFill === '#f59e0b', `fill=${dotFill}`);
+        check('theme: ink colours the bars', barFill === '#2B5D87', `fill=${barFill}`);
+        check('theme: marks.point overrides just the dots', dotFill === '#F2B94B', `fill=${dotFill}`);
         // Dark mode: the `background` token paints the svg, and light ink recolours marks.
         const darkBg = await page.$eval('#dark .chart svg', (s) => s.style.background || getComputedStyle(s).backgroundColor);
         const darkBar = await page.$eval('#dark .chart svg rect:not(.plane)', (r) => r.getAttribute('fill'));
@@ -4746,7 +4748,7 @@ async function main() {
         console.log('\nChrome tokens (/theming, /marks/axes)');
         await open('/theming', '#chrome svg');
         const thmPanelFill = await page.$eval('#chrome svg rect.bg-rect', (r) => r.getAttribute('fill'));
-        check('theme.panel paints the plot area first', thmPanelFill === '#ebebeb', `fill=${thmPanelFill}`);
+        check('theme.panel paints the plot area first', thmPanelFill === '#EAF0F4', `fill=${thmPanelFill}`);
         await open('/marks/axes', '#styling svg');
         const thmTurned = await page.$$eval('#styling svg text', (ts) => ts.filter((t) => /rotate\(-40/.test(t.getAttribute('transform') || '')).length);
         check('axis: labelAngle turns the tick labels', thmTurned === 5, `thmTurned=${thmTurned}`);

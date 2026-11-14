@@ -1,28 +1,16 @@
 // @ts-check
 import { defineConstraint, constraintOptions } from './define.js';
+import { groupRows, rewrap } from './shared.js';
 
-// spacing: adjacent values along a field must stay at least `min` apart — a data
-// invariant.
+// spacing: adjacent values of a field stay at least `min` apart (in data units).
 //
 //   spacing({ field: 'x', min: 5 })    // no two points closer than 5 in x
 //
-// For elicitations where "distinct" is part of the claim: thresholds of a scale,
-// breakpoints of a piecewise curve, tiers of a rubric. Two coincident points may
-// be a genuine belief, but more often they're a slip of the hand that reads as one
-// point and can never be separated again — the topmost one takes every subsequent
-// grab.
-//
-// It repairs by pushing neighbours away from the moved row (which is the one the
-// person meant), the same way `ordering` and `monotonic` do. `min` is in DATA
-// units, not pixels: a constraint never sees the scale, and a rule that changed
-// meaning when the chart was resized wouldn't be an invariant at all.
-//
-// Note this also implies an order (pushing apart preserves the sort), so a field
-// with `spacing` doesn't need `ordering` as well.
+// Repairs by pushing neighbours away from the moved row.
 
 /**
  * @param {{ field?: string, min?: number, series?: string | null }} [options]
- *   field   the field whose values must stay apart (default 'x').
+ *   field   the field whose values must stay apart (default: the column the edit writes).
  *   min     the smallest allowed gap, in data units (default 1).
  *   series  group rows by this field first, so each line is judged on its own.
  * @returns {import('../types').Constraint}
@@ -37,13 +25,7 @@ export function spacing(options = {}) {
                 ? [Math.min(...domain.map(Number)), Math.max(...domain.map(Number))]
                 : null;
 
-            /** @type {Map<any, number[]>} */
-            const groups = new Map();
-            data.forEach((d, i) => {
-                const key = series ? d[series] : null;
-                if (!groups.has(key)) groups.set(key, []);
-                /** @type {number[]} */ (groups.get(key)).push(i);
-            });
+            const groups = groupRows(data, (d) => (series ? d[series] : null));
 
             const next = data.map((d) => ({ ...d }));
             let touched = false;
@@ -59,24 +41,22 @@ export function spacing(options = {}) {
                 const at = run.indexOf(/** @type {number} */(activeIndex));
                 const pivot = at >= 0 ? at : 0;
 
-                // The chain has to FIT the field's domain: with k neighbours beyond
-                // the dragged value it may sit no closer than k·min to that wall, or
-                // the shove carries a neighbour past the wall and a clamp folds the
-                // pushed thresholds together. Cap the dragged value first.
+                // Cap the dragged value k·min inside each domain wall (k = rows
+                // beyond it), so the push never carries a neighbour past the wall.
                 if (at >= 0 && bounds) {
                     const [lo, hi] = bounds;
                     const v = Number(next[run[at]][field]);
                     const capped = Math.max(lo + at * min, Math.min(hi - (run.length - 1 - at) * min, v));
-                    if (Number.isFinite(capped) && capped !== v) { next[run[at]][field] = capped; touched = true; }
+                    if (Number.isFinite(capped) && capped !== v) { next[run[at]][field] = rewrap(next[run[at]][field], capped); touched = true; }
                 }
 
                 for (let k = pivot + 1; k < run.length; k++) {
                     const floor = Number(next[run[k - 1]][field]) + min;
-                    if (Number(next[run[k]][field]) < floor) { next[run[k]][field] = floor; touched = true; }
+                    if (Number(next[run[k]][field]) < floor) { next[run[k]][field] = rewrap(next[run[k]][field], floor); touched = true; }
                 }
                 for (let k = pivot - 1; k >= 0; k--) {
                     const ceil = Number(next[run[k + 1]][field]) - min;
-                    if (Number(next[run[k]][field]) > ceil) { next[run[k]][field] = ceil; touched = true; }
+                    if (Number(next[run[k]][field]) > ceil) { next[run[k]][field] = rewrap(next[run[k]][field], ceil); touched = true; }
                 }
             }
 

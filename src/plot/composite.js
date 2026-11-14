@@ -1,142 +1,17 @@
 // @ts-check
-// composite.js — a GLYPH: a named group of ordinary marks over the chart's one
-// dataset. Each part encodes some columns of the same rows; a part whose channel
-// carries an `edit` is a handle. Editing a handle mutates its field; on the next
-// render every other part rebuilds from the changed rows, so the glyph stays
-// internally consistent with no per-part wiring.
+// composite.js — a glyph: a named group of ordinary marks over the chart's one
+// dataset. A part whose channel carries an `edit` is a handle; the other parts
+// rebuild from the edited rows on the next render.
 //
-// (Box mode below used to be a separate mark called `group`; there is one
-// implementation and one name now.)
-//
-// ── Two modes, one rule apart ───────────────────────────────────────────────
-// PLAIN — every part stands on the chart's own axes. Right for a glyph whose
-// parts are all data values: an error bar's caps are positions on y.
-//
-//   composite({
-//     id: 'errorbar',
-//     parts: [
-//       ruleX({ channels: { x: {field:'g'}, y1: {field:'lo'}, y2: {field:'hi'} } }),
-//       point({ channels: { x: {field:'g'}, y:  {field:'mean', edit: move()} } }),
-//       tick({  channels: { x: {field:'g'}, y:  {field:'lo',   edit: move()} } }),
-//       tick({  channels: { x: {field:'g'}, y:  {field:'hi',   edit: move()} } }),
-//     ],
-//   })
-//
-// BOX — the composite is a per-datum box, and parts place themselves INSIDE it.
-// Right for a glyph whose parts are relative to the glyph rather than to the
-// data: a face's eye is not "at y = 0.16 of the data", it is "16% of the way up
-// this face". A part opts in by stating a channel in local units (`frame:`), and
-// THAT is what switches the mode on — nothing else. The composite's own `x`/`y`/
-// `size` then place and size the box instead of trickling down.
-//
-//   composite({
-//     channels: { x: {field:'gdp'}, y: {field:'life'}, size: {value: 40} },
-//     parts: [
-//       point({   channels: { size: { frame: 1 } } }),          // fills the box
-//       ellipse({ channels: { x: { frame: -0.4 }, y: { frame: 0.16 },
-//                             rx: { field: 'openness', frame: [0.06, 0.19],
-//                                   edit: slide({ axis: 'x', increase: 'right' }) } } }),
-//     ],
-//   })
-//
-// ── The box ─────────────────────────────────────────────────────────────────
-// The composite's `x` / `y` / `size` define, FOR EACH ROW, an origin (cx, cy)
-// and a half-size R. A local channel is resolved against that box: local +1 on x
-// is cx + R, local +1 on y is cy - R (local y is UP), a magnitude of 1 is R.
-// `frameFamilyOf` in core/encoding.js owns which channel reads the box which way;
-// `createFrameScale` in core/scales.js turns each into a real linear scale.
-//
-// Real scale is the whole point. A local channel is not a pixel offset a mark
-// computes and an edit has to un-compute with a bespoke track — it is an
-// ordinary invertible Scale that happens to be built per datum, so:
-//   · a mark encodes through `encodeChannel`, exactly as it always does, and
-//   · an edit inverts through the SAME object (each node carries its frame map
-//     as `node.frame`, and computeEdit overlays it — see core/elicit.js).
-// So `slide` / `move` / `rotate` / `resize` work inside a box unchanged; there is
-// no second inversion path, and "an edit is the inverse of encoding" is true per
-// datum rather than approximately.
-//
-// `{ frame: -0.4 }` is a pinned local position; `{ field: 'f', frame: [lo, hi] }`
-// maps the field's SCHEMA domain onto that slice of the box. `{ value }` still
-// means PIXELS here as everywhere — it is the escape hatch, and inside a glyph
-// you almost never want one, which is why the local spelling is the short one.
-//
-// ── What a composite emits ──────────────────────────────────────────────────
-// Either way this is a DESUGARING, not a new kind of feature: it returns plain
-// features and `Elicit` flattens them, exactly as the `axes` convenience desugars
-// into axis/grid marks. The engine learns nothing. There is no scene-graph group:
-// co-centered parts that share an `angle` channel each emit `node.angle` and the
-// renderer rotates them about their own centers.
-//
-// In PLAIN mode it returns exactly the parts. In BOX mode it returns:
-//
-//   1. the BOX itself — a feature carrying the composite's x/y/size, drawing one
-//      transparent circle per row at (cx, cy) with radius R. It is FIRST, so it
-//      sits at the bottom of z-order: a part with its own edit is drawn above and
-//      wins the direct pick, while an inert part is pointer-transparent and lets
-//      the click through. That is what makes `x: { field, edit: move() }` on the
-//      composite move the whole glyph while dragging an eye still edits the eye.
-//      It also feeds the global resolver, so the frame's origin has axes to be
-//      measured against.
-//   2. the PARTS, each local one wrapped so its `build` runs once per row with
-//      that row's frame scales substituted in. Each part stays its own feature,
-//      so direct-pick dispatch keeps a drag on one part off its siblings.
-//
-// A local part that states no x/y sits at the box's ORIGIN. Parts do not inherit
-// the composite's x/y/size in box mode — those mean "the box", not "each part's
-// position" — so stating nothing is how you say "here, at the glyph".
-//
-// Two consequences of the per-row wrapping, both deliberate:
-//   · a local part's `build` sees a ONE-ROW dataset, so a derived `{ fn }` channel
-//     is called as `(d, 0, [d])` — it can't look across rows. Read the field.
-//     A bare `{ fn }` returns pixels, which cannot know where the box is; with
-//     `frame: true` it returns LOCAL units and goes through the part's frame scale
-//     (plot/mark.js: encodeOwn). That is how one part sits where another part's
-//     VALUE puts it — a forearm pivoting at the end of an upper arm.
-//   · a series (line-family) mark cannot span rows inside a box, so it is
-//     dev-warned rather than silently drawing one-point lines.
-//
-// A part with NO local channel inside a box composite keeps its ordinary build
-// over the global scales — that is the escape hatch for a part that genuinely
-// spans to a data value.
-//
-// ── Why the parts are real, separate features ───────────────────────────────
-//   1. NO HANDLE ARBITRATION. Direct-pick dispatch routes a gesture to the feature
-//      owning the touched node (elicit.js: `features.find(f => f.id ===
-//      event.node.featureId)`), so a drag on the `hi` cap cannot reach the `lo`
-//      cap's edit. A glyph whose handles share ONE feature does need arbitration —
-//      see plot/trend.js, whose two handles sit on one datum.
-//   2. NO CHANNEL GYMNASTICS. Each handle is its own mark, so each edits a plain
-//      `y` (or `x`) channel. The x1/x2/y1/y2 span channels are left to the marks
-//      that genuinely span, like the whisker's ruleX.
-//   3. SHARED STATE FOR FREE. Every mark reads the chart's one dataset, so a
-//      coupled edit (drag the mean, shift lo/hi with it) and a dataset constraint
-//      (keep the mean between the caps) both work across parts with no plumbing.
-//      The constraint gates and repairs whichever part's handle you grabbed.
-//
-// Parts that carry no edit are pure visuals; the engine gives them
-// `pointerEvents:'none'` (a mark with no direct-pick edit can't consume a gesture,
-// so it must not block one). Put visuals first and handles last in `parts` so
-// handles paint on top; pointer-transparency still covers an inert part that
-// overlaps a later handle.
-//
-// ── One glyph paints as one OBJECT ──────────────────────────────────────────
-// The parts being separate features has one consequence that is NOT wanted: the
-// engine draws feature by feature, so it would paint every row's part 1, then
-// every row's part 2 — every sticker's paper, then every sticker's text. Two
-// overlapping notes then come out interleaved, the lower note's label sitting on
-// the upper note's paper, which reads as a z-order bug and is one.
-//
-// So every feature this returns is stamped with a `glyph` key, and `paintOrder`
-// (core/scene.js) orders that group's nodes by ROW first: each glyph paints
-// whole, in its parts' declared order, and a later row covers an earlier one
-// completely. Paint order ONLY — dispatch, picking and data stay per feature, so
-// a drag on one part still cannot reach its sibling. The box is the exception
-// inside the group: as a `hit` node it stays at the bottom of it, because a box
-// covers its whole glyph and interleaved by row would swallow every gesture
-// aimed at the row before it.
+// Plain mode: every part uses the chart's scales. Box mode: a part that states a
+// channel in local units (`frame:`) switches it on; the composite's own x/y/size
+// then define a per-row box, and local channels encode through a real per-row
+// scale (`createFrameScale`) stamped as `node.frame` so edits invert through it.
+// In box mode the output is [box, ...parts]; the box is first so it sits at the
+// bottom of the glyph. Each part stays its own feature, so a drag on one part
+// cannot reach another. See MARK_CONTRACTS.md and .claude/rules/marks.md.
 
-import { normalizeMarkOptions, encodeChannel, positionalKeys, themeOf } from './mark.js';
+import { normalizeMarkOptions, encodeChannel, positionalKeys, themeOf, withoutEdit } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 import { createFrameScale, bandwidthOf, isBand, scaleKey } from '../core/scales.js';
 import {
@@ -144,50 +19,31 @@ import {
 } from '../core/encoding.js';
 import { warn } from '../core/dev.js';
 
-// The composite's own channels — the ones that DEFINE the box rather than
-// describe a part. In box mode they stay off the trickle-down list: inheriting
-// them would place every part at the origin AND at the box's full size, which is
-// the opposite of a local frame. (A local part reaches the origin by stating
-// nothing; see the origin defaults below.)
+// The channels that define the box. In box mode they don't trickle to parts.
 const FRAME_KEYS = ['x', 'y', 'size'];
 
-// `ports` says where links meet the GLYPH as a network node, so it goes on ONE
-// feature, never trickling to every part (each part would grow its own set of
-// ports). In box mode that is the box, whose circle is the glyph's extent; in plain
-// mode, the first part that declares the box it draws.
-//
-// `contains` (may a row of a hierarchy hold others — see core/fit.js) is the same
-// kind of statement: about the glyph as one node, so it goes to the same feature.
-// So is `dodge` (does a row keep clear of its siblings).
+// Channels about the glyph as one node. They go on one feature (the box in box
+// mode, else the first shaped part), never on every part.
 const GLYPH_KEYS = ['ports', 'contains', 'dodge'];
 
-// Counts composite CALLS, so every glyph gets its own paint group. See the
-// `glyph` key below and `paintOrder` in core/scene.js.
+// Counts composite calls so every glyph gets its own paint group.
 let glyphSeq = 0;
 
 /**
- * Shallow-merge composite channels under part channels. Part keys win entirely
- * (replace the ChannelSpec). When `keepEdit` is false, any channel that came
- * from the composite and still carries an `edit` has that edit stripped — so only
- * the last part keeps inherited edits.
+ * Shallow-merge composite channels under part channels; part keys win. Unless
+ * `keepEdit`, inherited channels lose their `edit`, so only the last part keeps them.
  * @param {Record<string, any>} groupChannels
  * @param {Record<string, any>} partChannels
  * @param {boolean} keepEdit
  * @returns {Record<string, any>}
  */
-export function mergeChannels(groupChannels, partChannels, keepEdit) {
+function mergeChannels(groupChannels, partChannels, keepEdit) {
     /** @type {Record<string, any>} */
     const merged = {};
     for (const [name, spec] of Object.entries(groupChannels || {})) {
         if (!spec) continue;
-        if (!keepEdit && spec.edit) {
-            const { edit: _edit, ...rest } = spec;
-            merged[name] = rest;
-        } else {
-            merged[name] = spec;
-        }
+        merged[name] = !keepEdit && spec.edit ? withoutEdit(spec) : spec;
     }
-    // Part wins on name conflict — including its own edit, if any.
     for (const [name, spec] of Object.entries(partChannels || {})) {
         if (spec !== undefined) merged[name] = spec;
     }
@@ -195,9 +51,8 @@ export function mergeChannels(groupChannels, partChannels, keepEdit) {
 }
 
 /**
- * Desugar every `frame:` shorthand in a channel map, IN PLACE — marks close over
- * their channels object inside build(), so replacing it would leave build() on
- * the old one (the same load-bearing detail the merge below documents).
+ * Desugar every `frame:` shorthand in a channel map, in place: marks close over
+ * their channels object, so it must not be replaced.
  * @param {Record<string, any>} channels
  * @returns {Record<string, any>} the same object
  */
@@ -215,9 +70,8 @@ function hasFrameChannel(channels) {
 }
 
 /**
- * The box's default half-size when the composite declares no `size`: half a
- * category slot when the glyph sits in one (so a face fills its band, the same
- * rule `arc` uses to fit a slot), else a comfortable share of the plot.
+ * The box's default half-size when no `size` is given: half a category slot, else
+ * 35% of the smaller plot side.
  * @param {import('../types').ScaleMap} scales
  * @param {number} width @param {number} height
  * @returns {number}
@@ -232,9 +86,7 @@ function defaultHalfSize(scales, width, height) {
 }
 
 /**
- * One row's box: where the glyph sits and how big it is. The single definition,
- * shared by the box feature's own nodes and by every part wrapped inside it — so
- * what you grab and what is drawn inside it cannot drift apart.
+ * One row's box (origin and half-size), shared by the box feature and every part.
  * @param {import('../types').ScaleMap} scales
  * @param {Record<string, any>} groupChannels
  * @param {any} d @param {number} index @param {any[]} data
@@ -251,10 +103,8 @@ function frameBox(scales, groupChannels, d, index, data, width, height) {
 }
 
 /**
- * Whether a local channel's field is DISCRETE — categorical or ordinal, as the
- * schema declares it (or the channel's own `type`, the override for a field the
- * schema does not cover). The measure decides the frame scale's kind, exactly as
- * it decides a global scale's: a category gets a stop, a number gets a line.
+ * Whether a local channel's field is categorical or ordinal (channel `type`, else
+ * the schema's).
  * @param {any} spec the ChannelSpec
  * @param {Record<string, any>} schema
  * @returns {boolean}
@@ -267,10 +117,8 @@ function isDiscreteField(spec, schema) {
 }
 
 /**
- * The value domain of one local channel. A `{ field }` channel is in the field's
- * own units, so the SCHEMA owns its domain exactly as it does everywhere else; a
- * `{ datum }` constant is already stated in local units, so the local range IS
- * its domain (making the scale the identity local -> pixel mapping).
+ * The value domain of one local channel: the schema's domain for a `{ field }`,
+ * the local range itself for a `{ datum }` constant.
  * @param {any} spec the ChannelSpec
  * @param {number[]} localRange
  * @param {Record<string, any>} schema
@@ -280,7 +128,7 @@ function frameDomain(spec, localRange, schema) {
     if (spec.field == null) return localRange;
     const fieldSpec = schema && schema[spec.field];
     const domain = fieldSpec && fieldSpec.domain;
-    // A discrete field keeps every category: each one is a stop in the slice.
+    // A discrete field keeps every category as a stop.
     if (Array.isArray(domain) && domain.length && isDiscreteField(spec, schema)) return domain.slice();
     if (Array.isArray(domain) && domain.length) return [domain[0], domain[domain.length - 1]];
     warn(
@@ -294,8 +142,7 @@ function frameDomain(spec, localRange, schema) {
 }
 
 /**
- * Build the frame scale map for ONE row: one linear scale per local channel of
- * this part, closed over that row's origin and half-size.
+ * The frame scale map for one row: one scale per local channel of this part.
  * @param {Record<string, any>} channels the part's channel map
  * @param {string[]} names the local channel names
  * @param {{ cx: number, cy: number, r: number }} box
@@ -311,9 +158,7 @@ function frameScales(channels, names, box, schema, dims, theme) {
         const spec = channels[name];
         const frameSpec = frameSpecOf(spec) || {};
         const family = frameFamilyOf(name);
-        // Where in the box this channel's extremes land. A 'plain' channel (angle,
-        // curvature) has no local box — its units are its own — so it falls back to
-        // the channel's ordinary default output range.
+        // A channel with no local box (angle, curvature) uses its default range.
         const localRange = frameSpec.range
             || frameLocalRange(name)
             || channelRange(name, 'linear', dims, theme);
@@ -325,11 +170,8 @@ function frameScales(channels, names, box, schema, dims, theme) {
             family,
             discrete: isDiscreteField(spec, schema),
         });
-        // Published under BOTH keys. The frame map is spread over the global scales
-        // to shadow them for this datum, and a reader finds a non-positional scale
-        // by (channel, field) — so a bare-name-only entry would stop shadowing the
-        // moment the global map became encoding-keyed, and the part would silently
-        // encode through the CHART's scale instead of its own box.
+        // Published under both keys so it shadows the global scale either way
+        // it is looked up; otherwise the part would encode through the chart's scale.
         if (scale) {
             out[name] = scale;
             if (spec && spec.field != null) out[scaleKey(name, spec.field)] = scale;
@@ -339,15 +181,9 @@ function frameScales(channels, names, box, schema, dims, theme) {
 }
 
 /**
- * The travel descriptors (`node.dm`) for a part's editable local channels, so
- * `guide: { track: true }` can draw where a handle may go.
- *
- * Only the POSITIONAL families get one, and only for a channel carrying an edit.
- * The contract is that a track IS the mapping the edit inverts through — so it is
- * drawn for the case where that is exactly true (a positional local channel: its
- * scale's pixel range is its travel) and left off where it would be a plausible
- * lie (a magnitude or an angle has no straight track, and an edit like `slide`
- * anchors its own).
+ * The travel descriptors (`node.dm`) for a part's editable local channels, drawn
+ * by `guide: { track: true }`. Only positional (x/y) channels get one; a magnitude
+ * or angle has no straight track.
  * @param {Record<string, any>} channels
  * @param {string[]} names the local channel names
  * @param {Record<string, any>} frame the per-datum frame scales
@@ -384,52 +220,38 @@ function frameTracks(channels, names, frame) {
  *   Elicit's flattened `features` list
  */
 export function composite(options = {}) {
-    // This glyph's paint group. Per CALL, not per id: two id-less composites are
-    // two glyphs, and the key must not merge them. It is stable for the life of
-    // the spec (a mark object is built once and rebuilt every render), which is
-    // what the engine needs — see `paintOrder` in core/scene.js.
+    // This glyph's paint group, per call (not per id) so two id-less composites stay apart.
     const glyph = `glyph#${++glyphSeq}`;
-    // Desugar top-level shorthands (fill, angle, size, …) into composite channels
-    // so `composite({ fill: 'steelblue', angle: 45, parts })` works like a mark.
+    // Desugar top-level shorthands (fill, angle, size, …) into composite channels.
     const opts = normalizeMarkOptions(options, { mark: 'composite', allow: MARK_OPTIONS.composite });
     const {
         id,
         parts = [],
         edits,
-        // Which TABLE this glyph is a view over. A composite DESUGARS into separate
-        // features that each resolve their own table, so it has to be stamped onto
-        // the box and every part — otherwise a composite({ table }) would draw its
-        // parts from the primary table while its box drew the named one.
+        // Stamped onto the box and every part, since each resolves its own table.
         table,
-        // `clip: false` escapes the chart's clip for the whole glyph: stamped on the
-        // box and every part that does not state its own, like `table`.
+        // Stamped on the box and every part that does not state its own.
         clip,
         channels: groupChannels = {},
-        // Glyphs usually sit in category slots; a band gives each part a centred
-        // slot. Stamped onto parts that don't state their own preference. (Scale
-        // resolution lets 'band' win a disagreement between marks anyway.)
+        // Stamped onto parts that don't state their own.
         discreteScale = 'band'
     } = opts;
 
     const name = id || 'composite';
     const last = parts.length - 1;
 
-    // `frame:` is sugar for a `scale` form; fold it away before anything reads a
-    // channel, so `frameSpecOf` stays the one reader of "is this local".
+    // Fold `frame:` sugar away first so `frameSpecOf` is the one reader of "is this local".
     desugarFrame(groupChannels);
     for (const part of parts) desugarFrame(part.channels || (part.channels = {}));
 
-    // BOX MODE is switched on by a part asking for local coordinates — never by a
-    // channel the composite happens to declare. Several plain glyphs set x/y (and
-    // angle) on the composite precisely so the parts INHERIT them; reading that as
-    // "this is a box" would silently reinterpret every constant inside them.
+    // Box mode comes from a part's local channel, never from the composite's own
+    // x/y: plain glyphs set those so parts inherit them.
     const boxed = parts.some((/** @type {any} */ p) => hasFrameChannel(p.channels))
         || Object.entries(groupChannels).some(
             ([key, spec]) => !FRAME_KEYS.includes(key) && frameSpecOf(spec)
         );
 
-    // In plain mode everything trickles. In box mode x/y/size describe the BOX,
-    // so they are withheld and the parts state local coordinates instead.
+    // In box mode x/y/size describe the box, so they don't trickle.
     /** @type {Record<string, any>} */
     const trickle = {};
     for (const [key, spec] of Object.entries(groupChannels)) {
@@ -438,18 +260,17 @@ export function composite(options = {}) {
         trickle[key] = spec;
     }
     if (!boxed && GLYPH_KEYS.some((key) => groupChannels[key])) {
-        // The glyph's SHAPE, not its label: a `node()`'s dot, not the name above it.
-        const boxed = parts.filter((/** @type {any} */ p) => typeof p.nodeBox === 'function');
-        const host = boxed.find((/** @type {any} */ p) => !p.labelBox) || boxed[0] || parts[0];
+        // The glyph's shape, not its label: a `node()`'s dot, not its name.
+        const shaped = parts.filter((/** @type {any} */ p) => typeof p.nodeBox === 'function');
+        const host = shaped.find((/** @type {any} */ p) => !p.labelBox) || shaped[0] || parts[0];
         for (const key of GLYPH_KEYS) {
             if (host && groupChannels[key]) (host.channels || (host.channels = {}))[key] = groupChannels[key];
         }
     }
 
     const wrapped = parts.map((/** @type {any} */ part, /** @type {number} */ i) => {
-        // Marks close over their factory `channels` object in build() (arrow
-        // functions). Mutate that object in place so encoding sees the merge;
-        // replacing the property with a new map would leave build() on the old one.
+        // Mutate `channels` in place: build() closes over this object, so a new
+        // map would leave build() on the old one.
         const closed = part.channels;
         const merged = mergeChannels(trickle, { ...closed }, i === last);
         for (const key of Object.keys(closed)) delete closed[key];
@@ -458,9 +279,7 @@ export function composite(options = {}) {
         let framed = Object.keys(closed).filter((ch) => frameSpecOf(closed[ch]));
 
         if (framed.length) {
-            // A local part that states no position sits at the box's origin. This is
-            // what lets a part say "here, at the glyph" by saying nothing, instead of
-            // repeating the composite's own x/y on every part.
+            // A local part that states no position sits at the box's origin.
             for (const axis of ['x', 'y']) {
                 if (closed[axis] === undefined) {
                     closed[axis] = { datum: 0, scale: 'frame' };
@@ -503,8 +322,7 @@ export function composite(options = {}) {
                         // The inner build saw a one-row dataset, so its index is 0.
                         node.index = index;
                         node.data = d;
-                        // The scales this node was encoded through, so an edit on it
-                        // inverts through the same objects (core/elicit.js).
+                        // So an edit inverts through the scales this node was encoded with.
                         node.frame = frame;
                         if (tracks && node.dm == null) node.dm = tracks;
                         out.push(node);
@@ -518,70 +336,49 @@ export function composite(options = {}) {
             ...part,
             channels: closed,
             build,
-            // A part placed in LOCAL units has no box in scene pixels without its
-            // frame, so it cannot stand for a node; a plain part keeps its own.
+            // A local part has no box in scene pixels, so it cannot stand for a node.
             nodeBox: framed.length ? undefined : part.nodeBox,
             labelBox: part.labelBox,
-            // One glyph paints as one OBJECT: the engine orders this group's nodes
-            // by ROW rather than by part, so a later row covers an earlier one
-            // whole instead of every part's row 1 sitting under every part's row 0
-            // (a sticker's text over the next sticker's paper). Within a row the
-            // parts keep the order they were declared in.
+            // Paint group: the engine orders it by row, then part, so each glyph
+            // paints whole (core/scene.js `paintOrder`).
             glyph,
-            // Inherited x/y may arrive after the mark factory stamped xKey/yKey
-            // from its own (then-empty) channels — refresh from the merge.
+            // Refresh xKey/yKey from the merge, which may have added x/y.
             xKey: (closed.x && closed.x.field) || part.xKey,
             yKey: (closed.y && closed.y.field) || part.yKey,
-            // Deterministic, stable ids so a part keeps its identity across renders
-            // (the engine keys scene nodes and driver sessions by feature id).
+            // Stable ids: the engine keys scene nodes and driver sessions by feature id.
             id: part.id || `${name}/${i}`,
-            // A part states its own table only to override the glyph's; otherwise
-            // the whole composite is one view over one table.
             table: part.table || table,
             clip: part.clip != null ? part.clip : clip,
             discreteScale: part.discreteScale || discreteScale,
-            // Composite-level edits land on the LAST part, the same rule an inherited
-            // channel edit follows: one dataset, so a whole-dataset edit declared on
-            // every part would fire once per part. In box mode they go to the box
-            // instead — an edit declared on the glyph is about the GLYPH, and the box
-            // is the feature that holds its placement columns.
+            // Composite-level edits go on the last part only, so they fire once.
+            // In box mode they go on the box instead.
             edits: !boxed && i === last && edits ? [...edits, ...(part.edits || [])] : part.edits,
         };
     });
 
     if (!boxed) return wrapped;
 
-    // ── The box ────────────────────────────────────────────────────────────
-    // A real feature, drawn FIRST so it is beneath every part: it carries the
-    // composite's global x/y/size (so the resolver builds the axes the origin is
-    // measured against) and one transparent circle per row (so an edit on those
-    // channels has a node to grab and moves the whole glyph).
+    // The box: drawn first so it sits beneath every part. It carries the global
+    // x/y/size and one transparent circle per row to grab the whole glyph.
     /** @type {Record<string, any>} */
     const boxChannels = {};
     for (const key of FRAME_KEYS) {
         const spec = groupChannels[key];
-        // A local composite channel would be circular — the box measured against
-        // itself — so it never defines the box.
+        // A local channel would measure the box against itself.
         if (!spec || frameSpecOf(spec)) continue;
         boxChannels[key] = spec;
     }
     for (const key of GLYPH_KEYS) if (groupChannels[key]) boxChannels[key] = groupChannels[key];
 
-    // Whether the box is something you can GRAB. A hit node is set up only when an
-    // edit names one of the box's own columns; otherwise the node is left for the
-    // engine's pointer-transparency pass to silence, exactly like any other mark
-    // with no direct-pick edit. Setting `pointerEvents` unconditionally would opt
-    // the box OUT of that pass and let an immovable glyph swallow the plane
-    // gesture aimed past it (a create, a sweep).
+    // Set `pointerEvents` only when grabbable; otherwise the engine makes the box
+    // inert, so an immovable glyph doesn't swallow plane gestures.
     const grabbable = !!(edits && edits.length)
         || FRAME_KEYS.some((key) => boxChannels[key] && boxChannels[key].edit);
 
     const box = {
         id: `${name}/frame`,
         type: 'composite',
-        // In the glyph's paint group, but as a `hit` node it stays at the bottom of
-        // it: a box covers its whole glyph, so interleaved by row it would take
-        // every gesture aimed at the row before it.
+        // As a `hit` node it stays at the bottom of the paint group.
         glyph,
         channels: boxChannels,
         edits,
@@ -590,8 +387,7 @@ export function composite(options = {}) {
         discreteScale,
         ...positionalKeys(boxChannels),
         /**
-         * The glyph as a network NODE: its box, the circle a part of local size 1
-         * fills. Links dock to it and a `ports` channel on the composite sits on it.
+         * The glyph as a network node: its box. Links and `ports` dock to it.
          * @param {any} row @param {number} index @param {any[]} rows
          * @param {import('../types').ScaleMap} scales @param {number} width @param {number} height
          */
@@ -612,13 +408,10 @@ export function composite(options = {}) {
                 cx: b.cx,
                 cy: b.cy,
                 r: b.r,
-                // Invisible but hit-testable: `pointer-events: all` picks up the fill
-                // area even when there is no fill, so the whole glyph — including the
-                // gaps between its parts — is one grab target.
+                // Invisible but hit-testable across the whole box.
                 fill: 'none',
                 stroke: 'none',
-                // Paints nothing, so say so: the renderer tags it `data-hit` and a
-                // `circle.mark` selector can tell it from a part it sits under.
+                // Tagged `data-hit` by the renderer.
                 hit: true,
                 ...(grabbable ? { pointerEvents: 'all' } : {}),
                 data: d,

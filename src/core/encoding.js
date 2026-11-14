@@ -1,59 +1,30 @@
 // @ts-check
-// encoding.js — the channel layer (Vega-Lite / Observable-Plot style).
-//
-// A CHANNEL is a named binding of a data field to a visual property; a mark's
-// `channels` is just a map of them:
-//
-//   channels: {
-//     x:    { field: "height" },                  // scale inferred from the schema
-//     y:    { field: "weight", edit: move() },    // ... and writable
-//     fill: { field: "group" },                   // -> ordinal palette
-//     size: { field: "pop", scale: { range: [4, 20] } },  // -> radius
-//     opacity: { value: 0.8 }                     // a visual constant (no scale)
-//   }
-//
-// The payoff: every channel — positional OR not — maps a datum the same way,
-// through `scale.encode(value)`.
-//
-// ── type vs scale ───────────────────────────────────────────────────────────
-// A channel's `type` is the DATA type (quantitative | categorical | ordinal |
-// temporal) — what the field means. It is normally declared once on the schema
-// and never repeated here. The SCALE type (linear | band | point | ordinal | …)
-// is how a channel draws that data, and is derived: `scaleTypeFor` is the one
-// place that decision lives. So a bar's x channel is a band because the field is
-// categorical AND a bar needs an interval — nobody writes `type: "band"`.
-//
-// Scales are built by the single factory in core/scales.js (`createScale`), and
-// resolved GLOBALLY per channel across all marks by core/resolve.js (the
-// Observable Plot model). This module supplies the inference and the per-channel
-// output ranges that resolver needs.
+// encoding.js — the channel layer: channel families, scale-type inference,
+// default output ranges, and the gesture <-> visual mapping. A channel's `type`
+// is the data type; `scaleTypeFor` derives the scale type. Scales are built in
+// core/scales.js and resolved per channel in core/resolve.js.
 
 import * as d3 from 'd3';
 import { DD } from './themes.js';
+import { isContinuousType, isRampType, toDate } from './scales.js';
 
-// Default categorical palette — 10 distinct hues (Tableau-style) so a domain of
-// up to ten categories gets its own colour before an ordinal scale recycles.
-// Override per-channel with `scale: { range: [...] }` or `scale: { scheme: '…' }`.
+// Default categorical palette: 10 distinct hues. Override with `scale: { range }`
+// or `scale: { scheme }`.
 export const DEFAULT_PALETTE = [
     '#4e79a7', '#f28e2b', '#e15759', '#76b7b2', '#59a14f',
     '#edc948', '#b07aa1', '#ff9da7', '#9c755f', '#bab0ac',
 ];
 // Default two-stop ramp for a continuous colour channel.
 export const DEFAULT_RAMP = ['#e6f0ff', '#08519c'];
-// Default three-stop ramp for a DIVERGING colour channel: two hues meeting at a
-// near-white neutral, so the pivot reads as "neither side" and distance from it
-// reads in either direction. (ColorBrewer RdBu's ends — colour-blind safe.)
+// Default diverging ramp: two hues meeting at a near-white neutral (ColorBrewer
+// RdBu's ends).
 export const DEFAULT_DIVERGING = ['#2166ac', '#f7f7f7', '#b2182b'];
 
-// Default glyph range for the `symbol` channel — neutral unicode SHAPES (like
-// Observable Plot's symbol channel), so a symbol channel always renders something
-// before an author supplies emoji. Override with `scale: { range: ['😢', …] }` or a
-// named `scheme` (see SYMBOL_SCHEMES). Emoji are a special case of a symbol range.
-export const DEFAULT_SYMBOLS = ['●', '■', '▲', '◆', '★', '✚', '▼', '◀', '▶', '⬟'];
+// Default glyph range for the `symbol` channel: neutral unicode shapes. Override
+// with `scale: { range }` or a named `scheme` (SYMBOL_SCHEMES).
+const DEFAULT_SYMBOLS = ['●', '■', '▲', '◆', '★', '✚', '▼', '◀', '▶', '⬟'];
 
-// Named symbol/emoji schemes — the "emoji is a special case" shortcut, so an author
-// writes `scale: { scheme: 'faces' }` instead of listing the glyphs. Ordered
-// low → high so they line up with an ordinal domain sorted the same way.
+// Named symbol/emoji schemes, ordered low -> high to match a sorted ordinal domain.
 /** @type {Record<string, readonly string[]>} */
 const SYMBOL_SCHEMES = {
     faces: ['😞', '😐', '🙂'],
@@ -64,10 +35,8 @@ const SYMBOL_SCHEMES = {
     shapes: DEFAULT_SYMBOLS,
 };
 
-// Named colour schemes. Categorical entries are ready-made palettes (d3-scale-
-// chromatic scheme arrays); ramp entries are interpolators sampled to N swatches.
-// Keys are lowercase so authors write `scheme: 'tableau10'` / `scheme: 'RdBu'`
-// without worrying about d3's internal CamelCase.
+// Named colour schemes, lowercase keys. Categorical entries are palettes; ramp
+// entries are interpolators.
 /** @type {Record<string, readonly string[]>} */
 const CATEGORICAL_SCHEMES = {
     category10: d3.schemeCategory10,
@@ -129,9 +98,8 @@ const RAMP_SCHEMES = {
     rainbow: d3.interpolateRainbow,
     sinebow: d3.interpolateSinebow,
 };
-// ColorBrewer discrete diverging/sequential palettes (arrays indexed by n = 3..11).
-// Prefer these for ordinal colour so a 7-class RdBu is the true Brewer set, not a
-// quantized sample of the continuous interpolator (which overshoots the ends).
+// ColorBrewer discrete palettes (n = 3..11). Used for ordinal colour instead of
+// sampling the interpolator, which overshoots the ends.
 /** @type {Record<string, { [n: number]: readonly string[] } | readonly string[][]>} */
 const DISCRETE_RAMP_SCHEMES = {
     rdbu: d3.schemeRdBu,
@@ -164,12 +132,10 @@ const DISCRETE_RAMP_SCHEMES = {
 };
 
 /**
- * Resolve a named colour `scheme` to a concrete range array, or null if the name
- * is unknown / not given. A categorical scheme returns its palette as-is (an
- * ordinal scale recycles it if the domain is longer); a ramp scheme uses the
- * ColorBrewer discrete palette sized to the domain when available, otherwise is
- * sampled into `count` swatches — or handed to createScale as a two-stop range
- * for a continuous (sequential) colour channel.
+ * Resolve a named colour `scheme` to a range array, or null if unknown.
+ * Symbol and categorical schemes return their palette. A ramp scheme returns a
+ * 9-stop sample for a continuous channel, else the Brewer set sized to the
+ * domain, else `count` samples.
  * @param {string | undefined} scheme
  * @param {import('../types').ScaleType} type the resolved scale type
  * @param {number} count domain length (categories), min 1
@@ -178,23 +144,17 @@ const DISCRETE_RAMP_SCHEMES = {
 export function schemeRange(scheme, type, count) {
     if (!scheme || typeof scheme !== 'string') return null;
     const key = scheme.toLowerCase();
-    // Symbol/emoji schemes are ready-made glyph palettes (an ordinal scale recycles
-    // them if the domain is longer), same shape as a categorical colour scheme.
+    // Symbol/emoji schemes are glyph palettes, shaped like a categorical scheme.
     if (SYMBOL_SCHEMES[key]) return [...SYMBOL_SCHEMES[key]];
     if (CATEGORICAL_SCHEMES[key]) return [...CATEGORICAL_SCHEMES[key]];
     const interp = RAMP_SCHEMES[key];
     if (!interp) return null;
-    // A continuous colour channel wants a RAMP for createScale: a dense sample of
-    // the interpolator, which createScale joins piecewise. Two end stops lost
-    // everything a scheme is made of — viridis came out purple→yellow through
-    // brown, turbo black→red. Nine stops keep every hue, and an odd count keeps
-    // the midpoint colour a diverging scheme's pivot takes (the neutral the two
-    // hues meet at). A discrete channel wants one swatch per category.
-    if (type === 'diverging' || type === 'sequential') return d3.quantize(interp, 9);
-    // A continuous scale TYPE on a colour channel (`scale: { type: 'log', scheme }`)
-    // is a ramp too: hand createScale the dense sample, which it spreads over the
-    // domain in the scale's own space.
-    if (['linear', 'log', 'pow', 'sqrt', 'symlog', 'time', 'utc'].includes(String(type))) return d3.quantize(interp, 9);
+    // A continuous colour channel gets a dense sample that createScale joins
+    // piecewise. Nine stops keep every hue; an odd count keeps a diverging midpoint.
+    if (isRampType(type)) return d3.quantize(interp, 9);
+    // A continuous scale type on a colour channel (`scale: { type: 'log', scheme }`)
+    // is a ramp too.
+    if (isContinuousType(type)) return d3.quantize(interp, 9);
     const n = Math.max(2, count || 2);
     const discrete = DISCRETE_RAMP_SCHEMES[key];
     if (discrete) {
@@ -206,15 +166,11 @@ export function schemeRange(scheme, type, count) {
     return d3.quantize(interp, n);
 }
 
-// Channel families that share scale semantics, so a field-driven fill/stroke is
-// colour-scaled and a field-driven fillOpacity/strokeOpacity is opacity-scaled —
-// symmetric with the base `opacity` channel.
+// Channel families that share scale semantics.
 const COLOR_CHANNELS = new Set(['fill', 'stroke']);
 const OPACITY_CHANNELS = new Set(['opacity', 'fillOpacity', 'strokeOpacity']);
-// The `symbol` channel maps a category -> a glyph (emoji / unicode shape) through
-// an ordinal scale, exactly as `fill` maps a category -> a colour. It is
-// non-positional and non-invertible (a glyph isn't a coordinate a drag inverts),
-// so it never enters AXIS_OF / visualForChannel — it's edited with cycle/legend.
+// `symbol` maps a category to a glyph through an ordinal scale. Non-positional
+// and non-invertible; edited with cycle/legend.
 const SYMBOL_CHANNELS = new Set(['symbol']);
 // The dash family: a field drives the stroke's dash pattern through an ordinal
 // scale onto DEFAULT_DASHES (an author's `range` is a list of SVG dash arrays).
@@ -222,33 +178,13 @@ const DASH_CHANNELS = new Set(['strokeDash']);
 /** The default dash vocabulary: solid, dashed, dotted, dash-dot, long dash. */
 export const DEFAULT_DASHES = ['', '4 2', '1 2', '6 3 1 3', '8 4'];
 
-// Position family: x1/x2 and y1/y2 are SPAN ENDPOINTS on the x/y axis, not their
-// own axes (Observable Plot's model — a bar's x1/x2 are both "x" units). The one
-// place a channel name resolves to the axis it shares a scale with, so x1/x2/y1/y2
-// union into the same domain/range/scale as x/y instead of getting their own.
-//
-// `theta` is the POLAR angular position — an arc's stacked magnitude, a needle's
-// direction — and it is a coordinate family of its own, with `axisRadial` as its
-// axis (Vega-Lite's split). It is NOT `angle`: `angle` is a mark's ROTATION IN
-// PLACE (a rotated label, a rotated symbol), which is not a position and has no
-// axis. One channel used to mean both, so `axisRadial` drew a polar axis for a
-// scale that six marks were using as a rotation.
-//
-// `radius` is the polar family's second axis — a RADIAL POSITION, the distance
-// from the centre a slice's rim sits at (a rose / radial plot encodes a field
-// there). Its RANGE is pixels the MARK owns (`innerRadius`/`outerRadius`), so the
-// mark declares them (`Mark.radiusRange`) and the resolver accumulates the hint
-// per bucket exactly as it does `countAxis` — the map stays static.
-// `count` is the third family: an axis whose unit is the MARK's own cell or token.
-// A waffle's cell is worth `unit` of the field; a dotStack's token is one row. It
-// gets its own bucket so it never unions with a y domain — a countable block and a
-// bar's height are not the same quantity — and it is drawn only when asked for
-// (core/axes.js), like a legend, because it reserves layout space.
-//
-// BUCKETING (which domain) and ORIENTATION (which screen direction the range runs)
-// are separate questions, which is why this map can stay static: the mark declares
-// `Mark.countAxis`, the resolver accumulates it per bucket exactly as it does
-// `discreteScale`, and `channelRange` reads it. `axisOf` never becomes mark-aware.
+// The axis each positional channel shares a scale with. x1/x2 and y1/y2 are span
+// endpoints on x/y. `theta`/`theta2` are the polar angular position (axis:
+// `axisRadial`), not `angle`, which is a rotation in place. `radius` is the radial
+// position; its pixel range comes from the mark (`Mark.radiusRange`). `count` is an
+// axis in the mark's own unit (a waffle cell, a dotStack token), its own bucket so
+// it never unions with y. The map stays static: the resolver accumulates the
+// mark's hints per bucket. See .claude/rules/scales-and-encoding.md.
 /** @type {Record<string, 'x' | 'y' | 'theta' | 'radius' | 'count'>} */
 const AXIS_OF = {
     x: 'x', x1: 'x', x2: 'x',
@@ -269,25 +205,16 @@ export function axisOf(channelName) {
     return AXIS_OF[channelName];
 }
 
-// ── OFFSET channels: a second category NESTED inside the first ──────────────
-// `xOffset`/`yOffset` split each category's slot on x/y into sub-bands by a
-// second field — a grouped (dodged) bar, a waffle per (state, sex), a dot per
-// (question, condition) side by side. Vega-Lite's spelling and model.
-//
-// An offset is deliberately NOT in AXIS_OF. It is not an axis: it has no domain
-// of its own on the plot, draws no axis, and must never union with x (a bar's
-// category and its group are two different vocabularies). It is its own bucket,
-// keyed by encoding like any non-positional channel, and its RANGE is the pixels
-// of ONE parent slot — the parent's bandwidth (a band) or step (a point) — which
-// the resolver fits once the parent scale exists (core/resolve.js). Every mark
-// reads it through one helper (`categorySlot`, plot/mark.js), and `encodeChannel`
-// on x/y adds it, so a mark that places by category is dodged without a line of
-// its own.
+// ── Offset channels: a second category nested inside the first ─────────────
+// `xOffset`/`yOffset` split each x/y slot into sub-bands (grouped bar, dodged dot).
+// Not in AXIS_OF: an offset has its own bucket, no axis, and a range of one parent
+// slot, fitted after the parent (core/resolve.js). Marks read it through
+// `categorySlot` and `encodeChannel`.
 /** @type {Record<string, 'x' | 'y'>} */
 const OFFSET_OF = { xOffset: 'x', yOffset: 'y' };
 
 /**
- * The positional axis an OFFSET channel nests inside ('x' for `xOffset`, 'y' for
+ * The positional axis an offset channel nests inside ('x' for `xOffset`, 'y' for
  * `yOffset`), or undefined for any other channel.
  * @param {string} channelName
  * @returns {'x' | 'y' | undefined}
@@ -296,26 +223,12 @@ export function offsetParentOf(channelName) {
     return OFFSET_OF[channelName];
 }
 
-/**
- * The offset channel nested inside a positional axis ('xOffset' for 'x'), or
- * undefined when the axis takes none.
- * @param {string} axis
- * @returns {'xOffset' | 'yOffset' | undefined}
- */
-export function offsetChannelOf(axis) {
-    return axis === 'x' ? 'xOffset' : axis === 'y' ? 'yOffset' : undefined;
-}
-
-// ── FRAME channels: a composite's LOCAL coordinate box ──────────────────────
-// `frame: -0.4` (short) or `scale: 'frame'` / `scale: { type: 'frame', range }`
-// (long) says: this channel is not on a global axis — resolve it against the
-// enclosing composite()'s per-datum box. The marker is CHANNEL-side only:
-// plot/composite.js turns it into an ordinary linear scale (createFrameScale),
-// so no resolved scale object ever carries type 'frame' and nothing downstream
-// branches on it. The global resolver skips a flagged channel entirely, which is
-// what keeps a glyph's local geometry out of the chart's x/y buckets (no phantom
-// axis, no band demand). `normalizeFrameKey` folds the short form into the long
-// one, so `frameSpecOf` stays the single reader.
+// ── Frame channels: a composite's local coordinate box ──────────────────────
+// `frame: -0.4` or `scale: 'frame'` / `scale: { type: 'frame', range }` resolves a
+// channel against the enclosing composite()'s per-datum box. plot/composite.js
+// turns it into a linear scale (createFrameScale), so no resolved scale has type
+// 'frame'. The global resolver skips these channels, keeping glyph geometry out
+// of the chart's x/y buckets.
 
 /**
  * The frame ScaleSpec of a channel, or null when the channel isn't frame-scaled.
@@ -332,18 +245,13 @@ export function frameSpecOf(chSpec) {
 }
 
 /**
- * Desugar the short `frame:` spelling into the `scale` forms above, so the rest
- * of the library keeps reading exactly one thing.
+ * Desugar the short `frame:` spelling into the `scale` forms:
  *
  *   { frame: -0.4 }                  ->  { datum: -0.4, scale: 'frame' }
  *   { field: 'f', frame: [lo, hi] }  ->  { field: 'f', scale: { type: 'frame', range: [lo, hi] } }
  *   { field: 'f', frame: true }      ->  { field: 'f', scale: 'frame' }
  *
- * `frame` exists because the long form had to be repeated on every channel of a
- * glyph, and a channel inside a glyph is local far more often than not — making
- * the local spelling the short one is what keeps an author from reaching for a
- * `{ value }` (which still means PIXELS, here as everywhere) by accident. An
- * explicit `scale` wins: it is how an author overrides a preset's range.
+ * An explicit `scale` wins.
  * @param {any} chSpec a ChannelSpec
  * @returns {any} the same spec, or a desugared copy
  */
@@ -356,9 +264,7 @@ export function normalizeFrameKey(chSpec) {
     return { ...rest, scale: 'frame' };
 }
 
-// Channels whose frame output is a MAGNITUDE (a length from the frame's origin,
-// not a position in it): a radius scales with the frame, it doesn't sit somewhere
-// in it. Everything else positional goes through axisOf; the rest is 'plain'.
+// Channels whose frame output is a magnitude (a length from the origin), not a position.
 const FRAME_MAGNITUDE = new Set(['size', 'rx', 'ry', 'strokeWidth']);
 
 /**
@@ -369,9 +275,7 @@ const FRAME_MAGNITUDE = new Set(['size', 'rx', 'ry', 'strokeWidth']);
  *   'plain' pixel = u                        (already in its own output units —
  *                                             `angle`/`theta` in degrees, `curvature`)
  *
- * Only the CARTESIAN axes read the box: a glyph's frame is a square in pixels, so
- * `theta` — a polar position, in degrees — has no local box and stays 'plain',
- * exactly like `angle`.
+ * Only x/y read the box; `theta` (degrees) stays 'plain' like `angle`.
  * @param {string} channelName
  * @returns {'x' | 'y' | 'size' | 'plain'}
  */
@@ -383,12 +287,9 @@ export function frameFamilyOf(channelName) {
 }
 
 /**
- * The default LOCAL range of a frame channel — the box a group's parts are
- * placed in. Positional channels span [-1, 1] (the frame is centred on the
- * group's anchor and one unit wide in each direction); magnitudes span [0, 1]
- * (zero to the frame's half-size). A 'plain' channel has no local box — its
- * units are its own — so it returns null and the caller falls back to the
- * channel's ordinary default range.
+ * The default local range of a frame channel: [-1, 1] for positional channels
+ * (centred on the anchor), [0, 1] for magnitudes, null for 'plain' (the caller
+ * falls back to the channel's ordinary range).
  * @param {string} channelName
  * @returns {number[] | null}
  */
@@ -400,16 +301,12 @@ export function frameLocalRange(channelName) {
 }
 
 // ---------------------------------------------------------------------------
-// Inference. The engine's resolver (core/resolve.js) unions a field's values
-// across marks and asks these two questions in order: what IS this data, and
-// how should this channel draw it.
+// Inference: what the data is, then how a channel draws it (core/resolve.js).
 // ---------------------------------------------------------------------------
 
 /**
- * What a field's values ARE, from a sample: a Date is temporal, a number is
- * quantitative, anything else is categorical. The fallback for a channel with no
- * values at all is quantitative — but the resolver never gets here in that case,
- * because a field with neither a schema type nor data is an error.
+ * What a field's values are, from a sample: a Date is temporal, a number is
+ * quantitative, anything else categorical. No values -> quantitative.
  * @param {any[]} values
  * @returns {import('../types').MeasureType}
  */
@@ -422,14 +319,9 @@ export function inferMeasureType(values) {
 }
 
 /**
- * Route a channel + its data type to a concrete scale type. THE one place the
- * "what does this channel do with continuous vs discrete vs temporal data"
- * decision lives — so a schema-declared type and an inferred one can never
- * disagree about the scale they produce.
- *
- * `discrete` is the concrete scale a mark wants for discrete data: a bar needs
- * the interval ('band'), a dot wants the tick ('point'). The MARK declares it
- * (`discreteScale`), defaulting to 'band'.
+ * Route a channel + its data type to a scale type. The one place this is decided,
+ * so a declared type and an inferred one produce the same scale. `discrete` is
+ * the scale the mark wants for discrete data (`discreteScale`: 'band' or 'point').
  * @param {string} channelName
  * @param {import('../types').MeasureType} measure
  * @param {import('../types').ScaleType} [discrete]
@@ -439,15 +331,12 @@ export function scaleTypeFor(channelName, measure, discrete = 'band') {
     const continuous = measure === 'quantitative' || measure === 'temporal';
     // Colour family: continuous data -> a ramp, discrete -> a palette.
     if (COLOR_CHANNELS.has(channelName)) return continuous ? 'sequential' : 'ordinal';
-    // Symbol family: always an ordinal category -> glyph map. (Binning a
-    // quantitative field into glyph buckets is out of scope for v1 — declare the
-    // field categorical/ordinal to drive it.)
+    // Symbol family: always ordinal (declare the field categorical/ordinal).
     if (SYMBOL_CHANNELS.has(channelName)) return 'ordinal';
     // Dash family: a category -> dash-pattern map.
     if (DASH_CHANNELS.has(channelName)) return 'ordinal';
-    // Offset family: a nested category always takes an INTERVAL of its parent's
-    // slot (a sub-band), whatever the mark prefers for the parent — a dot dodged
-    // by group sits at its sub-band's centre exactly as a bar fills it.
+    // Offset family: a nested category always takes a sub-band of its parent's
+    // slot, whatever the mark prefers.
     if (OFFSET_OF[channelName] && !continuous) return 'band';
     // positional / size / opacity: dates -> time, numbers -> linear, categories ->
     // the mark's discrete scale (band|point).
@@ -467,7 +356,10 @@ export function inferDomainFromValues(type, values) {
     if (type === 'band' || type === 'point' || type === 'ordinal') {
         return [...new Set(values.filter((v) => v != null))];
     }
-    const nums = values.filter((v) => v != null);
+    // A time scale reads date strings; NaN is a missing value.
+    const nums = values.filter((v) => v != null)
+        .map((v) => (type === 'time' ? +toDate(v) : v))
+        .filter((v) => !Number.isNaN(v));
     return nums.length ? [Math.min(...nums), Math.max(...nums)] : [0, 1];
 }
 
@@ -483,8 +375,9 @@ export function unionDomains(measure, domains) {
     if (!domains.length) return undefined;
     if (domains.length === 1) return domains[0];
     if (measure === 'quantitative' || measure === 'temporal') {
-        const lows = domains.map((d) => Math.min(...d.map(Number)));
-        const highs = domains.map((d) => Math.max(...d.map(Number)));
+        const num = measure === 'temporal' ? (/** @type {any} */ v) => +toDate(v) : Number;
+        const lows = domains.map((d) => Math.min(...d.map(num)));
+        const highs = domains.map((d) => Math.max(...d.map(num)));
         const [lo, hi] = [Math.min(...lows), Math.max(...highs)];
         return measure === 'temporal' ? [new Date(lo), new Date(hi)] : [lo, hi];
     }
@@ -492,12 +385,9 @@ export function unionDomains(measure, domains) {
     return [...new Set(domains.flat())];
 }
 
-// The scheme families the AUTOMATIC colour path rotates through, one per encoding
-// on a channel. Rotation is what keeps two encodings apart now that each gets its
-// own scale: independent scales would both restart at palette index 0, so
-// `mood: [glad, sad]` and `weather: [sun, rain]` would come out the SAME two
-// colours — two meanings, one hue, which is worse than the union it replaced.
-// Index 0 defers to the theme, so a single-encoding chart is exactly as it was.
+// Scheme families the automatic colour path rotates through, one per encoding on
+// a channel, so two encodings don't both start at palette index 0. Index 0 defers
+// to the theme.
 const CATEGORICAL_ROTATION = ['tableau10', 'dark2', 'set2', 'accent', 'paired', 'set3'];
 const SEQUENTIAL_ROTATION = ['blues', 'oranges', 'greens', 'purples', 'greys'];
 
@@ -509,20 +399,12 @@ function rampToDiscrete(/** @type {any[]} */ stops, /** @type {number} */ n) {
 }
 
 /**
- * The default colour range for a colour channel, chosen by what the data IS.
- *
- * The measure, not just the scale type, decides:
- *   categorical  unordered values -> DISTINCT HUES
- *   ordinal      ORDERED values   -> an ordered ramp, sampled to one swatch per
- *                category. This is the ColorBrewer rule, and it is the case this
- *                library cares most about: every Likert scale here is `ordinal`
- *                and used to get the same unordered hues as an unordered set, so
- *                "agree" and "disagree" read as unrelated categories.
- *   quantitative a continuous ramp (unchanged in kind)
- *
- * `index` is which encoding this is among those sharing the channel — see the
- * rotation tables above. Index 0 reads the theme so existing charts and custom
- * themes are untouched; later encodings take a different scheme FAMILY.
+ * The default colour range for a colour channel, chosen by the measure:
+ *   categorical  -> distinct hues
+ *   ordinal      -> an ordered ramp sampled to one swatch per category
+ *   quantitative -> a continuous ramp
+ * `index` is which encoding this is among those sharing the channel: index 0
+ * reads the theme, later ones take a different scheme family.
  * @param {import('../types').ScaleType} type
  * @param {any} theme
  * @param {{ measure?: import('../types').MeasureType, index?: number, count?: number }} [opts]
@@ -542,12 +424,10 @@ function colorRange(type, theme, opts = {}) {
             ? ((theme && theme.ramp) || DEFAULT_RAMP)
             : (schemeRange(nth(SEQUENTIAL_ROTATION), 'sequential', count) || DEFAULT_RAMP);
     }
-    // Discrete from here (an `ordinal` SCALE — a value -> colour map). Whether its
-    // swatches should be ordered is a question about the DATA, which is why the
-    // measure is consulted and not the scale type.
+    // Discrete from here. Whether swatches are ordered depends on the measure,
+    // not the scale type.
     if (measure === 'ordinal') {
-        // Index 0 samples the theme's own ramp, so an ordered set honours a custom
-        // theme the way a categorical one honours its palette.
+        // Index 0 samples the theme's ramp.
         if (index === 0) return rampToDiscrete((theme && theme.ramp) || DEFAULT_RAMP, Math.max(2, count));
         return schemeRange(nth(SEQUENTIAL_ROTATION), 'ordinal', count)
             || rampToDiscrete(DEFAULT_RAMP, Math.max(2, count));
@@ -558,11 +438,9 @@ function colorRange(type, theme, opts = {}) {
 }
 
 /**
- * The pixel extent of a polar mark's ring: `outer` as declared (px), else fitted
- * to the plot (0.4 of its smaller side, the single-donut default); `inner` in
- * (0, 1] is a RATIO of outer, above 1 absolute px (clamped inside). ONE rule,
- * read by `channelRange` for the `radius` scale and by `arc` for the ring it
- * draws, so the scale's range and the drawn ring cannot disagree.
+ * The pixel extent of a polar mark's ring: `outer` as declared, else 0.4 of the
+ * plot's smaller side; `inner` in (0, 1] is a ratio of outer, above 1 px (clamped
+ * inside). Read by `channelRange` and by `arc`, so scale range and ring agree.
  * @param {{ inner?: number | null, outer?: number | null } | null | undefined} hint
  * @param {{ width: number, height: number }} dims
  * @returns {{ inner: number, outer: number }}
@@ -581,13 +459,9 @@ export function radiusExtent(hint, dims) {
  * @param {import('../types').ScaleType} type
  * @param {{ width: number, height: number }} dims
  * @param {any} [theme] the resolved theme (supplies default palette/ramp/diverging)
- * @param {{ countAxis?: 'x' | 'y', radiusRange?: { inner?: number | null, outer?: number | null } | null, measure?: any, index?: number, count?: number }} [opts]
- * @param {{ measure?: import('../types').MeasureType, index?: number, count?: number,
- *   countAxis?: 'x' | 'y' }} [opts]
- *   what the data IS, which encoding this is among those sharing the channel, and
- *   how many categories it has. Colour reads the first three; `countAxis` is the
- *   count family's screen direction, accumulated from the mark (see AXIS_OF).
- *   Every other channel's range is fixed.
+ * @param {{ measure?: import('../types').MeasureType, index?: number, count?: number, countAxis?: 'x' | 'y', radiusRange?: { inner?: number | null, outer?: number | null } | null }} [opts]
+ *   colour reads `measure`, `index` and `count`; `countAxis` and `radiusRange`
+ *   are hints accumulated from the mark.
  * @returns {any[]}
  */
 export function channelRange(channelName, type, dims, theme, opts = {}) {
@@ -601,35 +475,22 @@ export function channelRange(channelName, type, dims, theme, opts = {}) {
         // How far a `curve` bows off its chord, as a fraction of the half-chord:
         // 0 is a straight segment, ±1 bows out by the half-chord's length.
         case 'curvature': return [-1, 1];
-        // Degrees in math convention (y-up). Default matches arcSpan semi/`orient:
-        // 'top'` — left (180°) → right (0°) through the top (NYT / speedometer).
-        // `theta` is the polar POSITION (a needle's bearing, an arc's sweep);
-        // `angle` is a mark's rotation in place. Same units, different questions,
-        // so they get the same default and separate scales.
+        // Degrees, math convention (y-up): left (180°) -> right (0°) over the top.
+        // `theta` and `angle` share the default but get separate scales.
         case 'theta': return [180, 0];
         case 'angle': return [180, 0];
-        // A COUNT axis runs along whichever screen direction the mark stacks in,
-        // which `axisOf` cannot know — the channel name is the same either way.
-        // The mark declares it (`Mark.countAxis`), the resolver accumulates it, and
-        // it arrives here as `opts.countAxis`. Same shape as `discretePref`.
+        // A count axis runs along the direction the mark declares (`Mark.countAxis`).
         case 'count': return opts.countAxis === 'x' ? [0, dims.width] : [dims.height, 0];
-        // A RADIAL position: pixels from the centre, between the mark's inner and
-        // outer radius (declared by the mark — `Mark.radiusRange` — and resolved
-        // here by the same rule the mark fits its ring with).
+        // Radial position: px between the mark's inner and outer radius (`radiusExtent`).
         case 'radius': { const r = radiusExtent(opts.radiusRange, dims); return [r.inner, r.outer]; }
     }
-    // Family-based ranges: any opacity/colour channel gets the same output range
-    // as its base channel, so fillOpacity/strokeOpacity and fill/stroke behave
-    // like opacity when driven by a field.
+    // Opacity and colour families share their base channel's range.
     if (OPACITY_CHANNELS.has(channelName)) return [0.15, 1];
     if (COLOR_CHANNELS.has(channelName)) return colorRange(type, theme, opts);
     // Symbol channel: a glyph palette (author overrides with scale.range/scheme).
     if (SYMBOL_CHANNELS.has(channelName)) return [...DEFAULT_SYMBOLS];
     if (DASH_CHANNELS.has(channelName)) return [...DEFAULT_DASHES];
-    // Stroke width in PIXELS. Without a case of its own it fell through to the
-    // [0, 1] guard below, so binding a field to `strokeWidth` mapped the whole
-    // domain onto sub-pixel strokes — the channel resolved, encoded, and drew
-    // hairlines that all looked identical.
+    // Stroke width in px; the [0, 1] fallback would draw identical hairlines.
     if (channelName === 'strokeWidth') return [1, 8];
     return [0, 1];
 }
@@ -660,15 +521,10 @@ export function pointerDegrees(pointer, center) {
 }
 
 /**
- * Bring a raw atan2 angle (from pointerDegrees, in (-180, 180]) onto the
- * continuous line an authored arc SPAN lives on, then clamp to that span. This
- * kills the ±180° branch-cut discontinuity: a top gauge's 0 endpoint sits at
- * 180°, so dragging just past it wraps atan2 to ≈-179° — without unwrapping,
- * scale.invert reads that as the FAR end (a jump to the max value). We instead
- * normalize `deg` (mod 360) to the representative within ±180° of the span
- * centre, then clamp to [min, max] of the span. A full circle (|span| ≈ 360)
- * leaves every angle inside its own window, so this is a no-op there (the dial
- * is untouched). Shared by rotate() and the arc edge edit.
+ * Bring a raw atan2 angle (from pointerDegrees, in (-180, 180]) to within ±180°
+ * of an arc span's centre, then clamp to the span. Avoids the ±180° branch cut
+ * reading as a jump to the far end; a no-op for a full circle. Shared by rotate()
+ * and the arc edge edit.
  * @param {number} deg raw angle in (-180, 180]
  * @param {number} spanStart degrees (scale.range[0])
  * @param {number} spanEnd degrees (scale.range[last])
@@ -684,12 +540,9 @@ export function unwrapDegrees(deg, spanStart, spanEnd) {
 }
 
 /**
- * The gesture->visual half of a channel-scoped interaction: given a pointer and
- * (for radial channels) the mark's centre, what visual value is the user
- * setting on `channelName`?  Positional channels read the pointer coordinate;
- * `size` reads the distance from the mark centre (a resize handle); `angle`
- * reads atan2 about the centre (a rotate gesture). New draggable channels
- * register here — this is the one place gestures are mapped.
+ * Gesture -> visual for a channel-scoped interaction: positional channels read
+ * the pointer; `size`/`radius` read the distance from `center`; `theta`/`angle`
+ * read the bearing about it. The one place gestures are mapped.
  * @param {string} channelName
  * @param {{ x: number, y: number }} pointer
  * @param {{ cx: number, cy: number } | null} [center]
@@ -699,10 +552,8 @@ export function visualForChannel(channelName, pointer, center) {
     const axis = axisOf(channelName);
     if (axis === 'x') return pointer.x;
     if (axis === 'y') return pointer.y;
-    // An offset reads the pointer along its PARENT axis. Its scale's invertValue
-    // takes that absolute pixel and finds the parent slot first (core/scales.js:
-    // nestOffsetScale), because the sub-band a pixel lands in depends on which
-    // category's slot it is inside.
+    // An offset reads the pointer along its parent axis; its invertValue finds the
+    // parent slot (core/scales.js: nestOffsetScale).
     const parent = OFFSET_OF[channelName];
     if (parent === 'x') return pointer.x;
     if (parent === 'y') return pointer.y;
@@ -711,9 +562,7 @@ export function visualForChannel(channelName, pointer, center) {
     if (channelName === 'size' || axis === 'radius') {
         return center ? Math.hypot(pointer.x - center.cx, pointer.y - center.cy) : undefined;
     }
-    // Both angular channels invert the same way — a bearing about a centre.
-    // `theta` is a polar POSITION, `angle` a rotation in place; the gesture that
-    // sets either is the same swing of the pointer.
+    // `theta` and `angle` both invert as a bearing about the centre.
     if (channelName === 'theta' || channelName === 'angle') {
         return center ? pointerDegrees(pointer, center) : undefined;
     }
@@ -721,17 +570,12 @@ export function visualForChannel(channelName, pointer, center) {
 }
 
 /**
- * The forward sibling of visualForChannel: given a channel and a VISUAL value
- * (already run through the channel's scale — a pixel for x/y, a radius for size,
- * a degree for angle), return the pointer position a gesture would have been at
- * to produce it. This lets an EXTERNAL controller drive a positional edit by a
- * DATA value: forward-encode value -> visual through the same scale the edit
- * inverts, then place the pointer here and synthesize a drag. It is the exact
- * inverse of visualForChannel, so a value round-trips (encode -> pointer ->
- * edit's invert) back to itself. `center` is the mark centre a radial channel
- * (size/angle) pivots about; positional channels reuse the untouched axis of it.
+ * The inverse of visualForChannel: the pointer position that produces a visual
+ * value. Lets an external controller drive a positional edit by a data value
+ * (encode -> pointer -> the edit's invert round-trips). `center` is the pivot
+ * for radial channels.
  * @param {string} channelName
- * @param {number} visual value already in the scale's OUTPUT space
+ * @param {number} visual value already in the scale's output space
  * @param {{ cx: number, cy: number } | null} [center]
  * @returns {{ x: number, y: number } | undefined}
  */

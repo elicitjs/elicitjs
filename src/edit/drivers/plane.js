@@ -1,8 +1,6 @@
 // @ts-check
-// plane driver — the simplest plane-pick lifecycle: a discrete gesture (click /
-// dblclick) that mints or seeds data with no existing target (create, anchor,
-// newSeries). It just runs each matching edit with a null index on its trigger
-// gesture; the edit's apply() appends to the dataset.
+// plane driver — runs each edit whose gesture matches the event, with a null
+// index (create, anchor, newSeries, axis zoom).
 
 /** @type {import('./index.js').Driver} */
 export const planeDriver = {

@@ -16,7 +16,7 @@ Decide by the data model, not the look. A new mark when the data model changes; 
 ## Adding a mark — checklist
 
 - Factory returns a `Mark`; annotate `@returns {import('../types').Mark}`, never `any`. `build(currentData, scales, width, height)` is the one required method.
-- Spread `markCommon(opts)` first in the returned object — it passes `id`/`edits`/`constraints`/`table` through verbatim. Never return them by hand or drop one. A key stated after the spread still wins.
+- Spread `markCommon(opts)` first in the returned object — it passes `id`/`edits`/`table`/`tip`/`clip` through verbatim. Never return them by hand or drop one. A key stated after the spread still wins.
 - Add options to `MARK_OPTIONS` in `src/vocabulary.js`, a `YourMarkOptions` interface in `types.d.ts`, and call `normalizeMarkOptions(options, { mark, allow: MARK_OPTIONS.yourMark })`. `mark` without `allow` disables unknown-option checks and warns. A wrong list entry gives a false positive; `check:warnings` catches that over the docs.
 - Resolve position/style through `encodeChannel` / `resolveStyle` / `categoryOf` (see the scales rule).
 - Set `discreteScale: 'band'` (needs an interval) or `'point'` (needs a tick). A mark that merely spans (`rule`) leaves it undefined so a `composite` can stamp one.

@@ -1,23 +1,12 @@
 // @ts-check
-// One scale per channel, GLOBAL to the plot, shared by every mark. Each mark is
-// a channel producer (it declares field-per-channel via its `channels` map); the
-// engine unions each channel's fields across all marks, asks the schema what they
-// are, and builds one scale. Marks then read scales by channel name (scales.x,
-// scales.fill) and edits invert through the same objects.
-//
-// ── Who owns what ───────────────────────────────────────────────────────────
-// The SCHEMA owns a field's data type and DOMAIN — they are properties of the
-// data, not of a mark's view of it. A mark owns only which field lands on which
-// channel, and (rarely) how that channel draws it:
+// resolve.js — one global scale per channel, shared by every mark. The engine
+// unions each channel's fields across marks, asks the schema what they are, and
+// builds one scale; edits invert through the same objects.
 //
 //   measure (data type):  channel `type` > schema `type` > inference from values
 //   scale (how to draw):  spec.scales[ch] > channel `scale` > scaleTypeFor(...)
-//   domain:               the UNION of the schema domains of every field on the
-//                         axis, else inferred from the union of their values
-//
-// The domain union is load-bearing: an error bar puts `mean`, `lo` and `hi` on y,
-// and the axis must span all three. Reading one field's domain and discarding the
-// rest is what forced charts to hand-write a chart-level y domain.
+//   domain:               the union of the schema domains of every field on the
+//                         axis (an error bar's mean/lo/hi), else inferred from values
 
 import { createScale, adoptScale, scaleKey, bandwidthOf, slotWidthOf, nestOffsetScale, offsetScaleOf } from "./scales.js";
 import {
@@ -33,10 +22,9 @@ import {
   frameSpecOf,
 } from "./encoding.js";
 
-// Scales re-resolve on every render, so a warning would repeat forever — `warn`
-// dedups once per key. See core/dev.js for why this is not gated on a build flag.
+// Scales re-resolve every render; `warn` dedups once per key.
 import { warn as warnOnce } from "./dev.js";
-import { refDomain } from "./schema.js";
+import { refDomain, fieldsOf } from "./schema.js";
 
 /**
  * Bring the three forms a `scale` option can take to one shape.
@@ -57,12 +45,10 @@ function normalizeScaleOption(opt) {
 /**
  * Resolves global scales across features.
  * @param {any[]} features
- * @param {Record<string, any[]>} tables the chart's dataset, one rows array per
- *   TABLE name. Every mark is a view over exactly one of them (`feature.table`).
+ * @param {Record<string, any[]>} tables the chart's dataset, one rows array per table name
  * @param {import('../types').ElicitSpec & { schema: import('../types').Schema, schemaSpec: import('../types').SchemaSpec }} spec
- *   the engine's live spec view. `schema` is the PRIMARY table's field map (kept for
- *   the single-table paths that predate structures); `schemaSpec` is the canonical
- *   schema, which is how a field is looked up in its own table's contract.
+ *   the engine's live spec view: `schema` is the primary table's field map,
+ *   `schemaSpec` the canonical schema.
  * @param {{ width: number, height: number }} dims
  * @returns {import('../types').ScaleMap}
  */
@@ -74,51 +60,28 @@ export function resolveScales(features, tables, spec, dims) {
   /** @type {Record<string, import('../types').ScaleSpec>} */
   const chartScales = spec.scales || {};
 
-  // A feature's rows and its own table's field map. A scale is GLOBAL per channel,
-  // so several tables can feed one axis — but each field must be looked up in the
-  // contract of the table it came from, or a node's `weight` would be validated
-  // against a link's.
+  // A feature's rows and its own table's field map: each field is looked up in the
+  // table it came from.
   /** @param {any} feature @returns {any[]} */
   const rowsOf = (feature) =>
     (tables && (tables[feature.table] || tables[spec.schemaSpec ? spec.schemaSpec.primary : ''])) || [];
   /** @param {any} feature @returns {Record<string, import('../types').FieldSchema>} */
-  const fieldsOf = (feature) => {
-    const t = schemaSpec && schemaSpec.tables[feature.table];
-    return (t && t.fields) || schema;
-  };
+  const fieldsFor = (feature) => (schemaSpec ? fieldsOf(schemaSpec, feature.table) : schema);
 
-  // Accumulate, per channel: the fields feeding it (in first-seen order), the
-  // FieldSchema each one resolved to (in the same order — a field name alone can't
-  // find its declaration once two tables share an axis), any explicit data type or
-  // scale option, the mark's preferred discrete scale, and the flat list of values
-  // across all marks (for inference).
+  // Per bucket: fields (first-seen order), their FieldSchemas (same order), any
+  // explicit type or scale option, the marks' hints, and all values (for inference).
   /** @type {Record<string, { fields: string[], fieldRefs: { table: string, field: string }[], schemas: any[], undeclared: string[], measure?: any, scaleOpt?: any, discretePref?: any, countAxis?: any, radiusRange?: any, values: any[] }>} */
   const acc = {};
 
   /** @param {string} ch */
   const ensure = (ch) => acc[ch] || (acc[ch] = { fields: [], fieldRefs: [], schemas: [], undeclared: [], values: [] });
 
-  // WHICH SCALE a channel feeds. Two different rules, because positional and
-  // non-positional channels want opposite things from a shared name:
-  //
-  //   POSITIONAL — by AXIS. x1/x2 union into x, y1/y2 into y, so span endpoints
-  //     share one domain/range/scale. An error bar's mean/lo/hi must span ONE y
-  //     axis; that union is the intent.
-  //   NON-POSITIONAL — by (channel, FIELD): one scale per ENCODING. Keyed by
-  //     channel alone, every mark binding `fill` shared a scale whose domain was
-  //     the union of every field on it — one mapping over values that mean two
-  //     different things, and `scale.fields[0]` (declaration order) as the
-  //     disambiguator for every edit. Two marks stating the SAME encoding still
-  //     land in one bucket, which is what makes a shared colour mean a shared value.
-  //
-  // A non-positional channel with no field (`fill: { datum: 'rain' }`) has no
-  // encoding to key on and keeps the bare channel name.
-  //
-  // `bucketMembers` tracks the raw channel names that fed each bucket so the built
-  // scale can be aliased back onto every one of them; `bucketChannel` remembers
-  // which CHANNEL a bucket belongs to, since the bucket key is no longer the
-  // channel name and the build loop needs the channel for scale type, range and
-  // `spec.scales` config.
+  // Which scale a channel feeds. Positional channels bucket by axis (x1/x2 into x),
+  // so span endpoints share one scale. Non-positional channels bucket by
+  // (channel, field): one scale per encoding, shared by marks stating the same
+  // encoding. A non-positional channel with no field keeps the bare channel name.
+  // `bucketMembers` records the channel names that fed each bucket (for aliasing);
+  // `bucketChannel` the channel a bucket belongs to.
   /** @type {Record<string, Set<string>>} */
   const bucketMembers = {};
   /** @type {Record<string, string>} */
@@ -132,49 +95,30 @@ export function resolveScales(features, tables, spec, dims) {
     return bucket;
   };
 
-  // Every mark reads the SAME dataset, so several marks encoding one field push
-  // its values into that channel's bucket more than once. Harmless:
-  // inferDomainFromValues takes min/max for continuous and dedupes discrete.
+  // Several marks may push one field's values more than once; inference dedupes.
   for (const feature of features) {
     const channels = normalizeChannels(feature);
-    // Which concrete scale this mark wants for discrete data. When marks
-    // disagree on a shared axis, 'band' wins — a bar needs the interval, and a
-    // dot renders fine on a band (it just uses the centre).
+    // When marks disagree on a shared axis, 'band' wins: a dot renders fine on a band.
     const pref = feature.discreteScale || "band";
     const rawChannels = new Set(feature.rawChannels || []);
     for (const [ch, chSpec] of Object.entries(channels)) {
       if (!chSpec) continue;
-      // `scale: null` reads the field raw (the datum holds a literal colour /
-      // pixel). No scale to build, so it contributes nothing — and needs no
-      // schema entry.
+      // `scale: null` reads the field raw: no scale, no schema entry needed.
       if (chSpec.scale === null) continue;
 
-      // `scale: 'frame'` is a composite's LOCAL coordinate box (plot/composite.js): the
-      // scale is built per datum from the composite's own position and size, so
-      // there is no global one to resolve. Skipping BEFORE bucketOf is what
-      // keeps a glyph's internal geometry out of the chart's axes — a face's eye
-      // at local x -0.4 must not widen the x domain, demand a band, or conjure
-      // an axis for a box that isn't in the data's units at all.
+      // `scale: 'frame'` is a composite's local box, built per datum. Skipped before
+      // bucketOf so glyph geometry never widens the chart's axes.
       if (frameSpecOf(chSpec)) continue;
 
-      // A channel the mark reads RAW (`Mark.rawChannels`) resolves no scale by
-      // construction, so there is nothing here to build. A channel naming a column
-      // of ANOTHER table forced this (`link` once read node sizes off the node
-      // rows): this pass can only see the mark's own table, so a perfectly
-      // well-declared field looked undeclared and the chart opened with a warning
-      // telling the author to declare what they already had.
+      // A raw channel (`Mark.rawChannels`) resolves no scale. It may name another
+      // table's column, which this pass cannot see.
       if (rawChannels.has(ch)) continue;
 
-      // A derived channel (`{ fn }`) is computed per datum in VISUAL space —
-      // its result is used as-is, never scaled — so it declares no field and
-      // feeds no scale. Skip it explicitly (rather than relying on the empty-
-      // bucket drop below) so a stray `scale`/`type` on it can't contaminate a
-      // shared axis bucket's scaleOpt/measure.
+      // A derived channel (`{ fn }`) is visual space, so it feeds no scale. Skipped
+      // explicitly so a stray `scale`/`type` can't contaminate a shared bucket.
       if (typeof chSpec.fn === "function" && chSpec.field == null) {
         if (chSpec.scale !== undefined || chSpec.type !== undefined) {
-          // Key is `fnopt:`, not `fn:` — plot/mark.js already owns `fn:<channel>`
-          // for "this derived channel's fn threw". Sharing the namespace meant
-          // whichever fired first silenced the other for the rest of the page.
+          // Key is `fnopt:`; plot/mark.js owns `fn:<channel>`.
           warnOnce(
             `fnopt:${ch}`,
             `channel "${ch}" is derived ({ fn }) — its result is used ` +
@@ -185,10 +129,8 @@ export function resolveScales(features, tables, spec, dims) {
         continue;
       }
 
-      // `domain` and `range` are not channel options: the schema owns the
-      // domain, the scale owns the range. Both used to live here, and a
-      // leftover is invisible — the channel silently takes its default range
-      // (a needle's degrees collapse to [0, 1]) and the chart draws, wrong.
+      // `domain` and `range` are not channel options (the schema owns the domain,
+      // the scale the range). A leftover silently takes the default range, so warn.
       for (const [key, where] of [
         ["domain", "the spec's schema"],
         ["range", "this channel's `scale`"],
@@ -205,32 +147,23 @@ export function resolveScales(features, tables, spec, dims) {
       if (a.measure == null && chSpec.type != null) a.measure = chSpec.type;
       if (a.scaleOpt == null && chSpec.scale != null) a.scaleOpt = chSpec.scale;
       if (a.discretePref !== "band") a.discretePref = pref;
-      // Which screen direction a COUNT axis runs along. Same shape as
-      // `discretePref`: a per-mark hint accumulated onto the bucket, read when the
-      // scale is built. `axisOf` stays a static map because of this.
+      // Which way a count axis runs: a per-mark hint, accumulated like `discretePref`.
       if (a.countAxis == null && feature.countAxis) a.countAxis = feature.countAxis;
-      // The px extent of a RADIUS axis: declared by the polar mark (its inner /
-      // outer radius), accumulated here the same way, read by channelRange.
+      // The px extent of a radius axis, declared by the polar mark.
       if (a.radiusRange == null && feature.radiusRange) a.radiusRange = feature.radiusRange;
 
       if (chSpec.field != null) {
         if (!a.fields.includes(chSpec.field)) a.fields.push(chSpec.field);
-        // A field NAME is not unique across tables — a network chart can put `kind`
-        // on both nodes and links, and one `fill` scale over both. `fields` is the
-        // flat name list every reader has always taken; `fieldRefs` qualifies each
-        // one by the table it came from, which is the only place that is still
-        // known. A domain edit needs the qualified form to write the right schema.
+        // Field names are not unique across tables; `fieldRefs` qualifies each by
+        // its table so a domain edit writes the right schema.
         const owner = feature.table;
         if (owner != null && !a.fieldRefs.some((r) => r.table === owner && r.field === chSpec.field)) {
           a.fieldRefs.push({ table: owner, field: chSpec.field });
         }
-        // The declaration is taken from the field's OWN table, here, while we still
-        // know which feature it came from — the bucket only keeps names.
-        const declared = fieldsOf(feature)[chSpec.field];
-        // A `ref` IS a category (its values are identities), but its domain belongs
-        // to the column it points at, so it is derived rather than declared — that is
-        // what keeps a link's source in step with the nodes that exist. Substituted
-        // here so the rest of resolution never learns that refs exist.
+        // The declaration comes from the field's own table, known only here.
+        const declared = fieldsFor(feature)[chSpec.field];
+        // A `ref` is a category whose domain is derived from the column it points
+        // at. Substituted here so the rest of resolution never sees refs.
         if (declared && declared.type === 'ref' && schemaSpec) {
           a.schemas.push({
             type: 'categorical',
@@ -252,39 +185,25 @@ export function resolveScales(features, tables, spec, dims) {
   /** @type {import('../types').ScaleMap} */
   const scales = {};
 
-  // WHICH encoding this is among those sharing a channel, in first-seen order. The
-  // automatic colour path rotates scheme families by it, so two encodings on `fill`
-  // are perceptually different things rather than the same two hues twice — the
-  // separation the union used to provide by accident. Index 0 defers to the theme,
-  // so a chart with one encoding per channel is exactly as it was.
+  // Which encoding this is among those sharing a channel (first-seen order). The
+  // automatic colour path rotates scheme families by it; index 0 defers to the theme.
   /** @type {Record<string, number>} */
   const bucketIndex = {};
   /** @type {Record<string, number>} */
   const seenPerChannel = {};
-  for (const bucket of Object.keys(acc)) {
-    const a = acc[bucket];
-    // A constant-only channel (`stroke: 'white'` on a halo line) resolves no
-    // scale (see below), so it must not take a palette slot either — counting it
-    // handed the NEXT encoding on the channel the second scheme family.
-    if (!a.fields.length && !a.values.some((v) => v != null)) continue;
-    const ch = bucketChannel[bucket] || bucket;
-    bucketIndex[bucket] = seenPerChannel[ch] || 0;
-    seenPerChannel[ch] = bucketIndex[bucket] + 1;
-  }
   // Offset buckets, fitted to their parent's slot once every scale exists (below).
   /** @type {{ bucket: string, channel: string, parent: 'x' | 'y', opt: any }[]} */
   const offsets = [];
   for (const [bucket, a] of Object.entries(acc)) {
-    // The CHANNEL this bucket belongs to. For a non-positional bucket the key is
-    // `channel\0field`, so everything that wants a channel NAME — the scale type,
-    // the default range, `spec.scales` config, and every message an author reads —
-    // must go through this rather than the key.
+    // The channel this bucket belongs to. A non-positional key is `channel\0field`,
+    // so anything that wants a channel name reads this, not the key.
     const channel = bucketChannel[bucket] || bucket;
     const hasData = a.values.some((v) => v != null);
-    // A constant-only channel (`fill: { value: 'red' }`, `size: 9`) declares no
-    // field and no datum — there is nothing to scale. Leave it unresolved; a
-    // 1D plot with a dropped axis relies on this too (marks fall back to centre).
+    // A constant-only channel has nothing to scale; leave it unresolved.
     if (!a.fields.length && !hasData) continue;
+    // Counted after the skip, so a constant-only channel takes no palette slot.
+    bucketIndex[bucket] = seenPerChannel[channel] || 0;
+    seenPerChannel[channel] = bucketIndex[bucket] + 1;
 
     const entries = a.schemas;
     for (const f of a.undeclared) {
@@ -322,7 +241,7 @@ export function resolveScales(features, tables, spec, dims) {
     /** @type {import('../types').MeasureType} */
     const measure = a.measure || declared[0] || inferMeasureType(a.values);
 
-    // 2. How this channel DRAWS it.
+    // 2. How this channel draws it.
     /** @type {import('../types').ScaleType} */
     const type =
       opt.type || scaleTypeFor(channel, measure, a.discretePref || "band");
@@ -352,8 +271,7 @@ export function resolveScales(features, tables, spec, dims) {
       opt.range ||
       fromScheme ||
       channelRange(channel, type, dims, spec.theme, {
-        // Colour is chosen by what the data IS (ordered vs unordered), by which
-        // encoding this is on the channel, and by how many categories it has.
+        // Colour reads the measure, the encoding index and the category count.
         measure,
         index: bucketIndex[bucket] || 0,
         count: domain.length,
@@ -363,10 +281,9 @@ export function resolveScales(features, tables, spec, dims) {
       });
     if (opt.reverse && Array.isArray(range)) range = [...range].reverse();
 
-    // A scale the author built themselves is adopted as-is: we only sniff its
-    // capabilities and hand it the pixel range if it's positional and named none.
+    // An author's scale is adopted as a copy, so their instance is never mutated.
     const scale = opt.instance
-      ? adoptScale(opt.instance, {
+      ? adoptScale(typeof opt.instance.copy === "function" ? opt.instance.copy() : opt.instance, {
           range: opt.range ? undefined : range,
           positional,
           domain,
@@ -376,42 +293,24 @@ export function resolveScales(features, tables, spec, dims) {
           ...opt,
           type,
           domain,
-          // The theme's band spacing, used when the channel names no padding of
-          // its own. A capability of the scale it builds — core/scales.js decides
-          // which scale types read it.
+          // The theme's band spacing, when the channel names no padding.
           bandPadding: spec.theme && /** @type {any} */ (spec.theme).bandPadding,
-          // A nested category's sub-bands ABUT by default (Vega-Lite's grouped bar):
-          // the gap between groups is the parent band's padding, and a second gap
-          // inside each group reads as a second level of grouping that isn't there.
+          // Nested sub-bands abut by default; the gap between groups is the parent's padding.
           ...(offsetParentOf(channel) && opt.padding == null ? { padding: 0 } : {}),
         }, range);
 
     if (scale) {
-      // The schema fields that fed this axis, in first-seen order. Metadata
-      // only (NOT a domain/range on the channel) — an editable axis reads it
-      // to know which schema field domains a domain edit should write back to
-      // (a single-field axis -> one field; an error bar's y -> mean/lo/hi).
-      // `fieldRefs` is the same list QUALIFIED BY TABLE, because a name alone
-      // cannot say whose schema to write when one scale spans two tables.
+      // The schema fields that fed this scale, first-seen; an editable axis writes
+      // a domain edit back to them. `fieldRefs` is the same list qualified by table.
       scale.fields = a.fields;
       scale.fieldRefs = a.fieldRefs;
-      // Always publish under the bucket key itself (e.g. 'x', or 'fill\0group'),
-      // even when only x1/x2 were declared and 'x' was never literally used as a
-      // channel — baselineOf/bandwidthOf and other axis-keyed lookups expect
-      // scales.x to exist whenever any x-axis channel is in play.
+      // Always publish under the bucket key ('x', or 'fill\0group'): axis-keyed
+      // lookups expect scales.x whenever any x-axis channel is in play.
       scales[bucket] = scale;
-      // Alias onto every raw channel name that fed the bucket, so scales.x1 ===
-      // scales.x2 === scales.x, and `scales.fill` still resolves SOMETHING for a
-      // reader that has no field to key on.
-      //
-      // FIRST WINS, deliberately. With two encodings on one channel there are two
-      // scales and the bare name can only point at one; taking the first makes it
-      // the same scale a channel-keyed reader got before this change, so a lookup
-      // that was never updated degrades to the old behaviour instead of to
-      // `undefined`. Every reader that CAN name its field uses the composite key
-      // and never sees this alias. (`||=` rather than `=` is the whole mechanism —
-      // last-writer-wins would hand the alias to whichever mark was declared last,
-      // which is the arbitrariness this change exists to remove.)
+      // Alias onto every channel name that fed the bucket (scales.x1 === scales.x).
+      // First wins, deliberately: with two encodings on one channel the bare name
+      // points at the first. Readers that know their field use the composite key.
+      // Never make it last-wins.
       for (const name of bucketMembers[bucket] || []) {
         if (scales[name] === undefined) scales[name] = scale;
       }
@@ -420,12 +319,10 @@ export function resolveScales(features, tables, spec, dims) {
     }
   }
 
-  // ── OFFSET scales: a category nested inside x or y ─────────────────────────
-  // An offset's range is ONE parent slot in pixels, so it can only be fitted once
-  // the parent exists. `yOffset` runs [width, 0] for the same reason a band y axis
-  // does: the first category sits at the bottom of its slot, as `domain[0]` sits at
-  // the bottom of the axis. An author's own `range` is slot-local pixels and is
-  // kept as given.
+  // ── Offset scales: a category nested inside x or y ─────────────────────────
+  // Fitted once the parent exists: the range is one parent slot in px. `yOffset`
+  // runs [width, 0] so domain[0] sits at the bottom, like a band y axis. An
+  // author's `range` is slot-local px, kept as given.
   for (const { bucket, channel, parent, opt } of offsets) {
     const scale = /** @type {any} */ (scales)[bucket];
     const parentScale = /** @type {any} */ (scales)[parent];
@@ -448,18 +345,10 @@ export function resolveScales(features, tables, spec, dims) {
     nestOffsetScale(scale, parentScale, range);
   }
 
-  // ── A DERIVED count scale ──────────────────────────────────────────────────
-  // The count family has two shapes, and only one of them is an encoding. A
-  // `waffle` ENCODES a magnitude on `count`, so the bucket pass above already
-  // built its scale from the column. A `dotStack` DERIVES its count: one row is
-  // one token, there is no column, and the quantity is how many rows share a slot.
-  // That is the data-model difference that makes them two marks rather than one
-  // mark with an option — so it is a real asymmetry, not an oversight.
-  //
-  // It still has an axis, because the mapping is exact: tokens sit at a uniform
-  // pitch (`2r + gap`), so pixels->count is linear with no data needed. The mark
-  // declares that pitch and which way it stacks; the domain is however many whole
-  // tokens fit the plot, which keeps the axis stable as rows come and go.
+  // ── A derived count scale ──────────────────────────────────────────────────
+  // A `waffle` encodes a count column (built above). A `dotStack` derives it: one
+  // row is one token, so the scale comes from the mark's pitch (`2r + gap`), with
+  // a domain of however many whole tokens fit the plot.
   if (scales.count === undefined) {
     const counter = features.find(
       (f) => f && f.countAxis && f.countPitch > 0,
@@ -469,24 +358,21 @@ export function resolveScales(features, tables, spec, dims) {
       const capacity = Math.max(1, Math.floor(along / counter.countPitch));
       const span = capacity * counter.countPitch;
       const derived = createScale(
-        { channel: "count", type: "linear", domain: [0, capacity] },
+        { type: "linear", domain: [0, capacity] },
         counter.countAxis === "x" ? [0, span] : [dims.height, dims.height - span],
       );
       if (derived) scales.count = derived;
     }
   }
 
-  // A counting mark whose grid is WIDTH-limited (square cells that fit its band)
-  // draws a block shorter than the count scale's range, so the count axis read
-  // wrong against it. The mark declares `countLayout` — the grid length it will
-  // draw for a given band width and block length — and the count scale's range is
-  // fitted to that once the band scale is known. The mark caches the answer, so
-  // its cells and the axis come from one layout.
+  // A width-limited counting mark (square cells fitting its band) draws a block
+  // shorter than the count range. It declares `countLayout`, and the count range
+  // is fitted to it once the band scale is known.
   const laid = features.find((f) => f && f.countAxis && typeof f.countLayout === "function");
   const count = /** @type {any} */ (scales).count;
   if (laid && count && typeof count.range === "function") {
     const bandAxis = laid.countAxis === "x" ? "y" : "x";
-    // The block's thickness is its SLOT: the sub-band when the mark nests an
+    // The block's thickness is its slot: the sub-band when the mark nests an
     // offset in its category, else the category's band.
     const nested = offsetScaleOf(scales, laid.channels, bandAxis);
     const thickness = bandwidthOf(nested || scales[bandAxis], 20);

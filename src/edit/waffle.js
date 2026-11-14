@@ -1,17 +1,6 @@
 // @ts-check
-// waffle.js (edit) — the cell-native fill edit for the waffle mark.
-//
-// A waffle is a 2D grid, so the generic `drag`/click edits (which invert the
-// pointer through the 1D value scale) can't target an individual cell: they see
-// only the vertical pixel, round it to a whole row, and ignore the column. The
-// result is a fill that lands above or below the cell you pointed at.
-//
-// `edit.waffle.fill` instead reads the grid geometry the waffle stamps on every cell
-// node (`node.grid`) and resolves the pointer to the exact cell under it — row
-// AND column — then sets the value to that cell's COUNT: `value = dlo + count *
-// unit`. So a click (or drag) fills every cell up to and INCLUDING the one you
-// touched, and the next render's `filled` count equals that count exactly. The
-// same apply serves both gestures, so click and drag stay consistent.
+// waffle.js (edit) — fill a waffle up to the cell under the pointer, using the
+// grid geometry each cell stamps (`node.grid`): value = dlo + count * unit.
 
 import { makeEdit } from './shared.js';
 
@@ -36,13 +25,7 @@ function countAt(pointer, grid) {
 
 /**
  * edit.waffle.fill — fill a waffle up to (and including) the cell under the
- * pointer. Works for both `gesture: 'drag'` (fill as you drag) and
- * `gesture: 'click'` (fill on a single tap).
- *
- * Scoped to the waffle mark: it reads `node.grid`, which only a waffle stamps,
- * so on any other mark it can only no-op. `scope: 'waffle'` is what lets the
- * engine say so out loud (see SCOPE_CAPABILITY in core/elicit.js) instead of
- * leaving you with a dead gesture and no error.
+ * pointer. Works with `gesture: 'drag'` (default) or `'click'`.
  * @param {import('../types').EditOptions} [options]
  * @returns {import('../types').Edit}
  */

@@ -1,45 +1,34 @@
 // @ts-check
-// shared.js — what every guide has in common.
+// shared.js: helpers every guide uses.
 //
-// A guide views chart STATE (`views: 'state'`): it draws the RULE and the STATE
-// rather than the data. It is therefore allowed to DEPEND on the rows — a "mean"
-// line has to read them to know where it goes — while never writing any. So every
-// guide option may be either a literal or a function of the chart context:
+// A guide option is a literal or a function of the chart context:
 //
 //   guides.rule({ y: 25 })                                   // literal
 //   guides.rule({ y: ({ data }) => d3.mean(data, d => d.y),  // derived
 //                 label: ({ data }) => `mean of ${data.length}` })
 //
-// Note this is what a guide has INSTEAD of a channel map, and why "derived" is not
-// what distinguishes a guide from a mark: a mark channel can already be derived
-// (`{ fn }`). The difference is ARITY and WRITABILITY — a `{ fn }` channel is
-// per-ROW and its mark may still carry an `edit`; these expressions are per-CHART
-// and a guide carries none. See the `Guide` interface in types.d.ts.
-//
-// The context is the one `build` receives as its 5th argument: { scales, data,
-// constraints, features, featureNodes, ui, effects, theme, width, height, stage }
-// (see elicit.js's guideCtx). Guides never mutate it, and are never interactive.
+// The context is `build`'s 5th argument: { scales, data, constraints, features,
+// featureNodes, ui, effects, theme, width, height, stage } (`guideCtx` in
+// core/engine/render.js). Guides never mutate it.
 
 import { warn, warningsEnabled } from '../core/dev.js';
 import { GUIDE_UNIVERSAL_OPTIONS } from '../vocabulary.js';
 
 /**
- * Resolve one guide option against the chart context: call it if it's a function,
- * otherwise hand it back untouched.
+ * Call a guide option with the chart context if it's a function, else return it.
  * @template T
  * @param {T | ((ctx: any) => T)} value
  * @param {any} ctx
  * @returns {T}
  */
-export function resolveGuideOption(value, ctx) {
+function resolveGuideOption(value, ctx) {
     return typeof value === 'function'
         ? /** @type {(ctx: any) => T} */ (value)(ctx)
         : value;
 }
 
 /**
- * Resolve a whole options object at once — every value goes through
- * resolveGuideOption. Guide factories call this at the top of build().
+ * Resolve every value of an options object with resolveGuideOption.
  * @param {Record<string, any>} options
  * @param {any} ctx
  * @returns {Record<string, any>}
@@ -52,16 +41,7 @@ export function resolveGuideOptions(options, ctx) {
 }
 
 /**
- * Options every guide accepts, whatever it draws.
- * @type {string[]}
- */
-const UNIVERSAL_GUIDE_OPTIONS = GUIDE_UNIVERSAL_OPTIONS;
-
-/**
- * Guide keys that are WRONG in a specific, diagnosable way. The guide-layer
- * counterpart of `MISTAKEN_OPTIONS` (plot/mark.js) and `MISTAKEN_SPEC_KEYS`
- * (core/elicit.js) — the corrections here are all about the KIND confusion, since
- * that is the mistake a guide invites.
+ * Mistaken guide keys, with the correction to show. Most confuse a guide with a mark.
  * @type {Record<string, string>}
  */
 const MISTAKEN_GUIDE_OPTIONS = {
@@ -75,13 +55,7 @@ const MISTAKEN_GUIDE_OPTIONS = {
 };
 
 /**
- * Validate a guide's options.
- *
- * Guides had no option checking at all — the one feature kind with none — so
- * `guides.rule({ colour: 'red' })` or `guides.region({ field: 'y' })` drew a
- * default and said nothing. This is the same diagnostics half that
- * `warnUnknownOptions` gives marks and `warnUnknownElementOptions` gives chart
- * elements; there is nothing to DESUGAR into, so it is the check alone.
+ * Warn on guide options outside `allow`.
  * @param {string} guide the factory name, for the message
  * @param {any} options
  * @param {string[]} allow the guide's own option vocabulary
@@ -89,7 +63,7 @@ const MISTAKEN_GUIDE_OPTIONS = {
  */
 export function warnUnknownGuideOptions(guide, options, allow) {
     if (!options || !warningsEnabled()) return;
-    const known = new Set([...UNIVERSAL_GUIDE_OPTIONS, ...allow]);
+    const known = new Set([...GUIDE_UNIVERSAL_OPTIONS, ...allow]);
     for (const key of Object.keys(options)) {
         if (known.has(key)) continue;
         const fix = MISTAKEN_GUIDE_OPTIONS[key];
@@ -103,4 +77,17 @@ export function warnUnknownGuideOptions(guide, options, allow) {
             `ignored. ${guide} options are: ${[...known].sort().join(', ')}.`,
         );
     }
+}
+
+/**
+ * A value as plain readout text: a Date as a local date, a number rounded to
+ * `1 / scale`, anything else as a string.
+ * @param {any} v
+ * @param {number} scale 100 keeps two decimals
+ * @returns {string}
+ */
+export function plainValue(v, scale) {
+    if (v instanceof Date) return v.toLocaleDateString();
+    if (typeof v === 'number') return String(Math.round(v * scale) / scale);
+    return String(v);
 }

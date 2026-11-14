@@ -1,13 +1,10 @@
 // @ts-check
-// guides.crosshair — rules that follow the pointer across the plot, with the
-// value under it read off each axis at the plot edge. A GUIDE: it views
-// `ui.pointer` and writes nothing, so it never blocks a gesture.
+// guides.crosshair: rules that follow the pointer, with the value under it read
+// off each axis at the plot edge.
 import { GUIDE_OPTIONS } from '../vocabulary.js';
-import { warnUnknownGuideOptions } from './shared.js';
+import { warnUnknownGuideOptions, plainValue } from './shared.js';
 import { measureText } from '../core/measure.js';
 import { resolveFormat } from '../format.js';
-
-export const CROSSHAIR_OPTIONS = GUIDE_OPTIONS.crosshair;
 
 /**
  * @param {{ x?: boolean, y?: boolean, readout?: boolean, stroke?: string, strokeDash?: string,
@@ -17,30 +14,24 @@ export const CROSSHAIR_OPTIONS = GUIDE_OPTIONS.crosshair;
  * @returns {import('../types').Guide}
  */
 export function crosshair(options = {}) {
-    warnUnknownGuideOptions('crosshair', options, CROSSHAIR_OPTIONS);
+    warnUnknownGuideOptions('crosshair', options, GUIDE_OPTIONS.crosshair);
     const { x: onX = true, y: onY = true, readout = true, stroke, strokeDash = '3 3', fontSize: fontSizeOpt, format } = options;
     const fmt = format != null ? resolveFormat(format) : null;
     /** @param {any} v @returns {string} */
-    const show = (v) => {
-        if (v == null) return '';
-        if (fmt) return fmt(v);
-        if (v instanceof Date) return v.toLocaleDateString();
-        if (typeof v === 'number') return String(Math.round(v * 100) / 100);
-        return String(v);
-    };
+    const show = (v) => (v == null ? '' : fmt ? fmt(v) : plainValue(v, 100));
 
     return {
         views: 'state',
         type: 'crosshair',
         tracksPointer: true,
         build: (_rows, scales, width, height, ctx) => {
-            const p = ctx.ui && ctx.ui.pointer;
+            const p = ctx.ui?.pointer;
             if (!p || p.x < 0 || p.y < 0 || p.x > width || p.y > height) return [];
-            const rt = (ctx.theme && ctx.theme.guide && ctx.theme.guide.rule) || {};
+            const rt = ctx.theme?.guide?.rule || {};
             const ink = stroke ?? rt.stroke ?? '#64748b';
-            const fontSize = fontSizeOpt ?? ((ctx.theme && ctx.theme.font && ctx.theme.font.size) || 10);
-            const labelFill = (ctx.theme && ctx.theme.axis && ctx.theme.axis.labelFill) || '#374151';
-            const bg = (ctx.theme && ctx.theme.background) || '#ffffff';
+            const fontSize = fontSizeOpt ?? (ctx.theme?.font?.size || 10);
+            const labelFill = ctx.theme?.axis?.labelFill || '#374151';
+            const bg = ctx.theme?.background || '#ffffff';
             /** @type {import('../types').FeatureNode[]} */
             const nodes = [];
             /** @param {number} cx @param {number} cy @param {string} text @param {string} anchor */

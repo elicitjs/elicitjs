@@ -6,18 +6,16 @@ import { drivers, driverFor } from '../../edit/drivers/index.js';
 import { elementEffectOf } from '../effects.js';
 
 /**
- * Event routing: the ONE place a renderer's event reaches the edits.
+ * Event routing: where a renderer's event reaches the edits.
  *
- * Events carrying a `node` are mark-scoped and route to that mark's direct-pick
- * edits; events without one are plane-scoped and route to every feature's plane
- * edits through the driver registry. A multi-event lifecycle is a DRIVER
- * (edit/drivers), never a branch here — this file asks `driverFor` and never names
- * a pick mode. Hover, pointer and grab are interaction STATE recorded on `ui` for
- * the render's state pass; undo transactions are bracketed per gesture.
+ * An event with a `node` goes to that mark's direct-pick edits; one without goes
+ * to every feature's plane edits through the driver registry. Hover, pointer and
+ * grab are recorded on `ui` for the state pass. Undo is bracketed per gesture.
  *
  * @param {import('./state.js').ChartState} chart
  * @param {{
  *   features: any[],
+ *   featureById: Map<string, any>,
  *   ui: any,
  *   effects: any,
  *   tracksPointer: boolean,
@@ -44,13 +42,13 @@ import { elementEffectOf } from '../effects.js';
  */
 export function createDispatch(chart, deps) {
     const {
-        features, ui, effects, tracksPointer, featureNodes, hierarchyNodes, boxHosts,
+        features, featureById, ui, effects, tracksPointer, featureNodes, hierarchyNodes, boxHosts,
         tableOf, activeEdits, getStage, applyStage, arbitrates, frameScalesFor,
         runEdit, previewEdit, reachableKeys, settledNodes, heldStill, notifyChange,
         handleKey, visibleAt,
     } = deps;
-    const { endTxn, recordHistory } = deps.history;
-    const history = deps.history;
+    const { history } = deps;
+    const { endTxn, recordHistory } = history;
     const update = () => deps.update();
 
     // Can an edit run on a row the caller already names? A direct edit always can;
@@ -62,9 +60,7 @@ export function createDispatch(chart, deps) {
         return !!(d && d.targetsRow);
     };
 
-    // Direct-pick edits: the gesture landed on a mark (event.node). Fan the
-    // gesture out to every direct edit whose `gesture` matches; `when` arbitrates
-    // between edits sharing a gesture (plain-drag move vs Shift-drag resize).
+    // Run every direct edit on the touched mark whose `gesture` matches.
     /**
      * @param {any} feature
      * @param {any} event
@@ -73,34 +69,18 @@ export function createDispatch(chart, deps) {
     const dispatchDirectEdits = (feature, event) => {
         const index = event.node && event.node.index != null ? event.node.index : null;
         let changed = false;
-        // A gesture normally fans to EVERY direct edit sharing its type (arbitrated
-        // by each edit's `when`). An externally-driven event may ADDRESS one edit by
-        // name (event.editName), so a feature carrying several same-gesture edits —
-        // three `set()`s on a face's params — drives exactly the one asked for
-        // instead of all of them. Native pointer events set no editName, so their
-        // fan-out is unchanged.
+        // An external event may name one edit (`event.editName`); then only that one runs.
         const direct = activeEdits(feature).filter(e => e.pick === 'direct'
             && (!event.editName || e.name === event.editName));
 
-        // A direct edit may still need a multi-event LIFECYCLE — a relative `slide`
-        // has to remember the pixel and value it started from, or the value would
-        // jump to wherever the mark was pressed. Its driver owns that state exactly
-        // as it does for a plane edit; the only difference is that the target is the
-        // node under the pointer, so nothing is searched for and the plane stays
-        // down. This is the driver registry doing its job, not a pick branch: the
-        // engine asks `driverFor` and never names a mode.
-        // A node that carries NO row (an axis end-handle) can still start a
-        // lifecycle: its driver resolves what was grabbed from the pointer. Only a
-        // plain direct edit needs the datum, so only those are skipped without one.
+        // Direct edits with a driver (e.g. relative `slide`) run their lifecycle on
+        // the touched row. They run even without a row (an axis end-handle).
         const lifecycle = direct.filter(e => driverFor(e));
         if (lifecycle.length && runDrivers(feature, event, lifecycle, index)) changed = true;
 
         if (index == null) return changed;
-        // An event that ADDRESSES an edit by name (`el.control(name, index)`) also
-        // names the row it acts on. For a plane edit whose driver only chooses a
-        // row (`targetsRow` — a nearest or sweep pick), that choice is already made,
-        // so the edit runs on this row like a direct one. Other plane edits need
-        // their driver's lifecycle, and `control()` reports them instead.
+        // `el.control(name, index)` also runs a named plane edit whose driver only
+        // chooses a row (`targetsRow`) directly on this row.
         const addressed = event.editName
             ? activeEdits(feature).filter(e => e.pick !== 'direct' && e.name === event.editName && rowTargeted(e))
             : [];
@@ -110,15 +90,8 @@ export function createDispatch(chart, deps) {
         return changed;
     };
 
-    // Hand a set of edits to the interaction drivers. Each driver (edit/drivers)
-    // owns one multi-event lifecycle; we give every driver the edits it `wants`
-    // plus a per-feature session, and it runs them. The engine knows no specific
-    // mode — adding one means adding a driver file.
-    //
-    // Both dispatch paths come through here. A PLANE gesture carries no node, so
-    // `index` is null and the driver resolves its own target from the pointer. A
-    // DIRECT gesture landed on a node, so `index` names the datum and the driver
-    // skips target selection entirely — same lifecycle, no raised plane.
+    // Hand edits to their drivers with a per-feature session. A plane gesture
+    // passes `index` null (the driver finds its target); a direct one names the row.
     /**
      * @param {any} feature
      * @param {any} event
@@ -136,10 +109,7 @@ export function createDispatch(chart, deps) {
         /** @param {import('../../types').Edit} edit @param {number | null} index */
         const previewFeatureEdit = (edit, index) => previewEdit(feature, edit, event, index);
 
-        // The feature's uncommitted proposal, and the chart's stage cursor. Handed to
-        // drivers as capabilities exactly like `session` — so a multi-event lifecycle
-        // (hover to preview, click to commit and advance) lives in its driver file,
-        // not in engine branches.
+        // The feature's uncommitted proposal and the stage cursor, handed to drivers.
         const preview = {
             get: () => (ui.preview && ui.preview[fid]) || null,
             clear: () => {
@@ -156,10 +126,8 @@ export function createDispatch(chart, deps) {
             next: () => applyStage(getStage() + 1)
         };
 
-        // Every edit reaches exactly ONE driver — the one `driverFor` names — so an
-        // edit two drivers could claim is never run (and committed) twice per tick.
-        // Iteration stays in REGISTRY order, which is load-bearing: a mark can carry
-        // two lifecycles at once, and connect's dragend must run after move's.
+        // Each edit goes to exactly one driver. Drivers run in registry order, which
+        // is load-bearing: connect's dragend must run after move's.
         /** @type {Map<any, import('../../types').Edit[]>} */
         const groups = new Map();
         for (const e of edits) {
@@ -174,9 +142,8 @@ export function createDispatch(chart, deps) {
         for (const driver of drivers) {
             const matching = groups.get(driver);
             if (!matching) continue;
-            // The per-feature session this driver reads/writes. It is SHARED with
-            // every other driver on the mark, so `clear` nulls only the keys this
-            // driver declared (`sessionKeys`) — ownership by contract, not memory.
+            // The session is shared by every driver on the mark, so `clear` nulls
+            // only this driver's `sessionKeys`.
             const own = driver.sessionKeys || [];
             const session = {
                 get: () => (ui.session && ui.session[fid]) || null,
@@ -197,9 +164,7 @@ export function createDispatch(chart, deps) {
                 feature, event, edits: matching,
                 marks: featureNodes[fid] || [],
                 data: tableOf(feature),
-                // Read-only: lets a driver (e.g. brush) encode a channel's current
-                // pixel position for hit-zone classification, without reinventing
-                // scale lookup — the same global scales every edit already inverts through.
+                // Read-only global scales, for a driver that encodes a channel (brush).
                 scales: chart.scales,
                 index: index != null ? index : null,
                 session,
@@ -215,13 +180,7 @@ export function createDispatch(chart, deps) {
         return changed;
     };
 
-    // Plane-pick edits: the gesture is on the plane, so it carries no node and the
-    // driver resolves its own target.
-    /**
-     * @param {any} feature
-     * @param {any} event
-     * @returns {boolean}
-     */
+    // Plane-pick edits: the event carries no node and the driver finds its target.
     /**
      * @param {any} feature
      * @param {any} event
@@ -231,15 +190,11 @@ export function createDispatch(chart, deps) {
     const dispatchPlaneEdits = (feature, event, live) =>
         runDrivers(feature, event, live !== undefined ? live : livePlaneEdits(feature, event), null);
 
-    // The plane edits of a feature that ACCEPT this gesture: those whose `when`
-    // passes. A stroke keeps the set its dragstart resolved (a modifier released
-    // mid-drag must not strand a driver without its dragend), so arbitration runs
-    // on dragstart / click / dblclick / hover and is reused for drag / dragend.
+    // The plane edits whose `when` accepts this gesture. A stroke latches the set at
+    // dragstart, so a modifier released mid-drag can't strand a driver without its dragend.
     /** @type {Record<string, import('../../types').Edit[]>} */
     let strokeLive = {};
-    // The plane edits that accepted each feature's last HOVER, so one that stops
-    // accepting (a modifier released) is told the pointer left. See the plane
-    // dispatch in handleEvent.
+    // The plane edits that accepted each feature's last hover.
     /** @type {Record<string, import('../../types').Edit[]>} */
     let hoverLive = {};
     /**
@@ -251,22 +206,15 @@ export function createDispatch(chart, deps) {
         const plane = activeEdits(feature).filter(e => e.pick !== 'direct');
         if (!plane.length) return plane;
         if (event.type === 'drag' || event.type === 'dragend') return strokeLive[feature.id] || [];
-        // The pointer LEAVING reaches every plane edit. Dropping hover state is not
-        // a gesture a modifier can decline, and a driver whose edit stopped
-        // accepting (Shift released) must still hear it, or its ring stays lit.
+        // A hoverout reaches every plane edit, accepted or not, so no hover ring stays lit.
         if (event.type === 'hoverout') return plane;
         const live = plane.filter(e => arbitrates(feature, e, event));
         if (event.type === 'dragstart') strokeLive[feature.id] = live;
         return live;
     };
 
-    // With the plane on top, a press anywhere arrives as a plane gesture even when
-    // it landed on a mark whose DIRECT edit should have it — a `move({ when:
-    // when.shift })` beside a sweep gated `when.noShift`, or a vertex drag beside a
-    // geo draw. When no plane edit accepts the gesture, resolve the node under the
-    // pointer the way the renderer would have (pick.js's hitTest honours editable /
-    // locked / pointerEvents) and hand the event on as a direct one. A stroke latches
-    // the node it pressed, so leaving the mark mid-drag does not lose it.
+    // When no plane edit accepts a plane gesture, hit-test the mark under the
+    // pointer and re-route the event as a direct one. A stroke latches that node.
     /** @type {any} */
     let planeGrab = null;
     // Is the current stroke a direct grab the plane gesture was re-routed to?
@@ -279,6 +227,15 @@ export function createDispatch(chart, deps) {
         }
         return null;
     };
+    // The mark under the pointer, when one of its direct edits accepts the gesture as `type`.
+    /** @param {any} event @param {string} [type] @returns {any | null} */
+    const grabbableAt = (event, type = event.type) => {
+        const hit = hitAny(event.x, event.y);
+        const owner = hit ? featureById.get(hit.featureId) : null;
+        const accepts = owner && activeEdits(owner).some((e) => e.pick === 'direct'
+            && arbitrates(owner, e, { ...event, type, node: hit }));
+        return accepts ? hit : null;
+    };
     /** @param {any} event @returns {any | null} */
     const fallbackHit = (event) => {
         if (event.type === 'dragstart') { planeGrab = hitAny(event.x, event.y); return planeGrab; }
@@ -288,32 +245,14 @@ export function createDispatch(chart, deps) {
         return null;
     };
 
-    // 4. Event routing.
-    //    - Events carrying a `node` are mark-scoped (change existing elements) and
-    //      route to that mark's direct-pick edits.
-    //    - Events without a `node` are plane-scoped and route to every feature's
-    //      plane/nearest/sweep/draw edits.
+    // Route one renderer event.
     /**
      * @param {any} event
      */
     const handleEvent = (event) => {
         let shouldRender = false;
 
-        // Pointer-over/out on an editable mark. Pure interaction STATE — it never
-        // reaches an edit, opens no undo transaction and writes no data; it only
-        // records which row the pointer is on so the state pass can draw the
-        // `hovered` effect (see core/effects.js). Handled before everything else so
-        // it can't be mistaken for a gesture.
-        //
-        // This is the counterpart to a proximity driver's session: both answer "which
-        // mark would a gesture take?", and they feed the same effect, so a direct-pick
-        // mark now signals that before you press it instead of only changing the
-        // cursor.
-        // Hover is interaction STATE, like grab below: record it and let the one
-        // render decision at the end draw the `hovered` effect. (It used to call
-        // update() directly and return — a second render path beside shouldRender.)
-        // Pointer POSITION, for the guides that follow it (a tip, a crosshair).
-        // State only: recorded, rendered when a guide reads it, never dispatched.
+        // Pointer position, for guides that follow it. State only, never dispatched.
         if (event.type === 'pointermove' || event.type === 'pointerleave') {
             const next = event.type === 'pointermove' ? { x: event.x, y: event.y } : null;
             const same = (!next && !ui.pointer) || !!(next && ui.pointer && next.x === ui.pointer.x && next.y === ui.pointer.y);
@@ -322,11 +261,10 @@ export function createDispatch(chart, deps) {
             return;
         }
 
+        // Hover over a mark: state for the `hovered` effect, never an edit.
         if (event.type === 'pointerover' || event.type === 'pointerout') {
             const node = event.node;
-            // The NODE rides along with the row: a feature that draws several
-            // handles for one row (a port per edge, a vertex per point) must light
-            // the one under the pointer, not the first it emitted.
+            // Keep the node, so a row with several handles lights the one hovered.
             const next = event.type === 'pointerover' && node && node.index != null
                 ? { featureId: node.featureId, index: node.index, node }
                 : null;
@@ -334,10 +272,8 @@ export function createDispatch(chart, deps) {
             const same = (a, b) => (!a && !b)
                 || !!(a && b && a.featureId === b.featureId && a.index === b.index
                     && handleKey(a.node) === handleKey(b.node));
-            // A LEAVE clears the hover only if it is from the node hovered now. When
-            // a handle appears under a still pointer (a link's end, lit by hovering
-            // the link), the browser may report entering the handle before leaving
-            // the link body; clearing on that stale leave hid the handle again.
+            // Ignore a stale pointerout from a node other than the hovered one: the
+            // browser can report entering a new handle before leaving the old node.
             const stale = event.type === 'pointerout' && ui.hover && node
                 && !same(ui.hover, { featureId: node.featureId, index: node.index, node });
             if (!stale && !same(ui.hover, next)) {
@@ -351,27 +287,17 @@ export function createDispatch(chart, deps) {
             return;
         }
 
-        // A keyboard nudge is INPUT NORMALIZATION, not an interaction mode: the
-        // renderer reports "one step this way" and we resolve it into the pixel a
-        // pointer would have been at, so it arrives as an ordinary `drag`. Every
-        // direct-pick drag edit becomes keyboard-drivable with no new edit, no new
-        // driver, and nothing downstream learning that keyboards exist.
+        // A keyboard nudge becomes an ordinary `drag` to the pixel one step away.
         if (event.type === 'nudge') {
-            // Step from where the datum's CURRENT VALUE sits, which is not the same
-            // as where the node sits: a bar's centre is halfway up the bar, so
-            // nudging from it would first teleport the value to the middle of
-            // itself. encodeChannel answers "where is this datum on this axis" the
-            // same way the mark drew it — the node centre is only the fallback for
-            // a mark with nothing positional on that axis.
+            // Step from the datum's encoded value, not the node centre (a bar's
+            // centre is halfway up). The centre is the fallback.
             const node = event.node;
             const from = markCenter(node);
             if (!from) return;
-            const feature = features.find((f) => f.id === node.featureId);
+            const feature = featureById.get(node.featureId);
             const channels = (feature && feature.channels) || {};
             const datum = node.index != null ? (feature ? tableOf(feature) : [])[node.index] : node.data;
-            // Inside a composite's frame the datum's position is a LOCAL one, so read it
-            // (and step it) through the node's own frame scales — the same overlay
-            // computeEdit applies when the resulting drag arrives.
+            // Inside a composite frame, use the node's frame scales.
             const ks = frameScalesFor(feature, node, node.index) || chart.scales;
             const atX = datum ? encodeChannel(ks, channels, 'x', datum, from.cx) : from.cx;
             const atY = datum ? encodeChannel(ks, channels, 'y', datum, from.cy) : from.cy;
@@ -380,40 +306,22 @@ export function createDispatch(chart, deps) {
                 node,
                 x: nudgeTarget(ks.x, atX, event.dx, event.coarse),
                 y: nudgeTarget(ks.y, atY, event.dy, event.coarse),
-                // One press = one complete gesture (there is no dragend coming), so
-                // it closes its own undo transaction below.
+                // A nudge is a whole gesture; it closes its own undo transaction below.
                 nudge: true,
                 rawEvent: event.rawEvent,
             };
         }
 
-        // Undo transaction boundaries. A stroke is one unit of "take that back":
-        // dragstart opens it and dragend closes it, so the many commits a drag makes
-        // in between collapse into a single history entry. Any other gesture (click,
-        // dblclick, a typed commit) is a transaction of its own — begin it here and
-        // close it below, so it can't absorb the next one.
-        // dragstart always starts a fresh one, so a stroke whose dragend never
-        // arrived can't leak its stale "before" into the next gesture.
-        // A plane gesture no plane edit accepts falls back to the mark under the
-        // pointer (see fallbackHit). Resolved here, before the grab state and the
-        // transaction, so the re-routed event is indistinguishable from one the
-        // renderer reported on the node itself.
+        // Re-route plane gestures to a mark before the grab state and transaction,
+        // so the result looks like an event the renderer reported on the node.
         /** @type {Map<string, import('../../types').Edit[]> | null} */
         let planeLive = null;
-        // A press that lands ON a mark carrying a direct edit grabs that mark, as
-        // it does with the plane down: the author put a handle there to be
-        // dragged. Only a press elsewhere is the plane edits'. Without this, a
-        // sweep or brush anywhere on the chart made every direct handle beside
-        // it unreachable for the whole stage.
+        // A press on a mark whose direct edit accepts it grabs that mark first.
         if (!event.node && event.x != null && (event.type === 'dragstart' || event.type === 'click' || event.type === 'dblclick')) {
-            const hit = hitAny(event.x, event.y);
-            // ...provided one of that mark's direct edits ACCEPTS the gesture: a
-            // `move({ when: when.noShift })` under a Shift press declines, and the
-            // press stays the plane's (a Shift-gated sweep).
-            const owner = hit ? features.find((f) => f.id === hit.featureId) : null;
-            const accepts = owner && activeEdits(owner).some((e) => e.pick === 'direct'
-                && arbitrates(owner, e, { ...event, node: hit }));
-            if (hit && accepts) {
+            // A new stroke drops whatever a lost dragend left latched.
+            if (event.type === 'dragstart') { planeGrab = null; directStroke = false; }
+            const hit = grabbableAt(event);
+            if (hit) {
                 if (event.type === 'dragstart') { planeGrab = hit; directStroke = true; }
                 event = { ...event, node: hit };
             }
@@ -422,16 +330,11 @@ export function createDispatch(chart, deps) {
             if (event.type === 'dragend') { planeGrab = null; directStroke = false; }
             if (hit) event = { ...event, node: hit };
         }
-        // Hover follows the same rule: over a mark a press would grab, the mark is
-        // what the pointer is about to touch, so it lights as `hovered` and the
-        // plane edits see the pointer LEAVE (a pan drops its grab cursor, a sweep
-        // its preview). Off it, the plane edits get the hover back.
+        // Over a mark a press would grab, the mark is hovered and the plane edits
+        // get a hoverout instead.
         if (!event.node && event.type === 'hover' && event.x != null && chart.planeRaised) {
-            const hit = hitAny(event.x, event.y);
-            const owner = hit ? features.find((f) => f.id === hit.featureId) : null;
-            const accepts = owner && activeEdits(owner).some((e) => e.pick === 'direct'
-                && arbitrates(owner, e, { ...event, type: 'dragstart', node: hit }));
-            if (hit && accepts) {
+            const hit = grabbableAt(event, 'dragstart');
+            if (hit) {
                 if (!ui.hover || ui.hover.node !== hit) handleEvent({ type: 'pointerover', node: hit });
                 event = { ...event, type: 'hoverout' };
             } else if (ui.hover) {
@@ -444,9 +347,7 @@ export function createDispatch(chart, deps) {
             for (const l of planeLive.values()) if (l.length) { any = true; break; }
             if (!any) {
                 if (event.type === 'hover' || event.type === 'hoverout') {
-                    // Plane hover with nothing listening: report the mark under the
-                    // pointer as the renderer's own pointerover/out would, so the
-                    // `hovered` effect lights the direct mark the fallback would grab.
+                    // No plane edit listens: hover the mark under the pointer instead.
                     const hit = event.type === 'hover' ? hitAny(event.x, event.y) : null;
                     if (hit) { if (!ui.hover || ui.hover.node !== hit) handleEvent({ type: 'pointerover', node: hit }); }
                     else if (ui.hover) handleEvent({ type: 'pointerout', node: ui.hover.node });
@@ -457,8 +358,7 @@ export function createDispatch(chart, deps) {
             }
         }
 
-        // Which undo transaction this event belongs to (a wheel burst and a drag are
-        // each one gesture — see engine/history.js).
+        // Open or continue this gesture's undo transaction (see engine/history.js).
         history.gestureTxn(event.type);
 
         // A hierarchy's rows are pushed apart at the END of a stroke, around what it
@@ -468,12 +368,8 @@ export function createDispatch(chart, deps) {
             else if (event.type === 'drag') chart.stroking = true;
         }
 
-        // Grab state rides the SAME bracket as the transaction — one stroke, one
-        // grabbed row — so the state pass can draw `grabbed` beside the other two
-        // instead of the renderer painting it privately off d3.drag. Force a render
-        // when it changes and the state actually paints something: a press that
-        // moves no data (or none yet) still has to light the mark up, which is the
-        // whole point of pre-commit feedback.
+        // Grab state: one grabbed row per stroke, for the `grabbed` effect. Render
+        // on change even if no data moved, so a press lights the mark.
         if (event.type === 'dragstart' || event.type === 'dragend') {
             const next = event.type === 'dragstart' && event.node && event.node.index != null
                 ? { featureId: event.node.featureId, index: event.node.index }
@@ -487,19 +383,14 @@ export function createDispatch(chart, deps) {
 
         if (event.node) {
             // Dispatch to the touched mark's feature (direct pick).
-            const feature = features.find(f => f.id === event.node.featureId);
+            const feature = featureById.get(event.node.featureId);
             if (feature && dispatchDirectEdits(feature, event)) shouldRender = true;
         } else {
             // Plane gestures -> every feature's plane/nearest/sweep/draw edits.
             features.forEach(feature => {
                 const live = planeLive ? planeLive.get(feature.id) : undefined;
-                // A hover a plane edit now DECLINES is, to its driver, the pointer
-                // leaving: a `move({ when: when.shift })` lit a ring while Shift was
-                // down, and with Shift up it is never called again, so it would keep
-                // that ring forever. Retire it first, then hand the hover to the
-                // edits that accept it (they share the feature's session).
-                // Only an edit that accepted the LAST hover has anything to retire, so
-                // a pointer moving with Shift up re-renders nothing.
+                // An edit that accepted the last hover but declines this one gets a
+                // hoverout first, so it drops its hover ring.
                 if (event.type === 'hover') {
                     const accepted = live !== undefined ? live : livePlaneEdits(feature, event);
                     const declined = (hoverLive[feature.id] || []).filter(e => !accepted.includes(e));
@@ -513,9 +404,8 @@ export function createDispatch(chart, deps) {
             if (event.type === 'dragend') strokeLive = {};
         }
 
-        // A stroke that carried a node held its ancestors still (see heldStill). The
-        // release lets them go, whether or not the node changed container, and that
-        // last fit is part of the same gesture: one undo entry, one `change`.
+        // On release, settle the hierarchy held still during the stroke, inside the
+        // same undo entry.
         if (event.type === 'dragend' && hierarchyNodes && boxHosts.length) {
             chart.stroking = false;
             const settled = settledNodes(chart.tables, null, heldStill(), { since: chart.strokeNodes });
@@ -528,9 +418,7 @@ export function createDispatch(chart, deps) {
             }
         }
 
-        // Keep the transaction open only for the duration of a stroke. A nudge's
-        // synthetic drag is a complete gesture on its own, so it closes too —
-        // otherwise it would stay open and swallow whatever gesture came next.
+        // Close the transaction unless a stroke or wheel burst is still going. A nudge closes its own.
         if (event.type === 'dragend' || event.nudge
             || (event.type !== 'dragstart' && event.type !== 'drag' && event.type !== 'wheel')) endTxn();
 

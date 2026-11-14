@@ -1,54 +1,26 @@
 // @ts-check
 import { ELEMENT_OPTIONS } from '../vocabulary.js';
-// legend.js — a legend for a NON-POSITIONAL channel (fill / stroke / size /
-// symbol), built as a COMPOSABLE MARK the same way axes are (plot/axis.js). A
-// legend is "an axis for a channel that has no plot position": it reads the
-// GLOBAL scale for its channel (scales.fill, scales.size, …) and draws either a
-// column/row of discrete swatches or a continuous colour ramp.
+// legend.js — a legend for a non-positional channel (fill / stroke / size /
+// symbol / …), a chart element like the axes. It reads the global scale for one
+// encoding, (channel, field), and draws swatches, a ramp, or a size/angle/width key.
 //
-// Two things set it apart from a plain guide row:
-//   1. It reserves space on a side. `anchor` ('right'|'left'|'top'|'bottom')
-//      picks the side; the engine's reservation pass (core/legends.js) calls
-//      `measure(scales)`, shrinks the plot to make room, and stamps this mark's
-//      `_place` with where its band landed — so the legend never overlaps marks.
-//   2. It can be interactive. Pass `edit: edit.legend.category()` (a category
-//      picker: click a swatch to set the channel's field) or `edit:
-//      edit.legend.value()` (a continuous value picker: drag the ramp handle).
-//      Interactive nodes are ordinary MARK-layer nodes (not `background`), so the
-//      renderer binds click/drag directly to them — even out in the reserved margin
-//      band, where the interaction plane doesn't reach.
-//
-// A legend is a key for one ENCODING — a (channel, field) pair — not for a channel.
-// That is what `field` names, and it settles both halves of the job at once:
-//
-//   DRAWING   the scale is `scales[scaleKey(channel, field)]`, so the swatches are
-//             that encoding's own domain. There is no union to list and nothing to
-//             slice out of one.
-//   WRITING   a picker writes that same field, in `table`. There is no
-//             `scale.fields[0]` to fall back to and no ordering accident to inherit.
-//
-// The remaining coordinate is the ROW, which a swatch cannot name because it names
-// a VALUE: `row` (a number, an array, or `(data, { selection }) => index`), else the
-// chart's SELECTION, else the sole row of a one-row belief.
-//
-// Legends are normally built for you from the encodings the marks declare
-// (core/legends.js) — by `legend:` on the channel or the chart's `legends` key.
-// Composing one by hand is the third way, and then `field` is how it says which
-// encoding it is for; with one encoding on the channel it can be left out.
+// It reserves a band on its `anchor` side: core/legends.js calls `measure`, shrinks
+// the plot, and fills `_place`. With `edit.legend.category()` or
+// `edit.legend.value()` it is also a picker that writes `field` into the target
+// row: `row`, else the chart's selection, else the sole row of a one-row table.
 
 import * as d3 from 'd3';
 import { themeOf } from '../core/theme.js';
 import { tickData } from './axis.js';
 import { warnUnknownElementOptions, resolveHandles, elementEdits } from './mark.js';
 import { warn } from '../core/dev.js';
-import { scaleKey } from '../core/scales.js';
+import { scaleFor } from '../core/scales.js';
 import { measureText } from '../core/measure.js';
 import { unitShape, placeShape, DEFAULT_SHAPES } from './shapes.js';
 
 /**
- * `legend`'s own option vocabulary, on top of the universal chart-element options
- * (id / edit / edits / field). Keep in sync with the destructure in
- * `legend` below — a wrong entry is a false positive, which is worse than none.
+ * `legend`'s option list, on top of the universal chart-element options
+ * (id / edit / edits / field). Keep in sync with the destructure in `legend`.
  * @type {string[]}
  */
 export const LEGEND_OPTIONS = ELEMENT_OPTIONS.legend;
@@ -56,16 +28,12 @@ export const LEGEND_OPTIONS = ELEMENT_OPTIONS.legend;
 /** Numeric view of a domain value (a Date sorts by its timestamp). */
 const numOf = (/** @type {any} */ v) => (v instanceof Date ? v.getTime() : v);
 
-/** A colour channel encodes to a paint; size to a radius; symbol to a glyph. */
+/** Whether a channel encodes to a colour. */
 const isColorChannel = (/** @type {string} */ ch) => ch === 'fill' || ch === 'stroke';
 
 /**
- * Does this scale want a continuous RAMP (a gradient) rather than swatches? Any
- * continuous (invertible) scale, or a colour ramp — which is 'discrete' by the
- * invert test but declares `ramp: true` (core/scales.js stamps it). Capability
- * flags only: this line once read `scale.type === 'sequential'`, the one branch on a
- * scale's type outside core/scales.js, and an adopted d3.scaleSequential (no type)
- * silently drew swatches.
+ * Whether a scale is drawn as a continuous key rather than swatches: a continuous
+ * scale, or a colour ramp (`ramp: true`, stamped by core/scales.js).
  * @param {any} scale
  * @returns {boolean}
  */
@@ -74,23 +42,15 @@ function isRampScale(scale) {
 }
 
 /**
- * Which shape a legend takes. The discriminator is what the channel ENCODES TO,
- * not the scale kind alone:
+ * Which shape a legend takes, from what the channel encodes to:
  *
  *   swatches   a discrete domain, whatever the channel — one chip per category
- *   ramp       continuous COLOUR — a gradient with ticks
- *   graduated  continuous SIZE — nested circles at tick values
- *   fan        continuous ANGLE — spokes at their encoded bearings
- *   weights    continuous STROKEWIDTH — segments at their encoded thicknesses
+ *   ramp       continuous colour: a gradient with ticks
+ *   graduated  continuous size: nested circles at tick values
+ *   fan        continuous angle: spokes at their encoded bearings
+ *   weights    continuous strokeWidth: segments at their encoded thicknesses
  *
- * Reading only the scale kind sent every continuous channel to the ramp, and the
- * ramp can paint nothing but colour: `legendSize()` over a quantitative field drew
- * a flat grey bar with numbers beside it, which reports the domain and says nothing
- * about size at all. A key for a channel has to show that channel.
- *
- * Every form reads `scale.encode`, so each reflects whichever scale the channel
- * actually resolved — a linear or a sqrt size, a reversed angle — rather than
- * re-deriving one and quietly disagreeing with the marks.
+ * Every form reads `scale.encode`, so it matches the scale the marks use.
  * @param {string} channel
  * @param {any} scale
  * @returns {'swatches' | 'ramp' | 'graduated' | 'fan' | 'weights'}
@@ -104,11 +64,22 @@ function legendForm(channel, scale) {
 }
 
 /**
- * The box one discrete swatch occupies. `swatchSize` for every channel except
- * `size`, whose chip is a circle whose radius the SCALE decides — so the row has to
- * grow to fit the biggest one, or a domain encoding to radius 18 overlaps its
- * neighbours in a 14px row. (It used to be clamped to fit instead, which kept the
- * layout tidy by making the key unable to show the top of its own scale.)
+ * A value through a scale: `encode` when the scale has it, else the scale called directly.
+ * @param {any} scale @param {any} v
+ * @returns {any}
+ */
+export const encodeOn = (scale, v) => (typeof scale.encode === 'function' ? scale.encode(v) : scale(v));
+
+/**
+ * The column a legend reads and writes: its pinned `field`, else the scale's first.
+ * @param {string | undefined} field @param {any} scale
+ * @returns {string | null}
+ */
+const writtenField = (field, scale) => field ?? ((scale && scale.fields && scale.fields[0]) || null);
+
+/**
+ * The box one discrete swatch occupies: `swatchSize`, or for `size` large enough
+ * to fit the biggest encoded radius (never clamped).
  * @param {string} channel
  * @param {any} scale
  * @param {any[]} domain
@@ -119,66 +90,52 @@ function swatchBox(channel, scale, domain, swatchSize) {
     if (channel !== 'size') return swatchSize;
     let max = 0;
     for (const v of domain) {
-        const r = Number(typeof scale.encode === 'function' ? scale.encode(v) : scale(v));
+        const r = Number(encodeOn(scale, v));
         if (Number.isFinite(r)) max = Math.max(max, r);
     }
     return Math.max(swatchSize, 2 * max);
 }
 
 /**
- * The caption above a legend: the `title` option, else the ENCODED FIELD's name. A
- * legend with no title makes the reader guess what the colours are about, and the
- * field is already the answer — it is the thing this legend is a key for.
- * `scale.fields[0]` remains only as the fallback for a legend bound to no encoding
- * (a hand-composed one on a channel no mark binds). `title: false` turns it off.
+ * The caption above a legend: `title`, else the field's name (`scale.fields[0]`
+ * when no field is pinned). `title: false` turns it off.
  * @param {any} title @param {string | undefined} field @param {any} scale
  * @returns {string | null}
  */
 function legendTitle(title, field, scale) {
     if (title === false || title === null) return null;
     if (title != null) return String(title);
-    const f = field ?? ((scale && scale.fields && scale.fields[0]) || null);
+    const f = writtenField(field, scale);
     return f == null ? null : String(f);
 }
 
 /**
- * Estimate a label column's pixel width from the longest label. Exact text
- * measurement would need a canvas; a char-count estimate is enough to reserve a
- * band, and `labelWidth` overrides it when a caller wants it exact.
+ * A label column's pixel width: the longest label, measured (core/measure.js), plus
+ * a small allowance. `labelWidth` overrides it.
  * @param {any[]} values
  * @param {(v: any) => string} format
  * @param {number} fontSize
  * @returns {number}
  */
 function estimateLabelWidth(values, format, fontSize) {
-    // Measured (core/measure.js: canvas-backed, with a per-glyph estimate when
-    // there is no document). A character-count estimate clipped "AAPL" and
-    // over-reserved for "iii".
     let max = 0;
     for (const v of values) max = Math.max(max, measureText(String(format(v)), { fontSize }));
-    // A small allowance: the page's own font is often a little wider than the
-    // measuring context's fallback family.
+    // The page's font is often a little wider than the measuring fallback.
     return Math.ceil(max * 1.06 + 2);
 }
 
 /**
  * The shared legend builder. `legendColor`/`legendSize`/`legendSymbol` pin
- * `channel`. Unlike a mark it encodes no datum row — it draws a SCALE — so it has
- * no channel map; its chrome (stroke/fill/fontSize) are plain options resolved
- * against the theme's legend tokens at build time.
+ * `channel`. Its paint options default to the theme's legend tokens.
  * @param {any} [options]
  * @returns {import('../types').Mark}
  */
 export function legend(options = {}) {
-    // Validation without desugaring: a legend has no channel map to desugar INTO,
-    // but it takes a dozen options and used to check none of them (see
-    // plot/mark.js's warnUnknownElementOptions).
     warnUnknownElementOptions('legend', options, LEGEND_OPTIONS);
     const {
         channel = 'fill',
         anchor = 'right',
-        // Vertical (a stacked column) on the sides, horizontal (a row) top/bottom;
-        // overridable.
+        // Default: vertical on the sides, horizontal top/bottom.
         orient: orientOpt,
         // Swatch geometry; unset, the theme's `guide.legend` tokens (14 / 6).
         swatchSize: swatchSizeOpt,
@@ -189,28 +146,17 @@ export function legend(options = {}) {
         ticks = 4,
         tickFormat,
         title,
-        // Which dataset row the picker writes into. Left undefined, it tracks the
-        // chart's SELECTION (edit.select / el.select) — click a bar to select it,
-        // then the legend edits that row; with nothing selected it falls back to the
-        // sole row of a one-row belief, else targets nothing (inert until you pick).
-        // A number pins a fixed row; a function `(data, { selection }) => index`
-        // computes one.
+        // The row the picker writes: a number, an array, or
+        // `(data, { selection }) => index`. Unset: the selection, else a sole row.
         row,
-        // Chrome — theme legend tokens unless overridden (resolved at build time).
+        // Chrome; defaults to the theme's legend tokens.
         stroke: strokeOpt,
         fill: fillOpt,
         fontSize: fontSizeOpt,
         handleColor: handleColorOpt,
         handleSize: handleSizeOpt,
-        // Opt-in interactivity: edit.legend.category() (discrete category pick) or
-        // edit.legend.value() (continuous value pick), or a list. Both `edit` and
-        // `edits` are read (elementEdits).
-        //
-        // `field` and `table` are WHAT such an edit writes. A legend has no channel
-        // map, so with neither stated the field falls back to `scale.fields[0]` —
-        // whichever mark was declared first — and the table to the structure's
-        // primary. Pin them and the spec says which column of which table a swatch
-        // click lands in.
+        // The column and table an edit writes. Unset: `scale.fields[0]` and the
+        // primary table.
         field,
         table,
         id,
@@ -220,25 +166,16 @@ export function legend(options = {}) {
     const vertical = orient === 'vertical';
     const edits = elementEdits(options, channel);
     const editable = edits.length > 0;
-    // A DOMAIN edit (edit.scale.categories) reshapes the vocabulary the legend is
-    // drawing, so it needs affordances a picker does not: a typable swatch, a "×"
-    // per category and a "+" at the end. Read as a capability off the edits rather
-    // than as an option, the same way the axis decides — and separately from
-    // `editable`, because the two kinds of edit arm under different conditions: a
-    // picker needs a target ROW, a domain edit needs nothing but the scale.
+    // A domain edit (edit.scale.categories) adds a typable swatch, "×" and "+". Kept
+    // apart from `editable`: a picker needs a target row, a domain edit doesn't.
     const domainEditable = edits.some((e) => /** @type {any} */ (e).target === 'domain');
 
-    // THE scale this legend is a key for. A scale is one ENCODING — (channel, field)
-    // — so the field is what finds it; the bare channel name is the fallback for a
-    // positional scale and for a legend bound to no encoding at all.
+    // The scale for this (channel, field) encoding; the bare channel as fallback.
     /** @param {import('../types').ScaleMap} scales */
-    const scaleOf = (scales) => /** @type {any} */ (scales)[scaleKey(channel, field)] || scales[channel];
+    const scaleOf = (scales) => /** @type {any} */ (scaleFor(scales, channel, field));
 
-    // Filled by core/legends.js's reservation pass each render: `offset` is the
-    // gap from the plot edge to this legend's near edge (past any axis in the
-    // author margin), `size` its extent across the side. A mutable object the
-    // build closure reads, so the engine can place the legend without widening
-    // build()'s signature.
+    // Filled by core/legends.js each render: `offset` from the plot edge to the
+    // legend's near edge, `size` its extent across the side.
     const place = { offset: 0, size: 0 };
 
     /** Swatch geometry and title weight: option > theme legend token > default.
@@ -254,8 +191,8 @@ export function legend(options = {}) {
     };
 
     /**
-     * The domain values a discrete legend lists, or the [lo,hi] a ramp spans, plus
-     * a formatter — the one place the scale is read, shared by measure() and build().
+     * The values a legend lists (domain or ticks), their formatter and label width.
+     * Shared by measure() and build().
      * @param {any} scale
      * @param {any} thm
      * @returns {{ ramp: boolean, form: 'swatches'|'ramp'|'graduated'|'fan'|'weights', values: any[], format: (v: any) => string, labelW: number, fontSize: number }}
@@ -266,9 +203,7 @@ export function legend(options = {}) {
         const ramp = form !== 'swatches';
         let values, format;
         if (ramp) {
-            // A colour ramp scale sniffs as `discrete` (no invert), so tickData would
-            // return only its domain endpoints. Build nice ticks off a linear proxy
-            // over [lo, hi] instead — the ramp is a continuous axis in disguise.
+            // Ticks from a linear proxy over [lo, hi]; a colour ramp has no ticks of its own.
             const dom = scale.domain();
             const lin = d3.scaleLinear().domain([Math.min(...dom.map(numOf)), Math.max(...dom.map(numOf))]);
             values = lin.ticks(ticks);
@@ -292,17 +227,14 @@ export function legend(options = {}) {
         anchor,
         orient,
         layer: 'background',
-        // Read by resolveChannels (edit/route.js) ahead of the emergent
-        // `scale.fields[0]`, and by the engine's table-binding pass.
+        // `field` is read by resolveChannels ahead of `scale.fields[0]`.
         edits,
         field,
         table,
         _place: place,
 
         /**
-         * Bounding box of the legend content, so the reservation pass knows how much
-         * to shrink the plot. `across` (width for a vertical legend, height for a
-         * horizontal one) is what it reserves on the side.
+         * Bounding box of the legend content, for the reservation pass.
          * @param {import('../types').ScaleMap} scales
          * @param {{ width: number, height: number }} [dims] the plot's inner size, so a
          *   horizontal legend can wrap
@@ -316,15 +248,12 @@ export function legend(options = {}) {
             const { form, values, labelW, fontSize } = readScale(scale, thm);
             const titleText = legendTitle(title, field, scale);
             const titlePad = titleText ? fontSize + 4 : 0;
-            // The title is part of EVERY form's band, not just the swatches'.
             const titleW = titleText ? measureText(titleText, { fontSize: fontSize + 1, fontWeight: titleWeight ?? 600 }) + 2 : 0;
             /** @param {{ width: number, height: number }} box */
             const withTitle = (box) => ({ width: Math.max(box.width, titleW), height: box.height });
 
             if (form === 'graduated') {
-                // Nested circles: the band is as wide as the biggest one, and as tall
-                // as the stack. Radii come from the scale, so a wider size range
-                // reserves more room without a second constant to keep in step.
+                // Nested circles, sized from the scale.
                 const radii = graduatedRadii(scale, values);
                 if (!radii.length) return withTitle({ width: labelW, height: fontSize + titlePad });
                 const rMax = radii[radii.length - 1].r;
@@ -333,14 +262,12 @@ export function legend(options = {}) {
                 return withTitle({ width: radii.reduce((w, g) => w + 2 * g.r + 6 + labelW + gap, 0), height: 2 * rMax + fontSize + titlePad });
             }
             if (form === 'fan') {
-                // Measured from the actual spoke/label extents, not a square box —
-                // the sweep decides how much room a fan needs.
                 const fan = fanLayout(scale, values, labelW, fontSize);
                 return withTitle({ width: fan.width, height: fan.height + titlePad });
             }
             if (form === 'weights') {
                 const stack = values.reduce((h, v) => {
-                    const w = Number(typeof scale.encode === 'function' ? scale.encode(v) : scale(v));
+                    const w = Number(encodeOn(scale, v));
                     return h + Math.max(Number.isFinite(w) ? w : 0, fontSize) + gap;
                 }, 0);
                 return withTitle({ width: 2 * SPOKE + 6 + labelW, height: stack + titlePad });
@@ -349,9 +276,7 @@ export function legend(options = {}) {
                 if (vertical) return withTitle({ width: rampThickness + 6 + labelW, height: rampLength + titlePad });
                 return withTitle({ width: rampLength, height: rampThickness + 6 + fontSize + titlePad });
             }
-            // A domain-editable legend reserves room for the per-category "×" and
-            // the trailing "+". Measured here as well as drawn, or the affordances
-            // render outside the band the reservation pass shrank the plot by.
+            // Room for the per-category "×" and the trailing "+".
             const n = (values.length || 1) + (domainEditable ? 1 : 0);
             const removeW = domainEditable ? fontSize + 6 : 0;
             const box = swatchBox(channel, scale, values, swatchSize);
@@ -359,9 +284,7 @@ export function legend(options = {}) {
                 return { width: Math.max(box + 4 + labelW + removeW, titleW), height: n * (box + gap) + titlePad };
             }
             const itemW = box + 4 + labelW + removeW + gap;
-            // A horizontal legend WRAPS into rows when its items overrun the plot
-            // width (`dims`, from the reservation pass); build() lays them out the
-            // same way.
+            // A horizontal legend wraps at the plot width, as build() does.
             const perRow = dims && dims.width > 0 ? Math.max(1, Math.floor(dims.width / itemW)) : n;
             const rows = Math.ceil(n / perRow);
             return { width: Math.max(Math.min(n, perRow) * itemW, titleW), height: rows * (box + gap) + titlePad };
@@ -380,12 +303,7 @@ export function legend(options = {}) {
             const domain = scale.domain();
             if (!domain.length) return [];
 
-            // An armed legend that resolves NO column is a silent no-op: the swatches
-            // draw, the cursor turns into a pointer, the click dispatches, and
-            // `apply` bails because there is nothing to write to. That happens
-            // whenever the channel resolves no scale of its own (`scale: null`, a raw
-            // channel a mark reads itself) so `scale.fields` is empty and no `field`
-            // was pinned. Say so — this is the one case the author cannot see.
+            // An armed legend with no column to write would silently do nothing.
             if (editable && field == null && !((/** @type {any} */ (scale)).fields || []).length) {
                 warn(
                     `legend:field:${channel}`,
@@ -399,8 +317,6 @@ export function legend(options = {}) {
             const { swatchSize, gap, swatchRadius, titleWeight } = geometryOf(thm);
             const swatchStroke = strokeOpt ?? (thm.guide.legend.stroke || '#374151');
             const labelFill = fillOpt ?? (thm.guide.legend.labelFill || '#374151');
-            // Shared handle contract (plot/mark.js) — legend used to hard-code size
-            // and bypass resolveHandles for ramp grips.
             const handleStyle = resolveHandles(scales, {
                 handles: true,
                 handleSize: handleSizeOpt,
@@ -412,8 +328,7 @@ export function legend(options = {}) {
             const { form, values, format, labelW, fontSize } = readScale(scale, thm);
             const across = place.size || (this.measure(scales) || { width: 0, height: 0 })[vertical ? 'width' : 'height'];
 
-            // Top-left of the content box, in inner-plot g-coordinates. The legend
-            // sits in the reserved band just outside the plot on `anchor`'s side.
+            // Top-left of the content box, in the reserved band outside the plot.
             let cx0 = 0, cy0 = 0;
             if (anchor === 'right') cx0 = width + place.offset;
             else if (anchor === 'left') cx0 = -(place.offset + across);
@@ -434,16 +349,8 @@ export function legend(options = {}) {
                 contentTop = cy0 + fontSize + 4;
             }
 
-            // The row(s) the picker writes into. A swatch names a VALUE, not a row,
-            // so the row always comes from somewhere else:
-            //   row: a number / an array / (data, { selection }) => …  — pinned
-            //   row: 'selection' or unset  — the chart's SELECTION, which may hold
-            //     several rows (edit.select({ multi: true }), el.select([…]))
-            //   nothing selected, and the table has exactly ONE row  — that row. A
-            //     one-row belief is a schema fact, not a guess among many.
-            //   otherwise  — none, and the legend renders visibly disarmed below.
-            // `this.table` is the table the engine bound this element to, so a
-            // multi-table chart reads the right table's selection.
+            // The row(s) the picker writes: `row` if pinned, else the selection in
+            // this element's table, else the sole row of a one-row table, else none.
             const selected = /** @type {any} */ (scales).selection;
             const selectionAll = /** @type {any} */ (scales).selectionAll;
             const fromSelection = typeof selectionAll === 'function'
@@ -463,18 +370,8 @@ export function legend(options = {}) {
             );
             const targetRow = targetRows.length ? targetRows[0] : null;
 
-            // A legend is a KEY first and a picker second, so its unarmed state is
-            // not allowed to cost legibility. Fading the swatches was the obvious
-            // move and it is wrong twice over: a swatch's fill IS the encoding, so
-            // dimming it makes the key report a colour the marks do not have, and
-            // the whole legend then reads as absent rather than as pending — which
-            // is the same mistake as an effect painted over a mark's own paint.
-            //
-            // The state is carried by the current-value ring instead: it appears
-            // when there is a row to write and marks what a click would replace, so
-            // "no ring" is "nothing to write to" without touching the key. Whether
-            // that state is also a BUG — a picker nothing can ever arm — is a
-            // cross-feature question the engine asks (warnUnreachableLegendRow).
+            // Never dim swatches to show picker state: the fill is the encoding. The
+            // current-value ring carries it instead.
             const shared = {
                 scale, values, format, cx0, cy0: contentTop, vertical, anchor,
                 fontSize, swatchStroke, labelFill, editable, domainEditable,
@@ -502,13 +399,8 @@ export function legend(options = {}) {
 }
 
 /**
- * The circles a graduated size legend draws: one per tick value the scale maps to a
- * usable radius, ascending. Shared by measure() and build() so the reserved band and
- * the drawn content cannot disagree.
- *
- * Radii come from `scale.encode`, which is the whole point — the legend reports
- * whichever scale the size channel resolved (linear radius by default, `sqrt` for
- * linear area) rather than re-deriving one and quietly disagreeing with the marks.
+ * The circles a graduated size legend draws: one per tick value with a usable
+ * radius (from `scale.encode`), ascending. Shared by measure() and build().
  * @param {any} scale
  * @param {any[]} values tick values from readScale
  * @returns {{ v: any, r: number }[]}
@@ -516,10 +408,8 @@ export function legend(options = {}) {
 function graduatedRadii(scale, values) {
     const out = [];
     for (const v of values) {
-        const r = Number(typeof scale.encode === 'function' ? scale.encode(v) : scale(v));
-        // A tick below the domain's floor (a linear ticks() run often starts at 0)
-        // encodes to a dot too small to read; it would draw a smudge with a number
-        // beside it and say nothing.
+        const r = Number(encodeOn(scale, v));
+        // Skip radii too small to read.
         if (!Number.isFinite(r) || r < 1) continue;
         out.push({ v, r });
     }
@@ -528,9 +418,7 @@ function graduatedRadii(scale, values) {
 }
 
 /**
- * A graduated symbol legend: nested circles at tick values, biggest last, each
- * labelled. The size counterpart of the colour ramp — a continuous size scale has
- * no gradient to draw, so it shows the sizes themselves.
+ * A graduated size legend: labelled circles at tick values, biggest last.
  * @param {any[]} nodes
  * @param {any} o
  */
@@ -542,8 +430,7 @@ function buildGraduated(nodes, o) {
 
     let cursor = 0;
     for (const { v, r } of radii) {
-        // Circles share a vertical centre line (vertical) so the nesting reads as one
-        // family; horizontally they sit on a common baseline for the same reason.
+        // Vertical: a shared centre line. Horizontal: a shared baseline.
         const cx = vertical ? cx0 + rMax : cx0 + cursor + r;
         const cy = vertical ? cy0 + cursor + r : cy0 + rMax;
         nodes.push({
@@ -567,33 +454,25 @@ function buildGraduated(nodes, o) {
 const SPOKE = 22;
 
 /**
- * Where an ANGLE legend's spokes and labels sit, in a local frame whose origin is
- * the fan's hub, plus the bounding box that frame occupies.
- *
- * Laid out by MEASURING rather than by assuming a centred square, because a fan's
- * extent depends entirely on its domain: the default [180, 0] sweeps the upper half
- * only, so half a square box is empty while the topmost label runs up into the
- * title. Sharing one layout between `measure` and `build` is also what keeps the
- * reserved band and the drawn content in agreement.
+ * Where an angle legend's spokes and labels sit, relative to the hub, and the box
+ * they occupy (measured, since the extent depends on the domain). Shared by
+ * `measure` and `build`.
  * @param {any} scale @param {any[]} values @param {number} labelW @param {number} fontSize
  * @returns {{ spokes: any[], width: number, height: number, ox: number, oy: number }}
  */
 function fanLayout(scale, values, labelW, fontSize) {
     const spokes = [];
-    // The hub is the local origin; every extent below is relative to it.
     let minX = 0, maxX = 0, minY = 0, maxY = 0;
     for (const v of values) {
-        const deg = Number(typeof scale.encode === 'function' ? scale.encode(v) : scale(v));
+        const deg = Number(encodeOn(scale, v));
         if (!Number.isFinite(deg)) continue;
-        // Degrees are math convention (y-up) — `channelRange`'s [180, 0] default and
-        // what every angle-consuming mark reads — so screen y is negated.
+        // Degrees are y-up, so screen y is negated.
         const rad = (deg * Math.PI) / 180;
         const tx = Math.cos(rad) * SPOKE, ty = -Math.sin(rad) * SPOKE;
         const lx = tx + Math.cos(rad) * 6, ly = ty - Math.sin(rad) * 6;
         const anchor = Math.cos(rad) < -0.1 ? 'end' : Math.cos(rad) > 0.1 ? 'start' : 'middle';
         spokes.push({ v, tx, ty, lx, ly, anchor });
-        // The label's own box, by anchor, so a left-pointing spoke reserves room to
-        // its left rather than to its right.
+        // The label's box, by anchor.
         const l = anchor === 'end' ? lx - labelW : anchor === 'middle' ? lx - labelW / 2 : lx;
         const r = anchor === 'end' ? lx : anchor === 'middle' ? lx + labelW / 2 : lx + labelW;
         minX = Math.min(minX, tx, l); maxX = Math.max(maxX, tx, r);
@@ -603,8 +482,7 @@ function fanLayout(scale, values, labelW, fontSize) {
 }
 
 /**
- * An ANGLE legend: one spoke per tick value, drawn at the bearing that value
- * encodes to and labelled past its tip.
+ * An angle legend: one spoke per tick value at its encoded bearing, labelled past its tip.
  * @param {any[]} nodes
  * @param {any} o
  */
@@ -627,9 +505,8 @@ function buildFan(nodes, o) {
 }
 
 /**
- * A STROKEWIDTH legend: one segment per tick value, drawn at the thickness that
- * value encodes to, labelled beside it. Thickest last, so the stack reads as a
- * progression the way the graduated circles do.
+ * A strokeWidth legend: one labelled segment per tick value at its encoded
+ * thickness, thickest last.
  * @param {any[]} nodes
  * @param {any} o
  */
@@ -637,7 +514,7 @@ function buildWeights(nodes, o) {
     const { scale, values, format, cx0, cy0, gap, labelFill, fontSize, swatchStroke } = o;
     const rows = [];
     for (const v of values) {
-        const w = Number(typeof scale.encode === 'function' ? scale.encode(v) : scale(v));
+        const w = Number(encodeOn(scale, v));
         if (Number.isFinite(w) && w > 0) rows.push({ v, w });
     }
     rows.sort((a, b) => a.w - b.w);
@@ -659,13 +536,9 @@ function buildWeights(nodes, o) {
 }
 
 /**
- * A single swatch shape for a value: a colour chip, a sized dot, a glyph, or an
- * opacity chip — whichever the channel encodes to.
- * `ink` is the theme's legend ink, for the channels that encode to something other
- * than a colour and so need a colour to be shown IN (a size dot, an opacity chip).
- * Those two used to be literals — `#64748b` and `#334155` — so a themed chart got
- * two slate shapes that matched nothing else on the page.
- * `radius` rounds a colour or opacity chip (the theme's `guide.legend.swatchRadius`).
+ * A single swatch shape for a value: a colour chip, a sized dot, a glyph, an
+ * opacity chip or a dash, whichever the channel encodes to. `ink` paints the
+ * non-colour channels; `radius` rounds a colour or opacity chip.
  * @param {{ channel: string, x: number, y: number, size: number, encoded: any, stroke: string, ink: string, interactive: boolean, radius?: number }} o
  * @returns {any}
  */
@@ -673,8 +546,7 @@ function swatchNode({ channel, x, y, size, encoded, stroke, ink, interactive, ra
     const round = radius > 0 ? { rx: Math.min(radius, size / 2) } : {};
     const base = interactive ? {} : { background: true, pointerEvents: 'none' };
     if (channel === 'symbol') {
-        // A SHAPE identity (a name, or an SVG path — what plot/shape.js draws) is
-        // keyed as a small path chip; a text glyph (point's symbols) as text.
+        // A shape name or SVG path draws as a path chip; anything else as text.
         const unit = typeof encoded === 'string' && (/^\s*[Mm]/.test(encoded) || DEFAULT_SHAPES.includes(encoded.toLowerCase()))
             ? unitShape(encoded) : null;
         if (unit) {
@@ -687,10 +559,7 @@ function swatchNode({ channel, x, y, size, encoded, stroke, ink, interactive, ra
         };
     }
     if (channel === 'size') {
-        // `size` on a DISCRETE domain encodes to a radius per category. The chip used
-        // to clamp that to swatchSize/2 = 7px while the size range runs to 18, so
-        // every category above 7 collapsed to one dot and the key could not show the
-        // top of its own scale. The caller sizes the row from the radii instead.
+        // The encoded radius, unclamped; the caller sizes the row to fit.
         const r = Math.max(1, Number(encoded) || size / 2);
         return { type: 'circle', cx: x + size / 2, cy: y + size / 2, r, fill: ink, stroke, strokeWidth: 1, ...base };
     }
@@ -698,25 +567,16 @@ function swatchNode({ channel, x, y, size, encoded, stroke, ink, interactive, ra
         return { type: 'rect', x, y, width: size, height: size, fill: ink, fillOpacity: Number(encoded), stroke, strokeWidth: 1, ...round, ...base };
     }
     if (channel === 'strokeDash') {
-        // A dash pattern is shown as a short stroked segment in the legend ink.
         return { type: 'line', x1: x, x2: x + size, y1: y + size / 2, y2: y + size / 2, stroke: ink, strokeWidth: 2, strokeDasharray: String(encoded), ...base };
     }
     return { type: 'rect', x, y, width: size, height: size, fill: encoded, stroke, strokeWidth: 1, ...round, ...base };
 }
 
 /**
- * Discrete swatches: one chip + label per domain value.
- *
- * A chip can carry two unrelated interactions, and they coexist without
- * arbitration because they read different GESTURES:
- *   picker (edit.legend.category)     click  -> writes `category` into the target row
- *   rename (edit.scale.categories)    commit -> renames the domain entry
- * plus a "×" per category and a trailing "+" for the other two domain edits.
- *
- * `editText` goes on the CHIP, never on the label beside it: an edit makes its
- * node pointer-active, and a text node gets a hit area of `fontSize + 4` about its
- * ANCHOR — a disc sitting dead centre of the swatch row that would swallow the
- * click meant for the chip. Put the edit on the shape you mean to grab.
+ * Discrete swatches: one chip + label per domain value. A chip's click is the
+ * picker (edit.legend.category) and its text commit is a rename
+ * (edit.scale.categories); "×" and "+" remove and add categories.
+ * `editText` goes on the chip, not the label, whose hit disc would eat the click.
  * @param {any[]} nodes
  * @param {any} o
  */
@@ -724,20 +584,14 @@ function buildSwatches(nodes, o) {
     const { domain, cx0, cy0, vertical, swatchSize, gap, fontSize, swatchStroke, labelFill,
         editable, domainEditable, handleColor, targetRow, targetRows, scale, channel, data, field,
         currentStroke, currentWidth, swatchRadius } = o;
-    // A picker needs a target ROW; a domain edit needs only the scale. So the chip
-    // is a live mark-layer node if EITHER is armed — reading one flag for both is
-    // what would leave a rename-only legend inert on a chart with no selection.
+    // Interactive if either is armed: a picker needs a target row, a domain edit doesn't.
     const pickable = editable && targetRow != null;
     const interactive = pickable || domainEditable;
-    // Direct-pick dispatch keys on node.index, so a domain-only legend still needs
-    // one; 0 is the sentinel the axis uses, and a domain edit ignores it.
+    // Dispatch keys on node.index; 0 is a sentinel for a domain-only legend.
     const nodeIndex = targetRow != null ? targetRow : 0;
 
-    // Which domain values the target row(s) currently hold — what a click would
-    // REPLACE. With several rows selected they may hold different values, so this is
-    // a set and more than one swatch can be ringed. Read through the same column the
-    // edit writes (the pinned `field`, else the scale's own).
-    const heldField = field ?? ((scale.fields && scale.fields[0]) || null);
+    // The values the target rows hold now (ringed), read from the column the edit writes.
+    const heldField = writtenField(field, scale);
     const held = new Set();
     if (pickable && heldField != null) {
         for (const i of targetRows) {
@@ -750,8 +604,7 @@ function buildSwatches(nodes, o) {
     // Vertical: stack down. Horizontal: flow right, one item = chip + label (+ ×).
     const itemPitch = swatchSize + 4 + o.labelW + removeW + gap;
     const stepY = swatchSize + gap;
-    // A horizontal row WRAPS when its items overrun the plot width — the same
-    // rule measure() reserved rows by.
+    // A horizontal row wraps at the plot width, as in measure().
     const perRow = !vertical && o.plotWidth > 0 ? Math.max(1, Math.floor(o.plotWidth / itemPitch)) : Infinity;
     const posOf = (/** @type {number} */ i) => ({
         sx: vertical ? cx0 : cx0 + (i % perRow) * itemPitch,
@@ -764,32 +617,21 @@ function buildSwatches(nodes, o) {
 
         const chip = swatchNode({ channel, x: sx, y: sy, size: swatchSize, encoded, stroke: swatchStroke, ink: labelFill, interactive, radius: swatchRadius });
         if (interactive) {
-            // `category` is read by BOTH interactions — as the value a picker click
-            // writes, and as the name a rename commit renames FROM. One key, because
-            // it is one fact about the swatch; they never collide because a click and
-            // a commit are different gestures.
+            // The value a picker writes and the name a rename renames from.
             chip.category = value;
-            // `index` is what direct-pick dispatch keys on (one row); `indices` is
-            // every row the click should write, so a multi-row selection moves
-            // together instead of only its first member.
+            // `index` for dispatch, `indices` for every row the click writes.
             chip.index = nodeIndex;
             chip.indices = targetRows;
             chip.cursor = domainEditable && !pickable ? 'text' : 'pointer';
             if (domainEditable) {
                 chip.editText = true;
-                // The chip PAINTS no text — it is a colour box, and its name is the
-                // sibling label — so the editor has nothing to seed from and would
-                // open empty, turning every rename into "retype it from scratch".
-                // `editValue` is the string the edit is actually about.
+                // Seeds the editor, since the chip paints no text of its own.
                 chip.editValue = String(value);
             }
         }
         nodes.push(chip);
 
-        // The current-value ring. An OVERLAY (its own node, tagged `effect`) rather
-        // than paint on the chip, for the reason every effect is: the chip's fill IS
-        // the datum's encoding, and restyling it would overwrite what the legend is
-        // there to show. Drawn around the chip, so it reads on a swatch of any colour.
+        // The current-value ring: its own overlay node, so the chip's fill stays the encoding.
         if (held.has(value)) {
             nodes.push({
                 type: 'rect',
@@ -805,8 +647,7 @@ function buildSwatches(nodes, o) {
             textAnchor: 'start', background: true, pointerEvents: 'none',
         });
 
-        // The "×" remove affordance, mirroring the axis's. Its own node so the click
-        // is unambiguous — the chip means "this category", the × means "drop it".
+        // The "×" remove affordance.
         if (domainEditable) {
             nodes.push({
                 type: 'text',
@@ -819,7 +660,7 @@ function buildSwatches(nodes, o) {
         }
     });
 
-    // The trailing "+": double-click it, type a name, and the category is appended.
+    // The trailing "+": type a name to append a category.
     if (domainEditable) {
         const { sx, sy } = posOf(domain.length);
         nodes.push({
@@ -833,11 +674,9 @@ function buildSwatches(nodes, o) {
 }
 
 /**
- * A continuous colour ramp: a stack of thin slices sampling the scale, tick
- * labels, and (when interactive) a draggable handle at the target row's current
- * value. The handle carries the ramp band geometry so edit.legendValue can map a
- * drag position back to a value — the by-hand inversion a non-invertible colour
- * scale forces.
+ * A continuous ramp: thin slices sampling the scale, tick labels, and (when
+ * interactive) a handle at the target row's value. The handle carries the ramp
+ * geometry so edit.legend.value() can invert a drag on a non-invertible colour scale.
  * @param {any[]} nodes
  * @param {any} o
  */
@@ -855,10 +694,8 @@ function buildRamp(nodes, o) {
     const rampStart = vertical ? cy0 + rampLength : cx0; // pixel of `lo`
     const rampEnd = vertical ? cy0 : cx0 + rampLength;   // pixel of `hi`
 
-    // A colour ramp paints the encoded colour. An OPACITY ramp paints the legend's
-    // own ink and varies its alpha, so the gradient shows the thing being encoded.
-    // Anything else continuous and non-colour has no visual to fade, so it keeps the
-    // neutral bar and lets the tick labels carry the domain.
+    // Colour: the encoded colour. Opacity: the legend ink at that alpha. Anything
+    // else: a neutral bar.
     const isColor = isColorChannel(channel);
     const isOpacity = channel === 'opacity' || channel === 'fillOpacity' || channel === 'strokeOpacity';
     const sliceOf = (/** @type {any} */ paint) => (isColor
@@ -869,7 +706,7 @@ function buildRamp(nodes, o) {
     for (let j = 0; j < SLICES; j++) {
         const t0 = j / SLICES, t1 = (j + 1) / SLICES;
         const vMid = lo + ((t0 + t1) / 2) * span;
-        const paint = typeof scale.encode === 'function' ? scale.encode(vMid) : scale(vMid);
+        const paint = encodeOn(scale, vMid);
         if (vertical) {
             const yTop = cy0 + (1 - t1) * rampLength;
             nodes.push({
@@ -912,22 +749,17 @@ function buildRamp(nodes, o) {
         }
     }
 
-    // Draggable handle at the target row's current value (edit.legend.value). Read
-    // through the SAME column the edit writes — the legend's pinned `field` ahead of
-    // the emergent `scale.fields[0]` — or the grip sits at one mark's value while the
-    // drag writes another's.
+    // Handle at the target row's value, read from the same column the edit writes.
     if (editable && targetRow != null) {
-        const scaleField = field ?? ((scale.fields && scale.fields[0]) || null);
+        const scaleField = writtenField(field, scale);
         const current = scaleField != null ? data[targetRow] && data[targetRow][scaleField] : null;
         const t = current == null ? 0.5 : Math.max(0, Math.min(1, (numOf(current) - lo) / span));
         const hx = vertical ? cx0 + rampThickness / 2 : cx0 + t * rampLength;
         const hy = vertical ? cy0 + (1 - t) * rampLength : cy0 + rampThickness / 2;
         nodes.push({
-            // Placement: along the ramp at the target row's current value.
             type: 'circle', cx: hx, cy: hy, r: handleSize, fill: handleColor,
             stroke: handleStroke, strokeWidth: 1.5,
-            // `index` for dispatch (one row), `indices` for the write — a drag with
-            // several rows selected moves them all to the value under the grip.
+            // `index` for dispatch, `indices` for every row the drag writes.
             index: targetRow, indices: targetRows,
             along, rampStart, rampEnd, loValue: lo, hiValue: hi,
             cursor: vertical ? 'ns-resize' : 'ew-resize',

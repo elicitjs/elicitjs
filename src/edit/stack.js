@@ -1,34 +1,12 @@
 // @ts-check
-// stack.js — the STACK-scoped edits (scope 'stack'): the three things you can do to
-// a whole that is divided among rows.
-//
+// stack.js — edits on a stacked bar or arc/pie/donut (scope 'stack'):
 //   edit.stack.cut()    click a segment  → divide it in two at the pointer
 //   edit.stack.edge()   drag a boundary  → move value across it
 //   edit.stack.merge()  dblclick one     → fuse the two segments back into one
 //
-// All three work on a stacked `bar` AND on `arc`/`pie`/`donut`, because those two
-// marks are the same structure: a group of rows partitioning one total along a 1-D
-// parameter — data units up the value axis, degrees around a ring. Neither edit
-// knows which mark it is on. The mark stamps `node.stack` (plot/stack.js) with the
-// group's members and a GEOMETRY descriptor, and these invert through it — the same
-// arrangement as a composite's `node.frame`, where the thing that encoded a layout
-// carries the means to reverse it.
-//
-// ── The total is preserved by CONSTRUCTION ───────────────────────────────────
-// Every apply here is a redistribution: a cut divides one segment's magnitude into
-// two that sum to it, an edge drag moves value from one row to its neighbour, a
-// merge adds two into one. No `maintainSum` constraint is involved, and none would
-// help — its modes all sum over the WHOLE dataset, with no notion of the group a
-// gesture landed in, so on a grid of donuts or a chart of several bands it would
-// enforce the wrong invariant. Arithmetic that cannot break beats a rule that has
-// to be checked.
-//
-// ── Staleness ────────────────────────────────────────────────────────────────
-// A commit re-renders, so the node an in-flight gesture is holding describes the
-// PREVIOUS frame. Everything here therefore re-derives magnitudes from the live
-// `ctx.data` each tick and reads only the durable parts of the stamp (`members`,
-// `local`, `geometry`), never a cached share. That is also why `geometry` is plain
-// data rather than a closure over the layout.
+// They invert through the mark's `node.stack` stamp (plot/stack.js). Totals are
+// preserved by arithmetic, not `maintainSum`. Magnitudes are re-derived from the
+// live `ctx.data` each tick, since the node is a frame behind.
 
 import { makeEdit, andWhen, schemaDefaults, nextCategory } from './shared.js';
 import { stackLayout } from '../plot/stack.js';
@@ -39,27 +17,18 @@ import { warn } from '../core/dev.js';
  * @typedef {Object} StackWindow the span of the stack a gesture may land in
  * @property {number} lo cumulative magnitude at the window's start
  * @property {number} hi cumulative magnitude at its end
- * @property {number} local local index of the slice the window STARTS on
+ * @property {number} local local index of the slice the window starts on
  * @property {number} n how many slices the group has
  * @property {number} total the group's total magnitude
  */
 
 /**
- * Pointer → cumulative magnitude, one entry per stack GEOMETRY.
- *
- * A table rather than a switch inside each edit, and keyed by a capability the mark
- * declares rather than by a mark name — the same shape as the engine's
- * KIND_SATISFIES. A third kind of stack (a treemap row, a linear gauge) is a row
- * here and no change anywhere else.
- *
- * Each returns a value CLAMPED into the window, so "the pointer left the segment"
- * resolves to whichever end it is nearer instead of to a wild number.
+ * Pointer → cumulative magnitude, keyed by `geometry.kind`. Each result is
+ * clamped into the window.
  * @type {Record<string, (geometry: any, ctx: import('../types').EditContext, win: StackWindow) => number | undefined>}
  */
 const INVERTERS = {
-    // A stack's baseline is 0, so its cumulative total IS the value-axis value —
-    // the inversion is just the axis scale run backwards, with no bespoke pixel
-    // track to keep in step with the encoding.
+    // Baseline 0, so the cumulative total is the value-axis value.
     linear: (geometry, ctx, win) => {
         const scale = ctx.scales && /** @type {any} */ (ctx.scales)[geometry.axis];
         if (!scale || !scale.invertible) return undefined;
@@ -69,22 +38,16 @@ const INVERTERS = {
         return Math.max(win.lo, Math.min(win.hi, v));
     },
 
-    // Around a ring: measure the angle from the window's leading edge, in the
-    // layout's own sweep direction, modulo a turn. The modulo is what keeps a drag
-    // from tearing at the ±180° branch cut; the "outside the window" branch then
-    // resolves to the nearer end, because a pointer 350° round is just behind the
-    // start, not far past the end.
+    // Angle from the window's leading edge in the sweep direction, mod 360.
+    // Outside the window resolves to the nearer end.
     angular: (geometry, ctx, win) => {
         const { cx, cy, spanStart, spanEnd, pad } = geometry;
-        // Signed, exactly as plot/arc.js lays it out: padding comes out of the span
-        // in the span's own direction.
+        // Signed, as plot/arc.js lays it out.
         const span = spanEnd - spanStart;
         const dir = Math.sign(span) || 1;
         const usable = span - dir * pad * win.n;
         if (!Number.isFinite(usable) || dir * usable <= 0 || !(win.total > 0)) return undefined;
-        // Leading edge of the window: the start angle of slice `local`. Stable
-        // through a drag, because every edit here holds the cumulative total BEFORE
-        // the window fixed, so it re-derives identically each tick.
+        // Leading edge of the window: the start angle of slice `local`.
         const base = spanStart + dir * pad / 2 + dir * win.local * pad + usable * (win.lo / win.total);
         const theta = pointerDegrees(ctx.pointer, { cx, cy });
         const raw = (((theta - base) * dir % 360) + 360) % 360;   // [0, 360)
@@ -106,8 +69,7 @@ function cumulativeAt(geometry, ctx, win) {
 }
 
 /**
- * The live layout of the group a node belongs to. Recomputed per tick from ctx.data
- * — never read off the node, which is a frame behind.
+ * The live layout of the node's group, recomputed from ctx.data.
  * @param {any} node @param {import('../types').EditContext} ctx
  * @returns {{ st: any, members: number[], local: number, field: string, mags: number[], total: number, bounds: [number, number][] } | null}
  */
@@ -120,13 +82,8 @@ function groupOf(node, ctx) {
 }
 
 /**
- * Which column carries the segment's identity, and what its domain permits.
- *
- * The identity is the mark's colour field — a stack is read by colour, so the thing
- * that tells two segments apart IS `fill` (or `stroke`). The domain and its
- * openness come from the SCHEMA, which owns both; the resolved scale is only a
- * fallback for a field the author left undeclared, and such a field is open by
- * nature because there is no declared vocabulary to exceed.
+ * The segment's category field (`fill`, else `stroke`) with its domain and
+ * openness from the schema. An undeclared field uses the scale's domain and is open.
  * @param {import('../types').EditContext} ctx @param {string | undefined} override
  * @returns {{ field: string | null, domain: any[], open: boolean }}
  */
@@ -142,8 +99,7 @@ function categoryOfStack(ctx, override) {
     const declared = spec && Array.isArray(spec.domain) ? spec.domain : null;
     if (declared) return { field, domain: declared, open: !!spec.open };
 
-    // Undeclared: fall back to whatever scale the field ended up on, so a cut still
-    // avoids colliding with a category already in play.
+    // Undeclared: use the scale's domain, so a cut avoids categories in play.
     for (const name of ['fill', 'stroke']) {
         const ch = mc[name];
         if (!ch || ch.field !== field) continue;
@@ -157,18 +113,10 @@ function categoryOfStack(ctx, override) {
 /**
  * edit.stack.cut — click inside a segment to divide it there.
  *
- * The segment's magnitude splits into the part below the pointer and the part
- * above, so the group's total is untouched: cutting adds a category without
- * changing what is being divided. The new row is SPLICED in beside the one it came
- * from rather than appended, because a stack's order is its data order — appending
- * would send the new segment to the top of the stack (or the end of the pie),
- * nowhere near the cut.
- *
- * Its category comes from the schema's domain (see nextCategory), so building a
- * chart needs no keyboard: a closed domain hands out its next unused value and
- * refuses when they run out; an open one mints a placeholder to be renamed later.
- * This is a `target: 'domain'` edit for that reason — an open cut writes the schema
- * and the dataset together, and the engine commits both or neither.
+ * The magnitude splits at the pointer, keeping the total. The new row is spliced in
+ * after the original, since stack order is data order. Its category is the group's
+ * next unused one (`nextCategory`); an open domain grows, so this is a
+ * `target: 'domain'` edit that commits schema and rows together.
  *
  * @param {any} [options] `defaults` seeds the new row, `label` names an open-domain
  *   placeholder, `categoryField` overrides which column carries the identity
@@ -181,20 +129,17 @@ export function cut(options = {}) {
         gesture: 'click',
         pick: 'direct',
         scope: 'stack',
-        // Writes the schema's domain as well as the rows. The engine runs the
-        // dataset's constraints over the coupled `data` before committing either, so
-        // a `count({ max })` still caps how many segments a cut may create.
+        // Writes domain and rows; constraints still run over the rows.
         target: 'domain',
         ...rest,
-        // A segment BODY triggers a cut; a boundary handle does not (that is edge /
-        // merge). An author `when` narrows this, it can't replace it.
+        // A segment body, not a boundary handle.
         when: andWhen((/** @type {import('../types').EditContext} */ ctx) =>
             !!(ctx.node && ctx.node.stack && !ctx.node.edge), userWhen),
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
             const node = /** @type {any} */ (ctx.node);
             const g = groupOf(node, ctx);
             if (!g) return undefined;
-            const { members, local, field, mags, total, bounds } = g;
+            const { members, local, field, total, bounds } = g;
 
             const [lo, hi] = bounds[local];
             if (!(hi > lo)) return undefined;   // nothing to divide
@@ -205,12 +150,7 @@ export function cut(options = {}) {
             const gi = members[local];
             const sibling = ctx.data[gi];
 
-            // "Which category is free" is a question about THIS GROUP, not the whole
-            // dataset: every band of a stacked bar holds its own copy of the same
-            // vocabulary, so cutting in 2024 should offer the categories 2024 lacks —
-            // never skip one because a different year already uses it. (An open
-            // domain's placeholder is still globally unique: it is numbered off the
-            // domain, which is shared.)
+            // The free category is per group, not per dataset.
             const cat = categoryOfStack(ctx, categoryField);
             const groupRows = members.map((mi) => ctx.data[mi]);
             const minted = nextCategory(groupRows, cat.field, cat.domain, { open: cat.open, label });
@@ -225,8 +165,7 @@ export function cut(options = {}) {
                 return undefined;
             }
 
-            // The grouping keys must carry over or the new row leaves the stack it was
-            // cut from — it is the POSITION that says which group a row belongs to.
+            // Copy the positional keys so the new row stays in this group.
             /** @type {Record<string, any>} */
             const groupKeys = {};
             for (const c of ['x', 'y']) {
@@ -234,10 +173,7 @@ export function cut(options = {}) {
                 if (f) groupKeys[f] = sibling[f];
             }
 
-            // Everything else starts at the schema's default (else null) rather than
-            // being copied: the new segment is a NEW category, not a duplicate of its
-            // sibling. Deliberately not mintDatum — the magnitude comes from the cut
-            // and the category from the domain, so there is no pointer to invert.
+            // Other fields start at schema defaults. Not mintDatum: no pointer to invert.
             const newRow = {
                 ...schemaDefaults(ctx.schema),
                 ...groupKeys,
@@ -250,9 +186,7 @@ export function cut(options = {}) {
             rows[gi] = { ...sibling, [field]: at - lo };
             rows.splice(gi + 1, 0, newRow);
 
-            // An OPEN domain grows to hold the new category; a closed one is written
-            // back unchanged, so both regimes take one code path and the commit is
-            // atomic either way. No category field → nothing to widen.
+            // An open domain grows to hold the new category.
             /** @type {Record<string, any[]>} */
             const domains = {};
             if (cat.field && cat.open && !cat.domain.includes(minted)) {
@@ -267,10 +201,8 @@ export function cut(options = {}) {
  * edit.stack.edge — drag a boundary to move value between the two segments it
  * separates.
  *
- * Only those two change: one grows by exactly what the other loses, so the pair sum
- * — and therefore the group's total — is preserved. The pair's OUTER edges stay put
- * for the whole drag, which is what makes the boundary track the pointer instead of
- * sliding out from under it.
+ * One grows by what the other loses, so the total is kept. The pair's outer
+ * edges stay fixed during the drag.
  * @param {any} [options]
  * @returns {import('../types').Edit}
  */
@@ -278,9 +210,7 @@ export function edge(options = {}) {
     const { when: userWhen, ...rest } = options;
     return makeEdit({
         type: 'stack.edge',
-        // Not `inverts`: this edit runs the pointer back through the STACK its
-        // mark stamped (`node.stack`), not through a channel's scale, so it names
-        // no channel and the channel guards have nothing to check.
+        // Not `inverts`: it inverts through `node.stack`, not a channel's scale.
         gesture: 'drag',
         pick: 'direct',
         scope: 'stack',
@@ -316,15 +246,8 @@ export function edge(options = {}) {
 }
 
 /**
- * edit.stack.merge — dblclick a boundary to fuse the two segments it separates back
- * into one. The inverse of `cut`, and preserving the same total: the surviving row
- * takes the pair's whole magnitude, and the other is dropped.
- *
- * The LOWER segment survives, so the merged block keeps the identity that was
- * already beneath it and the stack's order is unchanged.
- *
- * Note it removes a row, not a category: the domain is left alone, so merging away
- * the last segment of a category and cutting a new one gets that category back.
+ * edit.stack.merge — dblclick a boundary to fuse its two segments. The lower row
+ * keeps the pair's total and the upper row is dropped. The domain is unchanged.
  * @param {any} [options]
  * @returns {import('../types').Edit}
  */

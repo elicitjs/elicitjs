@@ -1,12 +1,5 @@
 // @ts-check
-// The extension point: a constraint is a pure data invariant. ONE name for it —
-// this had three spellings once (`defineConstraint`, `define`, `custom`), which in
-// a JSON grammar would be three keywords for one thing.
-//
-// The surviving keyword is `custom`, matching `edit.custom` and `guides.custom`:
-// "author your own X inline" is one act, so it is one word in every grammar
-// namespace. (`authoring.defineConstraint` is the same function under the name a
-// mark or widget author reaches for while building vocabulary.)
+// `custom` authors a constraint inline (`authoring.defineConstraint` is the same function).
 export { defineConstraint as custom } from './define.js';
 export { clamp } from './clamp.js';
 export { maintainSum } from './maintainSum.js';
@@ -17,9 +10,7 @@ export { snap } from './snap.js';
 export { ordering } from './ordering.js';
 export { monotonic } from './monotonic.js';
 export { spacing } from './spacing.js';
-// Coupling rules: columns of one row that move together. `follow` carries a
-// range with its centre; `symmetric` mirrors a pair about it. Compose them with
-// `ordering` for a mean-with-interval glyph.
+// Coupling rules: columns of one row that move together.
 export { follow } from './follow.js';
 export { symmetric } from './symmetric.js';
 

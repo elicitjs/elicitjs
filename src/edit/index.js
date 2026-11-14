@@ -1,52 +1,29 @@
 // @ts-check
-// edit/ — the EDIT vocabulary: how a gesture changes a channel's data. An edit is
-// the inverse of encoding. Where `encode` maps data -> visual, an `edit` maps a
-// gesture -> that channel's data, through the SAME scale.
+// edit/ — the edit namespace: how a gesture changes a channel's data, through the
+// same scale that encodes it. Spec keywords only; building blocks are `authoring.*`.
 //
-// This namespace contains edits and nothing else. The primitives an edit is BUILT
-// from — `makeEdit`, `mintDatum`, `invertChannel`, `nearestMark`, `registerDriver`
-// — are `authoring.*`, so this list stays identical to the grammar's edit keywords.
-//
-// ── The descriptor ──────────────────────────────────────────────────────────
-// An edit is a plain descriptor the engine routes to, never a closure with hidden
-// state, built via `makeEdit`:
+// An edit is a plain descriptor built by `makeEdit` (shared.js):
 //   { type, gesture, channels, when, pick, scope, threshold, into, constrain,
 //     guide, stage, advance, apply }
-//     gesture   'drag' | 'click' | 'dblclick' | 'commit' — the raw gesture the
-//               hand makes (distinct from the transform NAME: a `move` is a 'drag')
-//     channels  channel names it governs; null = inject the channel it's placed on
-//     when      (ctx) => boolean — arbitration (e.g. only on Shift-drag). See `when`.
-//     pick      'direct' | 'nearest' | 'plane' | 'sweep' | 'draw' | 'brush' |
-//               'brushRect' | 'probe' | string — how the gesture selects its target
-//               (see edit/drivers). Custom picks register via registerDriver.
-//     scope     null (universal) | the mark CAPABILITY it needs. The engine
-//               dev-warns on a mismatch instead of letting it silently no-op.
-//     constrain constraint(s) applied on this edit's commit (sugar)
-//     guide     true to self-draw this edit's guide (constraint bounds / snap ring)
-//     stage     active only in this stage of a multi-step elicitation; null = always
-//     advance   probe only: a click settling a staged edit advances the stage
-//     apply     (ctx) => datum | dataset | undefined — performs the edit
-// Keys the descriptor doesn't know (edgeInset, resize, move, …) pass through
-// makeEdit onto the edit, where its driver reads them — the one sanctioned way a
-// driver (built-in or registerDriver'd) carries per-edit options.
+//     gesture   'drag' | 'click' | 'dblclick' | 'commit' | 'wheel'
+//     channels  channel names it governs; null = the channel it's placed on
+//     when      (ctx) => boolean — arbitration (e.g. only on Shift-drag)
+//     pick      'direct' | 'plane' | a driver name — how the target is chosen
+//     scope     null (universal) | the mark capability it needs
+//     constrain constraint(s) applied on this edit's commit
+//     guide     true to draw this edit's guide
+//     stage     active only in this stage; null = always
+//     advance   probe only: a settling click advances the stage
+//     apply     (ctx) => datum | dataset | undefined
+// Unknown keys pass through for the edit's driver.
 //
-// ── Where an edit goes ──────────────────────────────────────────────────────
-// On a channel (co-located), for the simple case:
-//   size: { field: "mag", edit: edit.slide() }   // linear magnitude (preferred)
-//   size: { field: "mag", edit: edit.resize() }  // radial magnitude
-// Or at mark level, for joint / arbitrary edits:
-//   edits: [ edit.move({ channels: ["x", "y"] }), edit.line.anchor() ]
+// Placement: on a channel (`size: { field: "mag", edit: edit.slide() }`) or at
+// mark level (`edits: [edit.move({ channels: ["x", "y"] })]`).
 //
-// ── Namespace vs scope ──────────────────────────────────────────────────────
-// These are SEPARATE decisions and must stay so. The NAMESPACE says what an edit
-// is ABOUT; `scope` names a mark capability the engine can check. `edit.network.*`
-// is a namespace of three, and only `rewire`/`reverse` set `scope: 'network'` —
-// `connect` goes on the NODE mark, which is an ordinary point/rect/composite with
-// no network capability to declare, so scoping it would only produce a false
-// warning. Namespace by subject; scope only when a real capability is required.
+// Namespace (what the edit is about) and `scope` (a mark capability to check) are
+// separate: `edit.network.connect` sets no scope because it goes on a node mark.
 
 // ── Universal — work on any mark with the channels they govern ──────────────
-// The transform NAME is the object outcome; the gesture is the physical action.
 export {
     // position
     move, moveSpan, brushSpan, brushRect,
@@ -62,55 +39,36 @@ export {
     custom,
 } from './basic.js';
 
-// Arbitration predicates for an edit's `when`. Part of the EDIT vocabulary — a
-// `when` only ever appears inside an edit's options, and in a JSON spec it is an
-// edit field (`"when": "shift"`).
+// Arbitration predicates for an edit's `when`.
 export { when } from './when.js';
 
 // ── Scoped families ─────────────────────────────────────────────────────────
-// Each namespace names what its edits are ABOUT. The JS path IS the JSON keyword,
-// and it is also the descriptor's `type`: `edit.line.draw()` <-> { "type":
-// "line.draw" }. That was documented long before it was true — only `edit.legend.*`
-// actually spelled its type that way, and everything else used a bare word
-// ('draw', 'cut') or a camelCase prefix ('axisScale', 'trendIntercept'). The bare
-// ones COLLIDED: `edit.move`/`edit.geo.move` and `edit.create`/`edit.geo.create`
-// were indistinguishable by type, and a driver that claims edits by type alone
-// (drivers/move.js) took the wrong one. Keep every new scoped edit's type equal to
-// its dotted path.
+// A scoped edit's `type` is its dotted path (`edit.line.draw()` -> 'line.draw'),
+// since drivers claim by type.
 
 import { anchor, newSeries, draw, sweep, removeSeries } from './line.js';
 
-// Line-scoped: authoring edits that need SERIES grouping (a line-family
-// capability), so they carry `scope: 'line'`.
+// Line-scoped: need series grouping (`scope: 'line'`).
 export const line = { anchor, newSeries, draw, sweep, removeSeries };
 
 import { scale as axisScale, zoom as axisZoom, pan as axisPan } from './axis.js';
 import { categories as scaleCategories } from './scale.js';
 
-// Scale-scoped: reshape the DOMAIN of the scale a chart element draws (the schema),
-// not the dataset. Works on any element that draws one — an axis or a legend — so
-// `scope: 'scale'`, the capability both share (`views: 'scale'`).
-// NOTE `categories()` returns an ARRAY of three edits — one authoring act that
-// needs three descriptors. It is the one factory that does; spread it.
+// Scale-scoped: edit the domain of the scale an axis or legend draws.
+// `categories()` returns an array of three edits; spread it.
 export const scale = { categories: scaleCategories };
 
-// Axis-scoped: `scale` drags a positional RANGE, which only an axis has. Reshaping
-// a category LIST is a property of the scale, not of the chrome that draws it, so
-// that edit is `edit.scale.categories` and works on a legend too.
+// Axis-scoped: edit a positional axis's range.
 export const axis = { scale: axisScale, zoom: axisZoom, pan: axisPan };
 
 import { category as legendCategory, value as legendValue } from './legend.js';
 
-// Legend-scoped: turn a legend into an input. Both read geometry only a legend
-// stamps (a swatch's `category`, a ramp handle's band), so `scope: 'legend'`.
+// Legend-scoped: use a legend as an input.
 export const legend = { category: legendCategory, value: legendValue };
 
 import { cut as stackCut, edge as stackEdge, merge as stackMerge } from './stack.js';
 
-// Stack-scoped: the three things you can do to a whole that is divided among rows.
-// `cut` divides a segment in two, `edge` moves value across a boundary, `merge`
-// fuses two back into one — each preserving the group's total by construction.
-// They need a mark that partitions a total (a `bar` with `stack`, or arc/pie/donut).
+// Stack-scoped: cut, resize and merge segments of a stacked bar or arc/pie/donut.
 export const stack = { cut: stackCut, edge: stackEdge, merge: stackMerge };
 
 import {
@@ -120,8 +78,7 @@ import {
     slopeSpread as trendSlopeSpread,
 } from './trend.js';
 
-// Trend-scoped: a parametric line is edited by its PARAMETERS, so each of these
-// inverts the pointer through x/y and then solves for the one it owns.
+// Trend-scoped: edit a parametric line's parameters.
 export const trend = {
     intercept: trendIntercept,
     slope: trendSlope,
@@ -131,27 +88,21 @@ export const trend = {
 
 import { fill as waffleFill } from './waffle.js';
 
-// Waffle-scoped: fill up to the exact cell under the pointer. Reads grid geometry
-// only a waffle stamps.
+// Waffle-scoped: fill up to the cell under the pointer.
 export const waffle = { fill: waffleFill };
 
 import {
     connect as networkConnect, rewire as networkRewire, reverse as networkReverse,
 } from './network.js';
 
-// Network-scoped: the gestures that build a network's TOPOLOGY. Creating and
-// deleting a node are plain `create`/`remove` — a node table's `key` is what gives
-// a minted row its identity (see mintDatum), not a special edit.
+// Network: build a network's links. Nodes use plain `create`/`remove`.
 export const network = {
     connect: networkConnect, rewire: networkRewire, reverse: networkReverse,
 };
 
 import { nest as hierarchyNest } from './hierarchy.js';
 
-// The gestures that build a hierarchy's CONTAINMENT. Like `network.connect`, `nest`
-// goes on ordinary node marks, so it declares no scope. Moving a container is the
-// plain `move` (the engine carries its contents), and a node is made and deleted by
-// plain `create`/`remove`.
+// Hierarchy: build containment. `nest` goes on node marks, with no scope.
 export const hierarchy = { nest: hierarchyNest };
 
 import {
@@ -164,17 +115,8 @@ import {
     createRect as geoCreateRect,
 } from './geo.js';
 
-// Geo-scoped: edits placed through the chart's `projection` rather than through
-// 1-D x/y scales.
-//
-// `draw`/`dragVertex`/`removeVertex`/`brush`/`createRect` belong here permanently:
-// their DATA SHAPE is genuinely geographic — a coordinates ARRAY or a bounding box,
-// neither of which is a single positional row.
-//
-// `move`/`create` are a different story. They duplicate the universal `move` and
-// `create` and exist only because the projection is not yet a scale, so the
-// pointer cannot be inverted through the ordinary channel path. Once it is, both
-// go and plain `edit.move()` / `edit.create()` work on a geo mark unchanged.
+// Geo-scoped: edits through the chart's `projection`. `move`/`create` exist only
+// because the projection is not yet a scale.
 export const geo = {
     move: geoMove,
     create: geoCreate,
@@ -185,9 +127,4 @@ export const geo = {
     createRect: geoCreateRect,
 };
 
-// There is no `edit.face.*`. A face is a `composite` of ordinary marks
-// (plot/face.js), so each parameter is a channel on a concrete part and takes the
-// universal edits: `slide` on a mouth's curvature or an eye's rx/ry, `rotate` on a
-// brow's angle, `move`/`resize` on the head. That namespace existed only to reach
-// handles living on one feature behind a private drag descriptor — the arrangement
-// the composite form removed.
+// There is no `edit.face.*`: a face is a composite, so its parts take the universal edits.

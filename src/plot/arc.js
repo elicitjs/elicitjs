@@ -1,7 +1,6 @@
 // @ts-check
-// arc.js — pie / donut slices. Each row's magnitude (the `value` channel's field)
-// is stacked into an angular span and drawn as an annular sector. Shares arcPath
-// with axisRadial.
+// arc.js: pie / donut slices. Each row's `theta` magnitude is stacked into an
+// angular span (a stacked bar in polar form) and drawn as an annular sector.
 //
 //   arc({
 //     outerRadius: 100, innerRadius: 40,   // donut
@@ -11,41 +10,25 @@
 //     },
 //   })
 //
-// ── A GRID / SCATTER of donuts ───────────────────────────────────────────────
-// A donut is a view over a GROUP of rows the way `face` is a view over one row —
-// so it scatters into the plane the same way. Bind `x` (and optionally `y`) to a
-// field and each distinct position becomes a SLOT holding its own donut; the rows
-// at that slot are its slices. There is no group transform — the encoding IS the
-// grouping (rows sharing the x/y value share a donut). A `size` field scales each
-// donut independently; `outerRadius` (px) pins one radius for all; otherwise the
-// radius fits the slot (a band category's cell, or a shrunk scatter default).
+// Binding `x` and/or `y` to a field makes one donut per distinct position; the
+// rows at that position are its slices. Radius: `outerRadius` (px), else a
+// per-donut `size` field, else a fit to the slot.
 //
 //   donut({
 //     channels: {
 //       x:     { field: 'state' },         // band axis → one donut per state
-//       theta: { field: 'share' },         // party's share within its state
+//       theta: { field: 'share' },
 //       fill:  { field: 'party' },
-//       size:  { field: 'voters' },        // (optional) donut size = turnout
+//       size:  { field: 'voters' },        // optional
 //     },
-//     edits: [edit.arc.edge()],            // drag a boundary — within that state
+//     edits: [edit.stack.edge()],          // drag a boundary within one donut
 //   })
 //
-// A boundary drag redistributes share between the two adjacent slices of ONE
-// donut (its stamped `members`), holding that slot's total fixed — the per-slot
-// "maintainSum" a pie enforces by construction — and never disturbs another slot.
-//
-// The magnitude channel is `theta` — the POLAR positional family, Vega-Lite's own
-// name for it ("the arc length in radians if theta2 is not specified"). It is not
-// `angle`: `angle` is a mark's ROTATION IN PLACE (a tilted label, a rotated
-// symbol), which is not a position and has no axis. It was called `value` here,
-// which collided with `ChannelSpec.value` — the visual-space constant — so the one
-// word meant both "a pixel/degree literal" and "the quantity this mark divides".
-//
-// Layout normalizes by the sum of magnitudes over the mark's rows (stacked bar in
-// polar form). Slice boundaries are draggable via edit.arc.edge(); sibling controls
-// work with maintainSum.
+// A boundary drag moves share between two adjacent slices of one donut and keeps
+// that donut's total fixed. The magnitude is `theta` (a polar position), not
+// `angle` (a rotation in place).
 
-import { encodeChannel, resolveStyle, normalizeMarkOptions, markDefaults, resolveHandles, markCommon} from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, markDefaults, resolveHandles, handlePaint, markCommon} from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 import { warn } from '../core/dev.js';
 import { arcSpan, arcPath, polarToXY } from './polar.js';
@@ -63,7 +46,6 @@ export function arc(options = {}) {
     });
     const {
         channels = {},
-        id,
         edits,
         outerRadius: outerOpt,
         innerRadius = 0,
@@ -71,19 +53,14 @@ export function arc(options = {}) {
         arc: arcOpt,
         start,
         end,
-        // Affordance: rim circles between slices (channel tag via node.edge).
-        // Slice paths themselves are not edge-editable — grab the boundary dots.
-        // handles: true|false|'hit' (shared contract). Only emitted when an edge
-        // edit is wired (see markEdits below).
+        // Rim dots between slices (node.edge). Drawn only when a stack edit is wired.
         handles = true,
         handleSize,
         handleColor,
     } = opts;
 
     const markEdits = edits || [];
-    // Boundary handles serve the stack edits only (they address a row PAIR), so they
-    // are armed by one — the same rule `bar` applies. Any other edit on the mark
-    // (a cycle on fill, a remove) used to arm them too, drawing grips nothing read.
+    // Boundary handles address a row pair, so only stack edits arm them.
     const editable = markEdits.some((/** @type {any} */ e) => e && e.scope === 'stack');
 
     const [spanStart, spanEnd] = arcSpan({
@@ -97,38 +74,18 @@ export function arc(options = {}) {
         ...markCommon(opts),
         type: 'arc',
         channels,
-        // `theta` is read RAW here, and that is a statement about this mark, not
-        // about the channel: an arc NORMALIZES its magnitudes itself (stackLayout,
-        // in data units, then arcSpan) and never asks the theta scale for anything.
-        // A `needle` does the opposite — its theta IS a bearing read through the
-        // scale — which is why the same channel is scaled there and raw here.
-        //
-        // Declaring it keeps the engine honest about both halves: no global theta
-        // scale is built from a pie (so a pie does not imply a radial axis it has
-        // no use for), and `legends: true` mints no fan key for it. It did: a fan
-        // of spokes is a key for BEARINGS, and a pie's shares are not bearings, so
-        // the key misreported the encoding and its reserved layout space moved the
-        // pie out from under its own boundary handles.
+        // `theta` is raw on arc: the mark normalizes its own magnitudes, so no theta
+        // scale (and no radial axis or legend) is built. `needle` scales it instead.
         rawChannels: ['theta'],
-        // The px extent of a `radius` channel's scale: this ring's inner and outer
-        // radius, resolved by the one rule build() also fits the ring with
-        // (core/encoding.js radiusExtent), so a slice's rim lands where the scale
-        // says its value is.
+        // The `radius` scale's px extent; build() fits the ring by the same rule
+        // (core/encoding.js radiusExtent).
         radiusRange: { inner: innerRadius, outer: outerOpt != null ? outerOpt : null },
         edits: markEdits,
-        // When `x`/`y` carry a categorical field, each category is a SLOT that holds
-        // one donut, so a discrete position axis wants a band (an interval to fit the
-        // ring into), not a point tick. Harmless when nothing is gridded — arc's
-        // classic single donut binds no positional field, so this preference never
-        // fires. (See `build`: rows are bucketed by their resolved x/y position.)
+        // A categorical x/y holds one donut per band.
         discreteScale: 'band',
-        // The magnitude is the mark's value axis; there is no category axis to key
-        // (a pie's rows are its own layout order), so xKey stays undefined rather
-        // than aliasing the same field twice.
+        // No category axis, so xKey stays undefined.
         yKey: thetaField,
-        // Capability flags: what edit.arc.* and edit.stack.* need (SCOPE_CAPABILITY).
-        // A pie IS a stack — it partitions one total among its rows — so the same cut
-        // and boundary drag that work on a stacked bar work here, in polar form.
+        // A pie partitions one total, so edit.stack.* works on it.
         supportsStack: true,
         /**
          * @param {any[]} currentData
@@ -138,24 +95,11 @@ export function arc(options = {}) {
          * @returns {import('../types').FeatureNode[]}
          */
         build: (currentData, scales, width, height) => {
-            // ── Which rows form one donut ────────────────────────────────────────
-            // A donut is a view over a GROUP of rows (its slices), the way a face is
-            // a view over ONE row. When a positional channel carries a field, that
-            // field partitions the dataset into slots — one donut per slot, placed at
-            // the slot's x/y (a band category's centre, or a scatter coordinate). No
-            // group transform: the ENCODING is the grouping. Bind neither x nor y and
-            // every row is one bucket — the classic single donut, unchanged.
-            // Rows keep their GLOBAL index (their address in the engine's one dataset)
-            // and first-seen order — both for the slot and within it — so slice/handle
-            // indices and the edge edit still address that one dataset. Which rows form
-            // a group is the same question for a donut in a slot and a stacked bar in a
-            // band, so it is answered once in plot/stack.js and shared with `bar`.
+            // One donut per distinct x/y position (one bucket when neither is bound).
+            // Rows keep their global index and first-seen order.
             const bucketList = groupByPosition(currentData, channels, ['x', 'y']);
 
-            // Default outer radius that FITS a slot. A band position axis gives a
-            // natural cell (its bandwidth); a continuous scatter has none, so shrink
-            // when there are several donuts. `outerRadius` (px) overrides for all
-            // donuts; a `size` field drives each donut's radius independently.
+            // Default outer radius: fit a band cell, or shrink in a scatter of several.
             const bandX = isBand(scales.x), bandY = isBand(scales.y);
             const cellW = bandX ? bandwidthOf(scales.x, width) : width;
             const cellH = bandY ? bandwidthOf(scales.y, height) : height;
@@ -168,23 +112,18 @@ export function arc(options = {}) {
 
             /** @type {import('../types').FeatureNode[]} */
             const nodes = [];
-            // One handle contract for every mark that draws one: shared radius
-            // default, one meaning per `handles` value, paint from the theme rather
-            // than the literals ('#0f172a' / '#fff') that used to live here and made
-            // an arc's boundary handles invisible on a dark theme.
             const handleStyle = resolveHandles(scales, { handles, handleSize, handleColor });
+            const arcDefaults = markDefaults(scales, 'arc', { fill: '#4f46e5', stroke: '#fff', strokeWidth: 1 });
 
             bucketList.forEach((bucket) => {
                 const rep = bucket.rep;
                 const members = bucket.members;
-                // A slot's position/radius resolve from its REPRESENTATIVE row, so a
-                // derived ({ fn }) channel gets that row's own global index.
+                // A slot's position and radius come from its first row.
                 const repIndex = members[0];
                 const cx = encodeChannel(scales, channels, 'x', rep, width / 2, repIndex, currentData);
                 const cy = encodeChannel(scales, channels, 'y', rep, height / 2, repIndex, currentData);
                 // Outer radius: explicit px > per-donut `size` field > fit default.
-                // With a `radius` channel each SLICE takes its own outer radius from
-                // the radius scale (a rose); `outer` is then the ring's extent.
+                // With a `radius` channel each slice takes its own rim (a rose).
                 const outer = outerOpt != null
                     ? outerOpt
                     : (channels.size && !channels.radius ? encodeChannel(scales, channels, 'size', rep, fitR, repIndex, currentData) : fitR);
@@ -194,17 +133,13 @@ export function arc(options = {}) {
                 if (channels.radius && (bucketList.length > 1 || bandX || bandY)) {
                     warn('arc:radius:slots', 'arc(): a `radius` channel on a gridded arc (x/y bound) uses the single-ring extent for every slot.');
                 }
-                // innerRadius in (0,1] is a RATIO of outer (so a data-driven radius
-                // keeps its ring proportional); >1 is absolute px, clamped inside.
+                // innerRadius in (0,1] is a ratio of outer; >1 is px, clamped inside.
                 const innerR = innerRadius > 0 && innerRadius <= 1
                     ? innerRadius * outer
                     : Math.min(innerRadius, outer * 0.95);
 
-                // Magnitude per slice: prefer the raw field (so stacking is in data
-                // units), not the encoded angle — pie layout owns the angular math.
-                // The field case IS the shared stack walk (plot/stack.js), so a pie
-                // and a stacked bar agree on what a share is, including that a
-                // negative or non-finite magnitude occupies no interval.
+                // Magnitudes in data units via the shared stack walk (plot/stack.js);
+                // a negative or non-finite magnitude occupies no interval.
                 const mags = thetaField != null
                     ? stackLayout(members, currentData, thetaField).mags
                     : members.map((/** @type {number} */ gi) => {
@@ -213,10 +148,8 @@ export function arc(options = {}) {
                     });
                 const total = mags.reduce((/** @type {number} */ a, /** @type {number} */ b) => a + b, 0);
                 const nSlices = members.length;
-                // The span is SIGNED: `start: 90, end: -270` walks clockwise, and
-                // padding is taken out of it in its own direction. Subtracting an
-                // unsigned pad from a negative span drove `usable` further negative
-                // and every slice was skipped as empty.
+                // The span is signed (`start: 90, end: -270` runs clockwise), so padding
+                // is taken out in the span's own direction.
                 const dir = Math.sign(span) || 1;
                 const usable = total > 0 ? span - dir * pad * nSlices : 0;
                 if (total > 0 && dir * usable <= 0) {
@@ -228,15 +161,12 @@ export function arc(options = {}) {
                     );
                 }
 
-                // How a pointer becomes a position along THIS donut's stack: an angle
-                // about its own centre, over its own span. Pure data — edit/stack.js
-                // re-derives the magnitudes from the live dataset and inverts through
-                // the same layout that encoded them.
+                // Pointer -> cumulative value is an angle about this donut's centre.
+                // Pure data; edit/stack.js re-derives from live data.
                 /** @type {any} */
                 const geometry = { kind: 'angular', cx, cy, spanStart, spanEnd, pad };
 
-                // Trailing edge angle of each drawn slice, by LOCAL slice position —
-                // the interior boundaries a handle sits on, within this donut.
+                // Trailing edge angle of each slice, by local slice position.
                 /** @type {Record<number, number>} */
                 const edgeAngle = {};
                 let cursor = spanStart + dir * pad / 2;
@@ -252,8 +182,7 @@ export function arc(options = {}) {
 
                     if (dir * sweep <= 0) return;
 
-                    const style = resolveStyle(scales, channels, d,
-                        markDefaults(scales, 'arc', { fill: '#4f46e5', stroke: '#fff', strokeWidth: 1 }), gi, currentData);
+                    const style = resolveStyle(scales, channels, d, arcDefaults, gi, currentData);
                     // The slice's own rim: through the radius scale when bound.
                     const sliceOuter = channels.radius
                         ? Math.max(innerR, Number(encodeChannel(scales, channels, 'radius', d, outer, gi, currentData)))
@@ -267,39 +196,18 @@ export function arc(options = {}) {
                         ...style,
                         cx, cy,
                         index: gi,
-                        // Slice boundary angles: `midAngle` for labels, a0/a1 for edge
-                        // editing. NOT `angle` — across this library `FeatureNode.angle`
-                        // means a ROTATION the renderer applies about the node's centre
-                        // (see types.d.ts and the `angle` channel). Stamping a slice's
-                        // mid-angle there was harmless only under the SVG renderer,
-                        // which skips the rotate for paths; the canvas renderer applies
-                        // it to every node type (renderers/canvas/draw.js's withAngle),
-                        // so every slice was being spun about its own centre.
+                        // Not `angle`: that is a rotation the renderer applies to the node.
                         midAngle: (a0 + a1) / 2,
                         a0, a1,
-                        // The stack this slice belongs to — what edit.stack.cut needs
-                        // to split it, and the same stamp a stacked bar's segments
-                        // carry. The mark that encoded the layout carries the means to
-                        // invert it (the node.frame idea, applied to a stack).
+                        // What edit.stack.* inverts through.
                         stack: stackDescriptor({ members, local, field: thetaField, geometry }),
-                        // Filled-region hit geometry. The pick layer measures distance
-                        // to a path's polyline, which for a bare `d` string is nothing
-                        // at all — so under the canvas renderer a slice BODY was not
-                        // clickable and only its rim handles could be grabbed. SVG
-                        // hit-tests the filled shape in the DOM and never needed this;
-                        // edit/pick.js reads `sector` so both renderers agree.
+                        // Filled-region hit area for edit/pick.js (a bare `d` has none on canvas).
                         sector: { cx, cy, r0: innerR, r1: sliceOuter, a0, a1 },
                     });
                 });
 
-                // Boundary handles — one per movable interior boundary between two
-                // adjacent slices of THIS donut. Direct-pick draggable; the arc edge
-                // edit reads the stamped `members` (this slot's global indices, in
-                // slice order) and pair-shifts within them, so a drag redistributes
-                // one donut's shares and never touches another slot. The full-circle
-                // seam is the fixed layout anchor at spanStart, so it is intentionally
-                // not a handle: with a fixed orientation and total, n slices have
-                // exactly n−1 independently movable boundaries.
+                // Boundary handles: n-1 per donut of n slices. The seam at spanStart is
+                // the fixed anchor, so it gets no handle.
                 if (editable && handleStyle.grabbable && total > 0 && nSlices > 1) {
                     for (let local = 0; local < nSlices - 1; local++) {
                         const angle = edgeAngle[local] + pad / 2;
@@ -307,17 +215,12 @@ export function arc(options = {}) {
                         nodes.push({
                             type: 'circle',
                             cx: p.x, cy: p.y,
-                            // Placement: on the OUTER rim, at the boundary angle plus
-                            // half the pad — i.e. exactly on the gap between the two
-                            // slices it redistributes.
+                            // On the outer rim, centred in the pad gap.
                             r: handleStyle.size,
-                            fill: handleStyle.visible ? handleStyle.fill : 'transparent',
-                            stroke: handleStyle.visible ? handleStyle.stroke : 'none',
-                            strokeWidth: handleStyle.visible ? handleStyle.strokeWidth : 0,
+                            ...handlePaint(handleStyle),
                             cursor: 'grab',
                             index: members[local],
-                            // A boundary handle: the pair it separates, and the stack
-                            // descriptor edit.stack.* inverts through.
+                            // The pair it separates.
                             edge: true,
                             loIndex: members[local],
                             hiIndex: members[local + 1],
@@ -333,9 +236,8 @@ export function arc(options = {}) {
 }
 
 /**
- * Donut convenience: arc with a default inner radius. When no outerRadius is
- * pinned (so the radius is chosen per slot — a fit default or a `size` field),
- * the inner radius is a RATIO of the outer, keeping every ring proportional.
+ * An arc with a default inner radius: 0.55 × outerRadius when pinned, else the
+ * ratio 0.55.
  * @param {any} [options]
  * @returns {import('../types').Mark}
  */

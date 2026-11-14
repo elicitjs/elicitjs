@@ -3,19 +3,10 @@ import { defineConstraint, constraintOptions } from './define.js';
 import { warn } from '../core/dev.js';
 import { movedFields, numOf, shifted } from './shared.js';
 
-// follow: columns that move WITH a lead column — a data invariant.
-//
-// When the lead column of a row moves by some delta, every listed column of that
-// row the edit did not itself change moves by the same delta: a mean's interval
-// travels with the mean, a box's whiskers with its median. Which column moved
-// is read by diffing the proposal against the committed row (as `ordering`
-// does), so one declaration covers every edit on the glyph; an edit that moves
-// a listed column directly leaves the lead alone.
+// follow: when `lead` moves by a delta, every `field` column the edit did not
+// change itself moves by the same delta.
 //
 //   constraints: [follow({ field: ['lo', 'hi'], lead: 'mean' })]
-//
-// `field` is the columns the rule REPAIRS (the convention every constraint
-// keeps); `lead` is the column they follow.
 
 /**
  * @param {{ field?: string | string[], lead?: string }} [options]

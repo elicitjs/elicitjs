@@ -1,11 +1,6 @@
 // @ts-check
-// probabilityTokens.js — discrete probability mass via stacked tokens.
+// probabilityTokens.js: discrete probability mass via stacked tokens.
 // Plain-chart twin: dotStack + probe-create/remove + count.
-//
-// `create` runs under the `probe` driver (hover/drag shows a GHOST token in the bin
-// under the cursor; a click or drag-release drops it for real), matching every other
-// survey instrument and the documented "tentative token" example. `remove` stays a
-// direct alt-click on an existing token.
 
 import { dotStackY } from '../plot/index.js';
 import { create, remove } from '../edit/index.js';
@@ -52,7 +47,7 @@ export function probabilityTokens(opts = {}) {
                 edits: [
                     // A tentative token: the ghost shows where it would drop; a click
                     // (or drag-release) commits. Alt-click removes an existing one.
-                    create({ pick: 'probe', channels: ['x'], defaults: {}, advance: false, stage }),
+                    create({ pick: 'probe', channels: ['x'], advance: false, stage }),
                     remove({ pick: 'direct', stage })
                 ]
             })

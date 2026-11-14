@@ -1,57 +1,32 @@
 // @ts-check
-// trendGeometry.js — the geometry of a PARAMETRIC line and its uncertainty band,
-// shared by `trend` (which draws the line and its handles) and `trendBand` (which
-// draws the envelope). Pure maths: it returns numbers and pixel points, never scene
-// nodes, so the two marks can differ in what they paint while agreeing exactly on
-// where things are.
+// trendGeometry.js: geometry of a parametric line and its uncertainty band, shared
+// by `trend` and `trendBand`. Pure maths: numbers and pixel points, no scene nodes.
 //
-// ── The model ───────────────────────────────────────────────────────────────
-// A belief about a linear relationship is two numbers:
-//
-//     y(x) = intercept + slope · x
-//
-// and its uncertainty is a range on each. The band is the whole family
-//
-//     { α + β·x : α ∈ [aLo, aHi], β ∈ [bLo, bHi] }
-//
-// whose envelope at any x is
+// The line is y(x) = intercept + slope · x. The band is the family
+// { α + β·x : α ∈ [aLo, aHi], β ∈ [bLo, bHi] }, whose envelope is
 //
 //     upper(x) = aHi + max(bLo·x, bHi·x)
 //     lower(x) = aLo + min(bLo·x, bHi·x)
 //
-// Piecewise linear with a single kink at x = 0 (where the slope range stops
-// mattering and only the intercept range is left), so sampling at { x0, 0, x1 }
-// gives the polygon EXACTLY — no tessellation, no sampling error.
+// It has one kink at x = 0, so sampling at { x0, 0, x1 } gives the polygon exactly.
 //
-// A correlation belief is this with the intercept pinned: aLo = aHi = 0 collapses
-// the polygon to a point at the origin and the band opens as a cone. The old `cone`
-// mark hard-coded that case in degrees; here it falls out of the general formula.
-//
-// ── Parameter channels ──────────────────────────────────────────────────────
-// intercept / slope name the two parameters, and the uncertainty is named EITHER
-// symmetrically (`interceptSpread` / `slopeSpread`, a half-width in the field's own
-// units — one pointer distance sets one) OR as an explicit asymmetric range
-// (`intercept1`/`intercept2`, `slope1`/`slope2`, the same 1/2 span spelling `area`
-// and `rect` use). The range form wins when present.
-//
-// All of them are UNSCALED (`scale: null`): they are parameters read in their own
-// units, not visual encodings, so they open no scale bucket of their own and need
-// no schema entry. Only x and y are scales here — the parameters are projected
-// THROUGH them, which is why every pixel below comes from `encodeValue`.
+// The uncertainty is either a half-width (`interceptSpread` / `slopeSpread`) or a
+// range (`intercept1`/`intercept2`, `slope1`/`slope2`); the range wins. Parameter
+// channels are unscaled (`scale: null`); only x and y are scales.
 
 import { encodeChannel, encodeValue } from './mark.js';
+import { warn } from '../core/dev.js';
 
 /** The parameter channels a trend mark reads, in declaration order. */
-export const PARAM_CHANNELS = [
+const PARAM_CHANNELS = [
     'intercept', 'slope',
     'interceptSpread', 'slopeSpread',
     'intercept1', 'intercept2', 'slope1', 'slope2'
 ];
 
 /**
- * Merge author channels over the mark's defaults and stamp `scale: null` on every
- * parameter channel, so a parameter is read in its own units and never resolves a
- * scale. `x` / `y` are left alone — they ARE the scales.
+ * Merge author channels over the defaults and stamp `scale: null` on every
+ * parameter channel. `x` / `y` are left scaled.
  * @param {Record<string, any>} rawChannels
  * @param {Record<string, any>} [defaults] parameter defaults, e.g. { intercept: { field: 'intercept' } }
  * @returns {Record<string, any>}
@@ -67,10 +42,45 @@ export function paramChannels(rawChannels, defaults = {}) {
 }
 
 /**
- * Read one datum's line parameters and the band's bounds on each.
- *
- * `a` / `b` are the line itself. The bounds default to the line (a zero-width band)
- * so a mark with no uncertainty declared still has well-formed geometry.
+ * A trend mark's channels: the author's over the `intercept` / `slope` column defaults.
+ * @param {Record<string, any>} rawChannels
+ * @returns {Record<string, any>}
+ */
+export function trendChannels(rawChannels) {
+    return paramChannels(rawChannels, { intercept: { field: 'intercept' }, slope: { field: 'slope' } });
+}
+
+/**
+ * The scale requirement both trend marks declare: the line is evaluated over two continuous axes.
+ * @returns {import('../types').MarkRequirement[]}
+ */
+export function trendRequires() {
+    return [{
+        channels: ['x', 'y'],
+        kind: 'continuous',
+        match: 'all',
+        why: 'an intercept and a slope are only defined over two continuous axes.',
+    }];
+}
+
+/**
+ * Warn that `probe` does nothing under the default grip.
+ * @param {string} mark the factory name
+ * @param {string} handle the handle `probe` would place
+ * @param {string} mount where the default grip mounts the handles
+ * @param {any} probe @param {string} grip
+ */
+export function warnProbeIgnored(mark, handle, mount, probe, grip) {
+    if (probe == null || grip === 'probe') return;
+    warn(`${mark}:probe-ignored`,
+        `${mark}(): \`probe\` places the ${handle} handle only under \`grip: 'probe'\`. `
+        + `The default grip mounts the handles on ${mount}; add `
+        + "`grip: 'probe'` to pin one at that column instead.");
+}
+
+/**
+ * Read one row's line (`a`, `b`) and the bounds on each. With no uncertainty
+ * declared the bounds equal the line (a zero-width band).
  * @param {any} datum
  * @param {Record<string, any>} channels
  * @param {import('../types').ScaleMap} scales
@@ -88,10 +98,8 @@ export function readParams(datum, channels, scales, index, data) {
     const a = read('intercept', 0);
     const b = read('slope', 0);
 
-    // The asymmetric range form wins over the symmetric half-width when declared —
-    // it is the more specific statement about the same interval. Bounds are sorted
-    // so a range given the wrong way round still draws (rather than inverting the
-    // polygon); pair it with ordering() if you want the data itself kept honest.
+    // The range form wins over the half-width. Bounds are sorted so a reversed
+    // range still draws; ordering() keeps the data itself in order.
     const bound = (/** @type {string} */ param, /** @type {number} */ mid) => {
         if (channels[`${param}1`] || channels[`${param}2`]) {
             const lo = read(`${param}1`, mid);
@@ -108,13 +116,11 @@ export function readParams(datum, channels, scales, index, data) {
 }
 
 /**
- * The two ends of the x domain, read off the declared domain rather than the data —
- * a parametric mark places itself from the coordinate space, not from rows (it
- * usually has exactly one).
+ * The two ends of the declared x domain (not the data's extent).
  * @param {import('../types').ScaleMap} scales
  * @returns {{ x0: number, x1: number }}
  */
-export function domainEndsOf(scales) {
+function domainEndsOf(scales) {
     const dom = scales.x && /** @type {any} */ (scales.x).domainConfig;
     return {
         x0: Array.isArray(dom) ? Number(dom[0]) : 0,
@@ -123,13 +129,11 @@ export function domainEndsOf(scales) {
 }
 
 /**
- * The two x positions a trend's handles sit at.
- *   anchor — the pivot: dragging the intercept handle translates the line so its
- *            value HERE follows the pointer, and dragging the slope handle rotates
- *            about this point. Defaults to 0 when 0 lies in the x domain (the
- *            classic y-intercept frame), else the domain's first end.
- *   probe  — where the slope handle sits. Defaults to the domain's other end, so
- *            anchor and probe are never the same point.
+ * The two x positions a trend's handles use.
+ *   anchor — the pivot the intercept handle sits at and the slope rotates about.
+ *            Defaults to 0 when in the x domain, else the domain's first end.
+ *   probe  — the slope handle's column under `grip: 'probe'`. Defaults to the
+ *            domain's last end.
  * @param {import('../types').ScaleMap} scales
  * @param {{ anchor?: number, probe?: number }} [opts]
  * @returns {{ anchor: number, probe: number }}
@@ -155,7 +159,7 @@ export const valueAt = (p, x) => p.a + p.b * x;
  * @param {number} w @param {number} h
  * @returns {{ x1: number, y1: number, x2: number, y2: number } | null}
  */
-export function clipLineToPlot(x1, y1, x2, y2, w, h) {
+function clipLineToPlot(x1, y1, x2, y2, w, h) {
     const dx = x2 - x1;
     const dy = y2 - y1;
     // Degenerate: a point. Keep it only if it sits inside the plot.
@@ -164,8 +168,8 @@ export function clipLineToPlot(x1, y1, x2, y2, w, h) {
         return { x1, y1, x2, y2 };
     }
 
-    // Liang–Barsky against [0,w] × [0,h], treating the segment as a ray pair so
-    // an infinite line through the two sample points reaches every plot edge.
+    // Liang–Barsky against [0,w] × [0,h], with t unbounded so the infinite line
+    // reaches every plot edge.
     let t0 = -Infinity;
     let t1 = Infinity;
     /** @param {number} p @param {number} q */
@@ -188,9 +192,6 @@ export function clipLineToPlot(x1, y1, x2, y2, w, h) {
     if (!clip(dy, h - y1)) return null;
     if (t0 > t1) return null;
 
-    // Finite segment through the samples may lie entirely inside; for the
-    // infinite line we still want the full clipped extent, so use [t0, t1]
-    // unrestricted by the sample segment.
     return {
         x1: x1 + t0 * dx,
         y1: y1 + t0 * dy,
@@ -200,19 +201,15 @@ export function clipLineToPlot(x1, y1, x2, y2, w, h) {
 }
 
 /**
- * Clip a convex polygon to the plot rectangle (Sutherland–Hodgman).
- *
- * A band's edges are unbounded in y — a wide slope range runs off the top and
- * bottom of the plot within the x domain — and the renderer applies no plot-rect
- * clip (only `overflow: hidden` on the whole SVG), so an unclipped polygon paints
- * over the axes and into the margins. Clipping per-point in pixel space would
- * bend a slanted edge; clipping the POLYGON keeps every edge straight.
+ * Clip a convex polygon to the plot rectangle (Sutherland–Hodgman). A wide slope
+ * range runs past the plot, and the renderer clips to the plot rect only when
+ * `spec.clip` (or a viewport edit) turns it on.
  * @param {[number, number][]} points
  * @param {number} w
  * @param {number} h
  * @returns {[number, number][]}
  */
-export function clipPolygonToPlot(points, w, h) {
+function clipPolygonToPlot(points, w, h) {
     /** @type {{ inside: (p: [number, number]) => boolean, at: (a: [number, number], b: [number, number]) => [number, number] }[]} */
     const edges = [
         { inside: (p) => p[0] >= 0, at: (a, b) => cut(a, b, 0, 0) },
@@ -251,9 +248,8 @@ export function clipPolygonToPlot(points, w, h) {
 }
 
 /**
- * The line y = a + b·x as a segment clipped to the plot. Sampled at the x-domain
- * ends and then extended as an infinite line, so it runs edge to edge rather than
- * stopping wherever the domain happens to end.
+ * The line y = a + b·x clipped to the plot, extended edge to edge rather than
+ * stopping at the domain ends.
  * @param {{ a: number, b: number }} params
  * @param {import('../types').ScaleMap} scales
  * @param {Record<string, any>} channels
@@ -273,12 +269,9 @@ export function lineSegment(params, scales, channels, width, height) {
 }
 
 /**
- * The two ends of a clipped segment, pulled in along it by `inset` pixels.
- *
- * A handle drawn exactly on the plot boundary is half-cut by it, so a grip mounted
- * at the end of a line has to sit slightly inside. The inset is skipped on a segment
- * too short to survive it — a line that only clips a corner — where pulling both ends
- * in would cross them over each other and put the handles in the wrong order.
+ * The two ends of a clipped segment, pulled in along it by `inset` px so a grip
+ * isn't half-cut by the plot edge. Skipped on a segment too short for it, where the
+ * ends would cross.
  * @param {{ x1: number, y1: number, x2: number, y2: number } | null} seg
  * @param {number} [inset]
  * @returns {{ x: number, y: number }[] | null} the two ends, in the segment's own order
@@ -330,10 +323,8 @@ export function envelopePolygon(params, scales, channels, width, height) {
 }
 
 /**
- * `levels` nested envelopes, innermost first — the band at increasing fractions of
- * its spread. Stacked at a low opacity they darken toward the line, which is how a
- * gradient is drawn here: the renderer has no gradients, so a ramp is N shapes (the
- * idiom `legend`'s continuous colour ramp already uses).
+ * `levels` nested envelopes, innermost first: the band at increasing fractions of
+ * its spread. Stacked at low opacity they darken toward the line.
  * @param {{ a: number, b: number, aLo: number, aHi: number, bLo: number, bHi: number }} params
  * @param {number} levels
  * @param {import('../types').ScaleMap} scales
@@ -358,8 +349,8 @@ export function nestedEnvelopes(params, levels, scales, channels, width, height)
     return out;
 }
 
-/** Deterministic PRNG so a sampled fan is STABLE across re-renders. */
-export function mulberry32(/** @type {number} */ seed) {
+/** Deterministic PRNG so a sampled fan is stable across re-renders. */
+function mulberry32(/** @type {number} */ seed) {
     let a = seed >>> 0;
     return function () {
         a |= 0; a = (a + 0x6D2B79F5) | 0;
@@ -370,7 +361,7 @@ export function mulberry32(/** @type {number} */ seed) {
 }
 
 /** A standard-normal draw (Box-Muller) from a uniform generator. */
-export function gauss(/** @type {() => number} */ rnd) {
+function gauss(/** @type {() => number} */ rnd) {
     let u = 0, v = 0;
     while (u === 0) u = rnd();
     while (v === 0) v = rnd();
@@ -378,18 +369,12 @@ export function gauss(/** @type {() => number} */ rnd) {
 }
 
 /**
- * Draw `samples` lines from the family — the ensemble reading of the same band.
+ * Draw `samples` lines from the family.
  *
- * `'normal'` treats the declared bounds as a `sigma`-wide envelope (1.96 by
- * default), so ~95% of the draws land inside the polygon the reader pointed at:
- * the bound is what the GESTURE names, and the SD is derived from it, not the
- * other way round. Each side of the line is scaled independently, so an asymmetric
- * range samples asymmetrically; when the range is symmetric this is exactly
- * `Normal(mid, spread / sigma)`.
- *
- * `'uniform'` draws flat across the bounds — every line in the family equally
- * plausible, which is the honest picture when the range is a hard interval rather
- * than a confidence envelope.
+ * `'normal'` treats the bounds as a `sigma`-wide envelope (default 1.96, so ~95%
+ * of draws land inside). Each side is scaled separately, so an asymmetric range
+ * samples asymmetrically; a symmetric one is `Normal(mid, spread / sigma)`.
+ * `'uniform'` draws flat across the bounds.
  * @param {{ a: number, b: number, aLo: number, aHi: number, bLo: number, bHi: number }} params
  * @param {{ samples?: number, seed?: number, distribution?: string, sigma?: number }} [opts]
  * @returns {{ a: number, b: number }[]}

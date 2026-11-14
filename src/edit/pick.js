@@ -1,45 +1,31 @@
 // @ts-check
-// pick.js — target selection for edits. `pick: 'direct'` uses the mark the
-// gesture landed on (handled by the renderer's node events); `pick: 'nearest'`
-// resolves the closest mark to the pointer within a pixel threshold, so small
-// marks are grabbable from nearby empty space (bars from anywhere in their
-// column, dots from adjacent space). This folds the old proximityDrag interactor
-// into the edit model — proximity is just how an edit picks its target.
+// pick.js — target selection and hit geometry for edits: nearest-mark
+// searches, containment hit tests, and pick thresholds.
 //
-// Every geometry test below runs on the mark's UNROTATED coordinates, with the
-// pointer brought into the mark's own frame first (`unrotate`). That keeps one set of
-// axis-aligned tests for shapes the renderers draw through a rotate transform.
+// Geometry tests run in the mark's unrotated frame (`unrotate` about `markCenter`).
 
 import { markCenter } from './shared.js';
 
 /**
  * Distance from pointer to a mark, per mark type:
  *   circle -> euclidean distance to the centre.
- *   rect   -> distance to the bar's band interval (its category slot), measured
- *             along the band axis, so any point in the column/row selects the bar
- *             regardless of its length. `bandAxis` is set by the bar mark.
- *   line   -> true point-to-segment distance to the tick. Along the span you can
- *             still grab it from anywhere (distance 0 on the segment), but two
- *             ticks stacked in the SAME band are disambiguated by the pointer's
- *             distance to each one's value position — the band-interval shortcut
- *             (used for rects) can't, since it ties every tick in the column at 0.
+ *   ellipse -> distance to the centre.
+ *   rect   -> distance to the bar's band interval along `bandAxis`, so any point
+ *             in the column selects the bar.
+ *   line   -> point-to-segment distance.
+ *   path   -> 0 inside a filled polygon, else distance to the polyline.
  * @param {any} mark
  * @param {number} px
  * @param {number} py
  * @returns {number}
  */
 export function distanceToMark(mark, px, py) {
-    // Rotation is undone once, up front: the pointer moves into the mark's own frame
-    // and every test below stays the axis-aligned one it always was. A circle is
-    // rotation-invariant about its own centre, so this is a no-op there.
     const p = unrotate(mark, px, py);
     if (mark.type === 'circle') {
         return Math.hypot(p.x - mark.cx, p.y - mark.cy);
     }
     if (mark.type === 'ellipse') {
-        // Distance to the CENTRE, like a circle — proximity ranks candidates, and an
-        // ellipse's centre is what a pointer is nearest to. Whether the pointer is
-        // INSIDE it is containsPoint's question, and that one is elliptical.
+        // Centre distance ranks candidates; containsPoint does the elliptical test.
         return Math.hypot(p.x - mark.cx, p.y - mark.cy);
     }
     if (mark.type === 'rect') {
@@ -60,12 +46,9 @@ export function distanceToMark(mark, px, py) {
         return segDist(p.x, p.y, mark.x1, mark.y1, mark.x2, mark.y2);
     }
     if (mark.type === 'path') {
-        // A filled SHAPE (plot/shape.js): inside its outline polygon is distance 0.
+        // A filled shape: inside its outline polygon is distance 0.
         if (mark.polygon && pointInPolygon(mark.points || [], p.x, p.y)) return 0;
-        // Distance to the polyline: the min over its consecutive segments, so a
-        // click anywhere ALONG a connected line (not just at a vertex) is "on" it.
-        // A path bakes any rotation into its own points, so `p` is the raw pointer
-        // here (no path mark carries `angle` — see plot/curve.js).
+        // Min distance over the polyline's segments. Paths bake rotation into points.
         const pts = mark.points || [];
         let best = Infinity;
         for (let i = 1; i < pts.length; i++) {
@@ -78,18 +61,8 @@ export function distanceToMark(mark, px, py) {
 }
 
 /**
- * The pointer in a rotated node's OWN frame — undo `node.angle` about its centre,
- * so an axis-aligned geometry test still holds for a rotated shape. (The SVG
- * renderer gets this from the DOM's own transform; canvas hit-testing has to do
- * it here, or a tilted mark would be grabbable only where it used to be. Proximity
- * picking has to do it under BOTH renderers — `nearestMark` measures geometry, not
- * DOM.)
- *
- * The pivot is `markCenter`, the same function both renderers rotate about, so where
- * a mark is PICKED and where it is PAINTED cannot drift apart. This used to demand
- * `cx`/`cy` on the node and bail otherwise, which made it a structural no-op for
- * every `rect`, `line` and `text` — i.e. for a rotated square point, a tilted tick
- * and a face's brow, all of which were grabbable only at their unrotated position.
+ * The pointer in a rotated node's own frame: undo `node.angle` about `markCenter`,
+ * the same pivot the renderers rotate about.
  * @param {any} mark @param {number} px @param {number} py
  * @returns {{ x: number, y: number }}
  */
@@ -122,8 +95,7 @@ export function pointInPolygon(pts, px, py) {
 }
 
 /**
- * Distance from a point to the segment (ax,ay)-(bx,by): project the point onto the
- * segment, clamp to its ends, measure to that closest point.
+ * Distance from a point to the segment (ax,ay)-(bx,by).
  * @param {number} px @param {number} py
  * @param {number} ax @param {number} ay @param {number} bx @param {number} by
  * @returns {number}
@@ -137,9 +109,8 @@ function segDist(px, py, ax, ay, bx, by) {
 }
 
 /**
- * The nearest mark within `threshold` (or null). Returns the mark's DATUM index so
- * the edit can address the datum. An optional `series` scopes the search to one
- * line's handles (used by a series-locked 2D sweep).
+ * The datum index of the nearest mark within `threshold`, or null. `series`
+ * restricts the search to one line's handles.
  * @param {any[]} marks
  * @param {number} px
  * @param {number} py
@@ -148,34 +119,19 @@ function segDist(px, py, ax, ay, bx, by) {
  * @returns {number | null}
  */
 export function nearestMark(marks, px, py, threshold, series) {
-    let best = null;
-    let bestDist = Infinity;
-    (marks || []).forEach((mark) => {
-        if (mark.index == null) return; // datum-bearing marks only (skip a line's path)
-        if (mark.locked) return;        // a read-only row is not a target (spec.lock)
-        if (series !== undefined && mark.series !== series) return;
-        const d = distanceToMark(mark, px, py);
-        // Address the DATUM (mark.index), not the array slot — a feature may emit
-        // extra nodes (a line's connecting path) that offset handle positions.
-        if (d < bestDist) { bestDist = d; best = mark.index; }
-    });
-    return best != null && bestDist <= threshold ? best : null;
+    const node = nearestNode(marks, px, py, threshold, series);
+    return node ? node.index : null;
 }
 
 /**
- * The `series` key of the line closest to the pointer within `threshold` (or
- * null) — measured to the LINE ITSELF (its connecting path's segments), not just
- * its vertices, so a click anywhere along a sparse line still resolves to it. Falls
- * back to handle distance for a one-point series (which has no path yet). This is
- * how a gesture decides WHICH line it means: a sweep locks onto it, an `anchor`
- * attaches to it, and being far from every line (null) starts a new one.
+ * The `series` key of the line closest to the pointer within `threshold`, or null.
+ * Measured to the line's path, falling back to handle centres for a one-point series.
  * @param {any[]} marks
  * @param {number} px
  * @param {number} py
  * @param {number} threshold
- * @param {{ includeLocked?: boolean }} [options] `includeLocked`: an APPEND-only
- *   edit (anchor) may extend a locked line — appending breaks no locked row — so
- *   it asks for locked lines too; a sweep or draw, which rewrites rows, must not.
+ * @param {{ includeLocked?: boolean }} [options] `includeLocked`: also consider
+ *   locked lines (for append-only edits like anchor).
  * @returns {any | null}
  */
 export function nearestSeries(marks, px, py, threshold, options = {}) {
@@ -183,8 +139,6 @@ export function nearestSeries(marks, px, py, threshold, options = {}) {
     let bestDist = Infinity;
     (marks || []).forEach((mark) => {
         if (mark.series === undefined) return;
-        // A fully locked line is not there as far as a gesture is concerned, so a
-        // drag beside it draws a new line instead of grabbing a frozen one.
         if (mark.locked && !options.includeLocked) return;
         // Prefer the drawn line (path); fall back to a handle's centre.
         let d;
@@ -197,10 +151,8 @@ export function nearestSeries(marks, px, py, threshold, options = {}) {
 }
 
 /**
- * The nearest datum-bearing NODE in 2-D, within `threshold` — the node itself,
- * not its row, for a caller that needs what the node is tagged with (which EDGE
- * of a band a handle belongs to). `nearestMark` answers with the row index, and
- * a band's two handles share one row.
+ * The nearest datum-bearing node within `threshold`, for callers that need the
+ * node's tags (e.g. which edge a handle belongs to), not just its row.
  * @param {any[]} marks
  * @param {number} px
  * @param {number} py
@@ -212,6 +164,7 @@ export function nearestNode(marks, px, py, threshold, series) {
     let best = null;
     let bestDist = Infinity;
     (marks || []).forEach((mark) => {
+        // Datum-bearing nodes only (skip a line's path); a locked row is not a target.
         if (mark.index == null || mark.locked) return;
         if (series !== undefined && mark.series !== series) return;
         const d = distanceToMark(mark, px, py);
@@ -221,27 +174,21 @@ export function nearestNode(marks, px, py, threshold, series) {
 }
 
 /**
- * The nearest mark measured ALONG ONE AXIS only (the you-draw-it sweep target):
- * distance is |px - cx| on 'x' or |py - cy| on 'y', so the pointer's position on
- * the other axis is ignored and a horizontal sweep always selects the point in
- * the column it is over. Any datum-bearing node with a centre is eligible — a
- * handle circle, or a bar's rect through `markCenter` — so a sweep paints bars
- * and cells as well as line vertices.
+ * The datum index of the nearest mark measured along one axis only (the sweep
+ * target). Any datum-bearing node with a `markCenter` is eligible.
  * @param {any[]} marks
  * @param {number} px
  * @param {number} py
  * @param {number} threshold
  * @param {'x' | 'y'} axis
  * @param {any} [series] restrict to marks with this `series` key (series-locked sweep)
- * @param {(mark: any) => boolean} [accept] a further filter — a band sweep locked
- *   to one EDGE passes only that edge's handles, since both edges of a row share
- *   the domain coordinate this measures
+ * @param {(mark: any) => boolean} [accept] a further filter (e.g. one edge's handles)
  * @returns {number | null}
  */
 export function nearestMarkOnAxis(marks, px, py, threshold, axis, series, accept) {
     let best = null;
     let bestDist = Infinity;
-    (marks || []).forEach((mark, i) => {
+    (marks || []).forEach((mark) => {
         if (mark.locked) return;        // a read-only row is not a target (spec.lock)
         if (series !== undefined && mark.series !== series) return;
         if (mark.index == null) return; // datum-bearing marks only (skip a line's path)
@@ -251,31 +198,41 @@ export function nearestMarkOnAxis(marks, px, py, threshold, axis, series, accept
         const center = axis === 'x' ? c.cx : c.cy;
         if (center == null) return;
         const d = Math.abs((axis === 'x' ? px : py) - center);
-        // Return the datum index, not the array slot (see nearestMark): a line's
-        // connecting path precedes its handles, so positions are offset by one.
-        if (d < bestDist) { bestDist = d; best = mark.index != null ? mark.index : i; }
+        if (d < bestDist) { bestDist = d; best = mark.index; }
     });
     return best != null && bestDist <= threshold ? best : null;
 }
 
-// How far outside a thin mark's outline still counts as "on" it, in px. A stroked
-// line or path has no area, so a bare containment test would be unhittable; this is
-// the grab tolerance the SVG hit-tester effectively grants via the stroke width.
+/**
+ * The topmost rect node whose bounds (grown by `inset`) contain the pointer, by
+ * datum index, or null. The last match wins: it is drawn on top.
+ * @param {any[]} marks
+ * @param {number} px @param {number} py
+ * @param {number} inset
+ * @returns {number | null}
+ */
+export function rectAt(marks, px, py, inset) {
+    /** @type {number | null} */
+    let hit = null;
+    for (const m of marks || []) {
+        if (m.type !== 'rect' || m.index == null) continue;
+        if (m.x == null || m.y == null || m.width == null || m.height == null) continue;
+        if (px >= m.x - inset && px <= m.x + m.width + inset
+            && py >= m.y - inset && py <= m.y + m.height + inset) hit = m.index;
+    }
+    return hit;
+}
+
+// How far outside a mark's outline still counts as on it, in px.
 export const HIT_TOLERANCE = 4;
 
-// Minimum grabbable thickness for a rect, in px. A bar whose value collapses to the
-// baseline has height 0 (or width 0, horizontal) — no area to hit under DIRECT pick,
-// so the bar becomes ungrabbable exactly when you want to drag it back up. Floor the
-// *hit* geometry (never the drawn geometry) to this so a degenerate rect keeps a
-// finger-sized target. Shared with the SVG renderer, which lays a transparent hit
-// rect of this box over each editable degenerate bar (a zero-area <rect> takes no
-// pointer events), so both backends grab an emptied bar identically.
+// Minimum grabbable rect thickness, in px, so a zero-height bar stays grabbable.
+// Floors only the hit box, never the drawn geometry. The SVG renderer uses it too.
 export const MIN_GRAB = 12;
 
 /**
- * The floored HIT box of a rect node: its drawn box, but each dimension expanded
- * symmetrically to at least MIN_GRAB so a collapsed bar stays grabbable. Visual-only
- * geometry (`x`/`y`/`width`/`height`) is untouched; this is purely the target area.
+ * A rect node's hit box: its drawn box, each dimension grown symmetrically to at
+ * least MIN_GRAB.
  * @param {any} mark
  * @returns {{ x: number, y: number, w: number, h: number }}
  */
@@ -293,32 +250,21 @@ export function rectHitBox(mark) {
 }
 
 /**
- * The topmost mark the pointer is actually ON (containment), or null — the geometric
- * replacement for the browser's SVG hit-test, used by renderers with no DOM elements
- * to hit (the canvas renderer). Distinct from `nearestMark`: `direct` pick means "the
- * mark under the pointer", not "the closest mark within 40px", so this tests real
- * containment and walks the scene BACK-TO-FRONT (last drawn wins, matching paint /
- * z-order).
- *
- * It also honours what SVG enforced for free: a node is only a target if its feature
- * has a direct-pick edit (`editable`) and it isn't locked, a guide, background, or
- * explicitly `pointerEvents:'none'` — the pointer-transparency invariant, which the
- * DOM hit-tester applied via CSS and a geometric hit-test must apply itself.
- *
- * Reuses `distanceToMark` for the genuine distance cases (circle centre, line/path
- * segments); a rect is a real point-in-bounds test rather than `distanceToMark`'s
- * band-proximity shortcut, because "anywhere in the column" is what NEAREST wants,
- * not what a direct hit is.
+ * The topmost editable mark containing the pointer, or null. The geometric
+ * hit test for renderers without DOM hit-testing (canvas). Walks the scene
+ * back to front, and skips nodes that are not `editable` (or `hoverable` on
+ * hover), locked, guides, backgrounds, or `pointerEvents: 'none'`.
  * @param {any[]} marks
  * @param {number} px
  * @param {number} py
+ * @param {boolean} [hover] also accept a `hoverable` node (what a hover reports, not what a press grabs)
  * @returns {any | null} the hit node object (not its index), or null
  */
-export function hitTest(marks, px, py) {
+export function hitTest(marks, px, py, hover = false) {
     const list = marks || [];
     for (let i = list.length - 1; i >= 0; i--) {
         const mark = list[i];
-        if (!mark || !mark.editable) continue;
+        if (!mark || !(mark.editable || (hover && mark.hoverable))) continue;
         if (mark.locked || mark.guide || mark.background) continue;
         if (mark.pointerEvents === 'none') continue;
         if (containsPoint(mark, px, py)) return mark;
@@ -327,12 +273,8 @@ export function hitTest(marks, px, py) {
 }
 
 /**
- * The nodes a pointer at (px, py) can reach on a chart that clips its marks to
- * the rect `clip` ({ x, y, width, height } in plot-local pixels, from
- * `clipRect`): all of them inside the rect, and only the `unclipped` ones (a
- * chart element's chrome, a mark that says `clip: false`) outside it —
- * what is not drawn there must not be grabbed or tipped there. With no clip,
- * every node.
+ * The nodes a pointer can reach under the clip rect (from `clipRect`): all of
+ * them inside it, only `unclipped` ones outside. With no clip, every node.
  * @param {any[]} marks
  * @param {number} px
  * @param {number} py
@@ -347,12 +289,9 @@ export function clipVisible(marks, px, py, clip) {
 }
 
 /**
- * The node under the pointer, EDITABLE OR NOT — what a tooltip or a readout
- * asks, as opposed to `hitTest`, which asks what a gesture may grab. Chrome
- * (guides, background, effects) is still skipped, as is a node that opted out
- * of the pointer for its own reasons (`pointerEvents: 'none'` set by a mark);
- * the engine's transparency stamp for an inert mark is `pointerEvents` too, so
- * the test reads the mark's own flag, `inert`, instead.
+ * The topmost datum-bearing node under the pointer, editable or not (for tooltips
+ * and readouts). Skips guides, backgrounds, effect overlays, invisible `hit`
+ * overlays, and nodes that carry no row.
  * @param {any[]} marks
  * @param {number} px
  * @param {number} py
@@ -378,36 +317,26 @@ function containsPoint(mark, px, py) {
         return distanceToMark(mark, px, py) <= r + HIT_TOLERANCE;
     }
     if (mark.type === 'ellipse') {
-        // Normalized elliptical test in the mark's own (un-rotated) frame: the
-        // tolerance is granted in each radius' own units, so a thin squinting eye
-        // stays as grabbable as a round one.
+        // Normalized elliptical test, with the tolerance added to each radius.
         const c = unrotate(mark, px, py);
         const rx = Math.max(1e-6, (mark.rx != null ? mark.rx : 5) + HIT_TOLERANCE);
         const ry = Math.max(1e-6, (mark.ry != null ? mark.ry : 5) + HIT_TOLERANCE);
         return Math.hypot((c.x - mark.cx) / rx, (c.y - mark.cy) / ry) <= 1;
     }
     if (mark.type === 'rect') {
-        // Floor the hit box to MIN_GRAB first, THEN grant the outline tolerance, so a
-        // zero-height/zero-width bar (value at the baseline) keeps a grabbable target.
-        // The box is the mark's UNROTATED one, so test the pointer in that frame.
+        // Floor to MIN_GRAB, then add the tolerance; test in the unrotated frame.
         const box = rectHitBox(mark);
         const p = unrotate(mark, px, py);
         return p.x >= box.x - HIT_TOLERANCE && p.x <= box.x + box.w + HIT_TOLERANCE
             && p.y >= box.y - HIT_TOLERANCE && p.y <= box.y + box.h + HIT_TOLERANCE;
     }
-    // An annular sector (a pie/donut slice) is the one FILLED region the renderers
-    // draw as a bare `d` string, which the polyline test below cannot see at all —
-    // it measures to `points`, and a slice has none. Under SVG that never showed,
-    // because the DOM hit-tests the filled shape itself; under canvas it meant a
-    // slice body was unclickable and only its rim handle could be grabbed. The mark
-    // stamps the sector it drew, so both renderers agree on where a slice IS.
+    // An annular sector (pie/donut slice), stamped by the mark; it has no `points`.
     if (mark.sector) {
         const { cx, cy, r0, r1, a0, a1 } = mark.sector;
         const d = Math.hypot(px - cx, py - cy);
         if (d < Math.max(0, r0) - HIT_TOLERANCE || d > r1 + HIT_TOLERANCE) return false;
-        // Sweep direction is the layout's, not the compass's — compare the pointer's
-        // offset from a0 against the sweep, both measured the same way round, so a
-        // slice that crosses the ±180° seam is not two pieces.
+        // Measure the pointer's angle from a0 in the sweep's direction, so a slice
+        // crossing ±180° stays one piece.
         const sweep = a1 - a0;
         const dir = Math.sign(sweep) || 1;
         const theta = Math.atan2(-(py - cy), px - cx) * 180 / Math.PI;
@@ -423,21 +352,17 @@ function containsPoint(mark, px, py) {
         return distanceToMark(mark, px, py) <= half + HIT_TOLERANCE;
     }
     if (mark.type === 'text') {
-        // A text mark's box is unknown to geometry; treat a small radius about its
-        // anchor as the hit area (enough to grab a label handle).
+        // No text box is known here; use a radius about the anchor.
         return Math.hypot(px - mark.x, py - mark.y) <= (mark.fontSize || 10) + HIT_TOLERANCE;
     }
     return false;
 }
 
-// A nearest edit needs a usable snap radius; 0 (makeEdit's default) would mean
-// "exact hit only", which defeats the purpose, so fall back to a sane default.
+// Snap radius in px when an edit sets no positive `threshold`.
 export const DEFAULT_PICK_THRESHOLD = 40;
 
 /**
- * An explicit positive threshold, else the fallback. The ONE place "did the author
- * set a threshold?" is decided, so a driver or edit that wants a different default
- * says so by passing one rather than re-implementing the test.
+ * An explicit positive threshold, else the fallback.
  * @param {number | undefined | null} value
  * @param {number} [fallback]
  * @returns {number}
@@ -447,13 +372,8 @@ export function resolveThreshold(value, fallback = DEFAULT_PICK_THRESHOLD) {
 }
 
 /**
- * The snap radius for an edit, with an optional driver-specific default.
- *
- * `fallback` matters: a driver whose grab target is a small fixed handle wants a
- * tighter radius than a free proximity pick. axisDrag and slide each declared one
- * and then wrote `pickThreshold(edit) || THEIRS` — which can never reach the `||`,
- * because pickThreshold always returns at least 40. Both constants were dead, and
- * an axis handle was being grabbed from 40px away instead of 14.
+ * The snap radius for an edit: its `threshold`, else `fallback` (a driver may
+ * pass a tighter default).
  * @param {import('../types').Edit | null | undefined} edit
  * @param {number} [fallback]
  * @returns {number}
@@ -462,9 +382,8 @@ export function pickThreshold(edit, fallback = DEFAULT_PICK_THRESHOLD) {
     return resolveThreshold(edit ? edit.threshold : undefined, fallback);
 }
 
-// A brush's edge zone needs a usable px radius; 0 would mean "the exact pixel
-// only", making the edge essentially ungrabbable.
-export const DEFAULT_EDGE_INSET = 8;
+// Default px width of a brush's edge zone.
+const DEFAULT_EDGE_INSET = 8;
 
 /**
  * @param {import('../types').Edit} edit

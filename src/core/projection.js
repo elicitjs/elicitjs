@@ -1,16 +1,10 @@
 // @ts-check
-// projection.js — chart-level geographic projection context (Observable Plot model).
-//
-// A projection is NOT a 1D scale kind. When `spec.projection` is set, geo marks
-// place lon/lat / GeoJSON through this object instead of through x/y scales.
-// Encode and edit share one contract:
+// projection.js — the chart-level geographic projection. When `spec.projection` is
+// set, geo marks place lon/lat and GeoJSON through it instead of x/y scales:
 //   apply([lon, lat])  → [x, y] | null
 //   invert([x, y])     → [lon, lat] | null
 //   path(geometry)     → SVG path `d` string
-//
-// Named projections and fit/domain options mirror Plot's createProjection so
-// authors can pass `"mercator"`, `{ type, domain, rotate, … }`, or a live
-// d3.geo* instance.
+// Accepts a name (`"mercator"`), `{ type, domain, rotate, … }`, or a d3.geo* instance.
 
 import * as d3 from 'd3';
 import { warn, warningsEnabled } from './dev.js';
@@ -85,25 +79,20 @@ function instantiate(type) {
 }
 
 /**
- * Domains already checked for ring winding. Kept as a WeakSet rather than folded
- * into dev.js's string-keyed dedup because the check itself costs a `d3.geoArea`
- * per polygon on every render — this remembers the WORK, not just the message.
+ * Domains already checked for ring winding. Caches the work (a `d3.geoArea` per
+ * polygon each render), not just the message.
  */
 const warnedDomains = new WeakSet();
 
 /**
- * d3-geo reads a reversed exterior ring as the *complement* of the polygon: its
- * area becomes the whole sphere, so `fitExtent` fits the world instead of the
- * region and every correctly-wound feature collapses to a sub-pixel dot. Silent
- * and baffling — so say it out loud.
+ * d3-geo reads a reversed exterior ring as the polygon's complement, so `fitExtent`
+ * fits the world and every feature collapses to a dot. Warn about it.
  * @param {any} domain
  * @param {string | undefined} type the projection type
  */
 function warnInvertedRings(domain, type) {
     if (!warningsEnabled()) return;
-    // Ring winding is a SPHERICAL rule: `d3.geoArea` on planar coordinates (an
-    // `identity` projection over pre-projected GeoJSON) measures nothing a ring's
-    // direction says, and reported every planar map as inverted.
+    // Ring winding is a spherical rule; planar `identity` data has none.
     if (type === 'identity') return;
     if (!domain || typeof domain !== 'object' || warnedDomains.has(domain)) return;
     warnedDomains.add(domain);
@@ -209,9 +198,6 @@ export function createProjection(projectionOpt, dims) {
             insetLeft = inset,
             ...options
         } = { type: undefined, domain: undefined, ...projectionOpt });
-        if (type == null && typeof projectionOpt.stream === 'function') {
-            return expose(projectionOpt);
-        }
         if (type == null) return null;
     } else {
         insetTop = insetRight = insetBottom = insetLeft = 0;

@@ -14,11 +14,9 @@
  */
 // ── from src/plot/mark.js ───────────────────────────────────────────────────
 /**
- * Map a datum through one channel using the global scale. Handles derived
- * channels (`{ fn }`, computed per datum in visual space), visual constants
- * (`{ value }`), data-space constants (`{ datum }`), scaled fields (`{ field }`),
- * unscaled raw fields (`{ field, scale: null }`), and missing scales/fields (fall
- * back). A function `value` (not `fn`) stays an opaque constant, never invoked.
+ * Map a datum through one channel's global scale. Handles `{ fn }`, `{ value }`,
+ * `{ datum }`, `{ field }` and `{ field, scale: null }`, and falls back when the
+ * scale or value is missing. A function `value` is a constant, never called.
  * @param {import('../types.js').ScaleMap} scales
  * @param {Record<string, any>} channels
  * @param {string} channel
@@ -30,15 +28,9 @@
  */
 export function encodeChannel(scales: import("../types.js").ScaleMap, channels: Record<string, any>, channel: string, datum: import("../types.js").Datum | null, fallback?: any, index?: number, data?: import("../types.js").Datum[]): any;
 /**
- * The interval a datum occupies across a CATEGORY axis: its category's band, or —
- * when the mark nests `xOffset`/`yOffset` in that axis — the sub-band the second
- * category picks inside it. The one place a band mark asks "where does my row
- * sit, and how thick is it", so a grouped bar, a grouped waffle and a dodged tick
- * are the same three lines in every mark. Resolves the category through
- * `categoryOf`, so `{ fn }`/`{ datum }` work on both levels.
- *
- * A CONTINUOUS offset (a jitter) shifts the whole band to centre on its encoded
- * position rather than subdividing it, since it names no interval.
+ * The interval a datum occupies on a category axis: its category's band, or the
+ * sub-band its `xOffset`/`yOffset` category picks inside it. A continuous offset
+ * (a jitter) shifts the whole band to centre on its encoded position.
  * @param {import('../types.js').ScaleMap} scales
  * @param {Record<string, any>} channels
  * @param {'x' | 'y'} axis the category axis
@@ -55,7 +47,6 @@ export function categorySlot(scales: import("../types.js").ScaleMap, channels: R
 };
 /**
  * Resolve a mark's handle options into the paint every handle node needs.
- *
  * @param {import('../types.js').ScaleMap} scales the scale map (carries the theme)
  * @param {{ handles?: boolean | string, handleSize?: number, handleColor?: string }} options
  * @param {{ fill?: string, stroke?: string }} [fallback] the mark's own ink, when it has one
@@ -77,21 +68,9 @@ export function resolveHandles(scales: import("../types.js").ScaleMap, options: 
     strokeWidth: number;
 };
 /**
- * The value-field names a mark reports back to the edit/constraint layer as
- * `xKey`/`yKey` — the field each positional channel is bound to, defaulting to the
- * column named after the channel.
- *
- * One helper because there were FOUR spellings of this in `src/plot/`:
- * `(channels.x && channels.x.field) || 'x'` (bar, line, area, tick, rect, waffle,
- * rule, trend, trendBand), the same thing without the default (point, text, face),
- * `yKey` set and `xKey` never (arc), and a non-positional field aliased into both
- * (needle). The engine and edit/guide.js each re-applied `|| 'x'` on read, so the
- * variants mostly agreed by accident — but "mostly, by accident" is what this pass
- * exists to remove.
- *
- * arc, needle and the geo* family stay deliberate exceptions and say why at their
- * own declaration: arc has no category axis (its rows are their own layout order),
- * needle is positioned by an angle, and geo marks key on lon/lat.
+ * The `xKey`/`yKey` a mark reports to the edit/constraint layer: the field bound to
+ * each positional channel, defaulting to the channel name. arc, needle and the geo
+ * marks don't use this and say why at their own declaration.
  * @param {Record<string, any> | undefined} channels
  * @returns {{ xKey: string, yKey: string }}
  */
@@ -100,32 +79,17 @@ export function positionalKeys(channels: Record<string, any> | undefined): {
     yKey: string;
 };
 /**
- * Which axis a directional mark's VALUE runs along — the ONE orientation rule.
- *
- * Every directional mark (bar, tick, rule, line, area, curve, text, waffle,
- * dotStack, rect) has to answer this, and each used to answer it its own way:
- * from the scales, from the channel map, from a declared span, or only when
- * forced. Six rules under three spellings meant `curveY` and `areaY` inferred
- * opposite things from the same `y1`/`y2` pair. This is that decision, once,
- * with the two places marks legitimately differ DECLARED as arguments:
- *
- *   orientation  the author's word. 'vertical' = the value runs along y (a bar
- *                that grows upward, a rule at a y, a line whose y is edited);
- *                'horizontal' = along x. The `…Y`/`…X` factory variants are
- *                sugar that pin it: `barY(o) === bar({ ...o, orientation: 'vertical' })`.
- *   extent       what a declared x1/x2 or y1/y2 pair MEANS: 'value' (area, rect,
- *                bar — the pair IS the value, so its axis is the value axis) or
- *                'span' (rule, tick, curve — the pair is the chord the mark is
- *                drawn along, so the OTHER axis is the value axis).
- *   single       what exactly one bound positional channel means: 'value' (rule,
- *                text — the lone channel is where the mark sits) or 'other' (waffle,
- *                dotStack, curve — the lone channel is the category/chord, and the
- *                value runs along the other axis).
- *
- * Precedence: the option; a declared pair; a band scale (the band is the category,
- * so the value is the other axis — only when `scales` are passed, which a counting
- * mark deliberately does not, since it must answer at factory time); a lone
- * channel; else y.
+ * Which axis a directional mark's value runs along.
+ *   orientation  'vertical' = the value runs along y, 'horizontal' = along x.
+ *                The `…Y`/`…X` factory variants pin it.
+ *   extent       what an x1/x2 or y1/y2 pair means: 'value' (the pair is the
+ *                value; area, rect, bar) or 'span' (the pair is the chord, so the
+ *                other axis is the value; rule, tick, curve).
+ *   single       what one bound positional channel means: 'value' (where the mark
+ *                sits; rule, text) or 'other' (the category; waffle, dotStack, curve).
+ * Precedence: orientation; a declared pair; a band scale (value on the other axis;
+ * only when `scales` is passed, which counting marks skip because they answer at
+ * factory time); a lone channel; else y.
  * @param {Record<string, any> | undefined} channels
  * @param {import('../types.js').ScaleMap | null | undefined} scales
  * @param {{ orientation?: string, extent?: 'value' | 'span', single?: 'value' | 'other' }} [opts]
@@ -137,32 +101,13 @@ export function resolveValueAxis(channels: Record<string, any> | undefined, scal
     single?: "value" | "other";
 }): "x" | "y";
 /**
- * Resolve a datum's CATEGORY on a band/point axis — the discrete-axis counterpart
- * to `encodeChannel`.
- *
- * A band mark (bar/tick/rect/waffle/arc) needs a category KEY, not a pixel: it feeds
- * the key to `bandStartOf`/`bandwidthOf` to get an interval. So it cannot use
- * `encodeChannel`, and every one of them instead read `datum[key]` raw — which meant
- * the channel forms worked on a bar's VALUE axis and were silently ignored on its
- * CATEGORY axis. `bar({ channels: { x: { datum: 'A' } } })` read `d['x']` and drew
- * wherever that landed. This is that missing path, in one place.
- *
- * The forms, in the same precedence `encodeChannel` uses:
+ * Resolve a datum's category key on a band/point axis: the discrete counterpart to
+ * `encodeChannel`. Band marks feed the key to `bandStartOf`/`bandwidthOf`.
  *   { fn }     fn(d, i, data) -> the category key
- *   { datum }  a data-space constant: the category itself (pin every row to one band)
- *   { field }  datum[field] — the ordinary case
- *   (none)     datum[key], the mark's xKey/yKey; and when the mark has no key
- *              either, the column named after the CHANNEL (`d.x` on x). That last
- *              step is the old per-mark `(channels.x && channels.x.field) || 'x'`
- *              default, hoisted here so it happens once instead of being spelled
- *              four different ways across bar/tick/rect/waffle/point/text/arc — and
- *              warned about, because an implicit column is exactly the "which data
- *              does this mark touch?" ambiguity the channel map exists to remove.
- *
- * `{ value }` is deliberately NOT honoured, and warns. `value` means "visual space,
- * skip the scale", and on a category axis there is no such thing: the output of the
- * axis is a band, chosen by which category you name — which is exactly `{ datum }`.
- * Silently treating it as a category would make two spellings mean one thing.
+ *   { datum }  a constant category (pins every row to one band)
+ *   { field }  datum[field]
+ *   (none)     datum[key], else the column named after the channel (warns)
+ * `{ value }` warns: a category axis has no visual-space constant; use `{ datum }`.
  * @param {Record<string, any>} channels
  * @param {string} channel
  * @param {import('../types.js').Datum | null} datum
@@ -173,16 +118,9 @@ export function resolveValueAxis(channels: Record<string, any> | undefined, scal
  */
 export function categoryOf(channels: Record<string, any>, channel: string, datum: import("../types.js").Datum | null, key: string | undefined, index?: number, data?: import("../types.js").Datum[]): any;
 /**
- * Encode an ARBITRARY value through a channel's scale — the derived-value sibling
- * of `encodeChannel`, which can only encode a value a datum already holds.
- *
- * A parametric mark computes the points it draws (`trend`'s line is sampled at x
- * positions no row contains; `trendBand`'s envelope is evaluated at the domain
- * ends), so it has a value in the field's units and needs the same field->pixel
- * path. Without this, such a mark reaches past the encoding layer and calls
- * `scales.x.encode(v)` itself, which is how `trend`/`cone` each grew their own
- * placement rules. Honours `scale: null` (raw) and a missing scale exactly as
- * `encodeChannel` does, so the two stay interchangeable.
+ * Encode an arbitrary value, in the field's units, through a channel's scale. For
+ * parametric marks that compute points no row holds (trend, trendBand). Honours
+ * `scale: null` and a missing scale like `encodeChannel`.
  * @param {import('../types.js').ScaleMap} scales
  * @param {Record<string, any>} channels
  * @param {string} channel
@@ -192,22 +130,11 @@ export function categoryOf(channels: Record<string, any>, channel: string, datum
  */
 export function encodeValue(scales: import("../types.js").ScaleMap, channels: Record<string, any>, channel: string, value: any, fallback?: any): any;
 /**
- * Resolve an ANGULAR channel to math degrees (0° = +x, CCW, y-up — the same
- * convention as needle / pointerDegrees). Scaled when that channel resolved a
- * scale so `rotate()` is an exact inverse; otherwise raw (a `{ value }` constant
- * or the field's literal degrees).
- *
- * Two channels are angular, and they are different questions:
- *   `theta`  a POLAR POSITION — a needle's bearing, an arc's sweep. Positional
- *            (see AXIS_OF), so `axisRadial` is its axis and a legend draws a fan.
- *   `angle`  a mark's ROTATION IN PLACE — a tilted label, a rotated symbol. Not a
- *            position, so no axis and no key.
- * They were ONE channel until this pass, which is why `axisRadial` drew a polar
- * axis for a scale six marks were using as a rotation.
- *
- * Marks stamp the result on `FeatureNode.angle` either way — that field is the
- * RENDERED rotation, which is what both questions end in; the renderer converts to
- * SVG with `rotate(-deg cx cy)`.
+ * Resolve an angular channel to math degrees (0° = +x, CCW, y-up). Scaled when the
+ * channel has a scale, so `rotate()` inverts exactly; otherwise raw degrees.
+ * `theta` is a polar position (a needle's bearing, an arc's sweep); `angle` is a
+ * rotation in place, with no axis or legend. Marks stamp the result on
+ * `FeatureNode.angle`, the rendered rotation.
  * @param {import('../types.js').ScaleMap} scales
  * @param {Record<string, any>} channels
  * @param {string} channel 'angle' (rotation) or 'theta' (polar position)
@@ -219,11 +146,8 @@ export function encodeValue(scales: import("../types.js").ScaleMap, channels: Re
  */
 export function encodeAngle(scales: import("../types.js").ScaleMap, channels: Record<string, any>, channel: string, datum: import("../types.js").Datum | null, fallback?: number, index?: number, data?: import("../types.js").Datum[]): number;
 /**
- * Resolve a datum's glyph on the `symbol` channel, or `undefined` when the mark
- * declares no symbol channel (or the datum's category maps to nothing). A glyph is
- * a category -> string map through the channel's ordinal scale — the same path
- * `fill` takes to a colour — so a shape mark can render it as a text node in place
- * of its circle/rect. Returns a string glyph or undefined.
+ * Resolve a datum's glyph string on the `symbol` channel, or undefined when there
+ * is no symbol channel or the category maps to nothing.
  * @param {import('../types.js').ScaleMap} scales
  * @param {Record<string, any>} channels
  * @param {import('../types.js').Datum} datum
@@ -233,10 +157,8 @@ export function encodeAngle(scales: import("../types.js").ScaleMap, channels: Re
  */
 export function resolveSymbol(scales: import("../types.js").ScaleMap, channels: Record<string, any>, datum: import("../types.js").Datum, index?: number, data?: import("../types.js").Datum[]): string | undefined;
 /**
- * Build a `text` scene node for a glyph centred at (cx, cy), sized so its box is
- * roughly the diameter of a circle of radius `size`. Shared by every shape mark
- * that can render a `symbol` (point / dotStack / waffle), so a glyph token looks
- * the same everywhere. `extra` carries the caller's style/data/index/pointer opts.
+ * Build a `text` node for a glyph centred at (cx, cy), sized to a circle of radius
+ * `size`. `extra` carries the caller's style/data/index/pointer fields.
  * @param {string} glyph
  * @param {number} cx @param {number} cy
  * @param {number} size the radius the mark would have used for a circle, in px
@@ -245,10 +167,8 @@ export function resolveSymbol(scales: import("../types.js").ScaleMap, channels: 
  */
 export function symbolNode(glyph: string, cx: number, cy: number, size: number, extra?: Record<string, any>): import("../types.js").FeatureNode;
 /**
- * Resolve the standard style channels for one datum into a style object ready to
- * spread onto a scene node. Only channels the mark actually declared (or that
- * carry a non-undefined default) are included, so a node stays sparse and the
- * renderer's own defaults apply to the rest.
+ * Resolve the standard style channels for one datum into a style object for a
+ * scene node. Only declared channels (or non-undefined defaults) are included.
  * @param {import('../types.js').ScaleMap} scales
  * @param {Record<string, any>} channels
  * @param {import('../types.js').Datum} datum
@@ -259,53 +179,20 @@ export function symbolNode(glyph: string, cx: number, cy: number, size: number, 
  */
 export function resolveStyle(scales: import("../types.js").ScaleMap, channels: Record<string, any>, datum: import("../types.js").Datum, defaults?: Record<string, any>, index?: number, data?: import("../types.js").Datum[]): Record<string, any>;
 /**
- * The field that identifies a SERIES — which rows belong to the same line, area,
- * geoLine, or stack segment. One rule for the whole mark layer, because "what
- * groups these rows?" is one question: the marks that ask it were each answering
- * it differently (line read stroke, area read fill-then-stroke), so a coloured
- * area and a coloured line grouped by different channels.
- *
- * `series` is a CHANNEL — `channels: { series: { field: 'group' } }` — because it
- * names a column, and `channels` is the only place a mark names one. It was a plain
- * top-level option (`series: 'group'`, plus a `z` alias), which is exactly the
- * "an option may never name a data column" rule this API otherwise holds to, and it
- * meant the one encoding that decides a line chart's shape was invisible to
- * everything that reads a channel map.
- *
- * It is a RAW channel: the grouping key is read off the datum (`d[seriesField]`)
- * and never scaled, so marks declare it in `Mark.rawChannels` and no scale is built
- * for it. A grouping is an identity, not a magnitude — cf. Vega-Lite's `detail`.
- *
- * Precedence: an explicit `series` channel wins; otherwise the field behind a paint
- * channel, fill before stroke — Observable Plot's `z` default, so a coloured chart
- * groups with no extra config.
- *
- * `series` is the public channel name; `seriesKey` is the internal feature field.
+ * The field that groups rows into series (a line, an area, a stack segment): the
+ * `series` channel, else the field behind fill, stroke, then strokeDash. `series`
+ * is a raw channel (never scaled), so marks list it in `Mark.rawChannels`.
  * @param {Record<string, any>} channels the mark's channel map
  * @returns {string | null}
  */
 export function seriesFieldOf(channels?: Record<string, any>): string | null;
 /**
- * The options every mark must pass through VERBATIM, gathered in one place.
+ * The options every mark passes through verbatim: id, edits, table, tip, clip.
+ * Spread first in a factory's returned object; a key stated after it wins.
  *
- * Spread this first in a factory's returned object; any key the mark states
- * itself afterwards wins (`bar` renames its own to `edits: markEdits`). One
- * helper because "a mark factory that accepts `edits` and drops them" is a bug this
- * codebase has already shipped once — `rule` silently dropped every one of these
- * for a long time, which made a draggable whisker impossible. Three names in one
- * place cannot drift the way three names in 29 places did.
- *
- * ── WHICH TABLE A MARK DRAWS ───────────────────────────────────────────────
- * A mark is a view over exactly ONE table of the dataset. `table:` names it.
- * With none, the mark takes the table filling its `tableRole` — `link` declares
- * `'links'`, every other mark leaves it unset and so gets the structure's
- * PRIMARY table, which on a single-table chart is the only one there is. The
- * engine resolves this once, where features are flattened, and dev-warns on a
- * name the schema doesn't declare.
- *
- * NAMES go in `table:`; ROLES go in `tableRole` and `Edit.table`. That
- * indirection is what lets a schema call its tables `claims`/`supports` and
- * need no `table:` written anywhere.
+ * `table:` names the one table a mark draws. Without it the mark takes the table
+ * filling its `tableRole` (`link` declares 'links'; other marks get the primary
+ * table). Names go in `table:`; roles go in `tableRole` and `Edit.table`.
  * @param {any} opts the result of normalizeMarkOptions
  * @returns {{ id: any, edits: any, table: any, tip: any, clip: any }}
  */
@@ -317,23 +204,13 @@ export function markCommon(opts: any): {
     clip: any;
 };
 /**
- * Desugar top-level constant shorthands into `channels`, without clobbering an
- * explicit `channels[ch]` (an explicit channel wins). Keeps
- * `bar({ fill: 'steelblue' })` and `point({ size: 9 })` working through the one
- * channel path. Returns a new options object with a merged `channels` map and the
- * shorthands stripped.
+ * Desugar top-level style shorthands (`fill: 'steelblue'`, `size: 9`) into
+ * `channels`, and return new options with the shorthands stripped. An explicit
+ * channel wins; a function becomes `{ fn }`, any other value `{ value }`.
  *
- * `except` keeps named shorthands as plain top-level options instead of desugaring
- * them. That's for a mark where the name is CHROME rather than per-datum style:
- * an axis's `stroke` paints its spine and its `fontSize` its labels — there is no
- * datum to resolve them against, so turning them into channels would only create
- * a channel nothing reads (and force the mark to reach back into raw options for
- * the real value, which is what axisRadial used to do).
- * Pass `mark` (the factory name) to get unknown-option diagnostics, and `allow`
- * to declare the mark's own option vocabulary on top of the universal ones. This
- * is the one place every mark already funnels through, so validating here reaches
- * all of them. A `mark` with no `allow` is a diagnostics HOLE and warns (see
- * warnUnknownOptions), which is what keeps the declaration from being optional.
+ * `except` keeps named shorthands as top-level options, for a mark where the name
+ * is chrome rather than per-datum style (an axis's `stroke` paints its spine).
+ * Pass `mark` and `allow` for unknown-option diagnostics (see warnUnknownOptions).
  * @param {any} [options]
  * @param {{ except?: string[], mark?: string, allow?: string[] }} [opts]
  * @returns {any}
@@ -344,17 +221,9 @@ export function normalizeMarkOptions(options?: any, { except, mark, allow }?: {
     allow?: string[];
 }): any;
 /**
- * Validate a CHART ELEMENT's options. The counterpart to normalizeMarkOptions for
- * `views: 'scale'` features — the diagnostics half without the channel desugar half,
- * because an element has nothing to desugar INTO.
- *
- * This exists because `axis`/`axisX`/`axisY`/`grid`/`gridX`/`gridY`/`legend`/
- * `legendColor`/`legendSize`/`legendSymbol` skipped normalizeMarkOptions entirely
- * (correctly — they encode no datum) and thereby skipped all validation too. They
- * take ~20 options each and checked none of them: `axisX({ colour: 'red' })` and
- * `axisX({ tickss: 5 })` both rendered a default axis in silence. Routing them
- * through normalizeMarkOptions instead would be wrong in the other direction — it
- * would accept `dy`/`symbol`/`size` (every style SHORTHAND) on an axis.
+ * Validate a chart element's options (`views: 'scale'`). The diagnostics half of
+ * normalizeMarkOptions, without the shorthand desugar: an element has no datum,
+ * and must not accept the mark style shorthands.
  * @param {string} element the factory name, for the message
  * @param {any} options
  * @param {string[]} allow the element's own option vocabulary
@@ -364,24 +233,10 @@ export function warnUnknownElementOptions(element: string, options: any, allow: 
 /** @type {string[]} */
 export const STANDARD_STYLE_CHANNELS: string[];
 /**
- * The shared HANDLE contract — one radius default, one meaning for `handles`, and
- * one place a handle's paint comes from.
- *
- * A handle is a grabbable sub-element a mark draws so a value can be dragged: a
- * line/area point, a trend's intercept and slope dots, an arc's boundary, a face's
- * eyelid, an axis end, a legend's ramp grip. Seven marks drew them with no shared
- * contract at all — `handleSize` defaulted to 4, 5 or 6 depending on the mark and
- * was hard-coded on axis (5) and legend (6); the colour was themed on some marks and
- * a literal (`'steelblue'`, `'#0f172a'`, `'rgba(15,23,42,0.5)'`) on others; and
- * `handles: false` meant three different things — invisible AND inert, invisible but
- * still grabbable, or radius-zero.
- *
- * `handles` now has exactly three values:
+ * The default handle radius. A mark's `handles` option is one of:
  *   true    drawn and grabbable (the default)
  *   false   neither drawn nor grabbable
- *   'hit'   invisible but still grabbable — the deliberate behaviour arc and face
- *           already had, where the SHAPE is the affordance (a slice boundary, a lip)
- *           and the dot would only be clutter.
+ *   'hit'   invisible but grabbable, where the shape itself is the affordance
  * @type {{ size: number }}
  */
 export const HANDLE_DEFAULTS: {
@@ -389,8 +244,8 @@ export const HANDLE_DEFAULTS: {
 };
 export function orientationOf(axis: "x" | "y"): "horizontal" | "vertical";
 /**
- * The style names an AXIS mark treats as chrome (its spine, ticks and labels)
- * rather than as per-datum channels — pass to normalizeMarkOptions's `except`.
+ * The style names an axis treats as chrome, not per-datum channels. Pass to
+ * normalizeMarkOptions's `except`.
  * @type {string[]}
  */
 export const AXIS_CHROME: string[];
@@ -421,12 +276,8 @@ export function rangeExtent(scale: any): [number, number];
  */
 export function bandwidthOf(scale: any, fallback?: any): any;
 /**
- * Leading pixel edge of a value's slot — the companion to `bandwidthOf`, which
- * gives the slot's thickness. `positionOnScale`/`encode` deliberately return a
- * band's CENTRE (that's where a mark sits), so a mark that draws the band as a
- * rectangle needs its start. That's the one geometry question encodeChannel
- * can't answer, and hand-rolling `scale(d[key])` for it is how the "four ways to
- * place a mark" drift started — ask here instead.
+ * Leading pixel edge of a value's slot (`encode` returns a band's centre). Use
+ * this instead of hand-rolling `scale(d[key])`.
  *   band  -> the category's interval start
  *   point -> the tick itself (no width to offset from)
  *   other -> encode(value), i.e. the position IS the edge
@@ -437,9 +288,9 @@ export function bandwidthOf(scale: any, fallback?: any): any;
  */
 export function bandStartOf(scale: any, value: any, fallback?: any): any;
 /**
- * The width of ONE category's slot on a discrete axis: a band's bandwidth, a
+ * The width of one category's slot on a discrete axis: a band's bandwidth, a
  * point's step (the distance between two ticks, centred on each). Undefined for
- * a continuous scale, which has no slot. What an OFFSET channel's range spans.
+ * a continuous scale, which has no slot. What an offset channel's range spans.
  * @param {any} scale
  * @returns {number | undefined}
  */
@@ -468,14 +319,11 @@ export function slotOf(scale: any, value: any): {
  */
 export function offsetScaleOf(scales: Record<string, any>, channels: Record<string, any> | undefined, axis: "x" | "y"): any;
 /**
- * The pixel span a mark occupies ALONG a (possibly categorical) axis — the
- * inverse concern of `bandwidthOf`: not "how thick" but "from where to where".
- * Mark-agnostic so any mark that spans a band (a tick across its category, and
- * later a bar) shares one rule:
+ * The pixel span a mark occupies along a (possibly categorical) axis:
  *   band scale   -> the category's interval [start, start+bandwidth]
  *   no band      -> the full axis extent [0, fullLength]  (rug / strip plot)
- * `inset` (px) shrinks each end; an explicit `length` (px) overrides the span
- * with a fixed-length segment centred on the band (or the axis) instead.
+ * `inset` (px) shrinks each end; `length` (px) gives a fixed segment centred on
+ * the span.
  * @param {any} scale the axis scale for the span dimension (may be null/linear)
  * @param {any} value the datum's category on that axis (band case)
  * @param {number} fullLength the inner pixel length of that axis (no-band case)
@@ -565,9 +413,8 @@ export function arcPath(cx: number, cy: number, outerRadius: number, startDeg: n
  */
 export function arcSpine(cx: number, cy: number, radius: number, startDeg: number, endDeg: number): string;
 /**
- * Angular interval [lo, hi] in degrees for one discrete category on an angle
- * scale (band → band edges; point → midpoints between neighbours; continuous →
- * undefined). Mirrors bandSpan for the degree range.
+ * Angular interval [lo, hi] in degrees for one category on an angle scale
+ * (band → band edges; point → midpoints between neighbours; continuous → null).
  * @param {any} scale
  * @param {any} value
  * @returns {[number, number] | null}
@@ -591,19 +438,16 @@ export function needleTriangle(cx: number, cy: number, length: number, deg: numb
 export const ORIENT_SPAN: Record<string, [number, number]>;
 // ── from src/plot/trendGeometry.js ──────────────────────────────────────────
 /**
- * Merge author channels over the mark's defaults and stamp `scale: null` on every
- * parameter channel, so a parameter is read in its own units and never resolves a
- * scale. `x` / `y` are left alone — they ARE the scales.
+ * Merge author channels over the defaults and stamp `scale: null` on every
+ * parameter channel. `x` / `y` are left scaled.
  * @param {Record<string, any>} rawChannels
  * @param {Record<string, any>} [defaults] parameter defaults, e.g. { intercept: { field: 'intercept' } }
  * @returns {Record<string, any>}
  */
 export function paramChannels(rawChannels: Record<string, any>, defaults?: Record<string, any>): Record<string, any>;
 /**
- * Read one datum's line parameters and the band's bounds on each.
- *
- * `a` / `b` are the line itself. The bounds default to the line (a zero-width band)
- * so a mark with no uncertainty declared still has well-formed geometry.
+ * Read one row's line (`a`, `b`) and the bounds on each. With no uncertainty
+ * declared the bounds equal the line (a zero-width band).
  * @param {any} datum
  * @param {Record<string, any>} channels
  * @param {import('../types.js').ScaleMap} scales
@@ -620,13 +464,11 @@ export function readParams(datum: any, channels: Record<string, any>, scales: im
     bHi: number;
 };
 /**
- * The two x positions a trend's handles sit at.
- *   anchor — the pivot: dragging the intercept handle translates the line so its
- *            value HERE follows the pointer, and dragging the slope handle rotates
- *            about this point. Defaults to 0 when 0 lies in the x domain (the
- *            classic y-intercept frame), else the domain's first end.
- *   probe  — where the slope handle sits. Defaults to the domain's other end, so
- *            anchor and probe are never the same point.
+ * The two x positions a trend's handles use.
+ *   anchor — the pivot the intercept handle sits at and the slope rotates about.
+ *            Defaults to 0 when in the x domain, else the domain's first end.
+ *   probe  — the slope handle's column under `grip: 'probe'`. Defaults to the
+ *            domain's last end.
  * @param {import('../types.js').ScaleMap} scales
  * @param {{ anchor?: number, probe?: number }} [opts]
  * @returns {{ anchor: number, probe: number }}
@@ -639,9 +481,8 @@ export function anchorsOf(scales: import("../types.js").ScaleMap, opts?: {
     probe: number;
 };
 /**
- * The line y = a + b·x as a segment clipped to the plot. Sampled at the x-domain
- * ends and then extended as an infinite line, so it runs edge to edge rather than
- * stopping wherever the domain happens to end.
+ * The line y = a + b·x clipped to the plot, extended edge to edge rather than
+ * stopping at the domain ends.
  * @param {{ a: number, b: number }} params
  * @param {import('../types.js').ScaleMap} scales
  * @param {Record<string, any>} channels
@@ -675,10 +516,8 @@ export function envelopePolygon(params: {
     bHi: number;
 }, scales: import("../types.js").ScaleMap, channels: Record<string, any>, width: number, height: number): [number, number][];
 /**
- * `levels` nested envelopes, innermost first — the band at increasing fractions of
- * its spread. Stacked at a low opacity they darken toward the line, which is how a
- * gradient is drawn here: the renderer has no gradients, so a ramp is N shapes (the
- * idiom `legend`'s continuous colour ramp already uses).
+ * `levels` nested envelopes, innermost first: the band at increasing fractions of
+ * its spread. Stacked at low opacity they darken toward the line.
  * @param {{ a: number, b: number, aLo: number, aHi: number, bLo: number, bHi: number }} params
  * @param {number} levels
  * @param {import('../types.js').ScaleMap} scales
@@ -696,18 +535,12 @@ export function nestedEnvelopes(params: {
     bHi: number;
 }, levels: number, scales: import("../types.js").ScaleMap, channels: Record<string, any>, width: number, height: number): [number, number][][];
 /**
- * Draw `samples` lines from the family — the ensemble reading of the same band.
+ * Draw `samples` lines from the family.
  *
- * `'normal'` treats the declared bounds as a `sigma`-wide envelope (1.96 by
- * default), so ~95% of the draws land inside the polygon the reader pointed at:
- * the bound is what the GESTURE names, and the SD is derived from it, not the
- * other way round. Each side of the line is scaled independently, so an asymmetric
- * range samples asymmetrically; when the range is symmetric this is exactly
- * `Normal(mid, spread / sigma)`.
- *
- * `'uniform'` draws flat across the bounds — every line in the family equally
- * plausible, which is the honest picture when the range is a hard interval rather
- * than a confidence envelope.
+ * `'normal'` treats the bounds as a `sigma`-wide envelope (default 1.96, so ~95%
+ * of draws land inside). Each side is scaled separately, so an asymmetric range
+ * samples asymmetrically; a symmetric one is `Normal(mid, spread / sigma)`.
+ * `'uniform'` draws flat across the bounds.
  * @param {{ a: number, b: number, aLo: number, aHi: number, bLo: number, bHi: number }} params
  * @param {{ samples?: number, seed?: number, distribution?: string, sigma?: number }} [opts]
  * @returns {{ a: number, b: number }[]}
@@ -772,14 +605,14 @@ export type LinkShape = {
         y: number;
     };
     /**
-     * unit vector INTO the source end
+     * unit vector into the source end
      */
     tangentIn: {
         x: number;
         y: number;
     };
     /**
-     * unit vector OUT OF the target end
+     * unit vector out of the target end
      */
     tangentOut: {
         x: number;
@@ -793,8 +626,7 @@ export type LinkSegment = {
     y2: number;
 };
 /**
- * A node's rectangle, in scene coordinates. Half-extents rather than width/height
- * because every test here is "how far out from the centre".
+ * A node's rectangle in scene coordinates, as centre plus half-extents.
  */
 export type LinkBox = {
     cx: number;
@@ -828,7 +660,7 @@ export type LinkShapeOptions = {
      */
     targetGap?: number | undefined;
     /**
-     * a named edge, or null/'auto' to slide — sugar for `sourcePort.side`
+     * a named edge, or null/'auto' to slide; shorthand for `sourcePort.side`
      */
     sourceSide?: string | null | undefined;
     /**
@@ -879,13 +711,11 @@ export type LinkShapeOptions = {
     grid?: import("../plot/linkRouter.js").RoutingGrid | undefined;
 };
 /**
- * The shapes, keyed by kind. `smooth` is an alias of `bezier`; `loop` is not
- * spellable by an author — it is reached only by a row referencing one node twice.
+ * The link shapes, keyed by kind. `smooth` builds the same shape as `bezier`;
+ * `loop` is used only for a row referencing one node twice.
  *
- * `anchors` says what the `seg` handed to `build` MEANS: the chord already pulled in
- * by `inset` for every point-to-point kind, or the two node centres for a kind that
- * docks to a box. See the header — this is a declared capability so that the mark
- * never branches on a kind name.
+ * `anchors` says what the `seg` passed to `build` means: `'chord'`, the chord already
+ * inset; `'box'`, the two node centres, with the boxes in `opts`.
  * @type {Record<string, { anchors: string, build: (seg: LinkSegment, bow: number, opts: LinkShapeOptions) => LinkShape | null }>}
  */
 export const LINK_SHAPES: Record<string, {
@@ -894,14 +724,8 @@ export const LINK_SHAPES: Record<string, {
 }>;
 // ── from src/plot/hitpath.js ────────────────────────────────────────────────
 /**
- * Sample a quadratic Bézier into a polyline.
- *
- * `samples` exists for the one caller that is not building a hit path: a rounded
- * corner (linkGeometry.js) IS a quadratic, and rounding it through this sampler is
- * what keeps an elbow a `points` polyline instead of a `d` string with a companion
- * hit path. A corner spans a few px, so it needs far fewer segments than a link
- * body — but a second sampler for the difference would be one copy too many.
- *
+ * Sample a quadratic Bézier into a polyline. `samples` lets a rounded corner
+ * (linkGeometry.js) use fewer segments.
  * @param {[number, number]} p1 @param {[number, number]} c @param {[number, number]} p2
  * @param {number} [samples] segments to divide the curve into
  * @returns {[number, number][]}
@@ -916,23 +740,10 @@ export function sampleQuadratic(p1: [number, number], c: [number, number], p2: [
 export function sampleCubic(p1: [number, number], c1: [number, number], c2: [number, number], p2: [number, number]): [number, number][];
 // ── from src/plot/stack.js ──────────────────────────────────────────────────
 /**
- * Which rows form one group.
- *
- * The grouping is the ENCODING: whichever of the named positional channels carry a
- * field partitions the dataset, so a `bar` stacks the rows that share a band and an
- * `arc` puts one donut in each x/y slot. Bind none of them and every row lands in a
- * single group — the classic one-stack / one-pie case, which is the same code path
- * rather than a special case. There is no `groupBy` option anywhere in this library
- * and this is why: declaring the position already says it.
- *
- * Keys resolve through `categoryOf`, so a `{ fn }` or `{ datum }` channel groups the
- * way it draws. Reading `datum[key]` raw here instead — which is what bar's old
- * private `stackOffsets` did — silently ignored both forms on the very axis that
- * decides the grouping.
- *
- * Each group keeps its rows' GLOBAL indices (their addresses in the engine's one
- * dataset) in first-seen order, so a node, a handle and an edit all still address
- * that one dataset.
+ * Which rows form one group. The positional channels in `keys` that carry a field
+ * partition the dataset; with none bound, every row is one group. Keys resolve
+ * through `categoryOf`, so `{ fn }` and `{ datum }` channels group the way they
+ * draw. Each group keeps its rows' global indices in first-seen order.
  *
  * @param {any[]} data the chart's dataset
  * @param {Record<string, any>} channels the mark's channel map
@@ -946,17 +757,9 @@ export function groupByPosition(data: any[], channels: Record<string, any>, keys
     members: number[];
 }[];
 /**
- * One group's shares and cumulative bounds, in the magnitude field's own DATA units.
- *
- * `bounds[local]` is `[lo, hi]`: the running total before this row, and after it. A
- * bar reads those as the segment's two ends on the value axis; an arc scales them
- * into its angular span. Both then encode them through their own scale — the numbers
- * here are data, never pixels.
- *
- * Non-finite and negative magnitudes count as 0. A stack is a part-to-whole
- * statement, and a negative part has no interval to occupy — silently flipping one
- * would put a segment behind its own baseline and make the boundaries between it and
- * its neighbours cross.
+ * One group's shares and cumulative bounds, in the magnitude field's data units.
+ * `bounds[local]` is `[lo, hi]`: the running total before and after this row.
+ * Non-finite and negative magnitudes count as 0.
  *
  * @param {number[]} members global row indices, in stack order
  * @param {any[]} data the chart's dataset
@@ -969,22 +772,13 @@ export function stackLayout(members: number[], data: any[], field: string | unde
     bounds: [number, number][];
 };
 /**
- * What a mark stamps on a segment node or a boundary handle so an edit can invert
- * the layout that produced it.
+ * What a mark stamps on a segment node or boundary handle so `edit.stack.*` can
+ * invert the layout. Pure data, no closures or scales: edits re-derive magnitudes
+ * from the live dataset each tick and read only `members`/`geometry` from it.
  *
- * This is the `node.frame` idea from `composite`, applied to a stack: the mark that
- * ENCODED the layout carries the means to invert it, so `edit.stack.*` needs no
- * second layout implementation and no knowledge of which mark it is on. Everything
- * here is pure DATA — no closures, no scales. A commit re-renders and the node an
- * in-flight gesture is holding goes stale, so every edit re-derives magnitudes from
- * the live dataset each tick and reads only `members`/`geometry` from the stamp.
- *
- * `geometry` says how a pointer becomes a position along the stack, and it names a
- * CAPABILITY rather than a mark:
- *   { kind: 'linear',  axis }                          value axis, through its scale
+ * `geometry` says how a pointer becomes a position along the stack:
+ *   { kind: 'linear',  axis }                            value axis, through its scale
  *   { kind: 'angular', cx, cy, spanStart, spanEnd, pad } around a ring
- * `edit/stack.js` holds one small table keyed by `kind`; a third geometry is a row
- * in it, not a branch in a mark.
  *
  * @param {{ members: number[], local?: number, field: string | undefined, geometry: any }} spec
  * @returns {{ members: number[], local: number | undefined, field: string | undefined, geometry: any }}
@@ -1013,13 +807,9 @@ export function measureText(text: string, font?: {
     fontWeight?: string | number;
 }): number;
 /**
- * Break a string into lines that each fit `maxWidth`. Greedy word wrap, honouring
- * newlines the author (or the user) typed, and hard-breaking a single word that is
- * too long for the box on its own — a word that cannot fit still has to be drawn
- * somewhere, and overflowing the shape is worse than a mid-word break.
- *
- * With no `maxWidth` the text still splits on its own newlines, so a multi-line
- * string works before any wrapping is asked for.
+ * Break a string into lines that fit `maxWidth`: greedy word wrap, honouring typed
+ * newlines, hard-breaking a word too long for the box. With no `maxWidth` it only
+ * splits on newlines.
  *
  * @param {string} text
  * @param {{ maxWidth?: number, fontSize?: number, fontFamily?: string, fontWeight?: string | number }} [opts]
@@ -1032,21 +822,13 @@ export function wrapText(text: string, opts?: {
     fontWeight?: string | number;
 }): string[];
 /**
- * The BOX a padded note of text occupies — `measureBlock` plus the padding and the
- * floors that turn a measurement into a drawn rectangle.
- *
- * This is `sticker`'s own sizing rule, lifted here so it has a name. A sticker's box
- * is measured rather than declared, which means nothing outside that mark could
- * know how big a note is — and a connector that docks to a node's EDGE has to. The
- * alternative, `link` asking the sticker what it drew, is a mark reading another
- * feature's geometry, which nothing here may do. So the rule lives in the one
- * measurement module and both callers go through it:
+ * The box a padded note of text occupies: `measureBlock` plus padding and minimums.
+ * This is `sticker`'s sizing rule, shared so a link can dock to a note's edge
+ * without reading another mark's geometry:
  *
  *   link({ channels: { nodeWidth: { fn: d => noteBox(d.label).width } } })
  *
- * The defaults deliberately match `sticker`'s, so a caller who states nothing gets
- * the same box the sticker draws. State the same options on both if you change them
- * there — that repetition is the honest cost of not coupling the two marks.
+ * Defaults match `sticker`'s; change both together.
  *
  * @param {string} text
  * @param {{ padding?: number, maxWidth?: number, minWidth?: number, minHeight?: number,
@@ -1072,8 +854,7 @@ export function noteBox(text: string, opts?: {
     height: number;
 };
 // ── from src/vocabulary.js ──────────────────────────────────────────────────
-/** Options EVERY mark accepts, whatever it draws. (`constraints` is deliberately
- *  absent: a constraint is a DATASET invariant and belongs on the spec.)
+/** Options every mark accepts. (`constraints` belongs on the spec, not a mark.)
  *  @type {string[]} */
 export const MARK_UNIVERSAL_OPTIONS: string[];
 /** Top-level constant shorthands every mark desugars into channels
@@ -1081,32 +862,27 @@ export const MARK_UNIVERSAL_OPTIONS: string[];
  *  names are read by the marks themselves; `angle` is a rotation in place.
  *  @type {string[]} */
 export const MARK_SHORTHANDS: string[];
-/** Options every chart element accepts. `field` and `table` say WHAT an edit on
- *  the element writes; an element has no channel map to say it otherwise.
+/** Options every chart element accepts. `field` and `table` name what its edits write.
  *  @type {string[]} */
 export const ELEMENT_UNIVERSAL_OPTIONS: string[];
 /** Options every guide accepts. @type {string[]} */
 export const GUIDE_UNIVERSAL_OPTIONS: string[];
-/** Mark factories: the options each reads on top of the universal mark options
- *  and the style shorthands (see `normalizeMarkOptions`, plot/mark.js). Keyed by
- *  the mark keyword; the `…X`/`…Y` variants share their bare mark's entry.
+/** Each mark's options beyond the universal ones and the shorthands. `…X`/`…Y`
+ *  variants share their bare mark's entry.
  *  @type {Record<string, string[]>} */
 export const MARK_OPTIONS: Record<string, string[]>;
-/** Chart elements: the options each reads on top of the universal element options
- *  (`id`/`edit`/`edits`/`field`/`table` — see `warnUnknownElementOptions`).
+/** Each chart element's options beyond the universal ones.
  *  @type {Record<string, string[]>} */
 export const ELEMENT_OPTIONS: Record<string, string[]>;
-/** Guides: the options each reads on top of the universal guide options (`id`).
+/** Each guide's options beyond the universal ones.
  *  @type {Record<string, string[]>} */
 export const GUIDE_OPTIONS: Record<string, string[]>;
-/** The keys `makeEdit` (edit/shared.js) normalizes on EVERY edit — the universal
- *  edit options. Anything else a factory is handed is either in that factory's
- *  `EDIT_OPTIONS` entry, a knob its driver declares (`Driver.options`), or a typo.
+/** The options `makeEdit` reads on every edit. Others come from `EDIT_OPTIONS` or
+ *  a driver's `Driver.options`.
  *  @type {string[]} */
 export const EDIT_UNIVERSAL_OPTIONS: string[];
-/** Edit factories: the options each reads on top of `EDIT_UNIVERSAL_OPTIONS`,
- *  keyed by the edit's `type` (its dotted path). A type with no entry is a custom
- *  edit built through `makeEdit` directly, and is not validated.
+/** Each edit's options beyond `EDIT_UNIVERSAL_OPTIONS`, keyed by its dotted `type`.
+ *  A type with no entry is not validated.
  *  @type {Record<string, string[]>} */
 export const EDIT_OPTIONS: Record<string, string[]>;
 /** Constraints: the options each reads. `field` is one name or an ordered list,
@@ -1115,23 +891,20 @@ export const EDIT_OPTIONS: Record<string, string[]>;
 export const CONSTRAINT_OPTIONS: Record<string, string[]>;
 // ── from src/plot/axis.js ───────────────────────────────────────────────────
 /**
- * `axis`'s own option vocabulary, on top of the universal chart-element options
- * (id / edit / edits / field). Exported so core/axes.js can hand a
- * grid only the options a grid reads, instead of forwarding the whole axis config.
- * Keep in sync with the destructure in `axis` below.
+ * `axis`'s option list, on top of the universal chart-element options
+ * (id / edit / edits / field). Keep in sync with the destructure in `axis`.
  * @type {string[]}
  */
 export const AXIS_OPTIONS: string[];
 /**
- * `grid`'s option vocabulary. Keep in sync with the destructure in `grid` below.
+ * `grid`'s option list. Keep in sync with the destructure in `grid`.
  * @type {string[]}
  */
 export const GRID_OPTIONS: string[];
 // ── from src/plot/legend.js ─────────────────────────────────────────────────
 /**
- * `legend`'s own option vocabulary, on top of the universal chart-element options
- * (id / edit / edits / field). Keep in sync with the destructure in
- * `legend` below — a wrong entry is a false positive, which is worse than none.
+ * `legend`'s option list, on top of the universal chart-element options
+ * (id / edit / edits / field). Keep in sync with the destructure in `legend`.
  * @type {string[]}
  */
 export const LEGEND_OPTIONS: string[];
@@ -1140,13 +913,9 @@ export const LEGEND_OPTIONS: string[];
 export const AXIS_RADIAL_OPTIONS: string[];
 // ── from src/edit/shared.js ─────────────────────────────────────────────────
 /**
- * Strip a `pick` an edit cannot honour, and say so.
- *
- * A few edits are inseparable from one driver: `brushSpan`/`brushRect`/`geo.brush`
- * read a zone lock that only their own driver writes, so pointing them at another
- * strategy produces an edit that silently never fires. They already forced their
- * pick — but did it by quietly dropping the option, which is the same class of
- * silent no-op the drop was protecting against.
+ * Strip a `pick` an edit bound to one driver cannot honour, and warn.
+ * Used by edits that read a zone lock only their driver writes
+ * (`brushSpan`, `brushRect`, `geo.brush`).
  * @param {any} options
  * @param {string} type the edit's type, for the message
  * @param {string} pick the driver it is bound to
@@ -1156,43 +925,28 @@ export function claimPick(options: any, type: string, pick: string): any;
 /**
  * Normalize an edit spec into the canonical Edit descriptor the engine routes to.
  *
- * Unknown keys PASS THROUGH onto the descriptor: driver-specific knobs
- * (`edgeInset`, `resize`, `move`, …) ride on the edit where their driver reads
- * them (see edgeInsetOf in pick.js). Canonical keys are normalized below and
- * always win over a raw spread value. This is the one sanctioned way a custom
- * driver (registerDriver) carries per-edit options — no post-hoc attachment.
+ * Unknown keys pass through onto the descriptor, which is how a driver reads its
+ * per-edit options (`edgeInset`, `resize`, …). Canonical keys always win over a
+ * raw spread value.
  * @param {any} spec
  * @returns {import('../types.js').Edit}
  */
 export function makeEdit(spec: any): import("../types.js").Edit;
 /**
- * Claim an edit for ONE tagged handle of a multi-handle feature.
- *
- * When a feature emits several handles over one datum (an area's y1/y2 edges, a
- * trend's intercept/slope), direct-pick dispatch fans a gesture to EVERY direct
- * edit on the feature — so an unguarded drag on the lo handle also runs the hi
- * edge's edit. Each handle carries its `channel`, and this wraps an edit's `when`
- * so it only fires on its own.
- *
- * An UNTAGGED or ABSENT node passes: a mark-level edit spanning both edges still
- * sees every gesture, and a plane/probe-pick edit (which carries no node at all)
- * is not silently killed by a guard written for handles.
+ * Restrict an edit to one tagged handle of a multi-handle feature (an area's
+ * y1/y2 edges), by wrapping its `when` to match the node's `channel` tag.
+ * An untagged or absent node passes, so plane/probe picks still fire.
  * @param {any} edit
  * @param {string} name the `channel` tag this edit owns
  * @returns {any}
  */
 export function claimEdge(edit: any, name: string): any;
 /**
- * A fresh series key not already present in the data — the identity of a new line.
+ * A series key not already in the data, for a new line.
  *
- * When the schema DECLARES the series field's domain, the key is the first
- * declared category no row uses (`nextCategory`, which honours `open`): a chart
- * whose `symbol` domain is ['AAPL', 'IBM'] gets a line called 'IBM', never `0`.
- * With a closed, exhausted domain there is no legal key — returns undefined and
- * warns, so the creator refuses instead of minting a value the axis has no room
- * for. Without a declared domain the key is the smallest non-negative integer
- * free among the existing keys, so colours (an ordinal scale over the keys) stay
- * stable as lines come and go.
+ * With a declared domain, the first unused category (`nextCategory`, honouring
+ * `open`); a closed, exhausted domain returns undefined and warns. Without one,
+ * the smallest unused non-negative integer.
  * @param {any[]} data
  * @param {string | null} seriesField
  * @param {Record<string, any> | null} [schema] the table's field schema
@@ -1200,21 +954,10 @@ export function claimEdge(edit: any, name: string): any;
  */
 export function nextSeriesKey(data: any[], seriesField: string | null, schema?: Record<string, any> | null): any;
 /**
- * A category for a row an edit is minting — the categorical sibling of
- * `nextSeriesKey`, and the reason `edit.stack.cut` needs no keyboard.
- *
- * The schema owns the domain, and the domain says which categories COULD exist; the
- * data says which are in play. So a new segment takes the first declared category
- * nothing currently uses. Which leaves the case where they run out, and that is
- * where `FieldSchema.open` speaks:
- *
- *   closed (the default) — the domain is the whole vocabulary. Return undefined and
- *     let the caller refuse: minting a category the author didn't declare would put
- *     a value on an axis that has no room for it.
- *   open — the domain is a starting set. Mint a placeholder that collides with
- *     nothing, for the author (or the user, via edit.scale.categories) to rename.
- *     Creating and NAMING are separate acts; blocking the first on the second is
- *     what forces a gesture to become a text field.
+ * A category for a row an edit is minting: the first declared category no row uses.
+ * When they run out:
+ *   closed (default) — return undefined so the caller refuses.
+ *   open — mint a placeholder name that collides with nothing, to rename later.
  *
  * @param {any[]} data
  * @param {string | null | undefined} field
@@ -1228,37 +971,14 @@ export function nextCategory(data: any[], field: string | null | undefined, doma
     label?: string | ((n: number) => string);
 }): any;
 /**
- * Mint ONE new datum — the single seed-and-invert core every creator builds on
- * (`create`, `toggle`, `anchor`, `draw`'s freehand branch, `geo.create`). Creation
- * is mark-agnostic: a datum is generated from the scales/axes, then whatever mark
- * views the dataset encodes it. This is that generation, in one place:
- *   1. `schemaDefaults(ctx.schema)` — every declared field at its default (else null,
- *      present-but-unset), so a minted row matches the elicited shape.
- *   2. `defaults` — the creator's explicit non-positional seed (group, mag, …), AND
- *      the extent an `rect`/area needs (`width`/`height`, `x2`/`y2`) so it isn't minted
- *      zero-size. These win over the schema.
- *   3. `seed` — values a creator already resolved outside the pointer inversion: geo's
- *      projected lon/lat, a line's series key. These win last and, being present, count
- *      as "placed" on their own.
- *   4. the inverted pointer, per positional channel — the exact inverse of `encode`.
- *   5. an IDENTITY, when the table declares one (see below).
- * Returns the datum, or `undefined` when nothing could be placed (no invertible
- * positional channel and no `seed`) — the "this mark can't create here" signal a
- * caller turns into a no-op (see also warnCreateOnNonMark in elicit.js).
- *
- * ── Identity ───────────────────────────────────────────────────────────────
- * A table may declare one field as its `key` — the column that identifies a row,
- * and the one a `ref` in another table points at. A minted row has to carry one:
- * a row whose identity is null can be referenced by nothing, so a link drawn to it
- * connects nothing and a gesture can never complete it.
- *
- * That is a property of the SCHEMA, not of any particular edit, so it belongs here
- * rather than in a creator of its own — `create`, `toggle` and every other minting
- * edit get it for free, on any table under any structure. `nextCategory` is the
- * same primitive `edit.stack.cut` uses, which is what keeps CREATING and NAMING
- * separate acts: the row arrives with a placeholder, and an `editText` renames it.
- * A closed vocabulary that has run out returns undefined, and the caller refuses —
- * the author declared exactly which rows may exist.
+ * Mint one new datum, the core every creator builds on. Layers, later wins:
+ *   1. `schemaDefaults(ctx.schema)` — every declared field at its default.
+ *   2. `defaults` — the creator's non-positional seed and any extent a rect needs.
+ *   3. `seed` — values already resolved (geo lon/lat, a series key). Counts as placed.
+ *   4. the inverted pointer, per positional channel.
+ *   5. the identity key, when the table declares one (`nextCategory` placeholder).
+ * Returns undefined when nothing could be placed, or when a closed key vocabulary
+ * is exhausted.
  * @param {import('../types.js').EditContext} ctx
  * @param {{ defaults?: Record<string, any>, seed?: Record<string, any>, label?: string }} [opts]
  * @returns {Record<string, any> | undefined}
@@ -1269,12 +989,8 @@ export function mintDatum(ctx: import("../types.js").EditContext, { defaults, se
     label?: string;
 }): Record<string, any> | undefined;
 /**
- * The scene node an edit is currently acting on, regardless of pick strategy:
- * `ctx.node` is set for a direct-pick gesture (the DOM element it landed on),
- * but a plane-pick gesture (nearest/sweep) resolves its target by datum index
- * with no node attached — so fall back to looking the current mark up in
- * `ctx.marks` by `ctx.index`, the same by-datum-index lookup guide.js's
- * `selectEffectNodes` already does for the proximity highlight.
+ * The scene node an edit is acting on: `ctx.node` for a direct pick, else the
+ * mark in `ctx.marks` at `ctx.index` (a plane pick carries no node).
  * @param {import('../types.js').EditContext} ctx
  * @returns {any | null}
  */
@@ -1291,36 +1007,20 @@ export function markCenter(node: any): {
     cy: number;
 } | null;
 /**
- * Where the pointer would be if you nudged it one step along `scale` — the pixel a
- * keyboard press stands in for, so an arrow key drives the SAME edit a drag does
- * (the edit still just inverts a pointer through a scale; it never learns there was
- * a keyboard).
- *
- * The step has to be asked of the scale, which is why this can't live in the
- * renderer: on a discrete axis a step is "the next category" (a fixed pixel nudge
- * would do nothing at all until it happened to cross a band edge), and on a
- * continuous one it's a fraction of the range.
+ * The pixel one keyboard step along `scale` moves the pointer to, so an arrow key
+ * drives the same edit a drag does. On a discrete axis a step is the next
+ * category; on a continuous one it is a fraction of the range.
  * @param {any} scale the axis scale (may be null / non-invertible)
  * @param {number} at current pixel position on that axis
- * @param {-1 | 0 | 1} dir step direction in PIXEL space
+ * @param {-1 | 0 | 1} dir step direction in pixel space
  * @param {boolean} [coarse] a bigger step (Shift)
  * @returns {number} the new pixel position (unchanged when it can't step)
  */
 export function nudgeTarget(scale: any, at: number, dir: -1 | 0 | 1, coarse?: boolean): number;
 /**
- * Map a pixel position on a straight track [pxAt0 → pxAt1] to a value, LINEARLY
- * across the channel's domain [loVal → hiVal]. `pxAt0` is the pixel where the
- * value is `loVal`, `pxAt1` where it is `hiVal`; the position is clamped to the
- * track, so the value never runs past the domain. This is "drag along an axis =
- * a value" — the single linear pointer→value mapping the `slide` edit and the
- * face's direct-manipulation handles both build on, so the two never drift.
- *
- * Deliberately domain-linear (not `scale.invertValue`): a `slide` track is an
- * arbitrary UI segment anchored at the handle, NOT the scale's own pixel range,
- * so the scale is consulted only for the domain extremes (via `domainConfig`),
- * never as geometry. For a plain linear channel this equals the scale's own
- * inversion; for a non-positional [0,1] param (a face channel) it maps the track
- * straight onto the field's units.
+ * Map a pixel on a track [pxAt0 → pxAt1] linearly to a value in [loVal → hiVal],
+ * clamped to the track. Used by `slide`. Domain-linear on purpose: the track is a
+ * UI segment, not the scale's pixel range.
  * @param {number} px current pixel position on the track
  * @param {number} pxAt0 the pixel where the value is `loVal`
  * @param {number} pxAt1 the pixel where the value is `hiVal`
@@ -1330,11 +1030,8 @@ export function nudgeTarget(scale: any, at: number, dir: -1 | 0 | 1, coarse?: bo
  */
 export function linearInvert(px: number, pxAt0: number, pxAt1: number, loVal: number, hiVal: number): number | undefined;
 /**
- * The domain extremes [lo, hi] of a resolved channel, read off its scale's
- * `domainConfig` (the declared field domain). Falls back to [0, 1] — the neutral
- * range a non-positional param uses — when the channel carries no domain. The
- * one place `slide` and the face read a channel's value range, so a track always
- * spans the same [lo, hi] the encoding drew from.
+ * The domain extremes [lo, hi] of a resolved channel, from its scale's
+ * `domainConfig`. Falls back to [0, 1].
  * @param {import('../types.js').ResolvedChannel | { scale?: any } | null | undefined} ch
  * @returns {[number, number]}
  */
@@ -1342,25 +1039,16 @@ export function channelDomain(ch: import("../types.js").ResolvedChannel | {
     scale?: any;
 } | null | undefined): [number, number];
 /**
- * The DISCRETE value set a channel steps through — what `cycle` advances along.
- *
- * The scale's domain when the channel HAS a scale; the field's SCHEMA domain when
- * it doesn't. That second half is not a fallback for a broken case, it is the
- * ordinary one: the schema OWNS the domain, and two perfectly well-formed channels
- * resolve no scale at all — `scale: null` (the datum holds a literal colour, a
- * sticker's `tone`) and a raw non-positional channel a mark reads itself (a link's
- * `curve`). Reading only `ch.scale.domain()` made `cycle()` a silent no-op on both:
- * the cursor turns editable, the click lands, `apply` returns undefined, nothing
- * happens and nothing is logged.
+ * The discrete values a channel steps through (what `cycle` advances along): the
+ * scale's domain, else the field's schema domain. Channels with `scale: null` or
+ * raw channels have no scale, so the schema fallback is the normal path for them.
  * @param {import('../types.js').ResolvedChannel | null | undefined} ch
  * @param {Record<string, any> | undefined} [schema] the target table's field map
  * @returns {any[] | null}
  */
 export function discreteDomain(ch: import("../types.js").ResolvedChannel | null | undefined, schema?: Record<string, any> | undefined): any[] | null;
 /**
- * Invert the pointer through ONE channel's scale — the single-field half of
- * `move()`, factored out so `brushSpan`'s edge-zone tick can reuse the
- * exact same computation instead of a second copy. Pass `center` for radial
+ * Invert the pointer through one channel's scale. Pass `center` for radial
  * channels (`size`, `angle`) that need a pivot.
  * @param {import('../types.js').ResolvedChannel} ch
  * @param {{ x: number, y: number }} pointer
@@ -1375,24 +1063,11 @@ export function invertChannel(ch: import("../types.js").ResolvedChannel, pointer
     cy: number;
 } | null): any;
 /**
- * Recenter a mark's CURRENT pixel span (read off its rendered node) on the
- * pointer, then invert both new endpoints back to data — the whole-span-move
- * computation `moveSpan` and `brushSpan`/`brushRect`'s body zone both use.
- * Stateless: no dragstart/delta tracking, just "the gesture sets the absolute
- * position", the same model `move()`/`invertChannel` already use for a single
- * field.
+ * Recenter a mark's pixel span on the pointer and invert both endpoints to data.
+ * Used by `moveSpan` and the body zone of `brushSpan` / `brushRect`.
  *
- * The span's WIDTH is preserved when the pointer pushes it against the scale's
- * pixel range: the whole interval shifts as a unit rather than each endpoint
- * clamping independently (which would shrink the span to zero at the edge and
- * leave it stuck). If the span is already wider than the range, it pins to the
- * full range.
- * The span's WIDTH comes from the DATUM, encoded through the two channels' scales
- * (a rect's node carries it as width/height, but an area's node is a handle
- * circle and a rule's a line, and they carry none); the node is the fallback. The
- * two values come back ordered: `a` is the smaller, whichever pixel end that was —
- * on a y axis the smaller pixel is the LARGER value, and handing it to the first
- * channel swapped a vertical span's low and high every tick.
+ * The span width comes from the datum (the node is the fallback) and stays rigid
+ * at the range edges; a span wider than the range pins to it. Returns a ≤ b.
  * @param {any} node the mark's current scene node (rect: x/y/width/height)
  * @param {import('../types.js').ResolvedChannel} chA
  * @param {import('../types.js').ResolvedChannel} chB
@@ -1421,14 +1096,11 @@ export function schemaDefaults(schema: Record<string, import("../types.js").Fiel
 /**
  * Distance from pointer to a mark, per mark type:
  *   circle -> euclidean distance to the centre.
- *   rect   -> distance to the bar's band interval (its category slot), measured
- *             along the band axis, so any point in the column/row selects the bar
- *             regardless of its length. `bandAxis` is set by the bar mark.
- *   line   -> true point-to-segment distance to the tick. Along the span you can
- *             still grab it from anywhere (distance 0 on the segment), but two
- *             ticks stacked in the SAME band are disambiguated by the pointer's
- *             distance to each one's value position — the band-interval shortcut
- *             (used for rects) can't, since it ties every tick in the column at 0.
+ *   ellipse -> distance to the centre.
+ *   rect   -> distance to the bar's band interval along `bandAxis`, so any point
+ *             in the column selects the bar.
+ *   line   -> point-to-segment distance.
+ *   path   -> 0 inside a filled polygon, else distance to the polyline.
  * @param {any} mark
  * @param {number} px
  * @param {number} py
@@ -1436,9 +1108,8 @@ export function schemaDefaults(schema: Record<string, import("../types.js").Fiel
  */
 export function distanceToMark(mark: any, px: number, py: number): number;
 /**
- * The nearest mark within `threshold` (or null). Returns the mark's DATUM index so
- * the edit can address the datum. An optional `series` scopes the search to one
- * line's handles (used by a series-locked 2D sweep).
+ * The datum index of the nearest mark within `threshold`, or null. `series`
+ * restricts the search to one line's handles.
  * @param {any[]} marks
  * @param {number} px
  * @param {number} py
@@ -1448,74 +1119,47 @@ export function distanceToMark(mark: any, px: number, py: number): number;
  */
 export function nearestMark(marks: any[], px: number, py: number, threshold: number, series?: any): number | null;
 /**
- * The `series` key of the line closest to the pointer within `threshold` (or
- * null) — measured to the LINE ITSELF (its connecting path's segments), not just
- * its vertices, so a click anywhere along a sparse line still resolves to it. Falls
- * back to handle distance for a one-point series (which has no path yet). This is
- * how a gesture decides WHICH line it means: a sweep locks onto it, an `anchor`
- * attaches to it, and being far from every line (null) starts a new one.
+ * The `series` key of the line closest to the pointer within `threshold`, or null.
+ * Measured to the line's path, falling back to handle centres for a one-point series.
  * @param {any[]} marks
  * @param {number} px
  * @param {number} py
  * @param {number} threshold
- * @param {{ includeLocked?: boolean }} [options] `includeLocked`: an APPEND-only
- *   edit (anchor) may extend a locked line — appending breaks no locked row — so
- *   it asks for locked lines too; a sweep or draw, which rewrites rows, must not.
+ * @param {{ includeLocked?: boolean }} [options] `includeLocked`: also consider
+ *   locked lines (for append-only edits like anchor).
  * @returns {any | null}
  */
 export function nearestSeries(marks: any[], px: number, py: number, threshold: number, options?: {
     includeLocked?: boolean;
 }): any | null;
 /**
- * The nearest mark measured ALONG ONE AXIS only (the you-draw-it sweep target):
- * distance is |px - cx| on 'x' or |py - cy| on 'y', so the pointer's position on
- * the other axis is ignored and a horizontal sweep always selects the point in
- * the column it is over. Any datum-bearing node with a centre is eligible — a
- * handle circle, or a bar's rect through `markCenter` — so a sweep paints bars
- * and cells as well as line vertices.
+ * The datum index of the nearest mark measured along one axis only (the sweep
+ * target). Any datum-bearing node with a `markCenter` is eligible.
  * @param {any[]} marks
  * @param {number} px
  * @param {number} py
  * @param {number} threshold
  * @param {'x' | 'y'} axis
  * @param {any} [series] restrict to marks with this `series` key (series-locked sweep)
- * @param {(mark: any) => boolean} [accept] a further filter — a band sweep locked
- *   to one EDGE passes only that edge's handles, since both edges of a row share
- *   the domain coordinate this measures
+ * @param {(mark: any) => boolean} [accept] a further filter (e.g. one edge's handles)
  * @returns {number | null}
  */
 export function nearestMarkOnAxis(marks: any[], px: number, py: number, threshold: number, axis: "x" | "y", series?: any, accept?: (mark: any) => boolean): number | null;
 /**
- * The topmost mark the pointer is actually ON (containment), or null — the geometric
- * replacement for the browser's SVG hit-test, used by renderers with no DOM elements
- * to hit (the canvas renderer). Distinct from `nearestMark`: `direct` pick means "the
- * mark under the pointer", not "the closest mark within 40px", so this tests real
- * containment and walks the scene BACK-TO-FRONT (last drawn wins, matching paint /
- * z-order).
- *
- * It also honours what SVG enforced for free: a node is only a target if its feature
- * has a direct-pick edit (`editable`) and it isn't locked, a guide, background, or
- * explicitly `pointerEvents:'none'` — the pointer-transparency invariant, which the
- * DOM hit-tester applied via CSS and a geometric hit-test must apply itself.
- *
- * Reuses `distanceToMark` for the genuine distance cases (circle centre, line/path
- * segments); a rect is a real point-in-bounds test rather than `distanceToMark`'s
- * band-proximity shortcut, because "anywhere in the column" is what NEAREST wants,
- * not what a direct hit is.
+ * The topmost editable mark containing the pointer, or null. The geometric
+ * hit test for renderers without DOM hit-testing (canvas). Walks the scene
+ * back to front, and skips nodes that are not `editable` (or `hoverable` on
+ * hover), locked, guides, backgrounds, or `pointerEvents: 'none'`.
  * @param {any[]} marks
  * @param {number} px
  * @param {number} py
+ * @param {boolean} [hover] also accept a `hoverable` node (what a hover reports, not what a press grabs)
  * @returns {any | null} the hit node object (not its index), or null
  */
-export function hitTest(marks: any[], px: number, py: number): any | null;
+export function hitTest(marks: any[], px: number, py: number, hover?: boolean): any | null;
 /**
- * The snap radius for an edit, with an optional driver-specific default.
- *
- * `fallback` matters: a driver whose grab target is a small fixed handle wants a
- * tighter radius than a free proximity pick. axisDrag and slide each declared one
- * and then wrote `pickThreshold(edit) || THEIRS` — which can never reach the `||`,
- * because pickThreshold always returns at least 40. Both constants were dead, and
- * an axis handle was being grabbed from 40px away instead of 14.
+ * The snap radius for an edit: its `threshold`, else `fallback` (a driver may
+ * pass a tighter default).
  * @param {import('../types.js').Edit | null | undefined} edit
  * @param {number} [fallback]
  * @returns {number}
@@ -1536,8 +1180,7 @@ export type DriverSession = {
 export type DriverPreview = {
     /**
      * the parked proposal:
-     * the rows it would commit, and WHICH TABLE they replace (an edit may propose for
-     * a table other than the one its mark draws — see edit.network.connect).
+     * the rows it would commit and the table they replace (which may not be the mark's).
      */
     get: () => {
         table: string;
@@ -1558,10 +1201,8 @@ export type DriverContext = {
     data: any[];
     scales: import("../types.js").ScaleMap;
     /**
-     * the datum a DIRECT gesture landed on, or null
-     * for a plane gesture — where the driver resolves its own target from the
-     * pointer (nearestMark and friends). A driver that can serve a direct-pick edit
-     * reads this first and skips its proximity search.
+     * the datum a direct gesture landed on, or null
+     * for a plane gesture, where the driver resolves its own target.
      */
     index: number | null;
     session: DriverSession;
@@ -1577,7 +1218,7 @@ export type DriverContext = {
 export type Driver = {
     name: string;
     /**
-     * a CAPABILITY
+     * a capability
      * claim on an edit not addressed by pick name (never re-test `pick`)
      */
     wants?: ((edit: import("../types.js").Edit) => boolean) | undefined;
@@ -1588,34 +1229,31 @@ export type Driver = {
     sessionKeys?: string[] | undefined;
     /**
      * the per-edit knobs this driver reads off the
-     * descriptor (`edgeInset`, `resize`, …) — the sanctioned passthrough; a key on
-     * an edit that is in neither its factory's vocabulary nor its driver's is reported
+     * descriptor (`edgeInset`, `resize`, …); unknown-option warnings skip them
      */
     options?: string[] | undefined;
     onEvent: (ctx: DriverContext) => boolean;
     /**
-     * writes a selection into its session (see above),
-     * so an edit with `guide: true` can draw the `select` effect for it.
+     * writes a selection into its session, so its
+     * edits get a catchment guide
      */
     selects?: boolean | undefined;
     /**
-     * choosing the row is all it does (see above),
-     * so `el.control(name, index)` can run its edits on a named row directly.
+     * only chooses the row, so
+     * `el.control(name, index)` can run its edits on a named row directly
      */
     targetsRow?: boolean | undefined;
 };
 /**
- * Register a custom driver (or replace a built-in by the same `name`). The engine
- * reads this mutable registry from dispatchPlaneEdits — no elicit.js branches.
+ * Register a custom driver, or replace a built-in with the same `name`.
  * @param {Driver} driver
  */
 export function registerDriver(driver: Driver): void;
 // ── from src/constraints/define.js ──────────────────────────────────────────
 /**
- * Author a constraint from a RULE against the data-only context. The extension
- * point (`constraints.custom` is this function): write the rule, return the
- * natural shape, and the plumbing — active datum, field, domain, result
- * normalization — is done for you.
+ * Author a constraint from a rule over the data-only context (`constraints.custom`).
+ * The rule returns a value, an object, replacement rows, or `false` to reject;
+ * the active datum, field, domain and result handling are done for you.
  * @param {(ctx: import('../types.js').ConstraintContext) => any} reducer
  * @param {{ type?: string, field?: string | string[], options?: Record<string, any>,
  *   table?: string, guide?: (ctx: any) => any[] }} [meta]
@@ -1643,10 +1281,9 @@ export namespace THEME {
 }
 // ── from src/widgets/shared.js ──────────────────────────────────────────────
 /**
- * The resolved theme a widget factory reads its answer-mark ink/size from:
- * DEFAULT_THEME < setTheme() base < the widget's own `theme` option — the same
- * precedence the engine applies to `spec.theme`, so the baked-in mark colour and the
- * live affordance colours always agree.
+ * Resolve a widget's theme for its answer mark's ink and size: DEFAULT_THEME, then
+ * the setTheme() base, then the widget's `theme` option, the same precedence the
+ * engine applies to `spec.theme`.
  * @param {import('../types.js').ThemeSpec | undefined} [theme]
  * @returns {import('../types.js').Theme}
  */
@@ -1737,24 +1374,14 @@ export type Tile = {
     key: string;
 };
 /**
- * Does this projection place lon/lat the way the tile pyramid does — i.e. will
- * tiles register with the data?
- *
- * Checked by BEHAVIOUR, not by a type name (same discipline as the scale
- * capability flags: a name is a label, a measurement is the truth). We derive the
- * world's top-left from the projection itself, then assert that probe points land
- * exactly where the Web Mercator formula says they must:
+ * Does this projection place lon/lat the way the tile pyramid does? Checked by
+ * behaviour: probe points must land where the Web Mercator formula puts them:
  *
  *   x = ox + worldPx · (lon + 180) / 360
  *   y = oy + worldPx · (0.5 − ln(tan(π/4 + φ/2)) / 2π)
  *
- * The LATITUDE probes are what carry the test: mercator and equirectangular agree
- * on the equator (both are linear in lon), so an equator-only check passes
- * equirectangular and would silently draw a stretched, misregistered map. The
- * probes also reject an oblique rotation, a clipped globe, and a hand-rolled d3
- * projection. A pure LONGITUDE rotation legitimately passes: it pans the sphere,
- * and since the tile grid is placed through the same projection, imagery and data
- * pan together.
+ * The latitude probes reject equirectangular, which agrees on the equator. A pure
+ * longitude rotation passes: tiles and data pan together.
  *
  * @param {ProjectionContext | null | undefined} projection
  * @returns {boolean}
@@ -1795,9 +1422,8 @@ export function tileCover(projection: ProjectionContext | null | undefined, widt
 export function tileUrl(url: string | ((t: Tile) => string), tile: Tile, subdomains?: string[]): string;
 // ── from src/core/theme.js ──────────────────────────────────────────────────
 /**
- * The theme a mark's build() can see: the engine stamps the resolved theme on the
- * scale map (the projection-transport pattern) so no build() signature changes.
- * Falls back to DEFAULT_THEME for a bare scale map (a mark unit-tested in isolation).
+ * The theme a mark's build() sees, stamped on the scale map by the engine.
+ * DEFAULT_THEME for a bare scale map (a mark tested in isolation).
  * @param {any} scales
  * @returns {import('../types.js').Theme}
  */

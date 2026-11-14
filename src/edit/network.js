@@ -1,43 +1,15 @@
 // @ts-check
-// network.js — the NETWORK-scoped edits: the two gestures that build a network's
-// topology and that nothing general could express.
-//
+// network.js — the network edits:
 //   edit.network.connect()   drag from a node's port to another node -> a new link row
 //   edit.network.rewire()    drag a link's end onto a node -> that end re-points;
 //                            into empty space -> the link is removed
 //   edit.network.reverse()   click a link -> its two ends swap
 //
-// Everything else a diagram editor needs is already universal, and stays that way:
-// `create` mints a node — with an identity, because the node table declares a `key`
-// (see mintDatum) — `move` drags one and the links re-derive on the next render,
-// `editText` writes a node's or a link's content, and `remove` deletes, the engine
-// dropping the links a deleted node stranded because `type: 'ref'` declared that
-// rule (see enforceRefs).
-//
-// ── Two rules, from the marks that draw the nodes ──────────────────────────
-// Where a node's edges are and which of them a link may use are statements the
-// NODE mark makes: its box (`Mark.nodeBox`) and its `ports` channel. The engine
-// hands both to every edit as rules over the node table (`ctx.nodeBox`,
-// `ctx.nodePorts`), because `rewire` lives on the LINK mark and could never see
-// the node mark's channels. The pointer is then tested against DATA — the boxes and
-// port positions those rules give for each node row — so a drop that looks like it
-// landed on a dot did, whichever mark carries the edit.
-//
-// ── Ports pin, bodies leave it open ────────────────────────────────────────
-// A drop lands on a PORT of a node (within a handle's radius of an edge midpoint
-// the node allows for that end), inside a node's BOX, or near its CENTRE (a dot
-// network with no box declared). A port pins that side. A body drop writes `null`:
-// `link` then meets a node with ports at the usable port facing the other end, and
-// slides along a node without ports — so a null end can never use a forbidden edge.
-//
-// ── The link mark names every column ───────────────────────────────────────
-// `source`/`target` and `sourceSide`/`targetSide` are the LINK mark's channels.
-// `connect` sits on a node's ports and writes a link row, so the engine hands it the
-// link mark's channel map (`ctx.targetChannels`); `rewire` and `reverse` sit on the
-// link and read their own. A side is written only where its channel names a field:
-// a link that records no sides simply slides.
+// Landing is tested against node geometry from `ctx.nodeBox` / `ctx.nodePorts`.
+// A port drop pins that side; a body drop writes `null`. Link columns come from the
+// link mark's channels (`ctx.targetChannels` for connect). See .claude/rules/network.md.
 
-import { makeEdit, mintDatum } from './shared.js';
+import { makeEdit, mintDatum, andWhen } from './shared.js';
 import { HANDLE_DEFAULTS } from '../plot/mark.js';
 import { pickThreshold, HIT_TOLERANCE } from './pick.js';
 import { nodeBoxesOf, boxAt } from '../plot/nodeBox.js';
@@ -52,16 +24,11 @@ const CONNECT_THRESHOLD = 28;
 /** Half-extent assumed for a node with no declared box — the same as link's. */
 const DEFAULT_EXTENT = 12;
 
-/**
- * How far the pointer must travel from the press before a release on the node it
- * started from makes a loop. A port sits ON its node's edge, so without this a
- * plain click on a port would land on that node's own body and draw a loop.
- */
+/** Pointer travel needed before a release on the starting node makes a loop. */
 const LOOP_TRAVEL = 8;
 
 /**
- * The nodes-role table, its rows, and its key column — the three things every network
- * edit needs, read off the canonical schema so a renamed table still resolves.
+ * The nodes-role table's name, schema, rows and key column.
  * @param {import('../types').EditContext} ctx
  * @returns {{ name: string, table: any, rows: any[], key: string } | null}
  */
@@ -75,10 +42,9 @@ function nodesOf(ctx) {
 }
 
 /**
- * The link columns a network edit reads and writes, from the LINK mark's channels:
- * `source`/`target` (else the link table's two `ref` columns, in order — what
- * `link` draws with) and `sourceSide`/`targetSide` (only where a channel names a
- * field).
+ * The link columns, from the link mark's channels: `source`/`target` (else the
+ * table's two `ref` columns, in order) and `sourceSide`/`targetSide` (only where a
+ * channel names a field).
  * @param {import('../types').EditContext} ctx
  * @param {Record<string, any>} channels the link mark's channel map
  * @returns {{ source: string, target: string, sourceSide: string | null, targetSide: string | null } | null}
@@ -139,16 +105,14 @@ function allowedSides(roles, end) {
 }
 
 /**
- * The node a link END would land on, and the side it would take: a port of a node
- * that allows that end there, else a node's body, else (no box declared) the node
- * whose centre is within `threshold`.
+ * The node a link end would land on and its side: an allowed port, else a node's
+ * body, else (no box declared) the node whose centre is within `threshold`.
  * @param {import('../types').EditContext} ctx
  * @param {{ name: string, table: any, rows: any[] }} nodes
  * @param {'source' | 'target'} end which end is being placed
  * @param {number | null} exclude a row that may not be chosen (the other end's node, with no self-loops)
  * @param {{ index: number, side: string | null, body: boolean } | null} [self] the node a
- *   loop would return to, when loops are allowed: its starting port is never a landing
- *   (a click on it is not a loop), and its body only once `body` says the pointer left
+ *   loop would return to: its starting port never lands, its body only when `body` is set
  * @returns {{ row: any, index: number, side: string | null } | null}
  */
 function landingOf(ctx, nodes, end, exclude, self = null) {
@@ -172,8 +136,7 @@ function landingOf(ctx, nodes, end, exclude, self = null) {
         });
         if (best) return best;
     }
-    // Then a body: inside the box, nearest centre wins where boxes overlap. A node
-    // whose ports allow this end nowhere is not a target at all.
+    // Then a body. A node whose ports allow this end nowhere is skipped.
     if (geo.boxed) {
         const inside = boxAt(p, nodes.rows, (_, i) => geo.boxes[i], {
             accepts: (i) => {
@@ -200,10 +163,8 @@ function landingOf(ctx, nodes, end, exclude, self = null) {
 }
 
 /**
- * The PORTS a drop for this end could land on, as `{ x, y, key }` — the points the
- * engine probes to decide which ports to show during a drag (`Edit.targets`). A
- * chart with no ports returns null — not "nowhere to land" but "nothing to probe":
- * a drop on any node body is fair, and there is nothing to light.
+ * The ports a drop for this end could land on, as `{ x, y, key }`, for the engine
+ * to probe (`Edit.targets`). Null when the chart has no ports.
  * @param {import('../types').EditContext} ctx
  * @param {'source' | 'target'} end
  * @returns {{ x: number, y: number, key: string }[] | null}
@@ -226,10 +187,9 @@ function portTargets(ctx, end) {
 }
 
 /**
- * Would a link a→b be a PARALLEL link the table doesn't allow? Never on a multigraph
- * (`multi: true`). Otherwise, does the table already hold this pair — where, on an
- * undirected table, B→A IS the edge A→B. `skip` is the row being rewired, which may
- * keep its own pair.
+ * Whether a→b would be a disallowed parallel link: false when `multi: true`, else
+ * whether the pair already exists (either way round when undirected). `skip` is
+ * the row being rewired.
  * @param {import('../types').EditContext} ctx
  * @param {{ source: string, target: string }} fields
  * @param {any} a @param {any} b @param {number | null} skip
@@ -249,14 +209,9 @@ function linked(ctx, fields, a, b, skip) {
  * connect — drag from a node's port to another node to create a link.
  *
  * Goes on a node mark's `ports` channel: `ports: { value: …, edit:
- * edit.network.connect() }`. The drag starts on a port, so it is `pick: 'direct'`,
- * and the connect driver claims it by CAPABILITY. It writes a LINK row
- * (`table: 'links'`, a ROLE) into the columns the link mark's channels name.
- *
- * What it may make is the links table's statement: a second link between one pair
- * only with `multi: true`, and a link from a node back to itself only with
- * `selfLoops: true` — released on another of that node's ports, or on its body once
- * the pointer has moved off the port it started from.
+ * edit.network.connect() }`. Direct-pick, claimed by the connect driver. Writes a
+ * row to the `links` role table. Parallel links need `multi: true`; self-loops
+ * need `selfLoops: true`.
  * @param {any} [options]
  * @returns {import('../types').Edit}
  */
@@ -266,7 +221,6 @@ export function connect(options = {}) {
         type: 'network.connect',
         gesture: 'drag',
         pick: 'direct',
-        // The proposal is a LINK row even though the gesture landed on a node.
         table: 'links',
         cardinality: 'append',
         threshold: threshold != null ? threshold : CONNECT_THRESHOLD,
@@ -283,8 +237,7 @@ export function connect(options = {}) {
             if (!from) return undefined;
             const fromId = from[nodes.key];
             if (fromId == null) return undefined;
-            // A drag that starts on a port a link may not LEAVE by makes nothing —
-            // not even a band. (A hidden port is still under the pointer.)
+            // Nothing from a port a link may not leave by.
             const portsRule = /** @type {any} */ (ctx).nodePorts;
             if (portsRule) {
                 const roles = portsRule(from, session.fromIndex, nodes.rows) || {};
@@ -296,9 +249,7 @@ export function connect(options = {}) {
                 ...(fields.sourceSide ? { [fields.sourceSide]: session.fromSide != null ? session.fromSide : null } : {}),
                 ...(fields.targetSide ? { [fields.targetSide]: toSide } : {}),
             });
-            // A half-made row, for the PREVIEW only: the link being drawn, with no
-            // target yet. Its free end is the pointer (the ghost pass hands it to
-            // the link mark). On commit the same gesture makes nothing.
+            // Preview only: a link with no target yet, its free end at the pointer.
             const dangling = () => {
                 if (!ctx.preview) return undefined;
                 const datum = mintDatum(ctx, {
@@ -319,9 +270,6 @@ export function connect(options = {}) {
             if (toId == null) return dangling();
             if (linked(ctx, fields, fromId, toId, null)) return dangling();
 
-            // mintDatum seeds every declared column of the LINK table from its
-            // schema (ctx.schema is the target table's — see computeEdit), so a link
-            // arrives with its weight/label defaults rather than two columns.
             const datum = mintDatum(ctx, {
                 defaults,
                 seed: { [fields.source]: fromId, [fields.target]: toId, ...sideSeed(to.side) },
@@ -332,13 +280,11 @@ export function connect(options = {}) {
 }
 
 /**
- * rewire — drag a link's END to reconnect it, or off into space to remove it.
+ * rewire — drag a link's end to reconnect it, or into empty space to remove it.
  *
- * Goes in a `link` mark's `edits`, which is what gives each end a handle. The
- * handle is tagged with its end, so the edit knows which column to write;
- * `rewire({ channels: ['target'] })` limits it to one end. Where you drop decides:
- * a port re-points the end and pins that side, a body re-points it (sliding, or the
- * allowed side facing the other end), and empty space removes the link.
+ * Goes in a `link` mark's `edits`; each end handle is tagged with its end.
+ * `rewire({ channels: ['target'] })` limits it to one end. A port drop pins that
+ * side; a body drop writes a null side.
  * @param {any} [options]
  * @returns {import('../types').Edit}
  */
@@ -357,18 +303,14 @@ export function rewire(options = {}) {
         scope: 'network',
         threshold: threshold != null ? threshold : CONNECT_THRESHOLD,
         ...rest,
-        // The ends it moves: the link mark draws a handle for each. The fields
-        // themselves come from the link's channel map (or its ref columns).
         channels: endsAllowed,
-        when: (/** @type {import('../types').EditContext} */ ctx) => {
-            // A gesture on the link BODY is not a rewire; only an end handle is.
+        // Only an end handle, not the link body.
+        when: andWhen((ctx) => {
             const end = endOf(ctx);
-            if (!end || !endsAllowed.includes(end)) return false;
-            return userWhen ? !!userWhen(ctx) : true;
-        },
-        // The ports the moved end could land on — never the OTHER end's node: a drop
-        // there lands on nothing, and "nothing" is a removal, which a probe would
-        // otherwise count as a place to land.
+            return !!end && endsAllowed.includes(end);
+        }, userWhen),
+        // Ports the moved end could land on, excluding the other end's node
+        // (a drop there removes the link).
         targets: (/** @type {import('../types').EditContext} */ ctx) => {
             const end = endOf(ctx);
             const nodes = nodesOf(ctx);
@@ -395,8 +337,7 @@ export function rewire(options = {}) {
             const loops = linkRulesOf(/** @type {any} */ (ctx).schemaSpec).selfLoops;
             const to = landingOf(ctx, nodes, end, !loops && otherIndex >= 0 ? otherIndex : null);
             if (!to || to.row[nodes.key] == null) {
-                // Off every node: the end follows the pointer while you aim, and the
-                // link is removed if you let go here — a link cannot dangle.
+                // Off every node: preview follows the pointer; commit removes the link.
                 if (ctx.preview) return { ...ctx.datum, [field]: null };
                 return ctx.data.filter((_, i) => i !== ctx.index);
             }
@@ -415,18 +356,7 @@ export function rewire(options = {}) {
 }
 
 /**
- * reverse — swap a link's two ends.
- *
- * The missing directed gesture: `rewire` re-points ONE end at a different node, and
- * `connect` builds a new edge, but nothing could turn A→B into B→A. That is the one
- * thing a reader of a directed diagram most often wants to correct, and re-drawing
- * the link is a poor substitute — it loses every other column on the row.
- *
- * Goes on the `link` mark, which declares `supportsNetwork`, so `scope: 'network'`
- * is a real capability check here (unlike `connect`, which sits on an ordinary node
- * mark and therefore sets none). It lands on the link's hit path — which is why
- * `link` draws one.
- *
+ * reverse — click a link to swap its two ends. Goes on the `link` mark.
  * @param {any} [options]
  * @returns {import('../types').Edit}
  */
@@ -441,9 +371,7 @@ export function reverse(options = {}) {
             if (!ctx.datum) return undefined;
             const fields = linkFieldsOf(ctx, ctx.markChannels || {});
             if (!fields) { warnRefs('reverse'); return undefined; }
-            // On an unordered table the two ends mean the same thing, so this
-            // rewrites the row and changes nothing anyone can see. Say so rather
-            // than letting a gesture that appears to do nothing look broken.
+            // Undirected: swapping has no visible effect, so warn instead.
             if (isDirected(/** @type {any} */ (ctx).schemaSpec) === false) {
                 warn(
                     'reverse:undirected',

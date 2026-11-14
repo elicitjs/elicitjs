@@ -1,19 +1,12 @@
 // @ts-check
-// guides.tip — a tooltip, as a GUIDE: the row under the pointer, drawn as a box
-// of its values. It views STATE (`ui.hit`, the engine's own hit test of
-// `ui.pointer`) and writes nothing, which is exactly what a guide is, and it is
-// why a tip can never block elicitation: no mark becomes pointer-active to show
-// one, the box itself is pointer-transparent, and dispatch does not change.
-//
-// Every mark takes `tip: true | string[] | fn` as a shorthand; the engine
-// desugars it into one of these bound to that mark (`mark: feature.id`).
+// guides.tip: a tooltip box with the values of the row under the pointer
+// (`ui.hit`). The box is pointer-transparent. A mark's `tip: true | string[] | fn`
+// desugars into a tip bound to that mark.
 import { GUIDE_OPTIONS } from '../vocabulary.js';
-import { warnUnknownGuideOptions } from './shared.js';
+import { warnUnknownGuideOptions, plainValue } from './shared.js';
 import { measureText } from '../core/measure.js';
 import { markCenter } from '../edit/shared.js';
 import { resolveFormat } from '../format.js';
-
-export const TIP_OPTIONS = GUIDE_OPTIONS.tip;
 
 /**
  * @param {{ mark?: string, text?: string[] | ((row: any, ctx: any) => string | string[]),
@@ -26,16 +19,15 @@ export const TIP_OPTIONS = GUIDE_OPTIONS.tip;
  * @returns {import('../types').Guide}
  */
 export function tip(options = {}) {
-    warnUnknownGuideOptions('tip', options, TIP_OPTIONS);
+    warnUnknownGuideOptions('tip', options, GUIDE_OPTIONS.tip);
     const { mark, text, anchor = 'pointer', dx = 12, dy = 12, fill, stroke, fontSize: fontSizeOpt, format } = options;
     const fmt = resolveFormat(format);
     /** @param {any} v @returns {string} */
     const show = (v) => {
         if (v == null) return '';
-        if (v instanceof Date) return v.toLocaleDateString();
-        if (typeof v === 'number') return format ? fmt(v) : String(Math.round(v * 1000) / 1000);
-        if (typeof v === 'object') return Array.isArray(v) ? `[${v.length}]` : '{…}';
-        return String(v);
+        if (typeof v === 'number' && format) return fmt(v);
+        if (typeof v === 'object' && !(v instanceof Date)) return Array.isArray(v) ? `[${v.length}]` : '{…}';
+        return plainValue(v, 1000);
     };
 
     return {
@@ -43,8 +35,8 @@ export function tip(options = {}) {
         type: 'tip',
         tracksPointer: true,
         build: (_rows, _scales, _w, _h, ctx) => {
-            const pointer = ctx.ui && ctx.ui.pointer;
-            const hits = (ctx.ui && ctx.ui.hits) || (ctx.ui && ctx.ui.hit ? [ctx.ui.hit] : []);
+            const pointer = ctx.ui?.pointer;
+            const hits = ctx.ui?.hits || (ctx.ui?.hit ? [ctx.ui.hit] : []);
             // A tip bound to a mark reads that mark's own row under the pointer,
             // even when an inert label or another mark is drawn over it.
             const hit = mark != null ? hits.find((/** @type {any} */ h) => h.featureId === mark) : hits[0];
@@ -66,11 +58,10 @@ export function tip(options = {}) {
             lines = lines.filter((l) => l !== '');
             if (!lines.length) return [];
 
-            const fontSize = fontSizeOpt ?? ((ctx.theme && ctx.theme.font && ctx.theme.font.size) || 10) + 1;
+            const fontSize = fontSizeOpt ?? (ctx.theme?.font?.size || 10) + 1;
             const lineHeight = Math.round(fontSize * 1.35);
             const pad = 6;
-            // A small allowance: the page's own font is often a little wider than
-            // the measuring context's fallback family.
+            // Allowance for the page font being wider than the measuring font.
             const textW = Math.max(...lines.map((l) => measureText(l, { fontSize }))) * 1.08 + 2;
             const boxW = textW + pad * 2;
             const boxH = lines.length * lineHeight + pad * 2 - (lineHeight - fontSize);
@@ -86,9 +77,9 @@ export function tip(options = {}) {
             if (x < 0) x = 0;
             if (y < 0) y = 0;
 
-            const inkFill = fill ?? ((ctx.theme && ctx.theme.background) || '#ffffff');
-            const inkStroke = stroke ?? ((ctx.theme && ctx.theme.axis && ctx.theme.axis.stroke) || '#9ca3af');
-            const labelFill = (ctx.theme && ctx.theme.axis && ctx.theme.axis.labelFill) || '#374151';
+            const inkFill = fill ?? (ctx.theme?.background || '#ffffff');
+            const inkStroke = stroke ?? (ctx.theme?.axis?.stroke || '#9ca3af');
+            const labelFill = ctx.theme?.axis?.labelFill || '#374151';
             return [
                 {
                     type: 'rect', x, y, width: boxW, height: boxH, rx: 3,

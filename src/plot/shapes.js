@@ -1,13 +1,7 @@
 // @ts-check
-// shapes.js — the geometry behind `plot.shape`: a vocabulary of named shapes,
-// an SVG path parser, and the one placement that bakes a unit shape into a
-// positioned, scaled, rotated path with a hit polygon.
-//
-// Pure (no DOM), so the mark, the legend's shape chip and the tests share it.
-// A shape is kept in UNIT form — centred on the origin, fitting [-1, 1] — and
-// placed per row by `placeShape`, so `size` means the same thing it does on a
-// `point` (the radius of the box the shape fits) whatever the path's native
-// coordinates were.
+// shapes.js — the geometry behind `plot.shape`: named shapes, an SVG path
+// parser, and `placeShape`, which bakes a unit shape (centred, fitting [-1, 1])
+// into a positioned, scaled, rotated path with a hit polygon. No DOM.
 import * as d3 from 'd3';
 import { sampleQuadratic, sampleCubic } from './hitpath.js';
 
@@ -45,9 +39,7 @@ function tokenize(d) {
     let m;
     /** @type {{ cmd: string, nums: number[] } | null} */
     let cur = null;
-    let consumed = 0;
     while ((m = re.exec(d)) !== null) {
-        consumed += m[0].length;
         if (m[1]) { cur = { cmd: m[1], nums: [] }; out.push(cur); }
         else if (cur) cur.nums.push(parseFloat(m[2]));
         else return null;
@@ -239,7 +231,7 @@ export function flatten(segs) {
 }
 
 /**
- * A shape in UNIT form: parsed, centred on its bounding box, scaled so the box
+ * A shape in unit form: parsed, centred on its bounding box, scaled so the box
  * fits [-1, 1]. `spec` is a named shape or an SVG path. Cached. Null when the
  * path cannot be read.
  * @param {string} spec
@@ -266,11 +258,9 @@ export function unitShape(spec) {
 }
 
 /**
- * Place a unit shape: scale to radius `r`, rotate by `angle` (math degrees,
- * counter-clockwise on screen — the same convention a node's `angle` carries),
- * translate to (cx, cy). The transform is BAKED into `d` (a path carries no
- * `angle` of its own, as needle's does), and `points` is the outline polygon
- * (the first subpath) the pick layer measures and the canvas can draw.
+ * Place a unit shape: scale to radius `r`, rotate by `angle` (degrees,
+ * counter-clockwise on screen), translate to (cx, cy). The transform is baked
+ * into `d`; `points` is the first subpath's outline, for picking and canvas.
  * @param {{ segments: Segment[] }} unit
  * @param {number} cx @param {number} cy @param {number} r @param {number} [angle]
  * @returns {{ d: string, points: [number, number][] }}

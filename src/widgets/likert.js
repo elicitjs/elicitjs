@@ -1,14 +1,11 @@
 // @ts-check
-// likert.js — a Likert scale as a survey instrument. Opinionated styling, but no
-// new machinery: a `point` on a band of the response options, `create` under the
-// `probe` driver (the answer follows the pointer, a click sets it), and
-// `count({ max: 1, strategy: 'replace' })` to keep exactly one. The survey look —
-// option rings, a track, labels under each ring — is the guide layer (theme.js).
+// likert.js: a Likert scale. A `point` on a band of the options, `create` under
+// the `probe` driver (hover previews, a click sets), and
+// `count({ max: 1, strategy: 'replace' })` to keep one answer. The rings come
+// from theme.js.
 //
-// Returns an ElicitSpec: Elicit(likert({ question, options })).
-//
-// The plain-API twin is the same mark + edit + constraint + guides; see
-// docs/widgets.html — expand the widget to customize.
+// Returns an ElicitSpec: Elicit(likert({ question, options })). The plain-API
+// twin is on the `/widgets` page of the elicitjs-docs site.
 
 import { point } from '../plot/index.js';
 import { create } from '../edit/index.js';
@@ -38,12 +35,10 @@ export function likert(opts = {}) {
         height,
         theme,
         margins: { top: 34, right: 60, bottom: 44, left: 60 },
-        // The contract of the elicited dataset. `ordinal`, not `categorical`: a
-        // Likert's options run from one pole to the other, so the domain's order is
-        // meaningful. The schema is what lets the scales resolve with zero rows.
+        // `ordinal`: the options' order is meaningful. The schema lets the scales
+        // resolve with zero rows.
         schema: { choice: { type: 'ordinal', domain: options } },
-        // A `point` would give each option a tick; the rings want the interval a
-        // band provides, so the chart overrides the mark's preference.
+        // A band, so each ring gets an interval rather than a tick.
         scales: { x: { type: 'band' } },
         // The elicited dataset: the one answer, or no rows until the first click.
         data: value != null ? [{ choice: value }] : [],
@@ -62,9 +57,8 @@ export function likert(opts = {}) {
                     x: { field: 'choice' }
                 },
                 edits: [
-                    // Hover previews the answer in the ring under the cursor; the
-                    // click commits it. `advance: false` — a Likert has one stage,
-                    // and re-clicking simply moves the answer.
+                    // Hover previews, a click commits. `advance: false`: one stage,
+                    // and re-clicking moves the answer.
                     create({ pick: 'probe', channels: ['x'], advance: false, stage })
                 ]
             })

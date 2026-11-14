@@ -1,9 +1,6 @@
 // @ts-check
-// panel.js — the PLOT AREA's own surface (`theme.panel`), as distinct from the
-// chart's `background`, which covers the margins too. A filled panel is the ggplot2
-// grey; a stroked one is a frame (Observable Plot's `frame`, Flint's
-// `structure.frame`). The engine emits it FIRST, so it is the floor every gridline,
-// axis and mark paints over.
+// panel.js — the plot area's own surface (`theme.panel`), distinct from the chart
+// `background`, which covers the margins too. Emitted first, so everything paints over it.
 
 /**
  * The panel node for a plot of `width × height`, or none when the theme sets

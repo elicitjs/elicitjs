@@ -1,53 +1,33 @@
 // @ts-check
-// guards.js — the engine's DEV DIAGNOSTICS, in one module.
-//
-// Every function here reports through `warn(key, msg)` from core/dev.js — on by
-// default, deduped once per key, silenced with `setWarnings(false)`. None of them
-// is control flow: the engine draws the same chart whether or not a guard fires.
-// They lived at the top of core/elicit.js; they are here so the engine file holds
-// the engine and a new guard is a function added here, not more lines in a
-// 2500-line closure. The two capability tables (`SCOPE_CAPABILITY`,
-// `KIND_SATISFIES`) live beside the guards that read them.
-//
-// They used to be gated on a Vite-only `import.meta.env.DEV` constant, which made
-// every one of them dead on webpack/Next and stripped them from the built bundle;
-// see the header of core/dev.js. Never re-gate a guard on a bundler-specific global.
+// guards.js — the engine's dev diagnostics. Every guard reports through
+// `warn(key, msg)` (core/dev.js) and none is control flow: the chart draws the
+// same whether or not one fires. Never gate a guard on a bundler-specific global.
+// The capability tables (`SCOPE_CAPABILITY`, `KIND_SATISFIES`) sit beside the
+// guards that read them.
 
 import { axisOf } from './encoding.js';
-import { scaleKey } from './scales.js';
-import { driverFor, needsPlaneOnTop } from '../edit/drivers/index.js';
+import { scaleFor } from './scales.js';
+import { drivers, driverFor, needsPlaneOnTop } from '../edit/drivers/index.js';
 import { UNVERIFIED } from '../edit/shared.js';
 import { warn, warningsEnabled } from './dev.js';
 
-// The capability guards below report through `warn(key, msg)` from core/dev.js —
-// on by default, deduped once per key, silenced with `setWarnings(false)`. They
-// used to be gated on a Vite-only `import.meta.env.DEV` constant, which made every
-// one of them dead on webpack/Next and stripped them from the built bundle; see
-// the header of core/dev.js. Never re-gate a guard on a bundler-specific global.
 /**
- * How a mark is named in a dev message. `id` is an OPTIONAL author field, so most
- * specs leave it unset and every guard that interpolated it read `mark "undefined"`.
- * Prefer the author's id, fall back to the factory name the mark stamps on itself
- * (`type` — see the mark contract in plot/mark.js), and only then to the
- * anonymous form.
+ * How a mark is named in a dev message: the author's id, else the factory name
+ * (`type`), else an anonymous form.
  * @param {any} feature
  * @returns {string}
  */
 export function markLabel(feature) {
     if (!feature) return '(unknown mark)';
-    // An author-chosen id is the most specific thing we can say. An engine-assigned
-    // one (`autoId`) is just a position, so prefer the factory name when the mark
-    // stamped one, and fall back to the placeholder only when it didn't.
+    // An engine-assigned id (`autoId`) is just a position, so prefer the factory name.
     if (feature.id && !feature.autoId) return `"${feature.id}"`;
     if (feature.type) return `${feature.type}()`;
     return feature.id ? `"${feature.id}"` : '(an unnamed mark)';
 }
 
-// Scope goes in the name: `edit.line.draw()` expects a line mark, `edit.arc.edge()`
-// an arc, and so on. Each scope names the mark capability that makes it work; a
-// mismatch is a silent no-op at runtime (the edit's `when` gate never fires), so
-// warn once per feature+edit. One table, not one function per family — a new
-// mark family adds a row here, not a new guard.
+// Each edit scope names the mark capability it needs. A mismatch is a silent no-op
+// (the `when` gate never fires), so warn once per feature+edit. A new mark family
+// adds a row here.
 /** @type {Record<string, { flag?: string, test?: (f: any) => boolean, expects: string }>} */
 export const SCOPE_CAPABILITY = {
     line: { flag: 'supportsSeries', expects: 'a line mark (line/area)' },
@@ -58,14 +38,12 @@ export const SCOPE_CAPABILITY = {
     trend: { flag: 'supportsTrend', expects: 'a trend mark (trend/trendBand)' },
     network: { flag: 'supportsNetwork', expects: 'a link mark' },
     legend: { flag: 'isLegend', expects: 'a legend element' },
-    // The one capability that is not a boolean flag: "draws a scale" is what
-    // `views` says, and axis / grid / legend all say it. A domain edit belongs on
-    // any of them — the domain is a property of the scale the element draws, not of
-    // the particular chrome it draws it as — so the entry carries a predicate.
+    // Not a flag: any element that `views` a scale (axis, grid, legend) can take a
+    // domain edit.
     scale: { test: (/** @type {any} */ f) => f.views === 'scale', expects: 'an axis or legend element' },
 };
 
-// What a scale `kind` satisfies. A mark declares the CAPABILITY it needs, never a
+// What a scale `kind` satisfies. A mark declares the capability it needs, never a
 // scale type — the same rule the rest of the engine follows (see core/scales.js).
 /** @type {Record<string, (kind: string) => boolean>} */
 export const KIND_SATISFIES = {
@@ -76,15 +54,8 @@ export const KIND_SATISFIES = {
 };
 
 /**
- * A mark that needs something specific from a scale says so (`Mark.requires`), and
- * this reports the mismatch instead of letting the mark degrade in silence.
- *
- * Silent degradation is the worst failure mode this library has, because the chart
- * still draws: a waffle with no band scale falls back to 20px-wide blocks over a
- * [0,1] domain and looks like a deliberate design; a trend with a missing scale
- * returns no nodes at all and looks like a spec that "just didn't render". Neither
- * said anything. The declaration lives on the MARK (it knows what its geometry
- * needs) and the check lives here (it knows what the scales resolved to).
+ * A mark that needs something from a scale says so (`Mark.requires`); report the
+ * mismatch instead of letting the mark degrade silently with fallback geometry.
  * @param {any} feature
  * @param {import('../types').ScaleMap} scales
  */
@@ -161,16 +132,9 @@ export function warnProjectionCartesianMix(features, scales) {
     );
 }
 
-// A plane gesture carries no node, so it fans to EVERY feature's plane-pick edits.
-// Two marks over the SAME table each declaring `create()` therefore append twice per
-// click. Direct-pick edits are immune (routed to the touched node's feature alone).
-// So: a whole-dataset edit belongs on exactly one mark PER TABLE. Warn rather than
-// branch — the engine stays ignorant of specific edit types.
-//
-// Scoped by the TABLE each edit writes, because two marks over different tables are
-// not duplicates at all: a node mark's `create` and a creator on a link mark append
-// to different arrays. Reporting them would make every network chart open with a
-// warning that says to delete one of two edits that do unrelated things.
+// A plane gesture fans to every feature's plane-pick edits, so two marks over the
+// same table each declaring `create()` append twice per click. Grouped by the table
+// each edit writes: marks over different tables are not duplicates.
 /**
  * @param {any[]} features
  * @param {(f: any) => import('../types').Edit[]} editsOf
@@ -182,10 +146,8 @@ export function warnDuplicatePlaneEdits(features, editsOf, tableOfEdit) {
     for (const f of features) {
         for (const e of editsOf(f)) {
             if (e.pick === 'direct') continue;
-            // A domain or selection edit writes the schema or the pipeline state,
-            // never the rows, so it cannot double-apply a whole-dataset change. An
-            // edit whose driver resolves ONE row to write (a sweep, a nearest pick, a
-            // brush) cannot either: each mark paints the row its own driver chose.
+            // Domain and selection edits never write rows, and a driver that
+            // `selects` one row per mark cannot double-apply.
             if (e.target === 'domain' || e.target === 'selection') continue;
             const d = driverFor(e);
             if (d && d.selects) continue;
@@ -196,9 +158,7 @@ export function warnDuplicatePlaneEdits(features, editsOf, tableOfEdit) {
     }
     for (const [table, owners] of Object.entries(byTable)) {
         if (owners.length < 2) continue;
-        // Keyed by the offending mark set, not a module-level boolean: a docs page
-        // renders many charts, and a single global one-shot meant the second broken
-        // chart on a page never reported at all.
+        // Keyed by the offending mark set, so each broken chart on a page reports.
         warn(
             `planedup:${table}:${owners.map(markLabel).join(',')}`,
             `${owners.length} marks carry a plane-pick edit over the same rows ` +
@@ -209,26 +169,18 @@ export function warnDuplicatePlaneEdits(features, editsOf, tableOfEdit) {
     }
 }
 
-// A legend picker writes a ROW, but a swatch names a VALUE — so the row comes from
-// the legend's `row`, which defaults to the chart's SELECTION. On a table with more
-// than one row and nothing selected, the picker has no target and a click writes
-// nothing. That is usually a legitimate WAITING state ("click a bar, then a
-// swatch"), which is why the legend just renders dimmed rather than complaining.
-//
-// It is a BUG only when nothing can ever arm it: no `row` pinned, several rows, and
-// no mark over that table carrying a selection edit. Then the picker is decoration.
-// Whether some OTHER feature can select is not a question a legend can answer from
-// inside its own build(), which is why the guard lives here.
+// A legend picker writes the legend's `row`, which defaults to the selection. With
+// several rows and nothing selected a click writes nothing, which is normally a
+// waiting state. It is a bug only when nothing can ever arm it: no `row`, several
+// rows, and no mark over that table with a selection edit.
 /**
  * @param {any[]} features
  * @param {(f: any) => import('../types').Edit[]} editsOf
  * @param {(f: any) => any[]} rowsOf
  */
 export function warnUnreachableLegendRow(features, editsOf, rowsOf) {
-    // Only an edit that writes a ROW needs one. A DOMAIN edit
-    // (edit.scale.categories) reshapes the scale the legend draws and a SELECTION
-    // edit writes pipeline state, so both are armed by the scale alone — counting
-    // them as pickers reported every rename-only legend as broken.
+    // Only an edit that writes a row needs one. Domain and selection edits (those
+    // with a `target`) are armed by the scale alone.
     const picks = (/** @type {any} */ f) => editsOf(f).filter((e) => !e.target);
     const legends = features.filter((f) => f && f.isLegend && picks(f).length && f.row == null);
     if (!legends.length) return;
@@ -250,7 +202,7 @@ export function warnUnreachableLegendRow(features, editsOf, rowsOf) {
 }
 
 /**
- * `edit.hierarchy.nest` reads where a node is RELEASED; something else has to carry
+ * `edit.hierarchy.nest` reads where a node is released; something else has to carry
  * it there. On a mark with no drag edit of its own the node never leaves its spot,
  * so the pointer is the only thing that moves and the drop reads as a teleport.
  * @param {any} feature
@@ -269,17 +221,10 @@ export function warnNestAlone(feature, edits) {
 }
 
 
-// `connect` resolves its TARGET by finding the node nearest the pointer when the
-// drag ends. Any other unarbitrated drag edit on the same mark defeats that
-// completely: `move` drags the SOURCE node along under the pointer, so the nearest
-// node at release is the one the drag started from, and connect reads that as
-// "released on itself" and does nothing. Both gestures look reasonable in the spec
-// and neither reports anything — the whole feature is just silently dead, which is
-// the failure mode this codebase warns about rather than tolerates.
-//
-// The fix is arbitration, not removal: `move({ when: when.noShift })` beside
-// `connect({ when: when.shift })`, which is also how every diagram editor
-// distinguishes the two.
+// `connect` finds its target as the node nearest the pointer at release. An
+// unarbitrated drag edit on the same mark (e.g. `move`) carries the source node
+// under the pointer, so connect sees a release on itself and does nothing. The fix
+// is `when`: `move({ when: when.noShift })` beside `connect({ when: when.shift })`.
 /** @param {any} feature @param {import('../types').Edit[]} edits */
 export function warnConnectConflict(feature, edits) {
     const connects = edits.filter(e => e.type === 'network.connect' && !e.when);
@@ -297,26 +242,17 @@ export function warnConnectConflict(feature, edits) {
     );
 }
 
-// An edit that WRITES ROWS declares it: `cardinality` says how the dataset's
-// shape changes ('append' one row, 'appendMany', 'toggle' one on/off, 'delete').
-// Read as a capability by the create guards — never a list of type names, which
-// is what this was, and which missed `network.connect` and every custom creator.
+// A creator declares `cardinality`; read as a capability, never a list of type names.
 const CREATES = new Set(['append', 'appendMany', 'toggle']);
 /** @param {import('../types').Edit} e @returns {boolean} */
-export function isDatasetCreator(e) {
+function isDatasetCreator(e) {
     return e.target !== 'domain' && CREATES.has(/** @type {string} */ (e.cardinality));
 }
 
 /**
- * Creation writes dataset ROWS, so it only makes sense on a DATA MARK positioned by an
- * invertible axis (the mark-agnostic model: mint a datum from the scales, every mark
- * that views the rows encodes it). Warn (dev only) when a datum-minting edit lands
- * where that can't happen:
- *   - a GUIDE (axis/grid): it edits the DOMAIN (edit.axis.*), it has no rows to mint;
- *   - a mark with no invertible positional channel: the pointer can't be inverted to a
- *     datum, so mintDatum returns undefined and the create is a silent no-op.
- * (rule/trend are NOT flagged: they carry invertible x/y and CAN place a datum — that
- * they read as a guide/derived line is a usage convention the docs matrix covers.)
+ * Creation mints dataset rows, so it needs a data mark with an invertible
+ * positional channel. Warn when a creator sits on a chart element (which edits the
+ * domain instead) or on a mark whose positional channels cannot invert.
  * @param {any} feature
  * @param {import('../types').Edit[]} edits
  * @param {import('../types').ScaleMap} scales
@@ -354,11 +290,9 @@ export function warnCreateOnNonMark(feature, edits, scales) {
 }
 
 /**
- * An EXTENT mark (a rect drawn from x1/x2 or y1/y2 SPANS) needs its extent seeded, or a
- * create mints it with zero size — an invisible row. Warn when a datum-minting edit is
- * present and neither the field schema nor the creator's own `defaults` supplies the
- * span endpoints. (A band-sized rect or a point mark has automatic extent, so it is
- * skipped: no span endpoint channels.)
+ * An extent mark (a rect from x1/x2 or y1/y2 spans) needs its span seeded, or a
+ * create mints a zero-size row. Warn when neither the schema nor the creator's
+ * `defaults` seeds the endpoints.
  * @param {any} feature
  * @param {import('../types').Edit[]} edits
  * @param {Record<string, any> | undefined} schema
@@ -367,9 +301,7 @@ export function warnCreateEmptyExtent(feature, edits, schema) {
     const ch = feature.channels || {};
     /** @type {string[]} */
     const spanFields = [];
-    // A span channel can exist without a `field` (an x1 given as a {value}); that
-    // endpoint has no field to seed, so drop it rather than printing "doesn't seed
-    // undefined".
+    // A span channel with no `field` (a {value}) has nothing to seed, so drop it.
     if (ch.x1 && ch.x2) spanFields.push(ch.x1.field, ch.x2.field);
     if (ch.y1 && ch.y2) spanFields.push(ch.y1.field, ch.y2.field);
     const named = spanFields.filter(Boolean);
@@ -390,12 +322,8 @@ export function warnCreateEmptyExtent(feature, edits, schema) {
 }
 
 /**
- * An edit's `pick` names its target strategy: `direct` (the node hit), `plane`
- * (no node — the registry's plane driver), or a lifecycle driver. A pick that
- * names NO registered driver is a silently dead edit: nothing claims it, the
- * plane is never raised, and no gesture ever reaches `apply`. Report it once per
- * feature+pick — a typo (`pick: 'nearset'`) or a custom driver that was never
- * `registerDriver`ed both land here.
+ * An edit whose `pick` names no registered driver is silently dead (a typo, or a
+ * custom driver never registered). Report once per feature+pick.
  * @param {any} feature
  * @param {import('../types').Edit[]} edits
  */
@@ -406,21 +334,16 @@ export function warnUnclaimedPick(feature, edits) {
         warn(
             `${markLabel(feature)}:nopick:${e.pick}`,
             `${e.type}() on ${markLabel(feature)} has pick: "${e.pick}", which names no ` +
-            `registered driver, so no gesture will ever reach it. Built-in picks are ` +
-            `direct, plane, nearest, probe, sweep, draw, brush, brushRect, geoBrush, ` +
-            `axisDrag, slide; a custom one needs registerDriver().`
+            `registered driver, so no gesture will ever reach it. Registered picks are ` +
+            `${['direct', ...drivers.map((d) => d.name)].join(', ')}; a custom one needs registerDriver().`
         );
     }
 }
 
 /**
- * An option an edit factory was handed that nothing reads. Marks, elements and
- * guides have warned on these for a while; edits could not, because a driver's
- * knobs legitimately ride the descriptor (`brushRect({ resize: 'x' })`) and only
- * the registry knows which driver an edit reaches. So `makeEdit` stamps what its
- * factory's vocabulary could not account for, and this subtracts the driver's
- * declared `options` before reporting. `slide({ exent: 200 })` used to be silently
- * inert — the quietest class of authoring bug, at the layer that writes the data.
+ * An option an edit factory was handed that nothing reads. `makeEdit` stamps the
+ * keys its vocabulary did not account for; the driver's declared `options` are
+ * subtracted before reporting.
  * @param {any} feature
  * @param {import('../types').Edit[]} edits
  */
@@ -473,18 +396,10 @@ export function describe(v) {
 
 
 /**
- * THE dead-drag guard. An edit maps a gesture back through a channel's scale, so
- * it can only write a value if that scale INVERTS. Attach `move()` to a colour or
- * symbol channel — or to any scale d3 gives no `invert()` (ordinal, sequential,
- * diverging) — and `invertChannel` returns undefined, `apply` returns an unchanged
- * clone, that clone passes every constraint, and a no-op commits. The cursor turns
- * editable, the drag feels alive, and NOTHING happens or is logged. It is the
- * quietest failure in the library and the likeliest first-run frustration.
- *
- * `warnCreateOnNonMark` above covers this for datum-MINTING edits only, and it
- * passes if ANY of x/y inverts. This covers the everyday surface (move, resize,
- * slide, rotate, cycle) and reports per dead channel, so a `move` across x and y
- * with a dead y is not silenced by a live x.
+ * The dead-drag guard. An edit maps a gesture back through a channel's scale, so
+ * it writes nothing if that scale does not invert, while the drag still feels
+ * alive. Reports per dead channel, so a live x does not hide a dead y.
+ * Creators are covered by `warnCreateOnNonMark`.
  * @param {any} feature
  * @param {import('../types').Edit[]} edits
  * @param {import('../types').ScaleMap} scales
@@ -492,9 +407,8 @@ export function describe(v) {
 export function warnDeadEditChannels(feature, edits, scales) {
     const markChannels = feature.channels || {};
     for (const e of edits) {
-        // Declared on the edit (makeEdit): only an edit that runs the pointer back
-        // through a scale can die on a non-invertible one. `'domain'` (slide)
-        // interpolates over the domain instead, and works on a ramp.
+        // Only an edit that runs the pointer back through a scale can die here;
+        // `'domain'` (slide) interpolates over the domain and works on a ramp.
         if (e.inverts !== true) continue;
         // A creator mints a whole row rather than inverting one channel, and has
         // its own guard (warnCreateOnNonMark).
@@ -502,13 +416,14 @@ export function warnDeadEditChannels(feature, edits, scales) {
         if (feature.supportsGeo) continue; // placed by the projection, not a channel scale
         const names = e.channels || [];
         if (!names.length) continue;
-        const dead = names.filter((n) => {
+        /** @param {string} n */
+        const tested = (n) => {
             const spec = markChannels[n];
             // No field means no column to write; warnMisplacedEdits reports that case.
-            if (!spec || spec.field == null) return false;
-            // A scale is one ENCODING, keyed by (channel, field); the bare name is
-            // the positional path and the fallback.
-            const s = /** @type {any} */ (scales)[scaleKey(n, spec.field)] || /** @type {any} */ (scales)[n];
+            return spec && spec.field != null ? scaleFor(scales, n, spec.field) : null;
+        };
+        const dead = names.filter((n) => {
+            const s = tested(n);
             return s && !s.invertible;
         });
         if (!dead.length) continue;
@@ -516,7 +431,7 @@ export function warnDeadEditChannels(feature, edits, scales) {
             `${markLabel(feature)}:dead:${e.type}:${dead.join(',')}`,
             `${e.type}() on ${markLabel(feature)} edits channel${dead.length > 1 ? 's' : ''} ` +
             `${dead.map((n) => `"${n}"`).join(', ')}, whose scale cannot be inverted ` +
-            `(${dead.map((n) => /** @type {any} */ (scales)[n].type || 'ordinal').join(', ')}). ` +
+            `(${dead.map((n) => tested(n).type || 'ordinal').join(', ')}). ` +
             `An edit runs a gesture BACKWARD through the scale, so a non-invertible channel ` +
             `silently does nothing. Edit a positional channel (x/y), or give the channel a ` +
             `continuous, band or point scale.`
@@ -525,13 +440,10 @@ export function warnDeadEditChannels(feature, edits, scales) {
 }
 
 /**
- * An INVERTING edit that resolves no channel writes nothing: `apply` runs the
- * pointer back through each of `ctx.channels`, and there are none. That is what a
- * mark-level `edits: [edit.line.sweep()]` or `edits: [move()]` is — the edit was
- * never placed on a channel and names none itself — and it was dead in silence
- * (the sweep driver quietly assumed `y`). Say which channel to name.
+ * An inverting edit that resolves no channel writes nothing (e.g. a mark-level
+ * `edits: [move()]` that names none). Say which channel to name.
  * @param {any} feature
- * @param {import('../types').Edit[]} edits the COLLECTED edits (placement channels injected)
+ * @param {import('../types').Edit[]} edits the collected edits (placement channels injected)
  */
 export function warnMissingEditChannels(feature, edits) {
     if (feature.supportsGeo) return; // geo edits invert through the projection
@@ -549,7 +461,7 @@ export function warnMissingEditChannels(feature, edits) {
 
 /**
  * A line or area with `handles: false` emits no handle nodes, and a proximity
- * edit (sweep, nearest, draw) resolves its target FROM those nodes — so the edit
+ * edit (sweep, nearest, draw) resolves its target from those nodes — so the edit
  * finds nothing and the chart reads as inert. `handles: 'hit'` is the spelling
  * for invisible-but-targetable.
  * @param {any} feature
@@ -576,12 +488,12 @@ export function warnHiddenHandles(feature, edits) {
 export const SPEC_KEYS = [
     // Frame
     'width', 'height', 'margins', 'responsive', 'overflow', 'focusOutline', 'clip',
-    // The three kinds of feature: marks view DATA, elements view a SCALE, guides
-    // view STATE. Plus the implicit layers that desugar into elements.
+    // The three kinds of feature: marks view data, elements view a scale, guides
+    // view state. Plus the implicit layers that desugar into elements.
     'marks', 'elements', 'guides', 'axes', 'legends',
     // The elicited dataset and its contract
     'schema', 'data', 'constraints', 'lock', 'context',
-    // Scales (per channel). No `domain` here — a domain describes the DATA.
+    // Scales (per channel). No `domain` here — a domain describes the data.
     'scales', 'projection',
     // Presentation
     'theme', 'effects',
@@ -594,13 +506,8 @@ export const SPEC_KEYS = [
 ];
 
 /**
- * Spec keys that are WRONG in a specific, diagnosable way. Same idea as
- * `MISTAKEN_OPTIONS` for marks (plot/mark.js), one layer up.
- *
- * This guard exists because the spec was the ONE layer with no validation at all.
- * A mark warns about `color:`; a chart element warns about `tickss:`; but
- * `Elicit({ mark: [...] })` drew an empty chart in silence — at the layer every
- * single user starts from, and where a typo costs the most.
+ * Spec keys that are wrong in a specific, diagnosable way (like `MISTAKEN_OPTIONS`
+ * for marks in plot/mark.js).
  * @type {Record<string, string>}
  */
 export const MISTAKEN_SPEC_KEYS = {

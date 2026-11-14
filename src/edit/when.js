@@ -1,10 +1,8 @@
 // @ts-check
-// when.js — arbitration predicates for an edit's `when`, kept separate from the
-// edits so the same edit works under any strategy. `when` decides WHETHER an edit
-// claims a gesture (e.g. plain-click recolours, Alt-click deletes); it never
-// changes what the edit does.
+// when.js — predicates for an edit's `when`, which decides whether the edit claims
+// a gesture (e.g. Alt-click deletes) without changing what it does.
 
-import { nearestSeries, DEFAULT_PICK_THRESHOLD } from './pick.js';
+import { nearestSeries, pickThreshold } from './pick.js';
 
 /**
  * The proximity radius `when.near`/`when.far` arbitrate with: the active edit's
@@ -12,8 +10,7 @@ import { nearestSeries, DEFAULT_PICK_THRESHOLD } from './pick.js';
  * @param {import('../types').EditContext} ctx
  * @returns {number}
  */
-const thresholdOf = (ctx) =>
-    ctx.edit && ctx.edit.threshold > 0 ? ctx.edit.threshold : DEFAULT_PICK_THRESHOLD;
+const thresholdOf = (ctx) => pickThreshold(ctx.edit);
 
 export const when = {
     /** @param {import('../types').EditContext} ctx */
@@ -28,12 +25,8 @@ export const when = {
     modifier: (key) => (/** @type {import('../types').EditContext} */ ctx) => !!(ctx.event && ctx.event[key]),
     /** @param {string} key */
     noModifier: (key) => (/** @type {import('../types').EditContext} */ ctx) => !(ctx.event && ctx.event[key]),
-    // Proximity arbitration for path authoring: is the pointer near an existing
-    // line, or out in empty space? Pair anchor({ when: when.near }) with
-    // newSeries({ when: when.far }) to add-to-nearest vs start-a-new-line.
-    // The radius is the EDIT'S own `threshold` when it carries one (read off
-    // ctx.edit), so arbitration and pick agree on what "near" means; the shared
-    // default otherwise.
+    // Is the pointer near an existing line (within the edit's threshold)? E.g.
+    // anchor({ when: when.near }) with newSeries({ when: when.far }).
     /** @param {import('../types').EditContext} ctx */
     near: (ctx) => nearestSeries(ctx.marks || [], ctx.pointer.x, ctx.pointer.y, thresholdOf(ctx)) != null,
     /** @param {import('../types').EditContext} ctx */

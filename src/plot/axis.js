@@ -1,20 +1,11 @@
 // @ts-check
 import { ELEMENT_OPTIONS } from '../vocabulary.js';
-// axis.js — axes and gridlines as CHART ELEMENTS (the Observable Plot model).
+// axis.js — axes and gridlines as chart elements (`views: 'scale'`). Used
+// explicitly (`elements: [elements.axisX(), elements.gridY()]`) or through the
+// implicit `axes` option (core/axes.js).
 //
-// An axis is scale chrome, not a data mark: `views: 'scale'`, singular `channel`,
-// CHROME paint options (not desugared channels), domain-targeting edits
-// (`edit.axis.*`). They are `elicit.elements.*`, and only there.
-//
-// Two ways to use them:
-//   1. EXPLICITLY:  elements: [ elements.axisX({ ticks: 5 }), elements.gridY() ]
-//      (or still inside `marks` — same factories)
-//   2. IMPLICITLY via the global `axes` convenience on Elicit(), which desugars
-//      into these same elements (see core/axes.js).
-//
-// Positioning: `anchor` ('bottom'|'top'|'left'|'right') sets the base side; a
-// width/height/scales-aware `transform(ctx) -> {x?,y?}` overrides the base
-// translate component(s) — e.g. cross at the origin, or a centred 1D slider axis.
+// `anchor` sets the side; `transform(ctx) -> {x?, y?}` overrides the base
+// translate (e.g. cross at the origin).
 
 import * as d3 from 'd3';
 import { positionOnScale, isDiscrete, isBand, bandStartOf, bandwidthOf } from '../core/scales.js';
@@ -23,16 +14,14 @@ import { measureText } from '../core/measure.js';
 import { warnUnknownElementOptions, resolveHandles, elementEdits } from './mark.js';
 
 /**
- * `axis`'s own option vocabulary, on top of the universal chart-element options
- * (id / edit / edits / field). Exported so core/axes.js can hand a
- * grid only the options a grid reads, instead of forwarding the whole axis config.
- * Keep in sync with the destructure in `axis` below.
+ * `axis`'s option list, on top of the universal chart-element options
+ * (id / edit / edits / field). Keep in sync with the destructure in `axis`.
  * @type {string[]}
  */
 export const AXIS_OPTIONS = ELEMENT_OPTIONS.axis;
 
 /**
- * `grid`'s option vocabulary. Keep in sync with the destructure in `grid` below.
+ * `grid`'s option list. Keep in sync with the destructure in `grid`.
  * @type {string[]}
  */
 export const GRID_OPTIONS = ELEMENT_OPTIONS.grid;
@@ -41,11 +30,8 @@ export const GRID_OPTIONS = ELEMENT_OPTIONS.grid;
 const numOf = (/** @type {any} */ v) => (v instanceof Date ? v.getTime() : v);
 
 /**
- * An interactive category label (editable DISCRETE axis): a foreground text node
- * that carries its `category` so edit.scale.categories() can rename it (dblclick ->
- * inline input -> commit) and route the gesture. `index: 0` is a sentinel so the
- * engine's direct-pick dispatch (which keys on node.index) accepts it — a domain
- * edit ignores the index.
+ * An editable category label on a discrete axis, carrying its `category` for
+ * edit.scale.categories(). `index: 0` is a sentinel so direct-pick dispatch accepts it.
  * @param {{ x: number, y: number, textAnchor: string, v: any, format: (v: any) => string, fill: string, fontSize: number }} o
  * @returns {import('../types').FeatureNode}
  */
@@ -57,9 +43,7 @@ function categoryLabel({ x, y, textAnchor, v, format, fill, fontSize }) {
 }
 
 /**
- * The "×" remove affordance next to a category label (editable DISCRETE axis). A
- * click routes to edit.scale.categories()'s remove edit, which drops the category
- * and its rows.
+ * The "×" remove affordance next to an editable category label.
  * @param {{ x: number, y: number, v: any, fontSize: number }} o
  * @returns {import('../types').FeatureNode}
  */
@@ -129,10 +113,8 @@ export function tickData(scale, opts = {}) {
 }
 
 /**
- * A per-tick option: a constant, or `(value, index) => constant` — the conditional
- * axis (a long tick and a bold label on January, a lighter one elsewhere). Only the
- * TICK-level options take the function form; the spine is one line and reads the
- * constant (or the theme) whatever the ticks do.
+ * A per-tick option: a constant, or `(value, index) => constant`. Only tick-level
+ * options take the function form; the spine reads the constant or the theme.
  * @param {any} opt
  * @param {any} v
  * @param {number} i
@@ -140,16 +122,13 @@ export function tickData(scale, opts = {}) {
  */
 const perTick = (opt, v, i) => (typeof opt === 'function' ? opt(v, i) : opt);
 
-/** A formatted tick label split into lines: a `\n` in the label is a line break,
- *  which is how a date axis puts the year under its January.
+/** A formatted tick label split into lines at `\n`.
  * @param {any} label @returns {string[]} */
 const linesOf = (label) => String(label).split('\n');
 
 /**
- * The axis's chrome, resolved for ONE scale: the option, else the theme's
- * per-kind token (`axis.discrete` / `axis.continuous`), else the axis-wide token.
- * Shared by `measureTitle` and `build`, so what the engine reserves and what the
- * axis draws are one geometry.
+ * The axis's chrome for one scale: the option, else the theme's per-kind token,
+ * else the axis-wide token. Shared by `measureTitle` and `build`.
  * @param {any} o the axis options
  * @param {any} scales
  * @param {any} scale
@@ -182,9 +161,8 @@ function chromeOf(o, scales, scale) {
 }
 
 /**
- * A tick label's text-anchor: `labelAlign` when set, else the side's natural
- * anchor (centred under an x tick; flush against a y axis, so the text runs away
- * from the plot).
+ * A tick label's text-anchor: `labelAlign`, else centred on x and running away
+ * from the plot on y.
  * @param {boolean} isX @param {number} dir @param {any} c resolved chrome
  * @returns {'start' | 'middle' | 'end'}
  */
@@ -194,10 +172,8 @@ function labelAnchorOf(isX, dir, c) {
 }
 
 /**
- * Where the tick LABELS reach, measured outward from the axis line, and the widest
- * label — the one geometry both the title placement and the layout reservation
- * read. A rotated label reaches by its projection on the axis normal; a multi-line
- * one by its line count.
+ * How far the tick labels reach outward from the axis line, the widest label, and
+ * the most lines. Read by title placement and the layout reservation.
  * @param {boolean} isX
  * @param {any} c resolved chrome
  * @param {string[]} labels formatted labels
@@ -220,11 +196,8 @@ function labelReach(isX, c, labels, tickSize, dir = -1) {
         const across = isX ? Math.cos(rad) : Math.sin(rad);
         return { far: base + labelW * along + c.fontSize * across * 0.6, labelW, lines };
     }
-    // Unrotated: an x label's baseline sits 0.7em past the padding (its cap height),
-    // every further line one line-height lower. A y label reaches by the part of its
-    // width that runs AWAY from the plot, which its alignment decides: all of it
-    // flush against the axis, none of it when `labelAlign` turns it inward (the
-    // space-saving axis, whose labels sit inside the plot on a negative padding).
+    // Unrotated x: baseline 0.7em past the padding, plus a line-height per extra
+    // line. Unrotated y: the part of the label's width that runs away from the plot.
     if (isX) return { far: Math.max(0, base + c.fontSize * 0.7 + (lines - 1) * lineH), labelW, lines };
     const textAnchor = labelAnchorOf(false, dir, c);
     const outward = textAnchor === 'middle' ? 0.5
@@ -238,12 +211,8 @@ function labelReach(isX, c, labels, tickSize, dir = -1) {
  * @returns {import('../types').Mark}
  */
 export function axis(options = {}) {
-    // No normalizeMarkOptions here, deliberately: an axis encodes no datum. It
-    // draws a SCALE (picked by `channel`), so it has no channel map and its
-    // stroke/fill/fontSize are chrome — plain options, like axisRadial's
-    // AXIS_CHROME set. There is nothing to desugar. But there IS something to
-    // VALIDATE, which is a separate job: warnUnknownElementOptions is the
-    // diagnostics half on its own (see plot/mark.js).
+    // Not normalizeMarkOptions: an axis has no channel map, and its paint options
+    // are plain chrome.
     warnUnknownElementOptions('axis', options, AXIS_OPTIONS);
     const {
         channel = 'x',
@@ -254,9 +223,7 @@ export function axis(options = {}) {
         tickFormat,
         title,
         titleAngle,
-        // Chrome. Every one defaults to the theme's axis token of the same name
-        // (per scale kind — see chromeOf), resolved at build time because a factory
-        // can't see the chart's theme. An explicit option still wins.
+        // Chrome. Each defaults to the theme's axis token of the same name at build time.
         //   stroke / strokeWidth / line   the spine (and the ticks' paint)
         //   tickSize / tickPadding        tick length; gap from tick to label
         //   fill / fontSize / fontFamily / fontWeight / labelAngle   the labels
@@ -278,20 +245,16 @@ export function axis(options = {}) {
         titleFontSize,
         titleFontWeight,
         titlePadding,
-        // Where the title sits ALONG the axis ('start' | 'middle' | 'end' — 'end' is
-        // the right of an x axis and the top of a y axis), and where each label
-        // sits: `labelAlign` its text-anchor, `labelOffset` px along the axis.
+        // `titleAnchor`: where the title sits along the axis ('end' is right on x,
+        // top on y). `labelAlign`: label text-anchor. `labelOffset`: px along the axis.
         titleAnchor,
         labelAlign,
         labelOffset,
         offset,
         grid = false,
-        // Opt-in interactivity: an edit (edit.axis.scale / edit.scale.categories) or
-        // a list of them, and an optional single field the edit pins (defaults to
-        // every field on the axis). Axes are inert unless `edit`/`edits` is given.
+        // The single field an edit pins (default: every field on the axis).
         field,
-        // Which TABLE an edit on this axis writes. Resolved by NAME in the engine's
-        // one binding pass, like a mark's.
+        // The table an edit on this axis writes, by name.
         table,
         handleColor: handleColorOpt,
         handleSize: handleSizeOpt,
@@ -303,29 +266,22 @@ export function axis(options = {}) {
         titleAnchor, labelAlign, labelOffset, offset,
     };
 
-    // Which way this axis RUNS. For x/y the channel says it. A `count` axis runs
-    // along whichever screen direction its mark stacks in, which the channel name
-    // cannot carry (it is `count` either way), so the ANCHOR decides — and the
-    // anchor is the visual truth for any channel that is not x or y.
+    // Direction: x/y from the channel; any other channel (e.g. `count`) from the anchor.
     const isX = channel === 'x'
         || (channel !== 'y' && (anchor === 'bottom' || anchor === 'top'));
     const edits = elementEdits(options, channel);
-    // Handles and category affordances serve DIRECT edits (a handle drag, a
-    // rename); a plane or driver edit (the wheel zoom, a pan) draws nothing to grab.
+    // Only direct edits get handles and category affordances.
     const editable = edits.some((e) => e.pick === 'direct');
 
     /**
-     * Resolved chrome + tick data + label reach for this render — one pass that
-     * measure and build both read.
+     * Resolved chrome, tick data and label reach, read by measure and build.
      * @param {any} scales
      * @param {any} scale
      */
     const layout = (scales, scale) => {
-        // A per-tick FUNCTION is resolved tick by tick below; the constant chrome
-        // (the spine, the title, a tick the function leaves undefined) takes the
-        // theme's value in its place.
+        // Per-tick functions resolve per tick; the constant chrome uses the theme instead.
         const constant = { ...chromeOpts };
-        for (const k of /** @type {const} */ (['tickSize', 'fontWeight', 'stroke'])) {
+        for (const k of /** @type {const} */ (['tickSize', 'fontWeight', 'stroke', 'fill'])) {
             if (typeof constant[k] === 'function') constant[k] = undefined;
         }
         const c = chromeOf(constant, scales, scale);
@@ -342,30 +298,22 @@ export function axis(options = {}) {
         id,
         type: 'axis',
         isAxis: true,
-        // A GUIDE: it views the SCALE, not columns of the dataset. See types.d.ts's
-        // Mark.views — the engine and resolveChannels branch on this, not on which
-        // of isAxis/isGrid/isLegend happens to be set.
+        // Views the scale, not dataset columns. Read this, not isAxis/isGrid/isLegend.
         views: 'scale',
         channel,
         layer: 'background',
-        // Interactive-axis wiring: the edits the engine collects (mark-level, so
-        // collectEdits picks them up) and the field/table they pin. Empty/undefined
-        // for a plain inert axis. `field` is read by resolveChannels (edit/route.js)
-        // ahead of the emergent `scale.fields[0]`; `table` by the engine's binding pass.
+        // The axis's edits and the field/table they pin. resolveChannels reads
+        // `field` ahead of `scale.fields[0]`.
         edits,
         field,
         table,
-        // A paired grid, when `grid: true` — the engine reads this to auto-add a
-        // matching grid mark alongside the axis (see elicit.js). Harmless otherwise.
+        // Passed through; the implicit `axes` layer (core/axes.js) adds the paired grid.
         grid,
-        // The side this axis draws on, and how far past the plot edge its labels
-        // and title reach — so the engine can reserve that room the way it does a
-        // legend's, instead of a rotated y title falling outside a tight margin.
+        // The side this axis draws on; with `measureTitle`, lets the engine reserve margin.
         anchor,
         /**
-         * How far past the plot edge this axis reaches when it reaches further
-         * than the default margin plans for: a title, rotated or multi-line labels,
-         * an offset. 0 otherwise, so an unstyled axis reserves nothing new.
+         * How far past the plot edge this axis reaches when it has a title, rotated
+         * or multi-line labels, an offset or `labelAlign`; 0 otherwise.
          * @param {import('../types').ScaleMap} scales
          * @returns {number} px from the plot edge to the axis's far edge
          */
@@ -378,8 +326,7 @@ export function axis(options = {}) {
             if (!title) return c.offset + reach.far + 2;
             if (isX) return c.offset + reach.far + c.titlePadding + c.fontSize * 0.5 + c.titleFontSize * 1.15 + 2;
             const angle = titleAngle != null ? titleAngle : (anchor === 'left' ? 90 : -90);
-            // A flat title at an END of a y axis sits above (or below) the plot, not
-            // beside the labels: the side only needs room for the labels.
+            // A flat y title at an end sits above or below the plot, not beside the labels.
             if (!angle && c.titleAnchor !== 'middle') return c.offset + reach.far + 2;
             const gap = angle ? c.fontSize * 0.9 : c.fontSize * 1.2;
             const titleExtent = angle ? c.titleFontSize * 0.7 : measureText(String(title), { fontSize: c.titleFontSize, fontWeight: c.titleFontWeight || undefined }) * 1.06;
@@ -398,8 +345,6 @@ export function axis(options = {}) {
 
             const thm = themeOf(scales);
             const { c, values, format, sizes, maxTick, reach } = layout(scales, scale);
-            // Shared handle contract (plot/mark.js) — axis used to hard-code size
-            // and pull colour from theme.axis.handle without going through resolveHandles.
             const handleStyle = resolveHandles(scales, {
                 handles: true,
                 handleSize: handleSizeOpt,
@@ -409,8 +354,7 @@ export function axis(options = {}) {
             const handleSize = handleStyle.size;
             const handleStroke = handleStyle.stroke;
 
-            // Tick/label direction: axes on bottom/right push ticks in the positive
-            // direction (down / right), top/left in the negative.
+            // Ticks point down/right on bottom/right axes, up/left otherwise.
             const dir = (anchor === 'bottom' || anchor === 'right') ? 1 : -1;
             const base = baseTranslate(anchor, width, height);
             // `offset` moves the whole axis away from the plot.
@@ -431,13 +375,12 @@ export function axis(options = {}) {
             /** @type {import('../types').FeatureNode[]} */
             const nodes = [];
 
-            // An editable DISCRETE axis makes its category labels interactive (rename
-            // by dblclick-typing, remove via an × affordance); an editable CONTINUOUS
-            // axis grows draggable end-handles. Both leave the spine/ticks inert.
+            // Editable discrete axis: renamable labels and × buttons. Editable continuous
+            // axis: draggable end-handles.
             const discrete = editable && isDiscrete(scale);
             const continuous = editable && scale.kind === 'continuous';
 
-            // Domain spine — spans the scale's pixel range along the axis.
+            // Domain spine.
             if (c.line) {
                 nodes.push(isX
                     ? { type: 'line', x1: t.x, x2: t.x + width, y1: t.y, y2: t.y, stroke: spineStroke, strokeWidth: c.strokeWidth, background: true, pointerEvents: 'none' }
@@ -450,7 +393,7 @@ export function axis(options = {}) {
                 if (p == null || Number.isNaN(p)) return;
                 const size = sizes[i];
                 const tickStroke = perTick(stroke, v, i) ?? c.stroke;
-                const labelFill = perTick(c.fill, v, i);
+                const labelFill = perTick(fill, v, i) ?? c.fill;
                 const weight = perTick(fontWeight, v, i) ?? c.fontWeight;
                 const text = String(format(v));
                 const lines = linesOf(text);
@@ -459,8 +402,7 @@ export function axis(options = {}) {
                     ...(weight != null ? { fontWeight: weight } : {}),
                     ...(lines.length > 1 ? { lines, lineHeight: lineH } : {}),
                 };
-                // Labels sit one row past the LONGEST tick, so a long tick on one
-                // value doesn't knock its label out of line.
+                // Labels sit past the longest tick so they stay in line.
                 const reachOut = maxTick + c.tickPadding;
                 if (size > 0) {
                     nodes.push(isX
@@ -470,10 +412,8 @@ export function axis(options = {}) {
                 /** @type {any} */
                 let label;
                 if (c.labelAngle) {
-                    // Rotated about the point just past the tick, with the text running
-                    // AWAY from the axis: its end sits at the tick when it rises to
-                    // the right of an x axis below the plot (or to the left of a y
-                    // axis), its start otherwise.
+                    // Rotated about the point past the tick, with the text running away
+                    // from the axis.
                     const up = c.labelAngle > 0;
                     const ends = isX ? (dir > 0 ? up : !up) : dir < 0;
                     label = {
@@ -484,8 +424,7 @@ export function axis(options = {}) {
                         angle: c.labelAngle, ...paint,
                     };
                 } else if (isX) {
-                    // A multi-line label grows away from the axis: down below the
-                    // plot, up above it.
+                    // A multi-line label grows away from the axis.
                     label = {
                         type: 'text', x: t.x + p + c.labelOffset, y: t.y + dir * (reachOut + c.fontSize * 0.7),
                         text, textAnchor: labelAnchorOf(true, dir, c), ...paint,
@@ -507,8 +446,7 @@ export function axis(options = {}) {
                 }
             });
 
-            // Editable affordances past the ticks: a "+" to add a category, or the two
-            // numeric end-handles the axisDrag driver grabs.
+            // A "+" to add a category, or the two end-handles the axisDrag driver grabs.
             if (discrete) {
                 const addX = isX ? t.x + width + c.fontSize : t.x;
                 const addY = isX ? t.y + dir * (c.tickSize + c.fontSize) : t.y + height + dir * (c.tickSize + c.fontSize);
@@ -530,10 +468,9 @@ export function axis(options = {}) {
                     const denom = numOf(gV) - numOf(aV) || 1;
                     nodes.push({
                         type: 'circle',
-                        cx: isX ? t.x + positionOnScale(scale, gV) : t.x,
-                        cy: isX ? t.y : t.y + positionOnScale(scale, gV),
-                        // Placement: at the domain's two extremes — the values a
-                        // rescale drag moves.
+                        cx: isX ? gPix : t.x,
+                        cy: isX ? t.y : gPix,
+                        // At the domain's two extremes.
                         r: handleSize, fill: handleColor, stroke: handleStroke, strokeWidth: handleStyle.strokeWidth,
                         axisHandle: true, handle: end, axis: channel,
                         anchorPixel: aPix, anchorValue: aV, grabPixel: gPix, grabValue: gV,
@@ -543,12 +480,8 @@ export function axis(options = {}) {
                 }
             }
 
-            // Optional axis title, centred along the axis, pushed past the labels.
-            // A y title runs ALONG its axis (rotated, reading bottom to top on the
-            // left, top to bottom on the right) and sits past the widest tick label,
-            // measured — it used to be horizontal at a fixed offset, so it crossed
-            // the labels or was clipped, and nearly every author dropped it.
-            // `titleAngle` overrides the rotation (0 for a horizontal y title).
+            // Axis title, past the labels. A y title is rotated to run along its axis
+            // unless `titleAngle` says otherwise (0 for a horizontal title).
             if (title) {
                 const titlePaint = {
                     fill: c.titleFill, fontSize: c.titleFontSize, ...font,
@@ -566,10 +499,8 @@ export function axis(options = {}) {
                 } else {
                     const angle = titleAngle != null ? titleAngle : (dir < 0 ? 90 : -90);
                     if (!angle && at !== 'middle') {
-                        // Flat, at an end: past the end of the axis, starting at the
-                        // axis line and running over the plot — Plot's "↑ Frequency",
-                        // Vega-Lite's titleX/titleY. 'end' is the top. Leave room for
-                        // it in the margin on that side.
+                        // Flat, at an end: past the end of the axis, starting at the axis
+                        // line ('end' is the top).
                         nodes.push({
                             type: 'text', x: t.x,
                             y: at === 'end'
@@ -579,9 +510,8 @@ export function axis(options = {}) {
                         });
                     } else {
                         const gap = angle ? c.fontSize * 0.9 : c.fontSize * 1.2;
-                        // Rotated, the title runs along the axis: 'end' puts it at the
-                        // top, whichever way it reads. Flat and centred, it hangs AWAY
-                        // from the labels so it never sits on top of them.
+                        // Rotated: 'end' is the top either way it reads. Flat and centred:
+                        // anchored away from the labels.
                         const readsUp = angle > 0;
                         const textAnchor = !angle ? (dir < 0 ? 'end' : 'start')
                             : at === 'middle' ? 'middle'
@@ -603,12 +533,9 @@ export function axis(options = {}) {
 }
 
 /**
- * The shared grid builder — full-span lines across the plot, one per tick.
- *
- * An `auto` grid is one the THEME asked for (`theme.grid.show`), which the
- * implicit axes add on every positional channel: it draws its lines only when the
- * theme's `show` covers its scale's kind, and its zero line whenever the theme sets
- * one. Written by hand, a grid always draws.
+ * The shared grid builder: one full-span line per tick. An `auto` grid (added by
+ * the theme) draws lines only where `theme.grid.show` covers its scale; a
+ * hand-written grid always draws.
  * @param {any} [options]
  * @returns {import('../types').Mark}
  */
@@ -618,8 +545,7 @@ export function grid(options = {}) {
         channel = 'x',
         ticks = 5,
         tickValues,
-        // Line paint defaults to the theme's grid tokens (build-time). `stroke`,
-        // `strokeWidth` and `strokeDash` also take `(value, index) => …`.
+        // Defaults to the theme's grid tokens; these also take `(value, index) => …`.
         stroke: strokeOpt,
         strokeWidth: strokeWidthOpt,
         strokeDash: strokeDashOpt,
@@ -627,9 +553,7 @@ export function grid(options = {}) {
         // An emphasised line at 0 (continuous scales only): `true` for the theme's
         // zero style, an object for one of its own, `false` for none.
         zero: zeroOpt,
-        // Where in a BAND a gridline sits: 0 its start edge, 1 its end, 0.5 (the
-        // default) its centre — Vega-Lite's `bandPosition`. 0 draws the lines
-        // BETWEEN the categories instead of through them. Ignored off a band scale.
+        // Where in a band a gridline sits: 0 start, 0.5 centre, 1 end. Band scales only.
         bandPosition: bandPositionOpt,
         id,
     } = options;
@@ -645,7 +569,7 @@ export function grid(options = {}) {
         views: 'scale',
         channel,
         layer: 'background',
-        // Set by the implicit-axes layer (core/axes.js) on a grid the THEME asked for.
+        // Set by core/axes.js on a grid the theme asked for.
         auto: false,
         /**
          * @param {any[]} _data
@@ -661,8 +585,7 @@ export function grid(options = {}) {
             const g = /** @type {any} */ (thm.grid);
             const continuous = scale.kind === 'continuous';
             const show = g.show || 'none';
-            // 'value' is the axis the VALUE runs along: the continuous one, or y
-            // when both are (a line over time grids its values, not its dates).
+            // The value axis: the continuous one, or y when both are.
             const other = /** @type {any} */ (scales)[isX ? 'y' : 'x'];
             const isValueAxis = continuous && (!(other && other.kind === 'continuous') || !isX);
             const drawLines = !mark.auto || show === 'all'

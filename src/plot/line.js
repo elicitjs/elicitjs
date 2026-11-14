@@ -1,32 +1,25 @@
 // @ts-check
-import { isBand } from '../core/scales.js';
-import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, handlesAreAffordance, markCommon, rawChannel, orderFieldOf, resolveValueAxis, orderSeries, seriesKeyOf, hasAnyEdit, inkOf, missingValue } from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, handlePaint, handlesAreAffordance, markCommon, rawChannel, resolveValueAxis, orderSeries, seriesKeyOf, hasAnyEdit, inkOf, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
-// line: a connected-path mark over an ordered set of points. It is deliberately
-// GENERAL — a you-draw-it curve, a multi-series line chart, a connected scatter
-// plot, and a hand-drawn 2D path are the same mark along four orthogonal knobs:
+// line: a connected path over an ordered set of points. One mark covers a
+// you-draw-it curve, a multi-series chart, a connected scatter and a drawn path:
 //
 //   grouping  `series` channel      -> which points form one line (defaults to
-//                                       the fill/stroke field, so lines auto-colour)
-//   ordering  `order` CHANNEL       -> sort each series by that column
+//                                       the fill/stroke field)
+//   ordering  `order` channel       -> sort each series by that column
 //             `connect` option      -> 'domain'   : sort by the domain axis
-//                                                    (a function / time series)
-//                                      'sequence' : connect in creation/array order
-//                                                    (connected scatter, map path)
-//   editing   the edits on the handles (drag direct/nearest/sweep) — not set here
-//   creation  anchor()/newSeries() primitives (see edit/index.js)
+//                                      'sequence' : connect in array order
+//   editing   the edits on the mark (not set here)
+//   creation  edit.line.anchor() / newSeries()
 //
-// Unlike one-node-per-datum marks, `build` emits (per series) one non-interactive
-// `path` connector drawn UNDER the handles, plus one indexed circle HANDLE per
-// datum. Handles are ordinary marks, so drag / nearest-pick / sweep / create /
-// remove / style all reuse the shared machinery. Handles are always
-// emitted (for hit-testing) and merely hidden when `handles: false`.
+// `build` emits one inert `path` per series, then one circle handle per row. Handles
+// are drawn only when an edit can grab them (or `handles` says so).
 //
 //   x: domain, y: value  -> lineY (time series)      x: value, y: domain -> lineX
 //
-// `line` auto-detects the value axis; `lineY`/`lineX` force one. `path` is the
-// same mark with `connect: 'sequence'`, for an order-as-drawn 2D path.
+// `line` resolves the value axis through `resolveValueAxis`; `lineY`/`lineX` force
+// one. `path` is the same mark with `connect: 'sequence'`.
 
 const SINGLE = '__single__'; // group key when no series field is set
 
@@ -36,17 +29,11 @@ const SINGLE = '__single__'; // group key when no series field is set
  * @returns {import('../types').Mark}
  */
 function buildLine(options, defaultConnect = 'domain') {
-    // Desugar top-level style shorthands (stroke: '…', strokeWidth: …) into the
-    // channels so line reads style the same way every mark does.
     const opts = normalizeMarkOptions(options, { mark: 'line', allow: MARK_OPTIONS.line });
     const {
         channels = {},
-        id,
-        edits,
         curve = 'linear',
-        // Handles draw only when something can grab them — an edit on a channel
-        // or in `edits` — the rule bar and arc already follow. A plain recreation
-        // used to need `handles: false` on every line to lose dots it never asked for.
+        // Unset: handles draw only when an edit can grab them.
         handles: handlesOpt,
         handleSize,
         handleColor,
@@ -62,18 +49,14 @@ function buildLine(options, defaultConnect = 'domain') {
         type: 'line',
         channels,
         handles: handlesOpt,
-        // `curve` is read raw (no scale), so it must be declared — same contract as
-        // `link`, which resolves its own per-row `curve` the same way. It was a plain
-        // option here and a raw channel there: one name, two tiers.
+        // Read raw (no scale).
         rawChannels: ['curve', 'series', 'order'],
-        // A line's domain axis is continuous (a point per datum, no band width).
         discreteScale: 'point',
         xKey,
         yKey,
         seriesKey: seriesField,
         connect,
-        // Groups points into series, so the line-scoped edits (edit.line.*) apply.
-        // The engine dev-warns if a line-scoped edit lands on a mark without this.
+        // Capability for edit.line.*.
         supportsSeries: true,
         /**
          * @param {any[]} currentData
@@ -83,36 +66,22 @@ function buildLine(options, defaultConnect = 'domain') {
          * @returns {import('../types').FeatureNode[]}
          */
         build(currentData, scales, width, height) {
-            // Handles draw only when something can grab them. Decided HERE, from the
-            // feature as the engine holds it — a composite merges its edits into a
-            // part after the factory ran, so a factory-time answer missed them.
+            // Decided at build time: a composite merges edits into a part after the factory runs.
             const editsNow = { edits: this && this.edits, channels: (this && this.channels) || channels };
             const handles = handlesOpt !== undefined ? handlesOpt : hasAnyEdit(editsNow);
             const rowHandle = handlesAreAffordance(handlesOpt, editsNow);
-            const { x: xScale, y: yScale } = scales;
 
-            // Which axis carries the value (the point's editable position)?
-            //   explicit (lineY/lineX) wins; else a band axis is the domain, so
-            //   the other axis is the value; else the axis carrying an `edit`;
-            //   else default to value-on-y (the usual time series).
-            // (A line whose x carried the only edit used to flip to value-on-x by that
-            // fact alone — an orientation you could not see in the spec. State it:
-            // lineX, or orientation: 'horizontal'.)
+            // The value axis: explicit orientation, else the non-band axis, else
+            // value-on-y. An edit's channel does not decide it.
             const valueAxis = resolveValueAxis(channels, scales, { orientation: opts.orientation });
-            // The domain (sweep) axis is the other one.
             const domainAxis = valueAxis === 'y' ? 'x' : 'y';
 
             /** @type {import('../types').FeatureNode[]} */
             const nodes = [];
 
-            // Per-datum pixel positions + series key, keeping the GLOBAL datum
-            // index so edits address the right datum after grouping/sorting.
-            // A row with no VALUE has no position: its coordinate is null, which
-            // breaks the path there (core/curves.js) and draws no handle. The domain
-            // axis keeps the centre fallback, so a value-only row still sits on it.
-            // A row whose DOMAIN field is missing has no place along the line at
-            // all (a reference row filling other columns): it is skipped, not a
-            // gap — it sat at the centre and broke the path there.
+            // Pixel positions per row, keeping the global index. A missing value gives
+            // a null coordinate (breaks the path, no handle); a missing domain value
+            // skips the row.
             const placed = currentData.flatMap((d, i) => missingValue(channels, domainAxis, d) ? [] : [{
                 d,
                 i,
@@ -121,9 +90,8 @@ function buildLine(options, defaultConnect = 'domain') {
                 series: seriesField ? d[seriesField] : SINGLE
             }]);
 
-            // Group into series (first-seen order), preserving each group's
-            // original data order so `order: 'sequence'` connects as drawn. Grouped
-            // by KEY (a Date by its time), tagged with the group's first raw value.
+            // Group into series in first-seen order, keeping data order within each.
+            // Grouped by key (a Date by its time), tagged with the first raw value.
             /** @type {Map<any, typeof placed>} */
             const groups = new Map();
             for (const p of placed) {
@@ -132,75 +100,53 @@ function buildLine(options, defaultConnect = 'domain') {
                 if (g) { g.push(p); p.series = g[0].series; } else groups.set(k, [p]);
             }
 
-            // Default ink from the theme (steelblue unless the theme's `ink` or a
-            // `marks.line` override changes it); the connector's stroke and the
-            // handles' fill share it so a line and its handles read as one colour.
+            // Theme default; the path's stroke and the handles' fill share it.
             const lineDefaults = markDefaults(scales, 'line', { stroke: themeOf(scales).ink, strokeWidth: 2 });
 
-            // One connector path per series, its points ordered per `order`.
+            // One path per series, ordered by `connect` / `order`.
             for (const group of groups.values()) {
                 if (group.length < 2) continue; // nothing to connect
                 const pts = orderSeries(group, connect, domainAxis, channels);
                 const style = resolveStyle(scales, channels, group[0].d, lineDefaults, group[0].i, currentData);
-                // One path per SERIES, so a channel-bound curve resolves once per
-                // series against that series' first row — the same rule a line's
-                // paint channels already follow (see ChannelSpec.fn in types.d.ts).
+                // Curve resolves once per series, from its first row.
                 const seriesCurve = String(
                     rawChannel(channels, 'curve', group[0].d, curve, group[0].i, currentData));
                 nodes.push({
                     type: 'path',
                     points: pts.map(p => /** @type {[number, number]} */([p.cx, p.cy])),
-                    // The row behind each vertex, so a tip (or a readout) over the
-                    // path can name the nearest one.
+                    // The row behind each vertex, for tips.
                     pointRows: pts.map((p) => p.i),
                     curve: seriesCurve,
                     ...style,
-                    // A stroked path reads as a line, never a filled blob.
                     fill: 'none',
+                    // Chrome: without this the path, drawn later, eats the handles' drags.
                     pointerEvents: 'none',
-                    // Tag with the group so proximity can resolve WHICH line this is
-                    // (measuring to the path, not just its handles).
+                    // Lets proximity tell which line this is.
                     series: group[0].series
                 });
             }
 
-            // Handles: an ordinary circle per datum, so edits/pick reuse the mark
-            // machinery. Tagged with `series` so a sweep can scope to one line.
-            // A handle is FILLED with its line's colour (the row's resolved stroke)
-            // and ringed with the theme's handle stroke, so a handle on a coloured
-            // series reads as that series — `handleColor` still overrides.
+            // A circle per row, tagged with `series`, filled with the line's colour
+            // unless `handleColor` is set.
             const handleStyle = resolveHandles(scales, { handles, handleSize, handleColor },
                 { fill: lineDefaults.stroke });
                 placed.forEach(({ d, i, cx, cy, series }) => {
                 if (!handleStyle.grabbable) return;
                 if (cx == null || cy == null) return; // a missing value has no handle
                 const paint = resolveStyle(scales, channels, d, lineDefaults, i, currentData);
-                const style = {
-                    fill: handleStyle.visible ? (handleColor || (channels.fill ? inkOf(paint.fill) : null) || inkOf(paint.stroke) || handleStyle.fill) : handleStyle.fill,
-                    stroke: handleStyle.stroke,
-                    strokeWidth: handleStyle.strokeWidth,
-                };
+                const rowInk = handleColor || (channels.fill ? inkOf(paint.fill) : null) || inkOf(paint.stroke);
                 nodes.push({
                     type: 'circle',
                     cx,
                     cy,
-                    // One `handles` vocabulary across marks (plot/mark.js): `false` is
-                    // neither drawn nor grabbable. Invisible-but-grabbable is
-                    // `handles: 'hit'` (transparent fill — not opacity:0).
                     r: handleStyle.size,
-                    ...style,
-                    ...(handleStyle.visible ? {} : {
-                        fill: 'transparent',
-                        stroke: 'none',
-                        strokeWidth: 0,
-                    }),
+                    ...handlePaint(handleStyle, rowInk),
                     data: d,
                     index: i,
                     series,
-                    // Drawn to be grabbed: the engine drops it on a row no live
-                    // edit can reach (a locked or context row, a later stage).
+                    // Dropped by the engine where no live edit reaches the row.
                     rowHandle,
-                    // The domain axis a you-draw-it sweep measures distance along.
+                    // The axis a sweep measures along.
                     sweepAxis: domainAxis
                 });
             });
@@ -237,13 +183,8 @@ export function lineX(options = {}) {
 }
 
 /**
- * A free 2-D path: points connected in CREATION order, both axes free. Same mark
- * as `line`, with `order: 'sequence'` as the default instead of domain order.
- *
- * That is what a lasso, a drawn trace and a connected scatter all are — an ordered
- * sequence of points in the plane, rather than a value read against a domain axis.
- * The name describes the geometry, not the chart genre: this used to also be
- * exported as `connectedScatter`, which named one thing you can draw with it.
+ * A free 2-D path: `line` with `connect: 'sequence'` as the default, so points
+ * join in array order (a lasso, a drawn trace, a connected scatter).
  * @param {any} [options]
  * @returns {import('../types').Mark}
  */

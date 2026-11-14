@@ -1,8 +1,6 @@
 // @ts-check
-// shared.js — the small kit every edit factory builds on: the descriptor
-// normalizer (makeEdit) plus the datum/series helpers create-style edits reuse.
-// Kept separate so the universal edits (basic.js) and the line-scoped edits
-// (line.js) share one implementation of these primitives.
+// shared.js — the kit every edit factory builds on: the descriptor normalizer
+// (makeEdit) plus datum, series and inversion helpers.
 
 import { visualForChannel, axisOf } from '../core/encoding.js';
 import { rangeExtent } from '../core/scales.js';
@@ -11,13 +9,9 @@ import { warn } from '../core/dev.js';
 import { EDIT_UNIVERSAL_OPTIONS, EDIT_OPTIONS } from '../vocabulary.js';
 
 /**
- * The option keys an edit was handed that neither `makeEdit` nor its factory's
- * vocabulary accounts for, stamped on the descriptor for the engine's
- * `warnUnknownEditOptions` to check against the edit's DRIVER (a driver's knobs
- * ride the descriptor by design — `Driver.options` declares them — and only the
- * engine can see the registry). An enumerable symbol: the edit is copied by spread
- * on its way through `collectEdits`, and a spread keeps enumerable symbol keys
- * while JSON.stringify ignores them.
+ * Option keys the edit's vocabulary doesn't know, stamped on the descriptor so
+ * `warnUnknownEditOptions` can check them against the driver's `options`.
+ * A symbol so it survives spread but not JSON.stringify.
  */
 export const UNVERIFIED = Symbol('elicit.unverifiedOptions');
 
@@ -25,21 +19,12 @@ export const UNVERIFIED = Symbol('elicit.unverifiedOptions');
  * @param {any} v
  * @returns {any[]}
  */
-export const asList = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]);
+const asList = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]);
 
 /**
- * Compose an edit's OWN structural guard with an author-supplied `when`, so both
- * must pass.
- *
- * Several edits are only meaningful on a particular kind of node — `edit.stack.edge`
- * on a boundary handle, `edit.scale.categories`' three on a tick label / remove
- * glyph. That guard is part of what the edit IS, not a default the caller is
- * choosing.
- *
- * Those factories used to drop the caller's options entirely rather than risk a
- * `when` overwriting the guard — which also silently swallowed `stage`, `guide`,
- * `name`, `threshold` and `constrain`, so an axis edit could not be staged or
- * guided at all. Composing is what lets the options through safely.
+ * Combine an edit's own structural guard with an author-supplied `when`; both
+ * must pass. Lets an edit that only works on certain nodes (e.g. `edit.stack.edge`
+ * on a boundary handle) still accept the caller's options.
  * @param {(ctx: any) => boolean} guard the edit's own structural precondition
  * @param {((ctx: any) => boolean) | null | undefined} userWhen
  * @returns {(ctx: any) => boolean}
@@ -48,13 +33,9 @@ export const andWhen = (guard, userWhen) =>
     (ctx) => guard(ctx) && (typeof userWhen === 'function' ? !!userWhen(ctx) : true);
 
 /**
- * Strip a `pick` an edit cannot honour, and say so.
- *
- * A few edits are inseparable from one driver: `brushSpan`/`brushRect`/`geo.brush`
- * read a zone lock that only their own driver writes, so pointing them at another
- * strategy produces an edit that silently never fires. They already forced their
- * pick — but did it by quietly dropping the option, which is the same class of
- * silent no-op the drop was protecting against.
+ * Strip a `pick` an edit bound to one driver cannot honour, and warn.
+ * Used by edits that read a zone lock only their driver writes
+ * (`brushSpan`, `brushRect`, `geo.brush`).
  * @param {any} options
  * @param {string} type the edit's type, for the message
  * @param {string} pick the driver it is bound to
@@ -76,18 +57,15 @@ export function claimPick(options, type, pick) {
 /**
  * Normalize an edit spec into the canonical Edit descriptor the engine routes to.
  *
- * Unknown keys PASS THROUGH onto the descriptor: driver-specific knobs
- * (`edgeInset`, `resize`, `move`, …) ride on the edit where their driver reads
- * them (see edgeInsetOf in pick.js). Canonical keys are normalized below and
- * always win over a raw spread value. This is the one sanctioned way a custom
- * driver (registerDriver) carries per-edit options — no post-hoc attachment.
+ * Unknown keys pass through onto the descriptor, which is how a driver reads its
+ * per-edit options (`edgeInset`, `resize`, …). Canonical keys always win over a
+ * raw spread value.
  * @param {any} spec
  * @returns {import('../types').Edit}
  */
 export function makeEdit(spec) {
     const { channel, channels, ...rest } = spec;
-    // Keys the vocabulary does not know. An edit whose type has no entry is a
-    // custom one built here directly, and is not checked.
+    // Keys the vocabulary does not know. A type with no entry is not checked.
     const allow = EDIT_OPTIONS[spec.type];
     const unverified = allow
         ? Object.keys(rest).filter((k) => !EDIT_UNIVERSAL_OPTIONS.includes(k) && !allow.includes(k))
@@ -96,76 +74,46 @@ export function makeEdit(spec) {
         ...rest,
         ...(unverified.length ? { [UNVERIFIED]: unverified } : {}),
         type: spec.type,
-        // Stable handle for `el.control(name)` — the name an external controller
-        // (a slider, a picker, a rotate icon) addresses this edit by. null (the
-        // default) means the edit isn't externally addressable; it stays purely
-        // pointer/keyboard-driven, unchanged. Naming an edit adds no dispatch path.
+        // Handle for `el.control(name)`; null means not externally addressable.
         name: spec.name || null,
         gesture: spec.gesture || 'drag',
-        // `channel` is the single-channel spelling, folded into `channels` here so
-        // EVERY factory accepts either without its own destructuring. The singular
-        // wins: it's the more specific spelling, and it lets a factory default
-        // (`channels: ['x']` in toggle) be overridden by a user's `channel: 'y'`.
+        // The singular `channel` wins, so it overrides a factory's `channels` default.
         channels: channel ? [channel] : (channels || null),
         when: spec.when || null,
         pick: spec.pick || 'direct',
         threshold: spec.threshold != null ? spec.threshold : 0,
-        // 'line' marks a mark-scoped edit (anchor/newSeries/draw/sweep) so the
-        // engine can dev-warn when it's attached to a mark without series support.
+        // Required mark capability (e.g. 'line'), checked by warnScopeMismatch.
         scope: spec.scope || null,
-        // Path-authoring target policy: 'nearest' extends the closest line, 'new'
-        // starts a fresh series. Read by the plane/draw dispatch.
+        // Path-authoring target: 'nearest' extends the closest line, 'new' starts one.
         into: spec.into || null,
         constrain: asList(spec.constrain),
         guide: spec.guide || null,
-        // Multi-stage gate: an edit with a numeric stage is active only when it
-        // equals the engine's current stage; null (the default) is always active.
-        // A uniform descriptor filter — not a mode branch (see elicit.js activeEdits).
+        // Active only when equal to the engine's current stage; null is always active.
         stage: spec.stage != null ? spec.stage : null,
-        // probe-pick only: does a click that settles this edit advance the stage?
-        // Defaults to true for a staged edit (the "line, then cone" flow); set false
-        // to commit repeatedly within one stage (the dot plot's create).
+        // probe-pick only: whether a settling click advances the stage.
         advance: spec.advance !== false,
-        // Write target: absent -> the dataset (a datum or array); 'domain' -> the
-        // schema (edit.axis.*). Read as a capability flag by the engine's commit path.
+        // Write target: absent -> the dataset; 'domain' -> the schema; 'selection'.
         target: spec.target || undefined,
-        // How this edit changes the dataset's SHAPE, declared so the engine can
-        // resolve `activeIndex` (the datum a constraint repairs around) without
-        // knowing what edit it's running:
-        //   'append' -> the gesture minted a row; the active one is the last.
-        //   'delete' -> the gesture dropped a row; no datum is active.
-        //   null     -> the row at `index` is the active one (the common case).
-        // An edit that mints AND drops (toggle), or appends many rows at once
-        // (newSeries/draw), leaves this null: "the touched datum" is genuinely
-        // ambiguous, and null means "resolve nothing around it".
+        // How the edit changes the dataset's shape, so the engine can resolve the
+        // row a constraint repairs around:
+        //   'append' -> minted one row; the active row is the last.
+        //   'delete' -> dropped a row; no active row.
+        //   'appendMany' / 'toggle' -> no single active row.
+        //   null     -> the row at `index` is active.
         cardinality: spec.cardinality || null,
-        // Does this edit run a POINTER back through a channel's scale, so it needs
-        // that scale to invert? Declared, so the dead-drag guard reads a capability
-        // rather than an allowlist of type names (which missed rank and stack.edge).
-        // `'domain'` is kept as stated: slide interpolates over the DOMAIN and never
-        // inverts a pixel, so it works on a colour ramp. Coercing it to a boolean
-        // made the guard report every slide on a ramp as dead.
+        // Whether the edit inverts a pointer through the scale (checked by the
+        // dead-drag guard). 'domain' stays a string: slide never inverts a pixel.
         inverts: spec.inverts === 'domain' ? 'domain' : !!spec.inverts,
-        // Does this edit move a positional domain as a WINDOW over the data (zoom,
-        // pan)? Then rows legitimately fall outside the plot, and the engine clips
-        // the marks to the plot rect unless the spec says `clip: false`.
+        // Moves a positional domain as a window (zoom, pan); turns on clipping.
         viewport: !!spec.viewport,
         apply: spec.apply
     };
 }
 
 /**
- * Claim an edit for ONE tagged handle of a multi-handle feature.
- *
- * When a feature emits several handles over one datum (an area's y1/y2 edges, a
- * trend's intercept/slope), direct-pick dispatch fans a gesture to EVERY direct
- * edit on the feature — so an unguarded drag on the lo handle also runs the hi
- * edge's edit. Each handle carries its `channel`, and this wraps an edit's `when`
- * so it only fires on its own.
- *
- * An UNTAGGED or ABSENT node passes: a mark-level edit spanning both edges still
- * sees every gesture, and a plane/probe-pick edit (which carries no node at all)
- * is not silently killed by a guard written for handles.
+ * Restrict an edit to one tagged handle of a multi-handle feature (an area's
+ * y1/y2 edges), by wrapping its `when` to match the node's `channel` tag.
+ * An untagged or absent node passes, so plane/probe picks still fire.
  * @param {any} edit
  * @param {string} name the `channel` tag this edit owns
  * @returns {any}
@@ -183,16 +131,11 @@ export function claimEdge(edit, name) {
 }
 
 /**
- * A fresh series key not already present in the data — the identity of a new line.
+ * A series key not already in the data, for a new line.
  *
- * When the schema DECLARES the series field's domain, the key is the first
- * declared category no row uses (`nextCategory`, which honours `open`): a chart
- * whose `symbol` domain is ['AAPL', 'IBM'] gets a line called 'IBM', never `0`.
- * With a closed, exhausted domain there is no legal key — returns undefined and
- * warns, so the creator refuses instead of minting a value the axis has no room
- * for. Without a declared domain the key is the smallest non-negative integer
- * free among the existing keys, so colours (an ordinal scale over the keys) stay
- * stable as lines come and go.
+ * With a declared domain, the first unused category (`nextCategory`, honouring
+ * `open`); a closed, exhausted domain returns undefined and warns. Without one,
+ * the smallest unused non-negative integer.
  * @param {any[]} data
  * @param {string | null} seriesField
  * @param {Record<string, any> | null} [schema] the table's field schema
@@ -220,11 +163,8 @@ export function nextSeriesKey(data, seriesField, schema) {
 }
 
 /**
- * The series of the last row a freehand stroke may CONTINUE: the last row that
- * is not read-only. A locked line is given, not elicited, so a far click that
- * "extends the existing path" must not pour new points into it — the lock would
- * accept the append (appending breaks no locked row) and the given line would
- * grow. Returns undefined when every row is locked, so the caller mints a new key.
+ * The series of the last row that is not locked, which a freehand stroke may
+ * continue. Undefined when every row is locked, so the caller mints a new key.
  * @param {any[]} data
  * @param {string | null} seriesField
  * @param {((row: any, i: number) => boolean) | null | undefined} locked
@@ -239,9 +179,7 @@ export function lastFreeSeries(data, seriesField, locked) {
 }
 
 /**
- * A series value as a grouping KEY: a Date groups by its time, so two rows holding
- * equal-valued distinct Date objects fall in one series instead of one per row.
- * Every place that groups or compares series values goes through this.
+ * A series value as a grouping key: a Date groups by its time.
  * @param {any} v
  * @returns {any}
  */
@@ -250,21 +188,10 @@ export function seriesKeyOf(v) {
 }
 
 /**
- * A category for a row an edit is minting — the categorical sibling of
- * `nextSeriesKey`, and the reason `edit.stack.cut` needs no keyboard.
- *
- * The schema owns the domain, and the domain says which categories COULD exist; the
- * data says which are in play. So a new segment takes the first declared category
- * nothing currently uses. Which leaves the case where they run out, and that is
- * where `FieldSchema.open` speaks:
- *
- *   closed (the default) — the domain is the whole vocabulary. Return undefined and
- *     let the caller refuse: minting a category the author didn't declare would put
- *     a value on an axis that has no room for it.
- *   open — the domain is a starting set. Mint a placeholder that collides with
- *     nothing, for the author (or the user, via edit.scale.categories) to rename.
- *     Creating and NAMING are separate acts; blocking the first on the second is
- *     what forces a gesture to become a text field.
+ * A category for a row an edit is minting: the first declared category no row uses.
+ * When they run out:
+ *   closed (default) — return undefined so the caller refuses.
+ *   open — mint a placeholder name that collides with nothing, to rename later.
  *
  * @param {any[]} data
  * @param {string | null | undefined} field
@@ -280,52 +207,24 @@ export function nextCategory(data, field, domain, { open = false, label = 'Categ
     if (!open) return undefined;
     /** @param {number} n */
     const name = (n) => (typeof label === 'function' ? label(n) : `${label} ${n}`);
-    // Number from the domain's length so the first minted name follows the declared
-    // ones, and step past anything already taken (including a previous placeholder).
+    // Number after the declared ones, skipping names already taken.
     let n = (domain || []).length + 1;
     while (used.has(name(n)) || (domain || []).includes(name(n))) n++;
     return name(n);
 }
 
-// The starting values a minted datum gets from the schema. The SCHEMA owns that
-// (core/schema.js), not the edit layer — but a creator reaches for it constantly
-// (mintDatum below, line.js), so it stays part of the authoring kit re-exported from
-// here and edit/index.js. Imported as well as re-exported: `export … from` creates no
-// local binding, and this module calls it.
+// Re-exported for creators. Imported too, since `export … from` creates no local binding.
 export { schemaDefaults };
 
 /**
- * Mint ONE new datum — the single seed-and-invert core every creator builds on
- * (`create`, `toggle`, `anchor`, `draw`'s freehand branch, `geo.create`). Creation
- * is mark-agnostic: a datum is generated from the scales/axes, then whatever mark
- * views the dataset encodes it. This is that generation, in one place:
- *   1. `schemaDefaults(ctx.schema)` — every declared field at its default (else null,
- *      present-but-unset), so a minted row matches the elicited shape.
- *   2. `defaults` — the creator's explicit non-positional seed (group, mag, …), AND
- *      the extent an `rect`/area needs (`width`/`height`, `x2`/`y2`) so it isn't minted
- *      zero-size. These win over the schema.
- *   3. `seed` — values a creator already resolved outside the pointer inversion: geo's
- *      projected lon/lat, a line's series key. These win last and, being present, count
- *      as "placed" on their own.
- *   4. the inverted pointer, per positional channel — the exact inverse of `encode`.
- *   5. an IDENTITY, when the table declares one (see below).
- * Returns the datum, or `undefined` when nothing could be placed (no invertible
- * positional channel and no `seed`) — the "this mark can't create here" signal a
- * caller turns into a no-op (see also warnCreateOnNonMark in elicit.js).
- *
- * ── Identity ───────────────────────────────────────────────────────────────
- * A table may declare one field as its `key` — the column that identifies a row,
- * and the one a `ref` in another table points at. A minted row has to carry one:
- * a row whose identity is null can be referenced by nothing, so a link drawn to it
- * connects nothing and a gesture can never complete it.
- *
- * That is a property of the SCHEMA, not of any particular edit, so it belongs here
- * rather than in a creator of its own — `create`, `toggle` and every other minting
- * edit get it for free, on any table under any structure. `nextCategory` is the
- * same primitive `edit.stack.cut` uses, which is what keeps CREATING and NAMING
- * separate acts: the row arrives with a placeholder, and an `editText` renames it.
- * A closed vocabulary that has run out returns undefined, and the caller refuses —
- * the author declared exactly which rows may exist.
+ * Mint one new datum, the core every creator builds on. Layers, later wins:
+ *   1. `schemaDefaults(ctx.schema)` — every declared field at its default.
+ *   2. `defaults` — the creator's non-positional seed and any extent a rect needs.
+ *   3. `seed` — values already resolved (geo lon/lat, a series key). Counts as placed.
+ *   4. the inverted pointer, per positional channel.
+ *   5. the identity key, when the table declares one (`nextCategory` placeholder).
+ * Returns undefined when nothing could be placed, or when a closed key vocabulary
+ * is exhausted.
  * @param {import('../types').EditContext} ctx
  * @param {{ defaults?: Record<string, any>, seed?: Record<string, any>, label?: string }} [opts]
  * @returns {Record<string, any> | undefined}
@@ -345,8 +244,7 @@ export function mintDatum(ctx, { defaults = {}, seed = {}, label } = {}) {
     if (key && datum[key] == null) {
         const spec = /** @type {import('../types').FieldSchema} */ ((ctx.schema && ctx.schema[key]) || {});
         const id = nextCategory(ctx.data, key, spec.domain || [], {
-            // A key with no declared domain is open by nature — there is no
-            // vocabulary to exhaust — so only an explicit `open: false` closes one.
+            // A key is open unless it says `open: false`.
             open: spec.open !== false,
             label: label || 'Item',
         });
@@ -357,9 +255,7 @@ export function mintDatum(ctx, { defaults = {}, seed = {}, label } = {}) {
 }
 
 /**
- * The field a table declares as its identity, or null. Read off the field map
- * rather than the canonical TableSchema so it works from an edit's `ctx.schema`,
- * which is already the target table's fields.
+ * The field a table's field map declares as its identity key, or null.
  * @param {Record<string, import('../types').FieldSchema> | undefined} schema
  * @returns {string | null}
  */
@@ -372,12 +268,8 @@ function keyFieldOf(schema) {
 }
 
 /**
- * The scene node an edit is currently acting on, regardless of pick strategy:
- * `ctx.node` is set for a direct-pick gesture (the DOM element it landed on),
- * but a plane-pick gesture (nearest/sweep) resolves its target by datum index
- * with no node attached — so fall back to looking the current mark up in
- * `ctx.marks` by `ctx.index`, the same by-datum-index lookup guide.js's
- * `selectEffectNodes` already does for the proximity highlight.
+ * The scene node an edit is acting on: `ctx.node` for a direct pick, else the
+ * mark in `ctx.marks` at `ctx.index` (a plane pick carries no node).
  * @param {import('../types').EditContext} ctx
  * @returns {any | null}
  */
@@ -409,27 +301,17 @@ export function markCenter(node) {
     return null;
 }
 
-// One keyboard step along a continuous axis, as a fraction of its pixel range.
-// Arbitrary by nature (there is no "natural" step on a continuous scale), so it's
-// named rather than sprinkled: fine enough to place a value, coarse enough that
-// crossing the axis doesn't take a hundred presses. A `snap` constraint quantizes
-// the result on commit, which is how a stepped field gets exact stops for free.
+// One keyboard step on a continuous axis, as a fraction of its pixel range.
 const NUDGE_FRACTION = 0.01;
 const NUDGE_FRACTION_COARSE = 0.1;
 
 /**
- * Where the pointer would be if you nudged it one step along `scale` — the pixel a
- * keyboard press stands in for, so an arrow key drives the SAME edit a drag does
- * (the edit still just inverts a pointer through a scale; it never learns there was
- * a keyboard).
- *
- * The step has to be asked of the scale, which is why this can't live in the
- * renderer: on a discrete axis a step is "the next category" (a fixed pixel nudge
- * would do nothing at all until it happened to cross a band edge), and on a
- * continuous one it's a fraction of the range.
+ * The pixel one keyboard step along `scale` moves the pointer to, so an arrow key
+ * drives the same edit a drag does. On a discrete axis a step is the next
+ * category; on a continuous one it is a fraction of the range.
  * @param {any} scale the axis scale (may be null / non-invertible)
  * @param {number} at current pixel position on that axis
- * @param {-1 | 0 | 1} dir step direction in PIXEL space
+ * @param {-1 | 0 | 1} dir step direction in pixel space
  * @param {boolean} [coarse] a bigger step (Shift)
  * @returns {number} the new pixel position (unchanged when it can't step)
  */
@@ -442,9 +324,7 @@ export function nudgeTarget(scale, at, dir, coarse = false) {
         const current = scale.invertValue(at);
         const i = domain.indexOf(current);
         if (i < 0) return at;
-        // A domain isn't always drawn low-to-high (a reversed range, or y's inverted
-        // pixels), so ask the scale which way its categories actually run before
-        // deciding which one "one step right/down" means.
+        // Ask the scale which way its categories run in pixels.
         const ascends = scale.encode(domain[domain.length - 1]) > scale.encode(domain[0]);
         const next = i + (ascends ? dir : -dir);
         if (next < 0 || next >= domain.length) return at;
@@ -456,25 +336,14 @@ export function nudgeTarget(scale, at, dir, coarse = false) {
     return Math.max(lo, Math.min(hi, at + dir * step));
 }
 
-// Compare two domain positions numerically (a Date sorts by its timestamp), so a
-// linear or time domain grid can be matched/ordered the same way.
+// A domain position as a number (a Date as its timestamp).
 /** @param {any} p @returns {number} */
 export const numOf = (p) => (p instanceof Date ? p.getTime() : p);
 
 /**
- * Map a pixel position on a straight track [pxAt0 → pxAt1] to a value, LINEARLY
- * across the channel's domain [loVal → hiVal]. `pxAt0` is the pixel where the
- * value is `loVal`, `pxAt1` where it is `hiVal`; the position is clamped to the
- * track, so the value never runs past the domain. This is "drag along an axis =
- * a value" — the single linear pointer→value mapping the `slide` edit and the
- * face's direct-manipulation handles both build on, so the two never drift.
- *
- * Deliberately domain-linear (not `scale.invertValue`): a `slide` track is an
- * arbitrary UI segment anchored at the handle, NOT the scale's own pixel range,
- * so the scale is consulted only for the domain extremes (via `domainConfig`),
- * never as geometry. For a plain linear channel this equals the scale's own
- * inversion; for a non-positional [0,1] param (a face channel) it maps the track
- * straight onto the field's units.
+ * Map a pixel on a track [pxAt0 → pxAt1] linearly to a value in [loVal → hiVal],
+ * clamped to the track. Used by `slide`. Domain-linear on purpose: the track is a
+ * UI segment, not the scale's pixel range.
  * @param {number} px current pixel position on the track
  * @param {number} pxAt0 the pixel where the value is `loVal`
  * @param {number} pxAt1 the pixel where the value is `hiVal`
@@ -490,11 +359,8 @@ export function linearInvert(px, pxAt0, pxAt1, loVal, hiVal) {
 }
 
 /**
- * The domain extremes [lo, hi] of a resolved channel, read off its scale's
- * `domainConfig` (the declared field domain). Falls back to [0, 1] — the neutral
- * range a non-positional param uses — when the channel carries no domain. The
- * one place `slide` and the face read a channel's value range, so a track always
- * spans the same [lo, hi] the encoding drew from.
+ * The domain extremes [lo, hi] of a resolved channel, from its scale's
+ * `domainConfig`. Falls back to [0, 1].
  * @param {import('../types').ResolvedChannel | { scale?: any } | null | undefined} ch
  * @returns {[number, number]}
  */
@@ -505,16 +371,9 @@ export function channelDomain(ch) {
 }
 
 /**
- * The DISCRETE value set a channel steps through — what `cycle` advances along.
- *
- * The scale's domain when the channel HAS a scale; the field's SCHEMA domain when
- * it doesn't. That second half is not a fallback for a broken case, it is the
- * ordinary one: the schema OWNS the domain, and two perfectly well-formed channels
- * resolve no scale at all — `scale: null` (the datum holds a literal colour, a
- * sticker's `tone`) and a raw non-positional channel a mark reads itself (a link's
- * `curve`). Reading only `ch.scale.domain()` made `cycle()` a silent no-op on both:
- * the cursor turns editable, the click lands, `apply` returns undefined, nothing
- * happens and nothing is logged.
+ * The discrete values a channel steps through (what `cycle` advances along): the
+ * scale's domain, else the field's schema domain. Channels with `scale: null` or
+ * raw channels have no scale, so the schema fallback is the normal path for them.
  * @param {import('../types').ResolvedChannel | null | undefined} ch
  * @param {Record<string, any> | undefined} [schema] the target table's field map
  * @returns {any[] | null}
@@ -530,9 +389,7 @@ export function discreteDomain(ch, schema) {
 }
 
 /**
- * Invert the pointer through ONE channel's scale — the single-field half of
- * `move()`, factored out so `brushSpan`'s edge-zone tick can reuse the
- * exact same computation instead of a second copy. Pass `center` for radial
+ * Invert the pointer through one channel's scale. Pass `center` for radial
  * channels (`size`, `angle`) that need a pivot.
  * @param {import('../types').ResolvedChannel} ch
  * @param {{ x: number, y: number }} pointer
@@ -547,24 +404,11 @@ export function invertChannel(ch, pointer, center = null) {
 }
 
 /**
- * Recenter a mark's CURRENT pixel span (read off its rendered node) on the
- * pointer, then invert both new endpoints back to data — the whole-span-move
- * computation `moveSpan` and `brushSpan`/`brushRect`'s body zone both use.
- * Stateless: no dragstart/delta tracking, just "the gesture sets the absolute
- * position", the same model `move()`/`invertChannel` already use for a single
- * field.
+ * Recenter a mark's pixel span on the pointer and invert both endpoints to data.
+ * Used by `moveSpan` and the body zone of `brushSpan` / `brushRect`.
  *
- * The span's WIDTH is preserved when the pointer pushes it against the scale's
- * pixel range: the whole interval shifts as a unit rather than each endpoint
- * clamping independently (which would shrink the span to zero at the edge and
- * leave it stuck). If the span is already wider than the range, it pins to the
- * full range.
- * The span's WIDTH comes from the DATUM, encoded through the two channels' scales
- * (a rect's node carries it as width/height, but an area's node is a handle
- * circle and a rule's a line, and they carry none); the node is the fallback. The
- * two values come back ordered: `a` is the smaller, whichever pixel end that was —
- * on a y axis the smaller pixel is the LARGER value, and handing it to the first
- * channel swapped a vertical span's low and high every tick.
+ * The span width comes from the datum (the node is the fallback) and stays rigid
+ * at the range edges; a span wider than the range pins to it. Returns a ≤ b.
  * @param {any} node the mark's current scene node (rect: x/y/width/height)
  * @param {import('../types').ResolvedChannel} chA
  * @param {import('../types').ResolvedChannel} chB
@@ -592,9 +436,7 @@ export function recenterSpan(node, chA, chB, pointer, datum) {
     let p1 = visual - span / 2;
     let p2 = visual + span / 2;
 
-    // Keep the span rigid inside the scale's pixel range. invertValue clamps each
-    // endpoint on its own — without this shift, a body-drag into the wall shrinks
-    // the interval (and a zero-width span can never grow again).
+    // Shift the whole span inside the range; invertValue would clamp each end alone.
     const [r0, r1] = rangeExtent(chA.scale);
     const rLo = Math.min(r0, r1);
     const rHi = Math.max(r0, r1);

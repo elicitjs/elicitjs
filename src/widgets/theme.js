@@ -1,27 +1,15 @@
 // @ts-check
-// theme.js — the survey-instrument look, and the affordances that produce it.
+// theme.js: the survey-instrument guides (option rings, cell grid, slider track,
+// prompt, quadrants), each built on `guides.custom`.
 //
-// A survey widget deviates from the chart look (no axis spines, no ticks) but not
-// from the model: everything below is a GUIDE — a non-interactive annotation that
-// re-derives from the live render context every frame, drawn through the one guide
-// path (`guides.custom`). The option rings on a Likert scale, the cell grid behind
-// a matrix and a slider's track are affordances, not data; they carry no datum and
-// must never swallow a gesture, which is precisely what a guide is.
-//
-// That is the point of these widgets as a demonstration: the styling changes, the
-// principles don't. A plain-chart Likert and this one differ only in which guides
-// they draw — same mark, same edit, same constraint.
-//
-// ── Theming ─────────────────────────────────────────────────────────────────
-// The affordance tokens (accent/ring/track/cell/label/question/…) come from the
-// chart's THEME, read LIVE from the render context (`ctx.theme.widget`) each frame,
-// so a `spec.theme` (or `setTheme()`) restyles every survey instrument at once —
-// this is the showcase for the style layer. `THEME` below is the built-in default
-// (identical to `DEFAULT_THEME.widget`), used when no theme rode in on the context.
+// Their tokens are read each frame from `ctx.theme.widget`, so `spec.theme` or
+// `setTheme()` restyles them. `THEME` is the default (same as `DEFAULT_THEME.widget`).
 
 import { custom } from '../guides/index.js';
+import { warnUnknownGuideOptions } from '../guides/shared.js';
+import { GUIDE_OPTIONS } from '../vocabulary.js';
 
-/** Stamp a guide's identity: the keyword a spec names it by. @param {string} type @param {import('../types').Guide} g */
+/** Stamp the guide's own keyword (not `custom`), since a spec names it. @param {string} type @param {import('../types').Guide} g */
 const typed = (type, g) => Object.assign(g, { type });
 import { bandwidthOf } from '../core/scales.js';
 
@@ -40,23 +28,22 @@ export const THEME = {
 
 /** The widget tokens for this frame: the chart's theme, else the built-in default.
  * @param {any} ctx render context (carries `theme`) @returns {typeof THEME} */
-const widgetTheme = (ctx) => (ctx && ctx.theme && ctx.theme.widget) || THEME;
+const tokensOf = (ctx) => ctx?.theme?.widget || THEME;
 
 /** The categories of a band/point scale, in domain order. @param {any} scale */
 const categoriesOf = (scale) => (scale && Array.isArray(scale.domainConfig) ? scale.domainConfig : []);
 
 /**
- * The row of option rings + their labels, with a connecting track behind them.
- * Rings sit on the plot's vertical centre — where a `point` with no y channel
- * parks itself — so the answer dot lands exactly inside its ring.
+ * A row of option rings with labels and a track between them. Rings sit on the
+ * plot's vertical centre, where a `point` with no y channel lands.
  * @param {{ labelOffset?: number, radius?: number }} [options]
  */
 export function optionRings(options = {}) {
+    warnUnknownGuideOptions('optionRings', options, GUIDE_OPTIONS.optionRings);
     const { labelOffset = 30, radius: radiusOpt } = options;
-    // Its own keyword, not `custom`: this guide appears in a spec by name.
     return typed('optionRings', custom((/** @type {any} */ ctx) => {
         const { scales, height } = ctx;
-        const tw = widgetTheme(ctx);
+        const tw = tokensOf(ctx);
         const radius = radiusOpt != null ? radiusOpt : tw.radius;
         const cats = categoriesOf(scales.x);
         if (!cats.length) return [];
@@ -65,9 +52,7 @@ export function optionRings(options = {}) {
 
         /** @type {any[]} */
         const nodes = [];
-        // The track, drawn as segments BETWEEN adjacent rings rather than one line
-        // through them: guide circles are unfilled (so the answer dot shows through)
-        // and a continuous rule would cut across every ring's interior.
+        // Track segments between rings, so no line crosses an unfilled ring.
         for (let i = 0; i < cats.length - 1; i++) {
             nodes.push({
                 type: 'line',
@@ -91,17 +76,16 @@ export function optionRings(options = {}) {
 }
 
 /**
- * The cell grid of a question matrix: a soft rect per (question, option) cell,
- * column headers above, and row labels in the left margin. Guide rects draw
- * behind the marks, so an answered cell shows its dot on top of its cell.
+ * A question matrix's cell grid: a rect per (question, option) cell, column
+ * headers above and row labels in the left margin.
  * @param {{ pad?: number }} [options]
  */
 export function cellGrid(options = {}) {
+    warnUnknownGuideOptions('cellGrid', options, GUIDE_OPTIONS.cellGrid);
     const { pad = 3 } = options;
-    // Its own keyword, not `custom`: this guide appears in a spec by name.
     return typed('cellGrid', custom((/** @type {any} */ ctx) => {
         const { scales } = ctx;
-        const tw = widgetTheme(ctx);
+        const tw = tokensOf(ctx);
         const cols = categoriesOf(scales.x);
         const rows = categoriesOf(scales.y);
         if (!cols.length || !rows.length) return [];
@@ -144,11 +128,11 @@ export function cellGrid(options = {}) {
  * @param {{ format?: (v: any) => string }} [options]
  */
 export function sliderTrack(options = {}) {
+    warnUnknownGuideOptions('sliderTrack', options, GUIDE_OPTIONS.sliderTrack);
     const { format = (/** @type {any} */ v) => String(v) } = options;
-    // Its own keyword, not `custom`: this guide appears in a spec by name.
     return typed('sliderTrack', custom((/** @type {any} */ ctx) => {
         const { scales, width, height } = ctx;
-        const tw = widgetTheme(ctx);
+        const tw = tokensOf(ctx);
         if (!scales.x) return [];
         const cy = height / 2;
         const dom = scales.x.domainConfig || [0, 1];
@@ -164,17 +148,15 @@ export function sliderTrack(options = {}) {
 }
 
 /**
- * The question prompt, drawn into the top margin so it travels with the chart.
- * `y` lifts it clear of whatever the instrument draws below it (column headers,
- * an axis label) — the caller owns the top margin, so it owns the offset.
+ * The question prompt, drawn in the top margin. `y` is its offset above the plot.
  * @param {string} text
  * @param {{ y?: number }} [options]
  */
 export function prompt(text, options = {}) {
+    warnUnknownGuideOptions('prompt', options, GUIDE_OPTIONS.prompt);
     const { y = -18 } = options;
-    // Its own keyword, not `custom`: this guide appears in a spec by name.
     return typed('prompt', custom((/** @type {any} */ ctx) => {
-        const tw = widgetTheme(ctx);
+        const tw = tokensOf(ctx);
         return text ? [{
             type: 'text', x: 0, y, text,
             textAnchor: 'start', fontSize: tw.questionSize, fill: tw.question
@@ -183,19 +165,16 @@ export function prompt(text, options = {}) {
 }
 
 /**
- * The quadrant frame of a correlation plot: axes through the centre and a
- * high/low label on each of the four ends (the layout of the line+cone task).
- * The side labels stack onto two lines so a long variable name fits the margin
- * instead of running off the SVG. (It was called `crosshair`; that word now
- * names the pointer-following rules in guides/crosshair.js.)
+ * A correlation plot's quadrant frame: axes through the centre and a high/low
+ * label at each of the four ends.
  * @param {{ x?: string, y?: string }} [labels]
  */
 export function quadrants(labels = {}) {
+    warnUnknownGuideOptions('quadrants', labels, GUIDE_OPTIONS.quadrants);
     const { x = 'x', y = 'y' } = labels;
-    // Its own keyword, not `custom`: this guide appears in a spec by name.
     return typed('quadrants', custom((/** @type {any} */ ctx) => {
         const { width, height } = ctx;
-        const tw = widgetTheme(ctx);
+        const tw = tokensOf(ctx);
         const cx = width / 2, cy = height / 2;
         /**
          * @param {number} px @param {number} py @param {string} text @param {string} anchor
@@ -203,9 +182,7 @@ export function quadrants(labels = {}) {
          */
         const t = (px, py, text, anchor) =>
             ({ type: 'text', x: px, y: py, text, textAnchor: anchor, fontSize: tw.labelSize, fill: tw.label });
-        // A side label stacks one word per line (plus its extreme), centred on the
-        // axis — a long variable name then fits the margin instead of running off
-        // the SVG, however wide it is.
+        // A side label stacks one word per line, plus its extreme, so it fits the margin.
         const lineH = 14;
         const side = (/** @type {number} */ px, /** @type {string} */ extreme, /** @type {string} */ anchor) => {
             const lines = [...String(x).split(/\s+/), `(${extreme})`];

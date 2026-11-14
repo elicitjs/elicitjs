@@ -1,22 +1,8 @@
 // @ts-check
 /**
- * Undo history.
- *
- * An elicitation is someone's belief being drafted, so "take that back" is a
- * primitive, not a nicety. A snapshot store rather than inverse operations:
- * an edit's apply() is already a pure data -> data function, so the state
- * before it IS the undo, and no edit has to describe how to reverse itself.
- *
- * The unit is a GESTURE, not a commit. A drag commits on every pointermove, so
- * per-commit history would make undo replay the drag backwards one pixel at a
- * time. Instead a transaction opens at dragstart and closes at dragend (both
- * renderers emit them for mark and plane drags alike), and the first commit
- * inside it records the pre-gesture state — once. A click or a typed commit is
- * its own transaction.
- *
- * Snapshots carry the schema and the chart size too, because edit.axis.* writes
- * the schema's domain and can grow the chart: undoing a category-add has to put
- * the domain, the rows AND the size back.
+ * Undo history as snapshots, one per gesture (dragstart to dragend; a click or
+ * typed commit is its own). The first commit in a gesture records the state
+ * before it. Snapshots also carry the schema and chart size, which axis edits change.
  */
 
 const MAX_HISTORY = 100;
@@ -43,10 +29,8 @@ export function createHistory(chart, deps) {
     /** @type {any} */
     let wheelTimer = null;
 
-    // The schema of EVERY table rides in a snapshot (a cross-table rename writes
-    // two tables' domains; a snapshot of the primary's alone could not undo it).
-    // So does context membership, as row indices: the clone has new row objects,
-    // and the context set is keyed by identity.
+    // Snapshot every table's schema, plus context membership as row indices
+    // (the clone has new row objects, and the context set is keyed by identity).
     const snapshot = () => {
         /** @type {Record<string, any>} */
         const schemas = {};
@@ -69,9 +53,7 @@ export function createHistory(chart, deps) {
             for (const i of /** @type {number[]} */ (idx)) if (chart.tables[name] && chart.tables[name][i]) set.add(chart.tables[name][i]);
             chart.contextRows[name] = set;
         }
-        // Replace each schema's CONTENTS: `schema` (the primary's field map) is
-        // captured by closures (and read by resolveScales each render), so
-        // rebinding the name would strand them.
+        // Replace each schema's contents in place; closures hold the field maps.
         for (const [name, fields] of Object.entries(snap.schemas)) {
             const live = schemaSpec.tables[name] && schemaSpec.tables[name].fields;
             if (!live) continue;
@@ -84,17 +66,13 @@ export function createHistory(chart, deps) {
         ui.preview = null;
     };
 
-    // Open a transaction if none is open. No snapshot here: a gesture that never
-    // commits (a hover that only PREVIEWS, firing beginTxn on every pointermove) must
-    // not clone the dataset. The snapshot is taken lazily by recordHistory, on the
-    // first commit — which is safe because every commit path calls recordHistory
-    // BEFORE it mutates `dataset`/`schema`, so "now" is still the pre-gesture state.
+    // Open a transaction if none is open. The snapshot is taken lazily by
+    // recordHistory, so a gesture that never commits clones nothing.
     const beginTxn = () => { if (!txn) txn = { recorded: false }; };
     const endTxn = () => { txn = null; };
 
-    // Called by every commit path, BEFORE it mutates state. The first commit in a
-    // transaction snapshots the (still pre-gesture) state and drops the redo stack —
-    // a new edit after an undo forks the history, so the old future is gone.
+    // Called by every commit path before it mutates state. The first commit in a
+    // transaction snapshots the state and drops the redo stack.
     const recordHistory = () => {
         if (!txn) beginTxn();
         if (!txn || txn.recorded) return;
@@ -104,12 +82,11 @@ export function createHistory(chart, deps) {
         txn.recorded = true;
     };
 
-    // Called by handleEvent for every incoming gesture event, before dispatch:
-    // decides which transaction the event belongs to.
+    // Decide which transaction an incoming event belongs to. A dragstart always
+    // opens a fresh one, so a lost dragend can't leak into the next gesture.
     /** @param {string} type the event's type */
     const gestureTxn = (type) => {
-        // A wheel burst is one gesture for undo: each tick keeps the transaction
-        // open and re-arms a short timer that closes it once the wheel goes quiet.
+        // A wheel burst is one transaction, closed by a timer once the wheel goes quiet.
         if (type === 'wheel') {
             if (!txn || wheelTimer == null) { endTxn(); beginTxn(); }
             if (wheelTimer != null) clearTimeout(wheelTimer);
@@ -118,17 +95,14 @@ export function createHistory(chart, deps) {
         else if (!txn) beginTxn();
     };
 
-    // A reseed (setData) is a new starting point, not an edit: there is nothing
-    // sensible to undo BACK to.
+    // Clear history on a reseed (setData).
     const reset = () => {
         past = [];
         future = [];
         endTxn();
     };
 
-    // Undo / redo one GESTURE. Both return whether they moved, so a caller can drive
-    // a button's disabled state; both fire the ordinary `change` notification,
-    // because as far as anything downstream is concerned the data just changed.
+    // Undo / redo one gesture. Both return whether they moved and fire `change`.
     const canUndo = () => past.length > 0;
     const canRedo = () => future.length > 0;
     const undo = () => {
@@ -150,5 +124,5 @@ export function createHistory(chart, deps) {
         return true;
     };
 
-    return { snapshot, restoreSnapshot, beginTxn, endTxn, recordHistory, gestureTxn, reset, canUndo, canRedo, undo, redo };
+    return { endTxn, recordHistory, gestureTxn, reset, canUndo, canRedo, undo, redo };
 }

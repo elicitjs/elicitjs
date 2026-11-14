@@ -1,83 +1,39 @@
 // @ts-check
-// mark.js — the shared foundation every mark builds on (Observable Plot's mark
-// model, adapted for belief elicitation). It gives marks two things uniformly:
+// mark.js: the shared foundation every mark builds on. `encodeChannel` maps a datum
+// through the engine's global per-channel scales, and `resolveStyle` resolves the
+// standard style channels, so every mark encodes and styles the same way.
 //
-//   1. Channel resolution — turn a datum into a visual value through the GLOBAL
-//      per-channel scale the engine resolved (positional OR style), the same way
-//      for every mark. `encodeChannel` is the one place that logic lives.
-//   2. A standard STYLE surface — fill, stroke, strokeWidth, opacity,
-//      fillOpacity, strokeOpacity — resolved the same way (constant, field, or
-//      unscaled) and spread onto the scene node, so any mark is styleable in one
-//      line and the renderer applies them uniformly.
-//
-// Declarative first. A channel is one of:
-//   { field }              a data field, through the channel's global scale
-//   { value }              a VISUAL-space constant — skips the scale
-//   { datum }              a DATA-space constant — goes THROUGH the scale, so
-//                          `y: { datum: 25 }` lands where y=25 is, not at 25px
+// A channel is one of:
+//   { field }              a data field, through the channel's scale
+//   { value }              a visual-space constant; skips the scale
+//   { datum }              a data-space constant; goes through the scale, so
+//                          `y: { datum: 25 }` lands at y=25, not at 25px
 //   { field, scale: null } a raw field, unscaled (the datum holds a literal)
-//   { fn }                 a DERIVED channel — fn(d, i, data) is computed per
-//                          datum in VISUAL space (its result is used as-is, never
-//                          scaled). e.g. fill: d => d.x > 50 ? 'red' : 'blue'.
-// The first four stay serializable and introspectable by the edit/elicitation
-// layer. `{ fn }` is the one deliberate exception: it is opaque to that layer, so
-// it is READ-ONLY — a derived channel can't carry an `edit` (it recomputes from
-// the committed rows on every render, so a source-field edit re-derives it for
-// free). A top-level function shorthand (`fill: d => …`) desugars to `{ fn }`; an
-// explicit `{ value: someFn }` stays an opaque constant, never invoked.
+//   { fn }                 derived: fn(d, i, data) in visual space, never scaled
+// `{ fn }` is read-only (it can't carry an `edit`). A top-level function shorthand
+// (`fill: d => …`) desugars to `{ fn }`; `{ value: someFn }` is a constant, never called.
 //
-// ── The mark contract ───────────────────────────────────────────────────────
-// A mark NEVER owns data. `Elicit` owns the chart's one dataset; a mark is a view
-// over it that encodes some columns and, where a channel carries an `edit`, writes
-// them back. The engine hands the current rows to build() — so there is no `data`
-// option and no `onChange` (both live on the Elicit spec). Nor does a mark own a
-// DOMAIN: that belongs to the data, and is declared once on the spec's schema.
+// A mark never owns data or a domain: the engine hands the rows to build(), and
+// the domain lives on the spec's schema. The contract is the `Mark` interface in
+// types.d.ts and MARK_CONTRACTS.md.
 //
-// A mark factory returns a plain feature object the engine consumes. Required:
-//   build(currentData, scales, width, height) -> FeatureNode[]
-//     the one method — emit scene nodes ({ type: 'circle'|'rect'|'line'|'path'|
-//     'text', … }); resolve every position/style through encodeChannel/resolveStyle.
-// Common optional fields the engine reads:
-//   channels                 the channel map (also the source scales resolve from)
-//   discreteScale            'band' (bar/tick: interval) | 'point' (dot/line: tick)
-//   xKey / yKey              value field names the edit/constraint layer reads back
-//   edits / constraints / id     (constraints are promoted to the dataset's set)
-//   seriesKey / order / supportsSeries   line-family grouping (see plot/line.js)
-// Every data mark should resolve a datum -> pixel through encodeChannel (band+value
-// marks use it for the value axis and band-geometry helpers for the category axis),
-// so positions are computed exactly one way across marks.
-//
-// ── pointerEvents: who silences what ────────────────────────────────────────
-// The engine silences a mark that carries no direct-pick edit, because the
-// renderer defaults nodes to pointer-events:auto and paints later features/parts
-// on top — an inert rule overlapping a handle would otherwise swallow its drag.
-// That rule is per-FEATURE and all-or-nothing, and it only fills in a value the
-// mark left unset (`node.pointerEvents == null`).
-//
-// So the split is:
-//   - Don't silence your WHOLE mark to make it inert — leave pointerEvents alone
-//     and let the engine decide (see rule.js). Setting it yourself there also
-//     disables the mark when it DOES carry an edit.
-//   - DO set it per-node on a glyph's CHROME — a line's path, a trend's fitted
-//     line, a dotStack's ghosts, a trendBand's samples — when the same feature also
-//     emits handles. The engine can't make that distinction for you (it sees one
-//     feature), and without it the chrome, drawn last, eats the handles' drags.
-//     `pointerEvents: 'stroke'` narrows a hit area to a shape's outline.
+// pointerEvents: the engine sets 'none' on every node of a mark with no
+// direct-pick edit, unless the node set its own. Don't set it on a whole mark to
+// make it inert. Do set it per node on chrome (a line's path, a trend's fitted
+// line) when the same feature also draws handles, or the chrome, painted last,
+// eats the handles' drags.
 
 /**
- * The standard style channels every mark understands, with their default
- * fallbacks (used when the mark doesn't set the channel at all). `undefined`
- * means "leave the attribute off" — the renderer supplies its own default.
+ * The standard style channels and their defaults. `undefined` leaves the
+ * attribute to the renderer's default.
  * @type {Record<string, any>}
  */
-export const STYLE_DEFAULTS = {
+const STYLE_DEFAULTS = {
     fill: undefined,
     stroke: undefined,
     strokeWidth: undefined,
-    // The dash pattern — a constant ('4 2') or a field through an ordinal scale
-    // onto a small dash vocabulary (core/encoding.js DEFAULT_DASHES), so a dashed
-    // series is an ENCODING like a coloured one. Public name `strokeDash`
-    // (Vega-Lite's); the scene field the renderers paint is `strokeDasharray`.
+    // A constant ('4 2') or a field through an ordinal scale onto a dash
+    // vocabulary (core/encoding.js DEFAULT_DASHES). Painted as `strokeDasharray`.
     strokeDash: undefined,
     opacity: undefined,
     fillOpacity: undefined,
@@ -88,49 +44,27 @@ export const STYLE_DEFAULTS = {
 /** @type {string[]} */
 export const STANDARD_STYLE_CHANNELS = Object.keys(STYLE_DEFAULTS);
 
-// Where a style channel lands on the scene node when the two names differ. A
-// channel is the AUTHOR's word; the scene field is the paint vocabulary both
-// renderers read (renderers/shared.js STYLE_FIELDS).
+// The scene field a style channel paints to, where the names differ
+// (renderers/shared.js STYLE_FIELDS).
 /** @type {Record<string, string>} */
 const SCENE_FIELD = { strokeDash: 'strokeDasharray' };
 
-// Top-level option shorthands that desugar to constant channels, so an author
-// writes `fill: 'red'` rather than `channels: { fill: { value: 'red' } }`.
-//
-// A superset of the style channels: `size` is a constant a mark reads itself
-// (a circle's radius, via encodeChannel), not one resolveStyle spreads onto a
-// node — so it belongs here and NOT in STANDARD_STYLE_CHANNELS. `text`/`fontSize`/
-// `textAnchor`/`lineAnchor`/`dx`/`dy` are the text mark's own constants (read raw
-// by the mark, not swept by resolveStyle), so `text({ text: 'hi', dy: -8 })`
-// reads like every other shorthand. (`format` is a mark-level option, not a
-// channel — it stays off this list.)
-const SHORTHANDS = MARK_SHORTHANDS;
-
-// The theme helpers a mark's build() reads its DEFAULT ink/fonts from. Re-exported
-// here so a mark imports its whole style vocabulary from one module (marks already
-// import resolveStyle/encodeChannel from mark.js). `themeOf(scales)` reads the theme
-// the engine stamped on the scale map; `markDefaults(scales, name, fallbacks)` layers
-// any `theme.marks[name]` overrides over the mark's built-in fallbacks. See
-// core/theme.js for the precedence rules.
+// Theme helpers, re-exported so a mark imports its style vocabulary from one
+// module. See core/theme.js.
 export { themeOf, markDefaults } from '../core/theme.js';
 import { themeOf } from '../core/theme.js';
 
-// A derived channel's fn re-runs on every render, so a warning would repeat
-// forever — `warn` dedups once per key. See core/dev.js.
+// `warn` dedups by key, so a derived fn that re-runs every render warns once.
 import { warn, warningsEnabled } from '../core/dev.js';
 
-// A scale is one ENCODING — (channel, field) — not one channel. `scaleKey` is the
-// single source of that key; see core/scales.js for why.
-import { scaleKey, slotOf, slotWidthOf, bandStartOf, bandwidthOf, offsetScaleOf } from '../core/scales.js';
+// A channel's scale is looked up through `scaleFor` (keyed by channel and field).
+import { scaleFor, slotOf, slotWidthOf, bandStartOf, bandwidthOf, offsetScaleOf } from '../core/scales.js';
 import { MARK_UNIVERSAL_OPTIONS, MARK_SHORTHANDS, ELEMENT_UNIVERSAL_OPTIONS } from '../vocabulary.js';
 import { frameSpecOf } from '../core/encoding.js';
 
 /**
- * Evaluate a derived channel's `fn(d, i, data)` in VISUAL space. The result is
- * used as-is (never scaled). A null/undefined datum resolves to the fallback
- * rather than calling `fn(undefined)` (constant-resolving callers pass no datum);
- * a fn that returns null/undefined or throws also falls back, so a bad accessor
- * never blanks the chart.
+ * Evaluate a derived channel's `fn(d, i, data)` in visual space. A null datum, a
+ * null/NaN result or a throw returns the fallback.
  * @param {any} spec the channel spec (must have a function `fn`)
  * @param {string} channel channel name, for the warning key
  * @param {import('../types').Datum | null} datum
@@ -139,7 +73,7 @@ import { frameSpecOf } from '../core/encoding.js';
  * @param {any} fallback
  * @returns {any}
  */
-export function callChannelFn(spec, channel, datum, index, data, fallback) {
+function callChannelFn(spec, channel, datum, index, data, fallback) {
     if (datum == null) return fallback;
     try {
         const out = spec.fn(datum, index, data);
@@ -153,11 +87,9 @@ export function callChannelFn(spec, channel, datum, index, data, fallback) {
 }
 
 /**
- * Map a datum through one channel using the global scale. Handles derived
- * channels (`{ fn }`, computed per datum in visual space), visual constants
- * (`{ value }`), data-space constants (`{ datum }`), scaled fields (`{ field }`),
- * unscaled raw fields (`{ field, scale: null }`), and missing scales/fields (fall
- * back). A function `value` (not `fn`) stays an opaque constant, never invoked.
+ * Map a datum through one channel's global scale. Handles `{ fn }`, `{ value }`,
+ * `{ datum }`, `{ field }` and `{ field, scale: null }`, and falls back when the
+ * scale or value is missing. A function `value` is a constant, never called.
  * @param {import('../types').ScaleMap} scales
  * @param {Record<string, any>} channels
  * @param {string} channel
@@ -169,15 +101,12 @@ export function callChannelFn(spec, channel, datum, index, data, fallback) {
  */
 export function encodeChannel(scales, channels, channel, datum, fallback, index, data) {
     if (channel !== 'x' && channel !== 'y') return encodeOwn(scales, channels, channel, datum, fallback, index, data);
-    // An OFFSET nested in this axis (`xOffset` on x) moves the position from the
-    // category's centre to its sub-band's centre. Here, on the one datum -> pixel
-    // path, so a point, a label or a line over a band axis is dodged by group with
-    // no code of its own. Only the bare axis channel: x1/x2 are a SPAN's ends. A
-    // sentinel, not the caller's fallback, says "no position": a real band centre
-    // can equal the fallback pixel (the middle of three categories is width / 2).
+    // A nested offset (`xOffset` on x) moves the position to the sub-band's
+    // centre. Only on bare x/y: x1/x2 are span ends. NO_POSITION, not the
+    // fallback, means "no position": a real band centre can equal the fallback.
     const at = encodeOwn(scales, channels, channel, datum, NO_POSITION, index, data);
     if (at === NO_POSITION) return fallback;
-    // Only a DATA-space position nests: `{ fn }` and `{ value }` are already pixels.
+    // Only a data-space position nests: `{ fn }` and `{ value }` are already pixels.
     const own = channels[channel];
     const dataSpace = own && own.scale !== null && (own.field != null || own.datum !== undefined);
     if (dataSpace && datum && typeof at === 'number') {
@@ -194,9 +123,8 @@ export function encodeChannel(scales, channels, channel, datum, fallback, index,
 const NO_POSITION = Symbol('no position');
 
 /**
- * A datum's position INSIDE its parent slot, in slot-local pixels: its sub-band's
- * centre (a band offset) or its encoded position (a continuous one, a jitter).
- * Undefined when the row has no offset value.
+ * A datum's position inside its parent slot, in slot-local pixels. Undefined
+ * when the row has no offset value.
  * @param {any} offset the nested scale
  * @param {Record<string, any>} channels
  * @param {'xOffset' | 'yOffset'} name
@@ -213,15 +141,9 @@ function offsetPixel(offset, channels, name, datum, index, data) {
 }
 
 /**
- * The interval a datum occupies across a CATEGORY axis: its category's band, or —
- * when the mark nests `xOffset`/`yOffset` in that axis — the sub-band the second
- * category picks inside it. The one place a band mark asks "where does my row
- * sit, and how thick is it", so a grouped bar, a grouped waffle and a dodged tick
- * are the same three lines in every mark. Resolves the category through
- * `categoryOf`, so `{ fn }`/`{ datum }` work on both levels.
- *
- * A CONTINUOUS offset (a jitter) shifts the whole band to centre on its encoded
- * position rather than subdividing it, since it names no interval.
+ * The interval a datum occupies on a category axis: its category's band, or the
+ * sub-band its `xOffset`/`yOffset` category picks inside it. A continuous offset
+ * (a jitter) shifts the whole band to centre on its encoded position.
  * @param {import('../types').ScaleMap} scales
  * @param {Record<string, any>} channels
  * @param {'x' | 'y'} axis the category axis
@@ -266,10 +188,7 @@ export function categorySlot(scales, channels, axis, datum, key, index, data, fa
 function encodeOwn(scales, channels, channel, datum, fallback, index, data) {
     const spec = channels[channel];
     if (!spec) return fallback;
-    // `expr` is RESERVED for the JSON spec layer — the declarative twin of `fn`.
-    // Reporting it is the point: a reserved-but-unimplemented key that silently did
-    // nothing would be the exact failure mode this library's diagnostics exist to
-    // prevent, and an author who wrote one meant something by it.
+    // `expr` is reserved for the JSON spec layer; warn rather than ignore it.
     if (spec.expr !== undefined) {
         warn(
             `expr:${channel}`,
@@ -279,32 +198,22 @@ function encodeOwn(scales, channels, channel, datum, fallback, index, data) {
         );
     }
     if (spec.field === undefined) {
-        // Derived channel — fn(d, i, data) computed in visual space, used as-is.
-        // Wins over value/datum so `{ fn }` is unambiguous.
+        // Derived channel, used as-is. Wins over value/datum.
         if (typeof spec.fn === 'function') {
             const out = callChannelFn(spec, channel, datum, index, data, NO_POSITION);
             if (out === NO_POSITION) return fallback;
-            // Inside a glyph box, `{ fn, frame: true }` is derived in the glyph's
-            // LOCAL units — the same units a `{ frame: -0.4 }` constant is stated
-            // in — so it goes through the part's frame scale like that constant
-            // does. That is how one part sits where another part's VALUE puts it (a
-            // forearm hung from the end of an upper arm whose angle is a field): a
-            // pixel-space fn cannot know where the box is.
+            // `{ fn, frame: true }` is in a glyph box's local units, so it goes
+            // through the part's frame scale like a `{ frame }` constant.
             if (frameSpecOf(spec)) {
                 const scale = scales[channel];
                 return scale ? scale.encode(out, fallback) : fallback;
             }
             return out;
         }
-        // Visual-space constant — the value IS the output. Subsumes static options
-        // like fill: "steelblue".
+        // Visual-space constant: the value is the output.
         if (spec.value !== undefined) return spec.value;
-        // Data-space constant — the value is in the field's units, so it goes
-        // through the scale exactly as a field's value would. `y: { datum: 25 }`
-        // is a reference line at y=25, not at pixel 25. On an UNSCALED channel
-        // (`scale: null`) the units are already the output, so the literal is used
-        // as-is — the same rule the `{ field }` branch below applies, which is what
-        // lets a parametric mark pin a parameter (`intercept: { datum: 0 }`).
+        // Data-space constant: goes through the scale like a field value. On an
+        // unscaled channel (`scale: null`) the literal is used as-is.
         if (spec.datum !== undefined) {
             if (spec.scale === null) return spec.datum;
             const scale = scales[channel];
@@ -313,41 +222,21 @@ function encodeOwn(scales, channels, channel, datum, fallback, index, data) {
         return fallback;
     }
     const raw = datum ? datum[spec.field] : undefined;
-    // A datum may lack this channel's field (e.g. a freshly created point with
-    // no group/mag yet) — fall back rather than encoding undefined -> NaN.
+    // A datum may lack the field (e.g. a freshly created row); fall back, not NaN.
     if (raw === undefined || raw === null) return fallback;
     // Unscaled field: the datum already holds a literal (a CSS colour, a pixel).
     if (spec.scale === null) return raw;
-    // A scale is one ENCODING, so it is keyed by (channel, field) — see
-    // core/scales.js's scaleKey. Positional channels union by axis and are
-    // published under the bare name, and every non-positional channel is aliased
-    // there too, so the `|| scales[channel]` is both the positional path and the
-    // safety net. This is THE lookup for every mark's fill/stroke/size/symbol:
-    // resolveStyle and resolveSymbol delegate here, and categoryOf takes no scales.
-    const scale = scales[scaleKey(channel, spec.field)] || scales[channel];
+    // The one scale lookup for every mark channel; resolveStyle and resolveSymbol delegate here.
+    const scale = scaleFor(scales, channel, spec.field);
     if (!scale) return fallback;
     return scale.encode(raw, fallback);
 }
 
 /**
- * The shared HANDLE contract — one radius default, one meaning for `handles`, and
- * one place a handle's paint comes from.
- *
- * A handle is a grabbable sub-element a mark draws so a value can be dragged: a
- * line/area point, a trend's intercept and slope dots, an arc's boundary, a face's
- * eyelid, an axis end, a legend's ramp grip. Seven marks drew them with no shared
- * contract at all — `handleSize` defaulted to 4, 5 or 6 depending on the mark and
- * was hard-coded on axis (5) and legend (6); the colour was themed on some marks and
- * a literal (`'steelblue'`, `'#0f172a'`, `'rgba(15,23,42,0.5)'`) on others; and
- * `handles: false` meant three different things — invisible AND inert, invisible but
- * still grabbable, or radius-zero.
- *
- * `handles` now has exactly three values:
+ * The default handle radius. A mark's `handles` option is one of:
  *   true    drawn and grabbable (the default)
  *   false   neither drawn nor grabbable
- *   'hit'   invisible but still grabbable — the deliberate behaviour arc and face
- *           already had, where the SHAPE is the affordance (a slice boundary, a lip)
- *           and the dot would only be clutter.
+ *   'hit'   invisible but grabbable, where the shape itself is the affordance
  * @type {{ size: number }}
  */
 export const HANDLE_DEFAULTS = { size: 5 };
@@ -363,10 +252,9 @@ export function inkOf(v) {
 }
 
 /**
- * Is this datum's value for a FIELD channel missing (null, undefined or NaN)? A
- * row with no value has no position on that axis, so a mark draws nothing for it
- * — the rule a line's gap and an area's break follow. A channel that is a
- * constant, a `{ fn }`, or absent is never "missing".
+ * Is this datum's value for a field channel missing (null, undefined or NaN)? Such
+ * a row has no position on that axis. A constant, `{ fn }` or absent channel is
+ * never missing.
  * @param {Record<string, any>} channels @param {string} name @param {any} datum
  * @returns {boolean}
  */
@@ -378,9 +266,8 @@ export function missingValue(channels, name, datum) {
 }
 
 /**
- * Does a mark's option bag carry ANY edit — on a channel or in `edits`? The
- * default for `handles` on a line or area: a handle exists to be grabbed, so a
- * mark nothing can grab draws none (bar and arc already gate theirs on an edit).
+ * Does a mark's options carry any edit, on a channel or in `edits`? Marks use it
+ * to draw no handles when nothing can grab them.
  * @param {any} opts normalized mark options
  * @returns {boolean}
  */
@@ -392,11 +279,9 @@ export function hasAnyEdit(opts) {
 }
 
 /**
- * Are a mark's handle dots an AFFORDANCE — drawn so a row can be grabbed — and so
- * row handles (`node.rowHandle`) the engine drops wherever no live edit can reach
- * the row? Yes when the mark carries an edit, and yes when `handles` was left to
- * its default. An explicit `handles: true` on a mark with NO edit asks for the
- * dots as INK (points on a reference line), and those always draw.
+ * Are a mark's handles an affordance, so they are stamped `rowHandle` and dropped
+ * where no live edit reaches the row? Yes with an edit or with `handles` left at its
+ * default. An explicit `handles: true` with no edit draws the dots as ink.
  * @param {any} handlesOpt the mark's `handles` option as the author wrote it
  * @param {{ edits?: any, channels?: Record<string, any> }} opts the edits and channels to read
  * @returns {boolean}
@@ -407,7 +292,6 @@ export function handlesAreAffordance(handlesOpt, opts) {
 
 /**
  * Resolve a mark's handle options into the paint every handle node needs.
- *
  * @param {import('../types').ScaleMap} scales the scale map (carries the theme)
  * @param {{ handles?: boolean | string, handleSize?: number, handleColor?: string }} options
  * @param {{ fill?: string, stroke?: string }} [fallback] the mark's own ink, when it has one
@@ -418,9 +302,8 @@ export function resolveHandles(scales, options, fallback = {}) {
     const theme = themeOf(scales);
     const visible = handles !== false && handles !== 'hit';
     const grabbable = handles !== false;
-    // 'hit' must stay pointer-hittable: opacity:0 is skipped by some hit-testers
-    // (Chromium under Playwright), so invisible-but-grabbable uses a transparent
-    // fill instead — the same pattern face already used for its supplemental dots.
+    // 'hit' uses a transparent fill, not opacity 0: some hit-testers (Chromium
+    // under Playwright) skip opacity:0 nodes.
     return {
         visible,
         grabbable,
@@ -434,21 +317,34 @@ export function resolveHandles(scales, options, fallback = {}) {
 }
 
 /**
- * The value-field names a mark reports back to the edit/constraint layer as
- * `xKey`/`yKey` — the field each positional channel is bound to, defaulting to the
- * column named after the channel.
- *
- * One helper because there were FOUR spellings of this in `src/plot/`:
- * `(channels.x && channels.x.field) || 'x'` (bar, line, area, tick, rect, waffle,
- * rule, trend, trendBand), the same thing without the default (point, text, face),
- * `yKey` set and `xKey` never (arc), and a non-positional field aliased into both
- * (needle). The engine and edit/guide.js each re-applied `|| 'x'` on read, so the
- * variants mostly agreed by accident — but "mostly, by accident" is what this pass
- * exists to remove.
- *
- * arc, needle and the geo* family stay deliberate exceptions and say why at their
- * own declaration: arc has no category axis (its rows are their own layout order),
- * needle is positioned by an angle, and geo marks key on lon/lat.
+ * A copy of a channel spec without its `edit`, for the copy that must not be a handle.
+ * @param {any} spec
+ * @returns {any}
+ */
+export function withoutEdit(spec) {
+    if (!spec) return spec;
+    const { edit: _edit, ...rest } = spec;
+    return rest;
+}
+
+/**
+ * A handle node's paint: the row's ink (else the handle fill) when drawn, nothing when `'hit'`.
+ * @param {{ visible: boolean, fill: string, stroke: string, strokeWidth: number }} handleStyle from `resolveHandles`
+ * @param {string | null} [rowInk] the row's own colour, when the handle takes it
+ * @returns {{ fill: string, stroke: string, strokeWidth: number }}
+ */
+export function handlePaint(handleStyle, rowInk) {
+    return {
+        fill: handleStyle.visible ? (rowInk || handleStyle.fill) : 'transparent',
+        stroke: handleStyle.visible ? handleStyle.stroke : 'none',
+        strokeWidth: handleStyle.visible ? handleStyle.strokeWidth : 0,
+    };
+}
+
+/**
+ * The `xKey`/`yKey` a mark reports to the edit/constraint layer: the field bound to
+ * each positional channel, defaulting to the channel name. arc, needle and the geo
+ * marks don't use this and say why at their own declaration.
  * @param {Record<string, any> | undefined} channels
  * @returns {{ xKey: string, yKey: string }}
  */
@@ -461,32 +357,17 @@ export function positionalKeys(channels) {
 }
 
 /**
- * Which axis a directional mark's VALUE runs along — the ONE orientation rule.
- *
- * Every directional mark (bar, tick, rule, line, area, curve, text, waffle,
- * dotStack, rect) has to answer this, and each used to answer it its own way:
- * from the scales, from the channel map, from a declared span, or only when
- * forced. Six rules under three spellings meant `curveY` and `areaY` inferred
- * opposite things from the same `y1`/`y2` pair. This is that decision, once,
- * with the two places marks legitimately differ DECLARED as arguments:
- *
- *   orientation  the author's word. 'vertical' = the value runs along y (a bar
- *                that grows upward, a rule at a y, a line whose y is edited);
- *                'horizontal' = along x. The `…Y`/`…X` factory variants are
- *                sugar that pin it: `barY(o) === bar({ ...o, orientation: 'vertical' })`.
- *   extent       what a declared x1/x2 or y1/y2 pair MEANS: 'value' (area, rect,
- *                bar — the pair IS the value, so its axis is the value axis) or
- *                'span' (rule, tick, curve — the pair is the chord the mark is
- *                drawn along, so the OTHER axis is the value axis).
- *   single       what exactly one bound positional channel means: 'value' (rule,
- *                text — the lone channel is where the mark sits) or 'other' (waffle,
- *                dotStack, curve — the lone channel is the category/chord, and the
- *                value runs along the other axis).
- *
- * Precedence: the option; a declared pair; a band scale (the band is the category,
- * so the value is the other axis — only when `scales` are passed, which a counting
- * mark deliberately does not, since it must answer at factory time); a lone
- * channel; else y.
+ * Which axis a directional mark's value runs along.
+ *   orientation  'vertical' = the value runs along y, 'horizontal' = along x.
+ *                The `…Y`/`…X` factory variants pin it.
+ *   extent       what an x1/x2 or y1/y2 pair means: 'value' (the pair is the
+ *                value; area, rect, bar) or 'span' (the pair is the chord, so the
+ *                other axis is the value; rule, tick, curve).
+ *   single       what one bound positional channel means: 'value' (where the mark
+ *                sits; rule, text) or 'other' (the category; waffle, dotStack, curve).
+ * Precedence: orientation; a declared pair; a band scale (value on the other axis;
+ * only when `scales` is passed, which counting marks skip because they answer at
+ * factory time); a lone channel; else y.
  * @param {Record<string, any> | undefined} channels
  * @param {import('../types').ScaleMap | null | undefined} scales
  * @param {{ orientation?: string, extent?: 'value' | 'span', single?: 'value' | 'other' }} [opts]
@@ -520,40 +401,20 @@ export function resolveValueAxis(channels, scales, { orientation, extent = 'valu
 const isBandScale = (scale) => !!(scale && scale.kind === 'band');
 
 /**
- * The `orientation` word for a value axis — the inverse of `resolveValueAxis`, for
- * a mark whose own vocabulary is the word rather than the axis.
+ * The `orientation` word for a value axis (the inverse of `resolveValueAxis`).
  * @param {'x' | 'y'} axis
  * @returns {'horizontal' | 'vertical'}
  */
 export const orientationOf = (axis) => (axis === 'x' ? 'horizontal' : 'vertical');
 
 /**
- * Resolve a datum's CATEGORY on a band/point axis — the discrete-axis counterpart
- * to `encodeChannel`.
- *
- * A band mark (bar/tick/rect/waffle/arc) needs a category KEY, not a pixel: it feeds
- * the key to `bandStartOf`/`bandwidthOf` to get an interval. So it cannot use
- * `encodeChannel`, and every one of them instead read `datum[key]` raw — which meant
- * the channel forms worked on a bar's VALUE axis and were silently ignored on its
- * CATEGORY axis. `bar({ channels: { x: { datum: 'A' } } })` read `d['x']` and drew
- * wherever that landed. This is that missing path, in one place.
- *
- * The forms, in the same precedence `encodeChannel` uses:
+ * Resolve a datum's category key on a band/point axis: the discrete counterpart to
+ * `encodeChannel`. Band marks feed the key to `bandStartOf`/`bandwidthOf`.
  *   { fn }     fn(d, i, data) -> the category key
- *   { datum }  a data-space constant: the category itself (pin every row to one band)
- *   { field }  datum[field] — the ordinary case
- *   (none)     datum[key], the mark's xKey/yKey; and when the mark has no key
- *              either, the column named after the CHANNEL (`d.x` on x). That last
- *              step is the old per-mark `(channels.x && channels.x.field) || 'x'`
- *              default, hoisted here so it happens once instead of being spelled
- *              four different ways across bar/tick/rect/waffle/point/text/arc — and
- *              warned about, because an implicit column is exactly the "which data
- *              does this mark touch?" ambiguity the channel map exists to remove.
- *
- * `{ value }` is deliberately NOT honoured, and warns. `value` means "visual space,
- * skip the scale", and on a category axis there is no such thing: the output of the
- * axis is a band, chosen by which category you name — which is exactly `{ datum }`.
- * Silently treating it as a category would make two spellings mean one thing.
+ *   { datum }  a constant category (pins every row to one band)
+ *   { field }  datum[field]
+ *   (none)     datum[key], else the column named after the channel (warns)
+ * `{ value }` warns: a category axis has no visual-space constant; use `{ datum }`.
  * @param {Record<string, any>} channels
  * @param {string} channel
  * @param {import('../types').Datum | null} datum
@@ -598,16 +459,9 @@ export function categoryOf(channels, channel, datum, key, index, data) {
 }
 
 /**
- * Encode an ARBITRARY value through a channel's scale — the derived-value sibling
- * of `encodeChannel`, which can only encode a value a datum already holds.
- *
- * A parametric mark computes the points it draws (`trend`'s line is sampled at x
- * positions no row contains; `trendBand`'s envelope is evaluated at the domain
- * ends), so it has a value in the field's units and needs the same field->pixel
- * path. Without this, such a mark reaches past the encoding layer and calls
- * `scales.x.encode(v)` itself, which is how `trend`/`cone` each grew their own
- * placement rules. Honours `scale: null` (raw) and a missing scale exactly as
- * `encodeChannel` does, so the two stay interchangeable.
+ * Encode an arbitrary value, in the field's units, through a channel's scale. For
+ * parametric marks that compute points no row holds (trend, trendBand). Honours
+ * `scale: null` and a missing scale like `encodeChannel`.
  * @param {import('../types').ScaleMap} scales
  * @param {Record<string, any>} channels
  * @param {string} channel
@@ -625,22 +479,11 @@ export function encodeValue(scales, channels, channel, value, fallback) {
 }
 
 /**
- * Resolve an ANGULAR channel to math degrees (0° = +x, CCW, y-up — the same
- * convention as needle / pointerDegrees). Scaled when that channel resolved a
- * scale so `rotate()` is an exact inverse; otherwise raw (a `{ value }` constant
- * or the field's literal degrees).
- *
- * Two channels are angular, and they are different questions:
- *   `theta`  a POLAR POSITION — a needle's bearing, an arc's sweep. Positional
- *            (see AXIS_OF), so `axisRadial` is its axis and a legend draws a fan.
- *   `angle`  a mark's ROTATION IN PLACE — a tilted label, a rotated symbol. Not a
- *            position, so no axis and no key.
- * They were ONE channel until this pass, which is why `axisRadial` drew a polar
- * axis for a scale six marks were using as a rotation.
- *
- * Marks stamp the result on `FeatureNode.angle` either way — that field is the
- * RENDERED rotation, which is what both questions end in; the renderer converts to
- * SVG with `rotate(-deg cx cy)`.
+ * Resolve an angular channel to math degrees (0° = +x, CCW, y-up). Scaled when the
+ * channel has a scale, so `rotate()` inverts exactly; otherwise raw degrees.
+ * `theta` is a polar position (a needle's bearing, an arc's sweep); `angle` is a
+ * rotation in place, with no axis or legend. Marks stamp the result on
+ * `FeatureNode.angle`, the rendered rotation.
  * @param {import('../types').ScaleMap} scales
  * @param {Record<string, any>} channels
  * @param {string} channel 'angle' (rotation) or 'theta' (polar position)
@@ -669,11 +512,8 @@ export function encodeAngle(scales, channels, channel, datum, fallback = 0, inde
 }
 
 /**
- * Resolve a datum's glyph on the `symbol` channel, or `undefined` when the mark
- * declares no symbol channel (or the datum's category maps to nothing). A glyph is
- * a category -> string map through the channel's ordinal scale — the same path
- * `fill` takes to a colour — so a shape mark can render it as a text node in place
- * of its circle/rect. Returns a string glyph or undefined.
+ * Resolve a datum's glyph string on the `symbol` channel, or undefined when there
+ * is no symbol channel or the category maps to nothing.
  * @param {import('../types').ScaleMap} scales
  * @param {Record<string, any>} channels
  * @param {import('../types').Datum} datum
@@ -688,10 +528,8 @@ export function resolveSymbol(scales, channels, datum, index, data) {
 }
 
 /**
- * Build a `text` scene node for a glyph centred at (cx, cy), sized so its box is
- * roughly the diameter of a circle of radius `size`. Shared by every shape mark
- * that can render a `symbol` (point / dotStack / waffle), so a glyph token looks
- * the same everywhere. `extra` carries the caller's style/data/index/pointer opts.
+ * Build a `text` node for a glyph centred at (cx, cy), sized to a circle of radius
+ * `size`. `extra` carries the caller's style/data/index/pointer fields.
  * @param {string} glyph
  * @param {number} cx @param {number} cy
  * @param {number} size the radius the mark would have used for a circle, in px
@@ -712,10 +550,8 @@ export function symbolNode(glyph, cx, cy, size, extra = {}) {
 }
 
 /**
- * Resolve the standard style channels for one datum into a style object ready to
- * spread onto a scene node. Only channels the mark actually declared (or that
- * carry a non-undefined default) are included, so a node stays sparse and the
- * renderer's own defaults apply to the rest.
+ * Resolve the standard style channels for one datum into a style object for a
+ * scene node. Only declared channels (or non-undefined defaults) are included.
  * @param {import('../types').ScaleMap} scales
  * @param {Record<string, any>} channels
  * @param {import('../types').Datum} datum
@@ -736,28 +572,9 @@ export function resolveStyle(scales, channels, datum, defaults = {}, index, data
 }
 
 /**
- * The field that identifies a SERIES — which rows belong to the same line, area,
- * geoLine, or stack segment. One rule for the whole mark layer, because "what
- * groups these rows?" is one question: the marks that ask it were each answering
- * it differently (line read stroke, area read fill-then-stroke), so a coloured
- * area and a coloured line grouped by different channels.
- *
- * `series` is a CHANNEL — `channels: { series: { field: 'group' } }` — because it
- * names a column, and `channels` is the only place a mark names one. It was a plain
- * top-level option (`series: 'group'`, plus a `z` alias), which is exactly the
- * "an option may never name a data column" rule this API otherwise holds to, and it
- * meant the one encoding that decides a line chart's shape was invisible to
- * everything that reads a channel map.
- *
- * It is a RAW channel: the grouping key is read off the datum (`d[seriesField]`)
- * and never scaled, so marks declare it in `Mark.rawChannels` and no scale is built
- * for it. A grouping is an identity, not a magnitude — cf. Vega-Lite's `detail`.
- *
- * Precedence: an explicit `series` channel wins; otherwise the field behind a paint
- * channel, fill before stroke — Observable Plot's `z` default, so a coloured chart
- * groups with no extra config.
- *
- * `series` is the public channel name; `seriesKey` is the internal feature field.
+ * The field that groups rows into series (a line, an area, a stack segment): the
+ * `series` channel, else the field behind fill, stroke, then strokeDash. `series`
+ * is a raw channel (never scaled), so marks list it in `Mark.rawChannels`.
  * @param {Record<string, any>} channels the mark's channel map
  * @returns {string | null}
  */
@@ -771,11 +588,8 @@ export function seriesFieldOf(channels = {}) {
 }
 
 /**
- * A series value as a grouping KEY — a Date groups by its time, so two rows that
- * hold equal-valued but distinct Date objects fall in ONE series rather than one
- * per row (a Map keyed by object identity split them). Every mark that groups
- * rows into series, and every edit that compares a row's series to a node's,
- * goes through this.
+ * A series value as a grouping key: a Date groups by its time, so equal but
+ * distinct Date objects share one series.
  * @param {any} v
  * @returns {any}
  */
@@ -784,12 +598,9 @@ export function seriesKeyOf(v) {
 }
 
 /**
- * Order one series' placed points for its connecting path. An `order` CHANNEL
- * wins — it names the column to sort by — otherwise the `connect` mode decides:
- * `domain` sorts by the domain axis's PIXEL position (so an ordinal axis orders
- * by its declared domain, not alphabetically — `area` used to sort the raw
- * value and crossed itself on a categorical x), `sequence` keeps data order.
- * Shared by `line` and `area` so the two agree on the path a series takes.
+ * Order one series' points for its path. An `order` channel wins; otherwise
+ * `connect: 'domain'` sorts by the domain axis's pixel position (so an ordinal axis
+ * follows its domain order) and 'sequence' keeps data order. Shared by line and area.
  * @template {{ d: any, cx: number | null, cy: number | null }} P
  * @param {P[]} group placed rows, with the domain axis encoded into cx / cy
  * @param {string} connect 'domain' | 'sequence'
@@ -813,17 +624,10 @@ export function orderSeries(group, connect, domainAxis, channels) {
 }
 
 /**
- * Read a non-positional channel raw: a field's value, a `{ value }` constant, else
- * the fallback. No scale — these channels (text/fontSize/textAnchor/…) are literals.
- * A derived channel (`{ fn }`, e.g. `text: d => …`) is computed per datum.
- *
- * The counterpart of `encodeChannel`: that one is the single datum -> SCALED path,
- * this one is the single datum -> UNSCALED path. It lives here beside it for that
- * reason — it used to sit in plot/text.js, its own comment already protesting that
- * it is "not a text-mark detail", while `link` and `sticker` imported it from there.
- *
- * A mark that reads a channel through this MUST list it in `Mark.rawChannels`, or
- * the resolver builds a global scale for a channel nothing scales.
+ * Read an unscaled channel: a field's value, a `{ fn }` result, a `{ value }`
+ * constant, else the fallback. The unscaled counterpart of `encodeChannel`.
+ * A mark that reads a channel through this must list it in `Mark.rawChannels`, or
+ * the resolver builds a scale nothing uses.
  * @param {Record<string, any>} channels
  * @param {string} name
  * @param {any} datum
@@ -844,10 +648,7 @@ export function rawChannel(channels, name, datum, fallback, index, data) {
         return callChannelFn(spec, name, datum, index, data, fallback);
     }
     if (spec.value !== undefined) return spec.value;
-    // `{ datum }` means "a constant in DATA space — put it through the scale". These
-    // channels have no scale (a label's string, its font size, its dx nudge are the
-    // output already), so `{ datum }` and `{ value }` would be two spellings of one
-    // thing. Say so rather than silently accepting either.
+    // `{ datum }` has no scale to go through here; warn instead of treating it as `{ value }`.
     if (spec.datum !== undefined) {
         warn(
             `rawdatum:${name}`,
@@ -859,20 +660,9 @@ export function rawChannel(channels, name, datum, fallback, index, data) {
 }
 
 /**
- * The field a line-family mark sorts its points by: the `order` CHANNEL's field, or
- * null when there is none (the mark then follows its `connect` mode).
- *
- * `order` is a channel because it names a COLUMN, and `channels` is the only place
- * a mark names one. It was a plain option taking a bare field name
- * (`order: 'stop'`), which is the same defect `series` had. Pointing the option at
- * another channel instead (`order: { channel: 'x' }`) was tried and does not work:
- * the common case sorts by a column bound to NOTHING — a route's `stop` number is
- * an ordering key and not an encoding — so there is no channel to point at.
- *
- * It is a RAW channel: the sort key is read off the datum and never scaled, so
- * marks declare it in `Mark.rawChannels`. The MODE (sort by the domain axis, or
- * connect in array order) is a separate question with no column in it, and lives on
- * the `connect` option.
+ * The field a line-family mark sorts its points by: the `order` channel's field, or
+ * null (the mark then follows its `connect` mode). `order` is a raw channel, so
+ * marks list it in `Mark.rawChannels`.
  * @param {Record<string, any>} channels
  * @returns {string | null}
  */
@@ -881,37 +671,12 @@ export function orderFieldOf(channels = {}) {
 }
 
 /**
- * Options every mark accepts, whatever it draws.
+ * The options every mark passes through verbatim: id, edits, table, tip, clip.
+ * Spread first in a factory's returned object; a key stated after it wins.
  *
- * `constraints` is deliberately NOT here. A constraint is a DATASET invariant: it
- * is promoted to the whole dataset and gates every edit from every mark, so a
- * constraint written inside one mark reads as scoped to that mark and is not.
- * It belongs on the spec. See MISTAKEN_OPTIONS.
- * @type {string[]}
- */
-const UNIVERSAL_OPTIONS = MARK_UNIVERSAL_OPTIONS;
-
-/**
- * The options every mark must pass through VERBATIM, gathered in one place.
- *
- * Spread this first in a factory's returned object; any key the mark states
- * itself afterwards wins (`bar` renames its own to `edits: markEdits`). One
- * helper because "a mark factory that accepts `edits` and drops them" is a bug this
- * codebase has already shipped once — `rule` silently dropped every one of these
- * for a long time, which made a draggable whisker impossible. Three names in one
- * place cannot drift the way three names in 29 places did.
- *
- * ── WHICH TABLE A MARK DRAWS ───────────────────────────────────────────────
- * A mark is a view over exactly ONE table of the dataset. `table:` names it.
- * With none, the mark takes the table filling its `tableRole` — `link` declares
- * `'links'`, every other mark leaves it unset and so gets the structure's
- * PRIMARY table, which on a single-table chart is the only one there is. The
- * engine resolves this once, where features are flattened, and dev-warns on a
- * name the schema doesn't declare.
- *
- * NAMES go in `table:`; ROLES go in `tableRole` and `Edit.table`. That
- * indirection is what lets a schema call its tables `claims`/`supports` and
- * need no `table:` written anywhere.
+ * `table:` names the one table a mark draws. Without it the mark takes the table
+ * filling its `tableRole` (`link` declares 'links'; other marks get the primary
+ * table). Names go in `table:`; roles go in `tableRole` and `Edit.table`.
  * @param {any} opts the result of normalizeMarkOptions
  * @returns {{ id: any, edits: any, table: any, tip: any, clip: any }}
  */
@@ -932,11 +697,8 @@ export function markCommon(opts) {
 }
 
 /**
- * Option names that are WRONG in a specific, diagnosable way, each with the
- * correction. These are the API's own history: every one of them was either a
- * real name once, or is the name a reasonable person guesses. Silently ignoring
- * them (which is what `...rest` did) is the worst outcome — the chart renders,
- * looking almost right, and the author has no idea their option did nothing.
+ * Option names that are wrong in a known way (old names and common guesses), each
+ * with its correction.
  * @type {Record<string, string>}
  */
 const MISTAKEN_OPTIONS = {
@@ -965,17 +727,8 @@ const MISTAKEN_OPTIONS = {
 };
 
 /**
- * The POSITIONAL names, each with the same correction.
- *
- * `ruleY({ y: 50 })` is the single most natural thing to write and the single most
- * silent thing to get wrong: `y` is not a shorthand (only STYLE names desugar), so
- * it fell into the generic "not an option this mark reads" message, which doesn't
- * say what to write instead. It had been drawing reference lines at a fallback
- * position in this repo's own docs for a long time.
- *
- * The correction has to name BOTH forms, because the two readings are genuinely
- * different features: a mark's positional channel takes a data-space constant,
- * while a reference line about the chart's state is a GUIDE.
+ * The positional names (`ruleY({ y: 50 })`), each with the same correction:
+ * a `{ datum }` or `{ field }` channel, or a guide for a plain reference line.
  * @returns {Record<string, string>}
  */
 function positionalCorrections() {
@@ -992,18 +745,9 @@ function positionalCorrections() {
 }
 
 /**
- * Warn about options a mark will silently ignore.
- *
- * Unknown keys used to fall into `...rest` and get spread onto the feature, where
- * nothing reads them — so `color: 'red'`, `channel:` for `channels:`, or a
- * misspelled `strokeWdith` all "worked" and did nothing at all. That is the
- * quietest class of authoring bug in the library.
- *
- * `allow` is the mark's own option vocabulary on top of the universal options and
- * the style shorthands. Omitting it silently disables every unknown-option check —
- * so a mark that names itself but declares no vocabulary is a diagnostics HOLE, not
- * a lenient default, and gets told so (once). `arc`/`pie`/`donut` and `axisRadial`
- * sat in that hole for a long time: `arc({ outerRadus: 50 })` warned nothing.
+ * Warn about options a mark would silently ignore. `allow` is the mark's own
+ * option vocabulary on top of the universal options and style shorthands; a `mark`
+ * with no `allow` disables the check, and warns that it did.
  * @param {string | undefined} mark the factory name, for the message
  * @param {any} options the RAW options, before shorthands are stripped
  * @param {string[] | undefined} allow mark-specific option names
@@ -1021,14 +765,12 @@ export function warnUnknownOptions(mark, options, allow) {
         );
     }
     const known = allow
-        ? new Set([...UNIVERSAL_OPTIONS, ...SHORTHANDS, ...allow])
+        ? new Set([...MARK_UNIVERSAL_OPTIONS, ...MARK_SHORTHANDS, ...allow])
         : null;
     for (const key of Object.keys(options)) {
         const fix = MISTAKEN_OPTIONS[key];
         if (fix) {
-            // `channel` is the real option name on axis/grid/legend, and several
-            // marks legitimately take `field`; an explicit allowlist wins over the
-            // generic correction.
+            // Some marks really take `channel` or `field`; the allow list wins.
             if (known && known.has(key)) continue;
             warn(`opt:${name}:${key}`, `${name}({ ${key}: … }): ${fix}`);
             continue;
@@ -1043,23 +785,13 @@ export function warnUnknownOptions(mark, options, allow) {
 }
 
 /**
- * Desugar top-level constant shorthands into `channels`, without clobbering an
- * explicit `channels[ch]` (an explicit channel wins). Keeps
- * `bar({ fill: 'steelblue' })` and `point({ size: 9 })` working through the one
- * channel path. Returns a new options object with a merged `channels` map and the
- * shorthands stripped.
+ * Desugar top-level style shorthands (`fill: 'steelblue'`, `size: 9`) into
+ * `channels`, and return new options with the shorthands stripped. An explicit
+ * channel wins; a function becomes `{ fn }`, any other value `{ value }`.
  *
- * `except` keeps named shorthands as plain top-level options instead of desugaring
- * them. That's for a mark where the name is CHROME rather than per-datum style:
- * an axis's `stroke` paints its spine and its `fontSize` its labels — there is no
- * datum to resolve them against, so turning them into channels would only create
- * a channel nothing reads (and force the mark to reach back into raw options for
- * the real value, which is what axisRadial used to do).
- * Pass `mark` (the factory name) to get unknown-option diagnostics, and `allow`
- * to declare the mark's own option vocabulary on top of the universal ones. This
- * is the one place every mark already funnels through, so validating here reaches
- * all of them. A `mark` with no `allow` is a diagnostics HOLE and warns (see
- * warnUnknownOptions), which is what keeps the declaration from being optional.
+ * `except` keeps named shorthands as top-level options, for a mark where the name
+ * is chrome rather than per-datum style (an axis's `stroke` paints its spine).
+ * Pass `mark` and `allow` for unknown-option diagnostics (see warnUnknownOptions).
  * @param {any} [options]
  * @param {{ except?: string[], mark?: string, allow?: string[] }} [opts]
  * @returns {any}
@@ -1069,12 +801,9 @@ export function normalizeMarkOptions(options = {}, { except = [], mark, allow } 
     const { channels = {}, ...rest } = options;
     /** @type {Record<string, any>} */
     const merged = { ...channels };
-    for (const ch of SHORTHANDS) {
+    for (const ch of MARK_SHORTHANDS) {
         if (rest[ch] === undefined || except.includes(ch)) continue;
         // An explicit channel for this name wins over the shorthand.
-        // A function shorthand (`fill: d => …`) desugars to a DERIVED channel
-        // (`{ fn }`), computed per datum in visual space; any other value is a
-        // visual-space constant (`{ value }`).
         if (merged[ch] === undefined) {
             merged[ch] = typeof rest[ch] === 'function' ? { fn: rest[ch] } : { value: rest[ch] };
         }
@@ -1084,41 +813,16 @@ export function normalizeMarkOptions(options = {}, { except = [], mark, allow } 
 }
 
 /**
- * The style names an AXIS mark treats as chrome (its spine, ticks and labels)
- * rather than as per-datum channels — pass to normalizeMarkOptions's `except`.
+ * The style names an axis treats as chrome, not per-datum channels. Pass to
+ * normalizeMarkOptions's `except`.
  * @type {string[]}
  */
 export const AXIS_CHROME = ['stroke', 'strokeWidth', 'fill', 'fontSize'];
 
 /**
- * Options every CHART ELEMENT accepts. A chart element (`views: 'scale'` — axis,
- * grid, legend, axisRadial) draws a SCALE rather than columns of the dataset, so it
- * has no `channels` map: the universal set is the mark's minus that.
- *
- * `field` and `table` are the pair that says WHAT an edit on the element writes.
- * An element has no channel map, so without them both coordinates are inferred —
- * the field from `scale.fields[0]` (declaration order) and the table from the
- * structure's primary. Neither is a statement the spec made. `table` is a NAME, the
- * same as a mark's; the engine resolves it in the one place features are bound
- * (core/elicit.js), so an element needs no `tableRole` to honour it.
- * @type {string[]}
- */
-// `constraints` is absent for the same reason it is absent from a MARK's
-// universal options, and doubly so here: an element draws a SCALE, not rows.
-const UNIVERSAL_ELEMENT_OPTIONS = ELEMENT_UNIVERSAL_OPTIONS;
-
-/**
- * Validate a CHART ELEMENT's options. The counterpart to normalizeMarkOptions for
- * `views: 'scale'` features — the diagnostics half without the channel desugar half,
- * because an element has nothing to desugar INTO.
- *
- * This exists because `axis`/`axisX`/`axisY`/`grid`/`gridX`/`gridY`/`legend`/
- * `legendColor`/`legendSize`/`legendSymbol` skipped normalizeMarkOptions entirely
- * (correctly — they encode no datum) and thereby skipped all validation too. They
- * take ~20 options each and checked none of them: `axisX({ colour: 'red' })` and
- * `axisX({ tickss: 5 })` both rendered a default axis in silence. Routing them
- * through normalizeMarkOptions instead would be wrong in the other direction — it
- * would accept `dy`/`symbol`/`size` (every style SHORTHAND) on an axis.
+ * Validate a chart element's options (`views: 'scale'`). The diagnostics half of
+ * normalizeMarkOptions, without the shorthand desugar: an element has no datum,
+ * and must not accept the mark style shorthands.
  * @param {string} element the factory name, for the message
  * @param {any} options
  * @param {string[]} allow the element's own option vocabulary
@@ -1126,7 +830,7 @@ const UNIVERSAL_ELEMENT_OPTIONS = ELEMENT_UNIVERSAL_OPTIONS;
  */
 export function warnUnknownElementOptions(element, options, allow) {
     if (!options || !warningsEnabled()) return;
-    const known = new Set([...UNIVERSAL_ELEMENT_OPTIONS, ...allow]);
+    const known = new Set([...ELEMENT_UNIVERSAL_OPTIONS, ...allow]);
     for (const key of Object.keys(options)) {
         if (known.has(key)) continue;
         const fix = MISTAKEN_OPTIONS[key];
@@ -1143,20 +847,9 @@ export function warnUnknownElementOptions(element, options, allow) {
 }
 
 /**
- * A CHART ELEMENT's edit list: both spellings flattened into one array, with the
- * element's own `channel` injected into any edit that didn't name one. The
- * element-side counterpart to `markCommon` — one helper so the universal options
- * cannot drift the way they did in 29 mark factories.
- *
- * Both spellings, because `edits` was in the universal element vocabulary (so it
- * validated clean) while `axis` and `legend` destructured only `edit` and then
- * overwrote the key with their own local — `legendColor({ edits: [...] })` passed
- * every check and silently did nothing. Accepting one and validating the other is
- * the worst of both.
- *
- * Injecting the channel is what lets `resolveChannels` find the edit's scale at all:
- * an element has no channel map, so without this the edit's `channels` is null and
- * it resolves nothing.
+ * A chart element's edit list: `edit` and `edits` flattened into one array, with
+ * the element's `channel` injected into any edit that names none, so
+ * `resolveChannels` can find the edit's scale (an element has no channel map).
  * @param {any} options the element's raw options (read `edit` and `edits`)
  * @param {string} channel the scale the element draws
  * @returns {import('../types').Edit[]}

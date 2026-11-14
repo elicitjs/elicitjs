@@ -1,9 +1,6 @@
 // @ts-check
-// nearest driver — proximity editing from the plane: resolve the closest mark to
-// the pointer within a threshold and edit it, holding a lock across a drag so a
-// mark stays grabbed even as the pointer leaves it. Also maintains the transient
-// session selection (px/py/threshold + hover/active index) that the edit's guide
-// draws as a snap ring + highlight.
+// nearest driver — edit the closest mark within a threshold, locked for the drag.
+// Writes px/py/threshold and hover/active index for the catchment ring.
 
 import { nearestMark, pickThreshold } from '../pick.js';
 
@@ -34,9 +31,7 @@ export const nearestDriver = {
             if (info) info.activeIndex = null;
             changed = true;
         } else {
-            // Any other gesture a nearest edit declares — a drag (uses the lock set
-            // on dragstart) or a discrete click/dblclick delete (resolve a fresh
-            // nearest target). Keep the ring at the pointer either way.
+            // Drag uses the dragstart lock; click/dblclick resolves the nearest mark.
             const info = session.get();
             if (info) { info.px = event.x; info.py = event.y; }
             const matching = edits.filter((e) => e.gesture === event.type);

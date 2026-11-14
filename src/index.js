@@ -1,19 +1,12 @@
 // @ts-check
-//
-// The public surface, in two halves.
-//
-// THE GRAMMAR — what can appear in a spec. Each namespace holds exactly one kind
-// of thing, so its members are the grammar's keywords:
-//   plot.*         marks      — view DATA (one node per row)
-//   elements.*     elements   — view a SCALE (axis / grid / legend)
-//   guides.*       guides     — view STATE (read-only; write nothing)
-//   edit.*         edits      — a gesture -> data, through the encoding's own scale
-//   constraints.*  invariants — pure rules over the elicited dataset
-//   widgets.*      instruments — whole specs, one call each
-//
-// THE AUTHORING KIT — what you build new vocabulary FROM (`authoring.*`, also
-// importable as `elicitjs/authoring`). Kept out of the grammar so autocomplete
-// shows the language rather than the implementation.
+// The public surface. Grammar namespaces hold only spec keywords:
+//   plot.*         marks        view data (one node per row)
+//   elements.*     elements     view a scale (axis / grid / legend)
+//   guides.*       guides       view state, write nothing
+//   edit.*         edits        a gesture -> data, through the encoding's scale
+//   constraints.*  invariants   rules over the elicited dataset
+//   widgets.*      instruments  whole specs
+// `authoring.*` (also `elicitjs/authoring`) holds the building blocks.
 import { Elicit } from "./core/elicit.js";
 import * as plot from "./plot/index.js";
 import * as elements from "./elements/index.js";
@@ -32,29 +25,24 @@ import { setWarnings } from "./core/dev.js";
 export {
   Elicit,
   plot,
-  // Chart elements (axis / grid / legend / axisRadial) — scale chrome. These view
-  // a SCALE rather than rows, which is why they are their own namespace and not
-  // marks.
+  // Axis / grid / legend / axisRadial: they view a scale, not rows.
   elements,
   edit,
   constraints,
-  // Guides view chart STATE and write nothing — the rule and the state, rather
-  // than the data. See ARCHITECTURE.md's feature table.
+  // Guides view chart state and write nothing.
   guides,
   widgets,
-  // The kit for writing new marks / edits / constraints / widgets. Also available
-  // as `import { … } from 'elicitjs/authoring'`.
+  // Building blocks for new marks / edits / constraints / widgets.
   authoring,
   format,
   D3Renderer,
   CanvasRenderer,
-  // Theme layer: `themes` are the built-ins (default, survey); `setTheme` sets the
-  // app-wide default; a chart passes `spec.theme` for a per-chart theme.
+  // `themes` are the built-in themes; `setTheme` sets the app-wide default;
+  // `spec.theme` sets one chart's.
   themes,
   setTheme,
   resolveTheme,
   DEFAULT_THEME,
-  // Developer warnings are ON by default (and off automatically when a bundler
-  // inlines NODE_ENV=production). Call setWarnings(false) to silence them.
+  // Warnings are on by default, off under NODE_ENV=production or setWarnings(false).
   setWarnings,
 };

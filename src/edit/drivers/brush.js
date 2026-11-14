@@ -1,32 +1,19 @@
 // @ts-check
-// brush driver — the combined Gantt-bar interaction for a span pair (x1/x2 or
-// y1/y2): grab near one endpoint to resize just that edge; grab the body to
-// translate the whole span. The grab zone is classified ONCE at dragstart and
-// locked in the feature's session for the gesture (mirrors nearest.js's
-// dragstart lock), so a continuous drag doesn't re-decide zone mid-gesture —
-// which matters, because the two endpoint fields can cross (an edge dragged
-// past the other) without breaking anything: bar.js's render always takes
-// min/max of the pair, so it never cares which field holds which value.
+// brush driver — for a span pair (x1/x2 or y1/y2): grab an endpoint to resize that
+// edge, or the body to move the span. The zone is classified once at dragstart and
+// locked in the session.
 //
-// At dragend, the SAME edit is re-invoked once more with the locked zone
-// forced to 'canonicalize' — a one-time data cleanup that swaps the two field
-// VALUES if they ended up inverted. This can't happen mid-gesture (re-sorting
-// every tick while a fixed field keeps receiving the pointer's value would
-// silently overwrite the untouched edge the moment they cross), but doing it
-// once at rest is invisible on screen, since rendering never depended on
-// which field was which.
+// At dragend the edit runs once more with `zone: 'canonicalize'` to swap inverted
+// values. Doing that per tick would overwrite the untouched edge once they cross.
 
 import { nearestMark, pickThreshold, edgeInsetOf } from '../pick.js';
 import { encodeChannel } from '../../plot/mark.js';
 import { axisOf } from '../../core/encoding.js';
 
 /**
- * Classify a grab point against a mark's CURRENT rendered span on the pair's
- * shared axis: near the low-pixel edge, near the high-pixel edge, or in the
- * body between. Returns the FIELD NAME currently at the grabbed edge (not a
- * fixed channel position) — after a prior crossover, x1 may not hold the
- * smaller value, so "which field is at the low pixel" must be re-resolved
- * fresh each gesture, not assumed from the channel's declared name.
+ * Classify a grab against the mark's current span: near the low edge, near the
+ * high edge, or the body. Returns the field now at the grabbed edge, resolved
+ * from pixels since x1 may hold the larger value after a crossover.
  * @param {any} feature
  * @param {import('../../types').ScaleMap} scales
  * @param {any} datum
@@ -58,6 +45,37 @@ function classifyZone(feature, scales, datum, channelNames, px, py, edgeInset) {
         return distLo <= distHi ? { zone: 'edgeA', field: loField } : { zone: 'edgeB', field: hiField };
     }
     return { zone: 'body' };
+}
+
+/**
+ * Drag tick of a zone-locked brush: track the pointer, run the edit on the locked row.
+ * @param {any} session @param {{ x: number, y: number }} event
+ * @param {import('../../types').Edit} edit @param {(edit: any, index: number) => any} runEdit
+ */
+export function brushDrag(session, event, edit, runEdit) {
+    const info = session.get();
+    if (!info) return;
+    info.px = event.x;
+    info.py = event.y;
+    if (info.activeIndex != null && info.zone) runEdit(edit, info.activeIndex);
+}
+
+/**
+ * Dragend tick: run the edit once with the zone forced to 'canonicalize', then
+ * release the row. Returns the session info, for a driver with more to reset.
+ * @param {any} session
+ * @param {import('../../types').Edit} edit @param {(edit: any, index: number) => any} runEdit
+ * @returns {any | null}
+ */
+export function brushRelease(session, edit, runEdit) {
+    const info = session.get();
+    if (!info) return null;
+    if (info.activeIndex != null && info.zone) {
+        info.zone = 'canonicalize';
+        runEdit(edit, info.activeIndex);
+    }
+    info.activeIndex = null;
+    return info;
 }
 
 /** @type {import('./index.js').Driver} */
@@ -93,22 +111,10 @@ export const brushDriver = {
             });
             changed = true;
         } else if (event.type === 'drag') {
-            const info = session.get();
-            if (info) { info.px = event.x; info.py = event.y; }
-            const index = info ? info.activeIndex : null;
-            if (index != null && info && info.zone) {
-                if (runEdit(edit, index)) changed = true;
-            }
+            brushDrag(session, event, edit, runEdit);
             changed = true;
         } else if (event.type === 'dragend') {
-            const info = session.get();
-            const index = info ? info.activeIndex : null;
-            if (index != null && info && info.zone) {
-                // One-time cleanup tick: force the zone to canonicalize, then commit.
-                info.zone = 'canonicalize';
-                runEdit(edit, index);
-            }
-            if (info) info.activeIndex = null;
+            brushRelease(session, edit, runEdit);
             changed = true;
         }
         return changed;

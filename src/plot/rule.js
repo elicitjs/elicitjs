@@ -1,62 +1,36 @@
 // @ts-check
-// rule: a straight reference line across the plot at a value on one axis, built on
-// the shared mark foundation like every other mark.
+// rule: a straight line across the plot at a value on one axis.
 //
 //   ruleY({ channels: { y: { datum: 50 } } })  -> horizontal line at y = 50
-//   ruleX({ channels: { x: { datum: 30 } } })  -> vertical line at x = 30
 //   ruleY({ channels: { y: { field: 'target' } } })  -> one line per datum
 //
-// `datum` is a DATA-space constant: it goes through the y scale, so the line lands
-// where y=50 is. (`value` would be 50 pixels — see mark.js.) For a one-off
-// chart-level reference line, guides.rule is the ergonomic form; `rule` is the mark,
-// and it earns its keep when the line is per-datum or is a span.
-//
-// SPAN mode (Observable Plot's ruleX/ruleY with y1/y2 or x1/x2): declaring a pair
-// of endpoint channels draws a SEGMENT between them at the datum's category on the
-// other axis, rather than a full-extent line — a lollipop stem or an error-bar
-// whisker. It mirrors bar's span model (see bar.js): the endpoints resolve through
-// encodeChannel exactly like bar's x1/x2·y1/y2, a missing endpoint defaults to the
-// value-axis baseline (so `y2` alone spans baseline -> y2), and the perpendicular
-// position comes from the category channel via categoryOf (band centre), the same
-// path every other band mark uses.
-//
-// A rule is an ordinary editable mark: put an `edit` on an endpoint channel and its
-// cap becomes a handle. It carries no pointerEvents of its own — the engine silences
-// any mark with no direct-pick edit, so an inert whisker cannot swallow a sibling
-// handle's drag while an editable one still receives its own.
+// Span mode: an endpoint pair (y1/y2 or x1/x2) draws a segment between them at
+// the row's category on the other axis (a stem, a whisker). A missing endpoint
+// defaults to the value-axis baseline.
+// No `pointerEvents` here on purpose: the engine silences a rule with no edit.
 
 import { baselineOf, isBand } from '../core/scales.js';
 import { encodeChannel, categorySlot, resolveStyle, normalizeMarkOptions, positionalKeys, markCommon, markDefaults, themeOf, resolveValueAxis, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
 /**
- * @param {any} options
+ * @param {any} [options]
  * @returns {import('../types').Mark}
  */
-function buildRule(options) {
-    // Desugar style shorthands (stroke, strokeWidth, opacity) into constant
-    // channels, so a rule reads style the same way every mark does.
+export function rule(options = {}) {
     const opts = normalizeMarkOptions(options, { mark: 'rule', allow: MARK_OPTIONS.rule });
-    const { channels = {}, id, edits, discreteScale } = opts;
+    const { channels = {}, discreteScale } = opts;
 
-    // Span mode: a pair of endpoint channels on one axis draws a segment between
-    // them (a stem / whisker), positioned at the datum's category on the other.
-    // Decided once per mark (not per datum), like bar's span. The presence of a
-    // y1/y2 (or x1/x2) endpoint — distinct channel names from the reference-line
-    // x/y — is the switch; a lone endpoint spans from the value-axis baseline.
+    // Span mode, decided once per mark: any y1/y2 (or x1/x2) endpoint switches it on.
     const hasYSpan = !!(channels.y1 || channels.y2);
     const hasXSpan = !!(channels.x1 || channels.x2);
     const spanAxis = hasYSpan ? 'y' : hasXSpan ? 'x' : null;
 
-    // Which axis carries the value? Forced by ruleX/ruleY; else inferred from
-    // whichever of x / y the mark declares a channel on.
-    // A rule is decided at factory time (no scales): its y1/y2 pair is the chord,
-    // and a lone x or y is where it sits.
+    // The value axis, decided at factory time (no scales): forced by ruleX/ruleY,
+    // else from the declared channels.
     const valueAxis = resolveValueAxis(channels, null, { orientation: opts.orientation, extent: 'span', single: 'value' });
 
-    // A rule bound to no field at all is a single reference line, not one line per
-    // row — otherwise `ruleY({ channels: { y: { datum: 25 } } })` would stack N
-    // identical lines on a chart with N rows.
+    // A rule bound to no field draws one line, not one per row.
     const constant = !Object.values(channels).some((/** @type {any} */ c) => c && c.field != null);
     const { xKey, yKey } = positionalKeys(channels);
 
@@ -64,8 +38,7 @@ function buildRule(options) {
         ...markCommon(opts),
         type: 'rule',
         channels,
-        // A rule spans; it has no opinion about the discrete scale of the axis it
-        // crosses. Left undefined so a composite can stamp its own onto it.
+        // Left undefined so a composite can stamp its own.
         discreteScale,
         xKey,
         yKey,
@@ -86,26 +59,21 @@ function buildRule(options) {
                     markDefaults(scales, 'rule', { stroke: themeOf(scales).ink, strokeWidth: 1 }),
                     index, currentData);
 
-                // Span mode: a segment between two endpoints on spanAxis, at the
-                // datum's category on the other axis. Endpoints resolve through
-                // encodeChannel (like bar's span); a missing one falls to the
-                // value-axis baseline, so `y2` alone spans baseline -> y2.
+                // Span mode: a segment between two endpoints on spanAxis; a
+                // missing endpoint falls to the value-axis baseline.
                 if (spanAxis) {
                     const posAxis = spanAxis === 'y' ? 'x' : 'y';
                     const posLen = posAxis === 'x' ? width : height;
                     const baseline = baselineOf(scales[spanAxis]);
                     const [c1, c2] = spanAxis === 'y' ? ['y1', 'y2'] : ['x1', 'x2'];
-                    // A row with no value where the rule sits, or none for any bound
-                    // endpoint, has no segment: draw nothing (it fell to the centre
-                    // of the plot, or to a zero-length line at the baseline).
+                    // No segment for a row missing its position or every bound endpoint.
                     if (missingValue(channels, posAxis, datum)) return;
                     const bound = [c1, c2].filter((c) => channels[c] && channels[c].field != null);
                     if (bound.length && bound.every((c) => missingValue(channels, c, datum))) return;
                     const a = channels[c1] ? encodeChannel(scales, channels, c1, datum, baseline, index, currentData) : baseline;
                     const b = channels[c2] ? encodeChannel(scales, channels, c2, datum, baseline, index, currentData) : baseline;
                     if (a === undefined || b === undefined) return;
-                    // Perpendicular position: category centre on a band axis (via
-                    // categoryOf, so { fn }/{ datum } work), else encodeChannel.
+                    // Perpendicular position: category centre on a band axis, else encodeChannel.
                     const posScale = scales[posAxis];
                     let posAt = posLen / 2;
                     if (channels[posAxis]) {
@@ -153,14 +121,6 @@ function buildRule(options) {
             return nodes;
         }
     };
-}
-
-/**
- * @param {any} [options]
- * @returns {import('../types').Mark}
- */
-export function rule(options = {}) {
-    return buildRule(options);
 }
 
 /**

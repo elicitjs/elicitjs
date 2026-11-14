@@ -1,9 +1,7 @@
 // @ts-check
 import { GUIDE_OPTIONS } from '../vocabulary.js';
-// guides.region — a declarative shaded band between two values on an axis (an
-// "acceptable range", a target zone). Like guides.rule it positions in data
-// space through scale.encode, so it composes across scale types, and any option
-// may be a function of the guide context (see guides/shared.js).
+// guides.region: a shaded band between two values on an axis, positioned in data
+// space. Any option may be a function of the guide context.
 //
 //   elicit.guides.region({ y: [40, 60] })          // horizontal band, y in [40,60]
 //   elicit.guides.region({ x: ["Agree", "Strongly agree"] })
@@ -12,34 +10,26 @@ import { GUIDE_OPTIONS } from '../vocabulary.js';
 import { resolveGuideOptions, warnUnknownGuideOptions } from './shared.js';
 
 /**
- * `region`'s option vocabulary. Exported so one list drives the diagnostics,
- * the docs table, and (later) the JSON grammar.
- * @type {string[]}
- */
-export const REGION_OPTIONS = GUIDE_OPTIONS.region;
-
-/**
  * @param {{ x?: any, y?: any, fill?: any, opacity?: any, stroke?: any, label?: any }} [options]
  *   `stroke` outlines the band; `label` names it (drawn at the band's top-left,
  *   in the plot's label ink).
  * @returns {import('../types').Guide}
  */
 export function region(options = {}) {
-    warnUnknownGuideOptions('region', options, REGION_OPTIONS);
+    warnUnknownGuideOptions('region', options, GUIDE_OPTIONS.region);
     return {
         views: 'state',
         type: 'region',
         build: (_rows, _scales, _w, _h, ctx) => {
             const { scales, width, height } = ctx;
             // Fill/opacity default to the theme's region tokens; an option still wins.
-            const rt = (ctx.theme && ctx.theme.guide && ctx.theme.guide.region) || {};
+            const rt = ctx.theme?.guide?.region || {};
             const {
-                x, y, fill = rt.fill || '#64748b', opacity = rt.opacity != null ? rt.opacity : 0.1,
+                x, y, fill = rt.fill || '#64748b', opacity = rt.opacity ?? 0.1,
                 stroke, label,
             } = resolveGuideOptions(options, ctx);
-            const labelFill = (ctx.theme && ctx.theme.guide && ctx.theme.guide.rule && ctx.theme.guide.rule.labelFill)
-                || (ctx.theme && ctx.theme.label) || '#374151';
-            const fontSize = (ctx.theme && ctx.theme.guide && ctx.theme.guide.rule && ctx.theme.guide.rule.fontSize) || 11;
+            const labelFill = ctx.theme?.guide?.rule?.labelFill || ctx.theme?.label || '#374151';
+            const fontSize = ctx.theme?.guide?.rule?.fontSize || 11;
 
             /** @type {import('../types').FeatureNode[]} */
             const nodes = [];

@@ -1,14 +1,8 @@
 // @ts-check
-// titles.js — a chart's TITLE, SUBTITLE and CAPTION: chrome that reserves layout
-// space exactly as a legend does (core/legends.js reserveLegends), so a titled
-// chart keeps its declared width and height and the plot shrinks to make room.
-// The bands are the OUTERMOST: plot, then the author's margin (where an axis
-// draws), then any legend, then the title block at the top edge; the caption
-// mirrors that at the bottom edge.
-//
-// Drawn as background text nodes (pointer-transparent) in the theme's title
-// tokens; left-aligned with the plot, the Observable Plot convention, and wrapped
-// to the chart's width.
+// titles.js — a chart's title, subtitle and caption. They reserve layout space like
+// a legend, outermost: the chart keeps its declared size and the plot shrinks.
+// Drawn as pointer-transparent background text, left-aligned and wrapped to the
+// chart's width.
 import { wrapText } from './measure.js';
 
 /**
@@ -25,7 +19,7 @@ function tokens(theme, part) {
         ? { fontSize: 16, fontWeight: 600 }
         : part === 'subtitle' ? { fontSize: 12, fontWeight: 'normal' } : { fontSize: 11, fontWeight: 'normal' };
     return {
-        fill: t.fill || (part === 'title' ? labelFill : labelFill),
+        fill: t.fill || labelFill,
         fontSize: t.fontSize != null ? t.fontSize : defaults.fontSize,
         fontWeight: t.fontWeight != null ? t.fontWeight : defaults.fontWeight,
         fontFamily: t.fontFamily || null,
@@ -71,14 +65,13 @@ function linesOf(text, t, maxWidth) {
  * caption sits at its bottom edge.
  * @param {{ title?: string, subtitle?: string, caption?: string }} spec
  * @param {any} theme
- * @param {{ innerWidth: number, outerHeight: number, effectiveMargins: { top: number, bottom: number, left: number, right: number }, authorMargins: { top: number, bottom: number }, maxWidth?: number }} layout
+ * @param {{ outerHeight: number, effectiveMargins: { top: number, bottom: number, left: number, right: number }, maxWidth?: number }} layout
  * @returns {import('../types').FeatureNode[]}
  */
-export function titleNodes(spec, theme, { innerWidth, outerHeight, effectiveMargins, authorMargins, maxWidth = 0 }) {
+export function titleNodes(spec, theme, { outerHeight, effectiveMargins, maxWidth = 0 }) {
     /** @type {import('../types').FeatureNode[]} */
     const nodes = [];
     const chrome = { background: true, pointerEvents: 'none', textAnchor: 'start', lineAnchor: 'top' };
-    void authorMargins; void innerWidth;
     let y = 2 - effectiveMargins.top; // the chart's top edge, in scene y
     /** @param {'title' | 'subtitle' | 'caption'} part @param {number} top @param {number} step */
     const block = (part, top, step) => {

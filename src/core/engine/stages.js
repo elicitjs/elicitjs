@@ -2,11 +2,8 @@
 import { collectEdits } from '../../edit/route.js';
 
 /**
- * Multi-stage elicitation: edits carrying a numeric `stage` are active only in
- * that stage (null = always). This is a uniform descriptor filter applied to
- * EVERY edit — the same shape as `gesture` matching — not a per-mode engine
- * branch, so the one-interaction-model invariant holds. `activeEdits` is the
- * single gate the dispatch/editable/plane-on-top paths run their edits through.
+ * Multi-stage elicitation: an edit with a numeric `stage` is active only in that
+ * stage (null = always). `activeEdits` is the one gate every edit path uses.
  *
  * @param {{
  *   spec: import('../../types').ElicitSpec,
@@ -31,10 +28,8 @@ export function createStages(deps) {
     const activeEdits = (feature) =>
         collectEdits(feature).filter(e => e.stage == null || e.stage === currentStage);
 
-    // Move the stage cursor WITHOUT re-rendering: drop every transient (an in-flight
-    // driver lock, a hover preview) so a stage switch can't resume a half-finished
-    // gesture, then notify. Callers render — `setStage` on the container does it
-    // directly; a driver's `stage.next()` rides the dispatch's own re-render.
+    // Move the stage without rendering: drop every transient so a half-finished
+    // gesture can't resume, then notify. The caller renders.
     /** @param {number} n */
     const applyStage = (n) => {
         currentStage = n;
@@ -46,9 +41,7 @@ export function createStages(deps) {
         for (const cb of listeners.stage) cb(currentStage, stageLabelOf(currentStage));
     };
 
-    // Multi-stage controls on the container. Advancing the stage re-renders (the
-    // active edit set, plane-on-top, and cursors all follow the stage) and drops
-    // every transient.
+    // Change the stage and re-render.
     /** @param {number} stage */
     const setStage = (stage) => {
         applyStage(stage);
@@ -56,7 +49,7 @@ export function createStages(deps) {
     };
 
     return {
-        getStage, stageLabelOf, activeEdits, applyStage,
+        getStage, activeEdits, applyStage,
         api: {
             getStage,
             getStageLabel: () => stageLabelOf(currentStage),

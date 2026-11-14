@@ -1,46 +1,30 @@
 // @ts-check
-import { isBand, baselineOf } from '../core/scales.js';
+import { baselineOf } from '../core/scales.js';
 import { claimEdge } from '../edit/shared.js';
-import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, handlesAreAffordance, markCommon, rawChannel, resolveValueAxis, orderSeries, seriesKeyOf, hasAnyEdit, inkOf, missingValue } from './mark.js';
+import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, handlePaint, handlesAreAffordance, markCommon, rawChannel, resolveValueAxis, orderSeries, seriesKeyOf, hasAnyEdit, inkOf, missingValue } from './mark.js';
 import { areaGenerator } from '../core/curves.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
-// area: a filled path under a series (the distributional sibling of line). Same
-// grouping / ordering knobs as line; emits one filled `path` per series plus
-// optional handle circles so sweep/drag/create reuse the line edit machinery.
+// area: one filled path per series, down to the baseline, plus optional handle
+// circles. Same series/ordering options as line.
 //
-//   area   — auto-detect value axis
+//   area   — value axis resolved from the channels and scales
 //   areaY  — value on y (fill down to the y baseline)
 //   areaX  — value on x (fill across to the x baseline)
 //
-// The value axis also accepts an explicit SPAN instead of a single value: two
-// endpoint channels (y1/y2 for areaY, x1/x2 for areaX) fill BETWEEN them rather
-// than down to the baseline. That is the uncertainty band — a confidence interval
-// or a fan chart around a forecast — and it's the same span/baseline split `bar`
-// and `rect` already make, spelled the same way, rather than a separate mark that
-// would fork this one's series/curve/order/handle machinery.
+// A span (y1/y2 or x1/x2) fills between two fields instead: an uncertainty band.
+// Handles sit on both edges. Pair with ordering({ fields: ['lo','hi'] }) to keep
+// the band from turning inside out.
 //
 //   areaY({ channels: { x: { field: 'year' },
 //                       y1: { field: 'lo' }, y2: { field: 'hi' } } })
-//
-// y1/y2 share y's resolved scale (see core/resolve.js's axis aliasing), so they go
-// through encodeChannel exactly like the single-value form, and the schema's domain
-// union means the band and a sibling mean line land on one axis. Handles sit on
-// BOTH edges, so `drag` on y1/y2 or `brushSpan` edits the interval directly. Pair
-// with ordering({ fields: ['lo','hi'] }) to stop the band turning inside-out.
 
 const SINGLE = '__single__';
 
 /**
- * Span mode puts TWO handles on ONE feature over ONE datum (one per edge), and
- * direct-pick dispatch fans a gesture out to every direct edit on the feature —
- * so an unguarded drag on the lo handle runs the hi edge's drag too and collapses
- * the band onto the pointer. `claimEdge` (edit/shared.js) claims each edge's edit
- * for its own `channel`-tagged handle — the trend intercept/slope arbitration,
- * applied for the author rather than asked of them.
- *
- * Guard every edit that governs exactly one edge of the span pair, whether it was
- * co-located on the channel or declared at mark level.
+ * In span mode both edge handles sit on one feature over one datum, and a gesture
+ * reaches every direct edit on the feature. `claimEdge` ties each single-edge edit
+ * to its own `channel`-tagged handle so a drag on one edge doesn't move the other.
  * @param {string[] | null} group the pair's channel names, or null outside span mode
  * @param {any} channels
  * @param {any[] | undefined} edits
@@ -61,15 +45,11 @@ function claimSpanEdges(group, channels, edits) {
     return { channels: guarded, edits: guardedEdits };
 }
 
-/**
- * @param {any} options
- * @returns {import('../types').Mark}
- */
-function buildArea(options) {
+/** @param {any} [options] @returns {import('../types').Mark} */
+export function area(options = {}) {
     const opts = normalizeMarkOptions(options, { mark: 'area', allow: MARK_OPTIONS.area });
     const {
         channels: declaredChannels = {},
-        id,
         edits: rawEdits,
         curve = 'linear',
         // Handles draw only when something can grab them (see `line`).
@@ -82,7 +62,6 @@ function buildArea(options) {
 
     const { xKey, yKey } = positionalKeys(declaredChannels);
     const seriesField = seriesFieldOf(declaredChannels);
-    // Span mode is decided once per mark (not per datum), exactly as bar/rect do it.
     const hasXSpan = !!(declaredChannels.x1 && declaredChannels.x2);
     const hasYSpan = !!(declaredChannels.y1 && declaredChannels.y2);
     const spanPair = hasYSpan ? ['y1', 'y2'] : hasXSpan ? ['x1', 'x2'] : null;
@@ -90,6 +69,8 @@ function buildArea(options) {
 
     return {
         ...markCommon(opts),
+        // The span-guarded edits, not the raw ones markCommon passes through.
+        edits,
         type: 'area',
         handles: handlesOpt,
         channels,
@@ -109,22 +90,18 @@ function buildArea(options) {
          * @returns {import('../types').FeatureNode[]}
          */
         build(currentData, scales, width, height) {
-            // Handles draw only when something can grab them. Decided HERE, from the
-            // feature as the engine holds it — a composite merges its edits into a
-            // part after the factory ran, so a factory-time answer missed them.
+            // Decided at build time: a composite merges edits into a part after the factory runs.
             const editsNow = { edits: this && this.edits, channels: (this && this.channels) || channels };
             const handles = handlesOpt !== undefined ? handlesOpt : hasAnyEdit(editsNow);
             const rowHandle = handlesAreAffordance(handlesOpt, editsNow);
             const { x: xScale, y: yScale } = scales;
-            // A declared y1/y2 pair IS the value (the band's two edges), so its axis
-            // is the value axis — extent: 'value', where a tick's pair is its chord.
+            // A y1/y2 pair is the value (the band's edges), so extent: 'value'.
             const valueAxis = resolveValueAxis(channels, scales, { orientation: opts.orientation, extent: 'value' });
             const spanMode = valueAxis === 'y' ? hasYSpan : hasXSpan;
 
             /** @type {Map<any, { d: any, i: number }[]>} */
             const groups = new Map();
-            // A row whose DOMAIN field is missing has no place along the band (a
-            // reference row filling other columns): skip it rather than break there.
+            // Skip rows with no domain value rather than break the band there.
             const alongAxis = valueAxis === 'y' ? 'x' : 'y';
             currentData.forEach((d, i) => {
                 if (missingValue(channels, alongAxis, d)) return;
@@ -136,19 +113,17 @@ function buildArea(options) {
 
             /** @type {import('../types').FeatureNode[]} */
             const nodes = [];
-            // The shared handle contract (plot/mark.js): one radius default, one
-            // meaning per `handles` value, themed paint instead of the literal
-            // 'steelblue' that used to be an area handle's fallback fill.
             const handleStyle = resolveHandles(scales, { handles, handleSize, handleColor });
+            const areaInk = themeOf(scales).ink;
+            const bandDefaults = markDefaults(scales, 'area', { fill: areaInk, stroke: areaInk, fillOpacity: 0.35 });
+            const handleDefaults = markDefaults(scales, 'area', { fill: areaInk, stroke: areaInk });
             const yBase = baselineOf(yScale, height);
             const xBase = baselineOf(xScale, 0);
 
             const domainAxis = valueAxis === 'y' ? 'x' : 'y';
             for (const [series, rows] of groups) {
                 const groupRows = rows || [];
-                // Place the DOMAIN axis first and order by its pixel position — the
-                // same rule `line` follows (orderSeries), so an ordinal x orders by
-                // its declared domain and the band never crosses itself.
+                // Order by domain-axis pixel position, as `line` does (orderSeries).
                 const placed = groupRows.map(({ d, i }) => ({
                     d, i,
                     cx: encodeChannel(scales, channels, 'x', d, width / 2, i, currentData),
@@ -156,28 +131,16 @@ function buildArea(options) {
                 }));
                 const sorted = orderSeries(placed, connect, domainAxis, channels);
 
-                const areaInk = themeOf(scales).ink;
-                // One band spans a whole series, so its style resolves from the series'
-                // FIRST row — and passes that row's own index, not a bare undefined.
-                const style = resolveStyle(scales, channels, sorted[0] ? sorted[0].d : {},
-                    markDefaults(scales, 'area', { fill: areaInk, stroke: areaInk, fillOpacity: 0.35 }),
+                // Style and curve resolve once per series, from its first row.
+                const style = resolveStyle(scales, channels, sorted[0] ? sorted[0].d : {}, bandDefaults,
                     sorted[0] ? sorted[0].i : undefined, currentData);
-                // One band per SERIES, so a channel-bound curve resolves once per
-                // series against its first row — the same rule as the style above.
                 const seriesCurve = String(rawChannel(channels, 'curve',
                     sorted[0] ? sorted[0].d : {}, curve,
                     sorted[0] ? sorted[0].i : undefined, currentData));
 
-                // Span mode: the far edge is a second field, not the baseline. Both
-                // edges resolve through encodeChannel like any other channel, so the
-                // only difference from the baseline form is WHERE the path closes.
-                // One SAMPLE per row: the domain position and the band's two edges in
-                // pixels. A row with no value gets a null edge, which breaks the
-                // band there (core/curves.js `defined`) instead of drawing through
-                // the baseline. Each sorted entry keeps its GLOBAL index `i`, so a
-                // derived ({ fn }) channel gets the same (d, i, data) here as it would
-                // on any other mark — sorting into series must not change what fn
-                // sees.
+                // One sample per row: domain position and both edges in px. In span
+                // mode the far edge is a second field, else the baseline. A missing
+                // value gives a null edge, which breaks the band (core/curves.js `defined`).
                 /** @type {any[]} */
                 let samples;
                 if (valueAxis === 'y') {
@@ -201,10 +164,8 @@ function buildArea(options) {
                             : xBase,
                     }));
                 }
-                // The path: top and bottom edges generated TOGETHER by d3.area, so one
-                // curve applies to both in the same direction (a closed polygon
-                // through d3.line curved the bottom edge backwards). `points` is the
-                // outline polygon the pick layer measures and the canvas can draw.
+                // d3.area draws both edges so the curve runs the same way on each.
+                // `points` is the outline polygon the pick layer measures.
                 const d = areaGenerator(seriesCurve, valueAxis !== 'y')(samples);
                 const definedIdx = samples.map((s, k) => (valueAxis === 'y'
                     ? Number.isFinite(s.x) && Number.isFinite(s.y0) && Number.isFinite(s.y1)
@@ -224,9 +185,7 @@ function buildArea(options) {
                         ...(gradient ? { fillGradient: gradient } : {}),
                         d,
                         points,
-                        // The outline is a POLYGON (a filled band), and each vertex's
-                        // row — top edge, then the bottom reversed — lets a tip over
-                        // the band name the nearest row.
+                        // Each vertex's row (top edge, then bottom reversed), for tips.
                         polygon: true,
                         pointRows: [...rowsDefined, ...[...rowsDefined].reverse()],
                         curve: seriesCurve,
@@ -237,28 +196,16 @@ function buildArea(options) {
                     });
                 }
 
-                // Handles. In span mode BOTH edges get one — an interval is edited by
-                // its ends, and a band whose lower edge had no handle would be a
-                // half-editable mark. Each carries the `channel` it belongs to, which
-                // is what claimSpanEdges' `when` guard reads to keep a drag on one
-                // edge from also running the other edge's edit.
+                // In span mode both edges get a handle, tagged with its `channel`
+                // for claimSpanEdges.
                 const handleChannels = spanMode
                     ? (valueAxis === 'y' ? ['y1', 'y2'] : ['x1', 'x2'])
                     : [valueAxis];
-                // One `handles` vocabulary (plot/mark.js): false = neither drawn nor
-                // grabbable; 'hit' = invisible but grabbable. area used to treat false
-                // as opacity:0 + pointerEvents:none and ignore 'hit'.
                 if (handleStyle.grabbable) {
                     sorted.forEach(({ d, i }) => {
-                        // Filled with the band's own colour (its stroke, else its
-                        // fill), ringed with the theme's handle stroke.
-                        const paint = resolveStyle(scales, channels, d, markDefaults(scales, 'area',
-                            { fill: areaInk, stroke: areaInk }), i, currentData);
-                        const hStyle = {
-                            fill: handleStyle.visible ? (handleColor || inkOf(paint.stroke) || inkOf(paint.fill) || handleStyle.fill) : handleStyle.fill,
-                            stroke: handleStyle.stroke,
-                            strokeWidth: handleStyle.strokeWidth,
-                        };
+                        // Filled with the band's colour, ringed with the theme's handle stroke.
+                        const paint = resolveStyle(scales, channels, d, handleDefaults, i, currentData);
+                        const hStyle = handlePaint(handleStyle, handleColor || inkOf(paint.stroke) || inkOf(paint.fill));
                         for (const ch of handleChannels) {
                             const onY = ch[0] === 'y';
                             const along = onY
@@ -272,13 +219,6 @@ function buildArea(options) {
                                 cy: onY ? at : along,
                                 r: handleStyle.size,
                                 ...hStyle,
-                                // Channel fill must not paint a 'hit' handle — force
-                                // transparent after resolveStyle.
-                                ...(handleStyle.visible ? {} : {
-                                    fill: 'transparent',
-                                    stroke: 'none',
-                                    strokeWidth: 0,
-                                }),
                                 data: d,
                                 index: i,
                                 channel: ch,
@@ -293,11 +233,6 @@ function buildArea(options) {
             return nodes;
         }
     };
-}
-
-/** @param {any} [options] @returns {import('../types').Mark} */
-export function area(options = {}) {
-    return buildArea(options);
 }
 
 /** @param {any} [options] @returns {import('../types').Mark} */

@@ -1,8 +1,5 @@
 // @ts-check
-// Helpers the row-coupling constraints share. A coupling rule has to know WHICH
-// column the gesture moved, and it learns that the way `ordering` does: by
-// diffing the proposed row against the committed one, so no rule ever has to be
-// told which handle was grabbed.
+// Helpers shared by the row-coupling constraints.
 
 /**
  * The columns of `fields` whose value differs between the proposed row and the
@@ -20,6 +17,33 @@ export function movedFields(fields, active, before) {
 /** A value as a number for comparison (a Date by its time). @param {any} v */
 export function numOf(v) {
     return v instanceof Date ? v.getTime() : Number(v);
+}
+
+/**
+ * A number stored the way the cell held it: a Date stays a Date.
+ * @param {any} prev the cell's current value @param {number} n @returns {any}
+ */
+export function rewrap(prev, n) {
+    return prev instanceof Date ? new Date(n) : n;
+}
+
+/**
+ * Row indices grouped by key, in row order.
+ * @param {any[]} data
+ * @param {(row: any) => any} keyOf
+ * @param {(row: any) => boolean} [accept] rows to include (default all)
+ * @returns {Map<any, number[]>}
+ */
+export function groupRows(data, keyOf, accept) {
+    /** @type {Map<any, number[]>} */
+    const groups = new Map();
+    data.forEach((d, i) => {
+        if (accept && !accept(d)) return;
+        const key = keyOf(d);
+        const g = groups.get(key);
+        if (g) g.push(i); else groups.set(key, [i]);
+    });
+    return groups;
 }
 
 /**

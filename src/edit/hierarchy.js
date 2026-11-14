@@ -1,13 +1,5 @@
-// edit.hierarchy.* — the gestures that build a hierarchy's CONTAINMENT.
-//
-// A hierarchy keeps "who is inside whom" in its nesting table (core/hierarchy.js), so
-// re-parenting is a write to THAT table, made from a gesture on a node — the
-// `edit.network.connect` shape: the edit sits on a node mark and names the table it
-// writes by ROLE (`table: 'nesting'`).
-//
-// Creating and deleting a node are plain `create`/`remove`, and MOVING a container is
-// the plain `move`: the engine carries its contents along (core/fit.js). The one
-// thing only a hierarchy has is putting a node in, or taking it out.
+// edit.hierarchy.* — edits on a hierarchy's containment. Re-parenting writes the
+// nesting table (`table: 'nesting'`) from a gesture on a node mark.
 
 import { makeEdit, mintDatum } from './shared.js';
 import { nestingOf, treeOf } from '../core/hierarchy.js';
@@ -16,18 +8,12 @@ import { boxAt } from '../plot/nodeBox.js';
 /**
  * nest — drop a node into a container, or out of one.
  *
- * Goes on the mark you DRAG (any mark drawing the hierarchy's nodes), beside a
- * `move`: move carries the node under the pointer, and at release nest reads where
- * it was let go. The row lands in the DEEPEST container under the pointer — a row
- * the node mark's `contains` channel allows to hold others — and a release over no
- * container takes it out to the root. The node itself and everything inside it are
- * never targets, and the engine refuses any drop that would break the tree, so a
- * container cannot be dropped into its own contents.
+ * Goes on the node mark beside a `move`. The node lands in the deepest container
+ * under the pointer (one the `contains` channel allows); over no container it goes
+ * to the root. The node and its descendants are never targets.
  *
- * Use it beside `move({ mode: 'relative' })`. A relative move is a driver and runs
- * before this one each tick, so the proposal drawn while you aim (the container
- * growing to take the node) survives the move's commit; an absolute move commits
- * after it and the release still works, with no preview.
+ * Pair with `move({ mode: 'relative' })` to get a preview while aiming; with an
+ * absolute move the release still works, without a preview.
  *
  * `defaults` seeds any further columns of the nesting row (a confidence, a note).
  * @param {any} [options]
@@ -39,7 +25,6 @@ export function nest(options = {}) {
         type: 'hierarchy.nest',
         gesture: 'drag',
         pick: 'direct',
-        // The proposal is a NESTING row even though the gesture is on a node.
         table: 'nesting',
         ...rest,
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
@@ -59,7 +44,7 @@ export function nest(options = {}) {
                 rank: (/** @type {number} */ i) => tree.depthOf(i),
             });
             const current = tree.parentOf(ctx.index);
-            if ((into === null ? null : into) === current) return undefined; // already there
+            if (into === current) return undefined; // already there
 
             const others = ctx.data.filter((d) => !d || d[nesting.child] !== childId);
             if (into === null) return others;

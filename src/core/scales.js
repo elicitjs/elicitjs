@@ -1,46 +1,24 @@
 // @ts-check
-// scales.js — the one scale factory, and the CAPABILITY MODEL every other module
-// branches on.
-//
-// ── Never branch on scale.type ──────────────────────────────────────────────
-// `type` is a label ('linear', 'log', 'band', …). It is NOT control flow, for two
-// reasons: a `log` scale behaves exactly like a `linear` one everywhere it
-// matters, and a scale a user hands us (`scale: d3.scaleBand().padding(0.3)`) has
-// no `type` at all. Branching on it means an unrecognized scale silently comes
-// back non-invertible — the chart draws fine and every edit on that channel goes
-// dead, with no error anywhere.
-//
-// So each scale carries what it can DO, sniffed once here from the object's own
-// shape and stamped on:
-//   kind: 'band'       occupies an interval per category (has a bandwidth)
+// scales.js — the one scale factory, and the capability model every module reads.
+// Never branch on `scale.type`: a user's `d3.scaleBand()` has no type, and a type
+// allowlist would silently kill its edits. Each scale is stamped with what it can
+// do, sniffed from its shape:
+//   kind: 'band'       an interval per category (has a bandwidth)
 //         'point'      a tick per category (no width)
 //         'continuous' has invert(): linear, log, pow, sqrt, time, symlog
 //         'discrete'   value -> discrete output (ordinal, sequential ramp)
 //   temporal:   the domain holds Dates, so encode() coerces first
 //   invertible: a gesture on this channel can be inverted back to data
-//
-// Marks, edits, axes and the pick layer read `kind`. Adding a scale type means
-// adding a case HERE and nowhere else.
+// A new scale type is a case here and nowhere else.
 import * as d3 from 'd3';
 import { warn } from './dev.js';
 
 /**
- * The key a NON-POSITIONAL scale lives under in the ScaleMap.
- *
- * A scale is one ENCODING — a (channel, field) pair — not one channel. Keyed by
- * channel alone, every mark binding `fill` shared a scale whose domain was the UNION
- * of every field on it: `mood: [glad, sad]` plus `weather: [sun, rain]` became one
- * mapping over four values that mean two different things, a legend that could not
- * say which encoding it was a key for, and `scale.fields[0]` — declaration order —
- * as the disambiguator for every edit.
- *
- * Two marks stating the SAME encoding still share one scale, which is the point:
- * that is what makes a shared colour mean a shared value.
- *
- * POSITIONAL channels are excluded and keep unioning by axis (`axisOf`): an error
- * bar's `mean`/`lo`/`hi` must span one y axis, and there the union is the intent.
- * The NUL separator cannot occur in a channel or field name, the same trick
- * core/elicit.js uses to qualify a selection key by table.
+ * The key a non-positional scale lives under in the ScaleMap: one scale per
+ * encoding (channel, field), so two marks stating the same encoding share it.
+ * Positional channels union by axis instead (`axisOf`). The NUL separator cannot
+ * occur in a channel or field name (engine/selection.js qualifies selection keys
+ * the same way).
  * @param {string} channel
  * @param {string | undefined} field
  * @returns {string}
@@ -50,12 +28,46 @@ export function scaleKey(channel, field) {
 }
 
 /**
+ * The scale for one encoding: the (channel, field) key first, the bare channel
+ * after. The bare-channel alias is first-wins (core/resolve.js); keep it.
+ * @param {Record<string, any> | null | undefined} scales
+ * @param {string} channel
+ * @param {string | null} [field]
+ * @returns {any}
+ */
+export function scaleFor(scales, channel, field) {
+    if (!scales) return undefined;
+    return scales[scaleKey(channel, field == null ? undefined : field)] || scales[channel];
+}
+
+const CONTINUOUS_TYPES = new Set(['linear', 'log', 'pow', 'sqrt', 'symlog', 'time', 'utc']);
+const RAMP_TYPES = new Set(['sequential', 'diverging']);
+
+/**
+ * Is this scale type a continuous, invertible one (linear, log, pow, sqrt, symlog, time)?
+ * @param {any} type
+ * @returns {boolean}
+ */
+export function isContinuousType(type) {
+    return CONTINUOUS_TYPES.has(String(type));
+}
+
+/**
+ * Is this scale type a colour ramp (sequential, diverging)?
+ * @param {any} type
+ * @returns {boolean}
+ */
+export function isRampType(type) {
+    return RAMP_TYPES.has(String(type));
+}
+
+/**
  * Coerce a domain value to a Date for a temporal scale. Accepts Dates, epoch
  * numbers, and ISO/parseable date strings; leaves an already-Date untouched.
  * @param {any} v
  * @returns {Date}
  */
-function toDate(v) {
+export function toDate(v) {
     return v instanceof Date ? v : new Date(v);
 }
 
@@ -78,9 +90,8 @@ function kindOf(scale) {
 }
 
 /**
- * Stamp the capability flags + the unified channel API onto a scale. Every scale
- * that reaches a mark or an edit has been through here, whether we built it
- * (createScale) or a user supplied it (adoptScale).
+ * Stamp the capability flags and the unified channel API onto a scale. Every scale
+ * a mark or edit sees passes through here (createScale or adoptScale).
  * @param {any} scale
  * @param {import('../types').ScaleType} [type] a label, when we know it
  * @returns {import('../types').Scale}
@@ -92,19 +103,13 @@ function stamp(scale, type) {
     scale.temporal = domain.some((/** @type {any} */ v) => v instanceof Date);
     scale.domainConfig = domain;
 
-    // Unified channel API. Marks and edits never branch on the scale:
-    //   encode(value)      -> visual output (band centre | pixel | colour | radius)
-    //   invertValue(pixel) -> data value    (nearest category | clamped invert)
-    // A colour scale is `discrete` with no invert(), so `invertible` is false and
-    // edits know a gesture can't drive that channel.
+    // Unified channel API: encode(value) -> visual output; invertValue(pixel) ->
+    // data value. A colour scale has no invert(), so `invertible` is false.
     scale.invertible = scale.kind === 'band' || scale.kind === 'point'
         || typeof scale.invert === 'function';
-    // A RAMP interpolates a continuous domain to a paint (sequential / diverging
-    // colour). It is 'discrete' by the invert test above  a colour cannot be driven
-    // backwards  yet its DOMAIN is an interval, which is what a legend needs to know
-    // to draw a gradient with ticks rather than one swatch per value. Stamped as a
-    // capability so nothing downstream asks `type`: our own ramps set it when built,
-    // an adopted d3.scaleSequential/scaleDiverging is sniffed by its interpolator().
+    // A ramp maps a continuous domain to a paint. Non-invertible, yet its domain is
+    // an interval, so a legend draws a gradient. Set by our ramps, sniffed from
+    // `interpolator()` on an adopted d3 scale.
     scale.ramp = scale.ramp === true || typeof scale.interpolator === 'function';
     scale.encode = (/** @type {any} */ value, /** @type {any} */ fallback) => positionOnScale(scale, value, fallback);
     scale.invertValue = scale.invertible
@@ -115,30 +120,20 @@ function stamp(scale, type) {
 }
 
 /**
- * Adopt a scale the user built themselves (`scale: d3.scaleBand().padding(0.3)`).
- * It arrives fully configured; we only sniff its capabilities and, for a
- * POSITIONAL channel that named no range of its own, hand it the plot's pixel
- * range — pixels are ours to know, palettes and radii are the author's. A colour
- * scale keeps whatever range/interpolator it was built with.
+ * Adopt a user-built scale (`scale: d3.scaleBand().padding(0.3)`): sniff its
+ * capabilities and, for a positional channel with no range of its own, give it the
+ * plot's pixel range. A colour scale keeps its own range.
  * @param {any} scale a d3 scale (or any callable with .domain/.range)
  * @param {{ range?: any[], positional?: boolean, domain?: any[], declared?: boolean }} [opts]
- *   `declared`: the domain came from the SCHEMA (not inferred from data)
+ *   `declared`: the domain came from the schema (not inferred from data)
  * @returns {import('../types').Scale}
  */
 export function adoptScale(scale, { range, positional, domain, declared } = {}) {
-    // The schema owns the domain. A DECLARED domain is applied outright — a d3
-    // continuous scale is born with [0, 1], so "the instance already has a domain"
-    // told nothing, and every adopted colour scale mapped the data onto [0, 1]. An
-    // inferred domain only fills an empty one (band/point/ordinal instances start
-    // empty), leaving an author's explicit domain alone.
+    // The schema owns the domain. An instance left at d3's default (empty, or
+    // [0, 1] for continuous) takes it: a declared domain always, an inferred one
+    // only into an empty domain. A domain the author set is kept.
     if (domain && typeof scale.domain === 'function') {
         const own = scale.domain();
-        // An instance that was never given a domain holds d3's factory default —
-        // empty for band/point/ordinal, [0, 1] for every continuous scale — and
-        // takes the schema's. One the author SET (a diverging [-6, 0, 6] with its
-        // pivot) is deliberate and kept; a declared domain is applied on top only
-        // when the instance was left at its default, which is what "the schema owns
-        // the domain" meant and what [0, 1] masquerading as 'set' broke.
         const untouched = own.length === 0
             || (own.length === 2 && Number(own[0]) === 0 && Number(own[1]) === 1);
         if (untouched && (declared || own.length === 0)) scale.domain(domain);
@@ -162,9 +157,7 @@ export function adoptScale(scale, { range, positional, domain, declared } = {}) 
  *   sequential          -> continuous field  -> continuous colour along a ramp
  *   diverging           -> continuous field  -> colour by distance from a pivot
  *
- * band vs point is the discrete split that matters per MARK: a bar needs the
- * interval, a circle wants the tick. The mark declares which it wants
- * (`discreteScale`) and the resolver picks accordingly; an explicit `scale` wins.
+ * The mark declares band vs point (`discreteScale`); an explicit `scale` wins.
  * @param {any} spec { type, domain, padding, nice, clamp, base, exponent }
  * @param {any[]} range
  * @returns {import('../types').Scale | null}
@@ -189,30 +182,19 @@ export function createScale(spec, range) {
     } else if (type === 'ordinal') {
         scale = d3.scaleOrdinal().domain(spec.domain).range(range);
     } else if (type === 'sequential') {
-        // Callable ramp with the d3-scale shape downstream code expects. It has
-        // neither bandwidth nor invert, so it sniffs as 'discrete' — correct: a
-        // colour is not something a gesture can invert.
+        // A callable ramp; no bandwidth or invert, so it sniffs as non-invertible.
         const [lo, hi] = [Math.min(...spec.domain), Math.max(...spec.domain)];
         const t = d3.scaleLinear().domain([lo, hi]).range([0, 1]).clamp(true);
-        // EVERY stop of the range, joined piecewise — a named scheme arrives as a
-        // dense sample and an author's 3-stop `range` means three colours, not the
-        // outer two.
+        // Every stop of the range, joined piecewise (a 3-stop `range` is three colours).
         const ramp = d3.piecewise(d3.interpolateRgb, range);
         scale = (/** @type {any} */ value) => ramp(t(value));
         scale.domain = () => spec.domain;
         scale.range = () => range;
         scale.ramp = true;
     } else if (type === 'diverging') {
-        // A ramp with a PIVOT: a value's distance from the pivot picks its colour,
-        // and each side gets its own half of the ramp. What a sequential scale can't
-        // say — "this is above/below the reference, by this much" — which is most of
-        // what an elicited difference, error or surprise means.
-        //
-        // The pivot is a DATA value (`scale: { type: 'diverging', pivot: 0 }`),
-        // defaulting to 0 when the domain straddles it (the usual neutral) and to the
-        // domain's midpoint when it doesn't. The two sides are scaled independently,
-        // so the pivot keeps its colour even on a lopsided domain like [-2, 10] —
-        // stretching one range across both halves would put the neutral colour at 4.
+        // A ramp with a pivot (a data value; default 0 when the domain straddles
+        // it, else the midpoint). Each side is scaled independently, so the pivot
+        // keeps its colour on a lopsided domain like [-2, 10].
         const [dlo, dhi] = [Math.min(...spec.domain), Math.max(...spec.domain)];
         const pivot = spec.pivot != null
             ? spec.pivot
@@ -221,11 +203,8 @@ export function createScale(spec, range) {
             .domain([dlo, pivot, dhi])
             .range([0, 0.5, 1])
             .clamp(true);
-        // Callable with the d3-scale shape downstream expects, and NO invert() — so
-        // it sniffs as 'discrete'/non-invertible, exactly like `sequential`: a colour
-        // is not something a gesture can drive backwards.
-        // Every stop, joined piecewise; a bare two-colour range gets a neutral
-        // middle so the pivot has a colour of its own.
+        // No invert(), so non-invertible like `sequential`. A two-colour range
+        // gets a neutral middle so the pivot has its own colour.
         const stops = range.length >= 3
             ? range
             : [range[0], '#f7f7f7', range[range.length - 1]];
@@ -239,10 +218,8 @@ export function createScale(spec, range) {
         scale = d3.scaleLog().domain(spec.domain).range(range);
         if (spec.base != null) scale.base(spec.base);
     } else if (type === 'symlog') {
-        // Linear near zero, logarithmic beyond it — the scale for a quantity that
-        // spans orders of magnitude AND legitimately reaches 0 (or goes negative),
-        // where `log` simply has no answer. `constant` sets how wide the linear
-        // region is.
+        // Linear near zero, logarithmic beyond: for magnitudes that reach 0 or go
+        // negative. `constant` sets the width of the linear region.
         scale = d3.scaleSymlog().domain(spec.domain).range(range);
         if (spec.constant != null) scale.constant(spec.constant);
     } else if (type === 'pow' || type === 'sqrt') {
@@ -252,14 +229,12 @@ export function createScale(spec, range) {
         scale = d3.scaleLinear().domain(spec.domain).range(range);
     }
 
-    // A continuous scale given a COLOUR range longer than its domain (a named
-    // scheme on `scale: 'linear'`, or a multi-stop `range`) would use only the
-    // first stops — d3 pairs domain and range elementwise. Spread the domain
-    // evenly over every stop instead, so the whole ramp is used.
+    // A continuous scale with a longer colour range than its domain: spread the
+    // domain over every stop, since d3 pairs domain and range elementwise.
     if (typeof scale.domain === 'function' && typeof scale.interpolate === 'function'
         && Array.isArray(range) && range.length > spec.domain.length && typeof range[0] === 'string'
         && spec.domain.length === 2) {
-        // Evenly in the scale's OWN space (log, sqrt, symlog, time), so a log
+        // Evenly in the scale's own space (log, sqrt, symlog, time), so a log
         // colour scale spreads its stops by decade rather than bunching them.
         const unit = scale.copy().range([0, 1]);
         const n = range.length;
@@ -275,31 +250,12 @@ export function createScale(spec, range) {
 }
 
 /**
- * Build the scale for ONE frame channel of ONE datum — a group's local
- * coordinate box, expressed as a real scale.
- *
- * A composite in BOX mode (plot/composite.js) places its parts in a box centred on its
- * encoded position and sized by its encoded `size`. Both are per-DATUM (a face
- * per row sits somewhere different and may be a different size), so the box
- * cannot be a global scale. It is instead one ordinary linear scale per datum,
- * built here: `domain` is the field's own units (the schema's), `localRange` is
- * where in the box the channel's extremes land, and `family` says how a local
- * unit becomes a pixel (see frameFamilyOf).
- *
- * The point of routing this through `createScale` rather than a bespoke helper
- * is that the result is a genuine Scale — capability-stamped, invertible, with a
- * `domainConfig` — so the edit layer inverts a gesture through the SAME object
- * that encoded it and nothing about "an edit is the inverse of encoding" needs a
- * special case. The scales this returns carry type 'linear' (or 'time'), or
- * 'point' over a DISCRETE field; 'frame' is a channel-side marker and never
- * reaches a resolved scale.
- *
- * A discrete field (`discrete: true`, which the caller reads off the schema's
- * measure) spreads its categories evenly from the first stop of `localRange` to
- * the last, with no padding: the ends of the slice ARE the first and last
- * category, the way a linear frame puts the domain's ends there. A point scale
- * inverts to the nearest category, so the universal edits snap without knowing
- * the field is categorical.
+ * Build the scale for one frame channel of one datum: a composite's per-datum
+ * local box (plot/composite.js) as a real, invertible linear (or time) scale, so
+ * edits invert through the same object that encoded. `localRange` is where the
+ * channel's extremes land in the box; `family` says how a local unit becomes a
+ * pixel (frameFamilyOf). A discrete field gets a point scale with no padding
+ * spanning `localRange`, so edits snap to the nearest category.
  * @param {{ domain: any[], localRange: number[], origin?: number, halfSize?: number, family?: 'x' | 'y' | 'size' | 'plain', discrete?: boolean }} opts
  * @returns {import('../types').Scale | null}
  */
@@ -315,11 +271,8 @@ export function createFrameScale({ domain, localRange, origin = 0, halfSize = 1,
         : createScale(
             { type: domain.some((/** @type {any} */ v) => v instanceof Date) ? 'time' : 'linear', domain },
             localRange.map(toPixel));
-    // The glyph's radius, carried on the scale so a GESTURE can size itself to the
-    // glyph. A `slide` on a frame channel sweeps the domain in one radius instead
-    // of a fixed 120px, which is far too coarse on a small glyph and too fine on a
-    // large one (see edit/basic.js: slideExtent). Not a scale capability — nothing
-    // branches on it; it is the one number an edit would otherwise have to guess.
+    // The glyph's radius, so a `slide` on a frame channel sweeps its domain in one
+    // radius (edit/basic.js: slideExtent). Not a capability; nothing branches on it.
     /** @type {any} */ (scale).frameExtent = Math.abs(halfSize) || undefined;
     return scale;
 }
@@ -377,9 +330,7 @@ export function positionOnScale(scale, value, fallback) {
         const p = scale(value);
         return p == null ? fallback : p;
     }
-    // A row missing this field yields scale(undefined) -> NaN, and an SVG attribute
-    // of NaN is dropped by the browser, so the mark VANISHES with no error. The band
-    // and point branches above already null-check; this one didn't.
+    // A missing value would give NaN, which the browser drops silently.
     if (value == null) return fallback;
     // Temporal: coerce the value to a Date so string/epoch data still positions —
     // and an unparseable one is a missing value, not a NaN coordinate.
@@ -388,9 +339,7 @@ export function positionOnScale(scale, value, fallback) {
         return typeof p === 'number' && !Number.isFinite(p) ? fallback : p;
     }
     const p = scale(value);
-    // Only a NUMERIC result can be a broken coordinate. This helper also carries
-    // non-positional channels (fill returns "steelblue"), so anything non-numeric
-    // passes through untouched.
+    // Only a numeric result can be a broken coordinate; colours pass through.
     return typeof p === 'number' && !Number.isFinite(p) ? fallback : p;
 }
 
@@ -405,12 +354,8 @@ export function bandwidthOf(scale, fallback) {
 }
 
 /**
- * Leading pixel edge of a value's slot — the companion to `bandwidthOf`, which
- * gives the slot's thickness. `positionOnScale`/`encode` deliberately return a
- * band's CENTRE (that's where a mark sits), so a mark that draws the band as a
- * rectangle needs its start. That's the one geometry question encodeChannel
- * can't answer, and hand-rolling `scale(d[key])` for it is how the "four ways to
- * place a mark" drift started — ask here instead.
+ * Leading pixel edge of a value's slot (`encode` returns a band's centre). Use
+ * this instead of hand-rolling `scale(d[key])`.
  *   band  -> the category's interval start
  *   point -> the tick itself (no width to offset from)
  *   other -> encode(value), i.e. the position IS the edge
@@ -429,9 +374,9 @@ export function bandStartOf(scale, value, fallback) {
 }
 
 /**
- * The width of ONE category's slot on a discrete axis: a band's bandwidth, a
+ * The width of one category's slot on a discrete axis: a band's bandwidth, a
  * point's step (the distance between two ticks, centred on each). Undefined for
- * a continuous scale, which has no slot. What an OFFSET channel's range spans.
+ * a continuous scale, which has no slot. What an offset channel's range spans.
  * @param {any} scale
  * @returns {number | undefined}
  */
@@ -459,17 +404,9 @@ export function slotOf(scale, value) {
 }
 
 /**
- * Nest an OFFSET scale (`xOffset`/`yOffset`) inside its parent: its range becomes
- * one parent slot in pixels, and its inverse reads an ABSOLUTE pixel along the
- * parent axis.
- *
- * The forward direction needs no help — a mark adds the offset to the slot start
- * it already knows (plot/mark.js: `categorySlot`). The inverse does, because a
- * gesture arrives as a pointer on the plot and the sub-band it lands in depends on
- * WHICH category's slot holds it: find that slot through the parent, then invert
- * the remainder locally. Stamped here, beside the rest of the capability model,
- * so an edit inverts through the same object that encoded and nothing in the edit
- * layer learns that offsets exist.
+ * Nest an offset scale (`xOffset`/`yOffset`) inside its parent: its range becomes
+ * one parent slot in px, and its inverse takes an absolute pixel, finds the parent
+ * slot, then inverts the remainder. Edits need no offset code.
  * @param {any} offset the offset channel's scale
  * @param {any} parent the x or y scale it nests inside (band or point)
  * @param {number[]} range the slot-local pixel range
@@ -504,19 +441,16 @@ export function offsetScaleOf(scales, channels, axis) {
     if (!spec || !scales) return null;
     const parent = scales[axis];
     if (slotWidthOf(parent) === undefined) return null;
-    const scale = (spec.field != null && scales[scaleKey(name, spec.field)]) || scales[name];
+    const scale = scaleFor(scales, name, spec.field);
     return scale && scale.parent === parent ? scale : null;
 }
 
 /**
- * The pixel span a mark occupies ALONG a (possibly categorical) axis — the
- * inverse concern of `bandwidthOf`: not "how thick" but "from where to where".
- * Mark-agnostic so any mark that spans a band (a tick across its category, and
- * later a bar) shares one rule:
+ * The pixel span a mark occupies along a (possibly categorical) axis:
  *   band scale   -> the category's interval [start, start+bandwidth]
  *   no band      -> the full axis extent [0, fullLength]  (rug / strip plot)
- * `inset` (px) shrinks each end; an explicit `length` (px) overrides the span
- * with a fixed-length segment centred on the band (or the axis) instead.
+ * `inset` (px) shrinks each end; `length` (px) gives a fixed segment centred on
+ * the span.
  * @param {any} scale the axis scale for the span dimension (may be null/linear)
  * @param {any} value the datum's category on that axis (band case)
  * @param {number} fullLength the inner pixel length of that axis (no-band case)
@@ -548,14 +482,10 @@ export function bandSpan(scale, value, fullLength, { inset = 0, length, slot } =
 }
 
 /**
- * Inverse of positionOnScale: map a pixel position back to a data value.
- * The mirror image of how marks are placed, so any scale a mark can be drawn
- * on is also a scale a mark can be created on.
- *   linear -> scale.invert(pixel), clamped into the domain
- *   band   -> the category whose band center is nearest the pixel (band scales
- *             have no invert(); we pick the closest category instead)
- *   missing scale (1D plots) -> undefined (that channel isn't positionable)
- * Returns undefined when the value can't be resolved (e.g. empty band domain).
+ * Inverse of positionOnScale: map a pixel back to a data value.
+ *   continuous -> scale.invert(pixel), clamped into the domain
+ *   band/point -> the category whose centre is nearest
+ * Undefined with no scale, a non-invertible scale, or an empty domain.
  * @param {any} scale
  * @param {number} pixel
  * @returns {any}
@@ -566,9 +496,7 @@ export function invertOnScale(scale, pixel) {
     if (isDiscrete(scale)) {
         const domain = scale.domain();
         if (!domain.length) return undefined;
-        // Discrete scales have no invert(), so find the category whose centre is
-        // closest to the pixel. This mirrors positionOnScale: a band's centre is
-        // offset by half its bandwidth, a point's centre is the tick itself.
+        // Nearest category centre, mirroring positionOnScale.
         const half = scale.kind === 'band' ? scale.bandwidth() / 2 : 0;
         let nearest = domain[0];
         let bestDist = Infinity;
@@ -583,10 +511,8 @@ export function invertOnScale(scale, pixel) {
         return nearest;
     }
 
-    // Continuous scale (linear | log | pow | sqrt | time | an adopted d3 scale):
-    // invert then clamp into the (possibly reversed) domain so created values
-    // never escape the axis. A temporal scale inverts to a Date; clamp numerically
-    // on epoch ms and hand back a Date.
+    // Continuous: invert, then clamp into the domain. A temporal scale clamps on
+    // epoch ms and returns a Date.
     const value = scale.invert(pixel);
     const domain = scale.domain();
     if (scale.temporal) {

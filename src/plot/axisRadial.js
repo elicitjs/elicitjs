@@ -1,27 +1,22 @@
 // @ts-check
 import { ELEMENT_OPTIONS } from '../vocabulary.js';
-// axisRadial.js — a circular / semicircular axis as a CHART ELEMENT (sibling of
-// axisX/axisY). It views the global `theta` SCALE — the POLAR ANGULAR POSITION,
-// not `angle`, which is a mark's rotation in place — (`views: 'scale'`), paints
-// chrome (arc spine, ticks, labels, optional colored categorical bands), and is
-// inert by default. Domain editing is out of scope — Cartesian edit.axis.* stays
-// on linear axes.
+// axisRadial.js — a circular / semicircular axis as a chart element. It draws the
+// `theta` scale (polar angular position, not `angle`): arc spine, ticks, labels and
+// optional categorical bands. With `channel: 'radius'` it draws concentric rings.
 //
 //   elements.axisRadial({
 //     orient: 'top',          // default: left → right through the top (NYT)
 //     radius: 110, bands: true, ticks: 5,
 //   })
 //
-// Placement exception: optional `channels.x` / `channels.y` (and `fill` for
-// categorical bands) draw ONE RING PER ROW — small-multiple chrome around each
-// needle. That is the one ChartElement that carries a channel map, and only for
-// placement / band colour — not for encoding elicited columns the way a data
-// mark does. It is `elicit.elements.axisRadial`, and only there.
+// The one element with a channel map: `channels.x` / `channels.y` draw one ring
+// per row (around small-multiple needles), and `fill` colours the bands.
 
 import { positionOnScale, isDiscrete } from '../core/scales.js';
 import { DEFAULT_PALETTE } from '../core/encoding.js';
 import { encodeChannel, warnUnknownElementOptions, themeOf } from './mark.js';
 import { tickData } from './axis.js';
+import { encodeOn } from './legend.js';
 import { warn } from '../core/dev.js';
 import {
     arcSpan,
@@ -32,10 +27,8 @@ import {
 } from './polar.js';
 
 /**
- * Horizontal text anchor for a label sitting at pixel `x` relative to the ring
- * centre `cx`: labels on the right grow rightward (`start`), on the left grow
- * leftward (`end`), near the vertical stay centred. Keeps long category names
- * (e.g. "VERY LIKELY D") from overflowing a centred anchor at the arc ends.
+ * Text anchor for a label at `x` about centre `cx`, so labels grow away from the
+ * ring: `start` on the right, `end` on the left, `middle` near the vertical.
  * @param {number} x @param {number} cx @param {number} [eps]
  * @returns {'start' | 'middle' | 'end'}
  */
@@ -53,8 +46,6 @@ export const AXIS_RADIAL_OPTIONS = ELEMENT_OPTIONS.axisRadial;
  * @returns {import('../types').ChartElement}
  */
 export function axisRadial(options = {}) {
-    // Chart-element validation (no style-shorthand desugar). `channels` is the
-    // documented placement exception for small-multiple rings — see header.
     warnUnknownElementOptions('axisRadial', options, AXIS_RADIAL_OPTIONS);
     const {
         channels = {},
@@ -90,7 +81,7 @@ export function axisRadial(options = {}) {
         id,
         type: 'axisRadial',
         channel,
-        // Placement / band-colour only — see header. Not a data-mark channel map.
+        // Placement and band colour only (see header).
         channels,
         edits,
         isAxis: true,
@@ -106,14 +97,14 @@ export function axisRadial(options = {}) {
         build: (currentData, scales, width, height) => {
             const scale = scales[channel];
             if (!scale) return [];
+            // Chrome: the option, else the theme's axis token.
+            const thm = themeOf(scales);
+            const labelFill = labelFillOpt ?? thm.axis.labelFill;
+            const stroke = strokeOpt ?? thm.axis.stroke;
+            const fontSize = fontSizeOpt ?? thm.axis.fontSize;
 
-            // A RADIUS axis: concentric rings at the scale's ticks, labelled up the
-            // vertical spoke — the key for a rose plot's radial position.
+            // A radius axis: concentric rings at the scale's ticks, labelled up the vertical.
             if (channel === 'radius') {
-                const thm = themeOf(scales);
-                const labelFill = labelFillOpt ?? thm.axis.labelFill;
-                const stroke = strokeOpt ?? thm.axis.stroke;
-                const fontSize = fontSizeOpt ?? thm.axis.fontSize;
                 if (radiusOpt != null) {
                     warn('axisRadial:radius:ignored', 'axisRadial({ channel: "radius" }) draws rings at the radius scale\'s own extent; its `radius` option is ignored.');
                 }
@@ -124,7 +115,7 @@ export function axisRadial(options = {}) {
                 /** @type {import('../types').FeatureNode[]} */
                 const out = [];
                 for (const v of values) {
-                    const r = Number(typeof scale.encode === 'function' ? scale.encode(v) : scale(v));
+                    const r = Number(encodeOn(scale, v));
                     if (!Number.isFinite(r) || r <= 0) continue;
                     out.push({ type: 'circle', cx, cy, r, fill: 'none', stroke, strokeWidth: 1, opacity: 0.6, ...bg });
                     out.push({ type: 'text', x: cx + 3, y: cy - r - 2, text: format(v), textAnchor: 'start', fill: labelFill, fontSize, ...bg });
@@ -135,14 +126,7 @@ export function axisRadial(options = {}) {
                 return out;
             }
 
-            // Resolve chrome from the theme (option overrides > theme.axis tokens).
-            const thm = themeOf(scales);
-            const labelFill = labelFillOpt ?? thm.axis.labelFill;
-            const stroke = strokeOpt ?? thm.axis.stroke;
-            const fontSize = fontSizeOpt ?? thm.axis.fontSize;
-
-            // Prefer the scale's own range as the arc span when the author set one;
-            // otherwise fall back to the mark's arc/start/end options.
+            // The scale's own range is the arc span; else the arc/start/end options.
             const range = typeof scale.range === 'function' ? scale.range() : null;
             let a0 = spanStart;
             let a1 = spanEnd;
@@ -156,9 +140,7 @@ export function axisRadial(options = {}) {
             const fillField = channels.fill && channels.fill.field;
 
             /**
-             * Emit one radial axis (bands + spine + ticks + labels + title) about a
-             * centre. Reused for the single centred axis and for the per-datum rings
-             * that surround small-multiple needles.
+             * One radial axis (bands, spine, ticks, labels, title) about a centre.
              * @param {number} cx @param {number} cy @param {number} r
              * @returns {import('../types').FeatureNode[]}
              */
@@ -175,8 +157,7 @@ export function axisRadial(options = {}) {
                         const [lo, hi] = band;
                         const row = fillField ? { [fillField]: v } : {};
                         let fill = encodeChannel(scales, channels, 'fill', row, null);
-                        // No fill channel declared -> a stable categorical palette (the
-                        // same default an ordinal fill scale would produce).
+                        // No fill channel: the default categorical palette.
                         if (fill == null) fill = DEFAULT_PALETTE[i % DEFAULT_PALETTE.length];
                         const inner = innerRadius > 0 ? innerRadius : Math.max(0, r - bandWidth);
                         const d = arcPath(cx, cy, r, lo, hi, { innerRadius: inner });
@@ -227,7 +208,7 @@ export function axisRadial(options = {}) {
                         text: title,
                         textAnchor: 'middle',
                         fontSize: fontSize + 1,
-                        fill: '#0f172a',
+                        fill: labelFill,
                         ...bg,
                     });
                 }
@@ -235,8 +216,7 @@ export function axisRadial(options = {}) {
                 return out;
             };
 
-            // Per-datum rings: when an x/y channel places pivots (small-multiple
-            // needles), ring each one. Otherwise a single axis at the plot centre.
+            // One ring per row when x/y place them; else one axis at the plot centre.
             if (xField || yField) {
                 /** @type {import('../types').FeatureNode[]} */
                 const nodes = [];

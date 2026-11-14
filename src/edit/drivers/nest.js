@@ -1,24 +1,9 @@
-// nest driver — the lifecycle of dropping a node into (or out of) a container.
-//
-// `edit.hierarchy.nest` is a direct edit: the press lands on the node being moved,
-// so there is no target search and the plane stays down. What it needs is a
-// LIFECYCLE, because the write happens at the release and the feedback happens
-// before it:
-//
-//   dragstart  remember which row is in flight. The engine reads `nestFrom` to hold
-//              that row's ancestors still for the stroke (a fitted container follows
-//              the child you are dragging, so it could never be left) and to lift the
-//              row and its contents above the rest.
-//   drag       preview where a release HERE would put it. The engine turns that
-//              nesting proposal into the node rows it implies, so the container
-//              under the pointer is drawn at the size it would take.
-//   dragend    commit. `nestFrom` is dropped FIRST: the commit's settle must fit
-//              every container, the ones held still included.
-//
-// It shares the mark with a `move`, which commits each tick. Drivers run in registry
-// order and this one is registered after `move`, so its preview is parked after the
-// move's commit cleared the last one. It owns `nestFrom` and nothing else, so its
-// `clear()` cannot take the move's anchors with it.
+// nest driver — the lifecycle for `edit.hierarchy.nest` (direct-pick):
+//   dragstart  store the row in flight as `nestFrom`; the engine holds its
+//              ancestors still and lifts it above the rest.
+//   drag       preview where a release here would put it.
+//   dragend    clear `nestFrom` first (so every container is fitted), then commit.
+// Registered after `move`, so its preview survives the move's per-tick commit.
 
 /** @type {import('./index.js').Driver} */
 export const nestDriver = {
@@ -43,8 +28,7 @@ export const nestDriver = {
             for (const edit of edits) {
                 if (previewEdit(edit, from)) previewed = true;
             }
-            // Back inside the container it started in: nothing would change, so
-            // nothing is proposed and the last proposal goes.
+            // Nothing would change: drop the last proposal.
             if (!previewed) preview.clear();
             return true;
         }

@@ -1,16 +1,7 @@
 // @ts-check
-// guide.js — an edit self-draws its guide when declared `guide: true`. This
-// retires the old `target: <featureId>` indirection: instead of a standalone
-// guide reaching back into a feature to introspect its constraints, the edit —
-// which already owns its channel(s) and constraints — draws them directly.
-//
-// Two things get drawn:
-//   1. Constraint boundaries, on the edit's OWN channel scale (axis-aware), so a
-//      clamp/maintainSum on a y-edit draws horizontal, on an x-edit vertical.
-//   2. For `pick: 'nearest'` edits, the proximity snap ring + selected-mark
-//      highlight, read from the transient `ui` selection the dispatch writes.
-//
-// Rebuilt every render (via the engine), so bounds track live data.
+// guide.js — draws an edit's own guide (`Edit.guide`): constraint bounds on the
+// edit's channel scale, the catchment ring of a proximity pick, and handle tracks.
+// Rebuilt every render, so bounds track live data.
 import { resolveChannels, collectEdits } from './route.js';
 import { driverFor } from './drivers/index.js';
 import { isBand, isDiscrete, rangeExtent } from '../core/scales.js';
@@ -22,24 +13,16 @@ const DEFAULT_CONSTRAINT_COLOR = '#e4572e';
 /**
  * The parts a guide can draw, with their default appearance.
  *
- * A GUIDE shows a RULE — what you may do — as distinct from an EFFECT, which shows
- * interaction STATE (see core/effects.js). `guide: true` used to draw two unrelated
- * things (constraint bounds AND the proximity ring + selected-mark outline) with
- * every dash, width, opacity and offset hard-coded and only one colour adjustable.
- * Naming the parts is what makes each one addressable:
- *
  *   guide: true                        bounds + catchment, at these defaults
  *   guide: false                       nothing
  *   guide: { bounds: true }            only the constraint bounds
  *   guide: { catchment: { opacity: 1 } }   keep the rest, restyle the ring
  *   guide: { color: '#0ea5e9' }        one colour for every part
  *
- * `bounds`   — the constraint boundaries on the edit's own value channel: a clamp's
- *              band and limit lines, a snap's stops, a maintainSum cap.
- * `catchment`— the reach of a proximity pick: the radius within which a free
- *              pointer resolves to a mark. Only drawn by drivers that select one.
- * `track`    — where a handle can travel. Marks that derive a handle's range
- *              (trend, arc, axis, legend) compute it already; this draws it.
+ * `bounds`   — constraint boundaries on the edit's value channel (clamp band and
+ *              limits, snap stops, maintainSum cap).
+ * `catchment`— the radius of a proximity pick. Only for drivers that `select`.
+ * `track`    — where a handle can travel (from its `node.dm`).
  * @type {any}
  */
 const GUIDE_PARTS = {
@@ -54,14 +37,11 @@ const GUIDE_PARTS = {
     track: { dash: '3 3', width: 2, opacity: 0.35 },
 };
 
-/** Which parts `guide: true` turns on. `track` is opt-in — it is extra ink on a
- *  chart that already shows the handle, and only reads as help when the travel
- *  range isn't obvious from the mark itself. */
+/** Which parts `guide: true` turns on. `track` is opt-in. */
 const GUIDE_TRUE_PARTS = ['bounds', 'catchment'];
 
 /**
- * Resolve an edit's `guide` into one config per part, or `null` for a part that is
- * off.
+ * Resolve an edit's `guide` into one config per part, or `null` for a part that is off.
  *
  * Grammar:
  *   true                         → bounds + catchment (track stays opt-in)
@@ -79,9 +59,7 @@ const GUIDE_TRUE_PARTS = ['bounds', 'catchment'];
  */
 export function resolveGuide(edit, ctx) {
     let spec = /** @type {any} */ (edit && edit.guide);
-    // Proximity picks that select a target need a pre-press signifier. Auto-enable
-    // catchment when the author left `guide` unset; `guide: false` stays fully off,
-    // and `guide: true` still means bounds + catchment (sweep's historical default).
+    // Unset `guide` on a selecting driver turns on the catchment alone.
     if (spec == null) {
         const driver = driverFor(edit);
         spec = (driver && driver.selects) ? { catchment: true } : false;
@@ -90,8 +68,8 @@ export function resolveGuide(edit, ctx) {
         return { bounds: null, catchment: null, track: null };
     }
 
-    const themeGuide = ctx && ctx.theme && ctx.theme.guide;
-    const themeColor = ctx && ctx.theme && ctx.theme.constraint && ctx.theme.constraint.color;
+    const themeGuide = ctx?.theme?.guide;
+    const themeColor = ctx?.theme?.constraint?.color;
     const baseColor = (spec && typeof spec === 'object' && spec.color)
         || themeColor
         || DEFAULT_CONSTRAINT_COLOR;
@@ -120,10 +98,8 @@ export function resolveGuide(edit, ctx) {
 }
 
 /**
- * Collect the auto-guides for every feature: an edit with `guide: true` / an
- * object form self-draws via buildEditGuide. Proximity picks that `selects` also
- * register when `guide` is omitted (auto-catchment — see resolveGuide); `guide:
- * false` stays fully off. Deduped per (feature, edit).
+ * Collect one guide per (feature, edit) that draws one: an edit with `guide` set,
+ * or a selecting driver's edit with `guide` omitted. `guide: false` draws nothing.
  * @param {any[]} features
  * @returns {import('../types').Guide[]} guides (`views: 'state'`, read-only)
  */
@@ -159,12 +135,9 @@ export function autoEditGuides(features) {
  * @param {any} ctx
  * @returns {import('../types').FeatureNode[]}
  */
-export function buildEditGuide(feature, edit, ctx) {
+function buildEditGuide(feature, edit, ctx) {
     const { scales, width, height } = ctx;
-    // A guide is drawn ABOUT a mark, so it reads that mark's own table and that
-    // table's invariants — a bounds rule over node rows must not be computed from
-    // link rows. On a single-table chart both resolve to what ctx.data/ctx.constraints
-    // already held, so nothing changes there.
+    // Read the mark's own table and that table's constraints.
     const data = ctx.tableOf ? ctx.tableOf(feature) : ctx.data;
     const constraints = ctx.constraintsIn ? ctx.constraintsIn(feature.table) : ctx.constraints;
     const markChannels = feature.channels || {};
@@ -174,20 +147,15 @@ export function buildEditGuide(feature, edit, ctx) {
     /** @type {import('../types').FeatureNode[]} */
     const nodes = [];
 
-    // Constraint boundaries on the edit's own value channel. Constraints are DATASET
-    // invariants, so an edit draws every one whose field matches its primary channel
-    // — including constraints declared on a sibling mark, since they gate this edit
-    // too. Plus any edit-scoped guard sugar.
+    // Bounds of every constraint on the primary channel's field, plus the edit's `constrain`.
     if (parts.bounds && primary && primary.scale) {
         const style = parts.bounds;
-        // Only a DESCRIPTOR can say what it is about and how to draw it; a bare
-        // function constraint is opaque and draws nothing.
+        // A bare function constraint can't be drawn.
         const invariants = /** @type {import('../types').ConstraintSpec[]} */ (
             [...(constraints || []), ...edit.constrain].filter((c) => typeof c !== 'function')
         );
         for (const constraint of invariants) {
-            // A rule ABOUT other columns is not this handle's rule; one naming none
-            // follows the edit, so it is.
+            // Skip constraints about other fields; one naming no field applies.
             const about = constraint.field == null
                 ? null
                 : /** @type {string[]} */ ([]).concat(constraint.field);
@@ -204,19 +172,10 @@ export function buildEditGuide(feature, edit, ctx) {
         }
     }
 
-    // The pick's CATCHMENT — how far a free pointer reaches to find a mark — for any
-    // edit whose driver resolves a target from an arbitrary pointer position. Asked
-    // of the driver registry (`selects`) rather than matched against a list of pick
-    // names here — that list had drifted, covering `brush` but not its 2-D siblings
-    // brushRect/geoBrush, which keep the same hover state and so drew nothing.
-    //
-    // The mark HIGHLIGHT that used to be drawn alongside it is gone from here: which
-    // mark a pointer has resolved is interaction STATE, not a rule, so it is now the
-    // `hovered` effect — and it looks the same whether the mark was found by
-    // proximity or by pointing straight at it (see core/elicit.js's effects pass).
+    // The catchment ring, for any driver that declares `selects`.
     const driver = driverFor(edit);
     if (driver && driver.selects) {
-        nodes.push(...catchmentGuide(feature, edit, ctx));
+        nodes.push(...catchmentGuide(feature, ctx, parts.catchment));
     }
 
     // Where each of this feature's handles can travel.
@@ -226,17 +185,9 @@ export function buildEditGuide(feature, edit, ctx) {
 }
 
 /**
- * Draw the TRACK each of a feature's handles moves along.
- *
- * A handle declares its own travel range by stamping `node.dm` — `{ x?, y? }`, each
- * `{ channel, field, pxAt0, pxAt1, loVal, hiVal }`, the descriptor `linearInvert`
- * already uses to map a pointer back to a value. So the track is not re-derived
- * here: it IS the mapping the edit will use, drawn.
- *
- * A mark with a handle whose travel range isn't a scale opts in this way — which is
- * the point of making it a declared contract rather than a per-mark drawing. (A
- * handle whose range IS a scale needs nothing: `group`'s frame channels are real
- * scales, so a glyph part's travel is already the mapping.)
+ * Draw the track each of a feature's handles moves along, from the handle's
+ * `node.dm` (`{ x?, y? }`, each `{ channel, field, pxAt0, pxAt1, loVal, hiVal }`,
+ * the descriptor `linearInvert` uses).
  * @param {any} feature
  * @param {import('../types').Edit} edit
  * @param {any} ctx
@@ -245,8 +196,7 @@ export function buildEditGuide(feature, edit, ctx) {
  */
 function trackGuide(feature, edit, ctx, style) {
     const marks = (ctx.featureNodes && ctx.featureNodes[feature.id]) || [];
-    // When the edit names channels, draw only the tracks it can actually write —
-    // otherwise a guide on one parameter would advertise every handle's range.
+    // If the edit names channels, draw only their tracks.
     const claims = edit.channels && edit.channels.length ? edit.channels : null;
     /** @type {import('../types').FeatureNode[]} */
     const nodes = [];
@@ -258,10 +208,7 @@ function trackGuide(feature, edit, ctx, style) {
     for (const mark of marks) {
         const dm = mark && mark.dm;
         if (!dm) continue;
-        // The track runs ALONG one axis, so the other coordinate is wherever the
-        // handle currently sits. `markCenter` rather than a raw cx/cy read, so a
-        // handle drawn as a line or a rect (a glyph's brow, a bar) gets a track too
-        // — a bare cx/cy read put those at NaN and drew nothing.
+        // The cross-axis coordinate is the handle's current centre.
         const c = markCenter(mark);
         if (!c) continue;
         for (const axis of /** @type {const} */ (['x', 'y'])) {
@@ -291,30 +238,18 @@ function constraintGuide(constraint, gctx) {
         case 'clamp': return clampGuide(constraint.options || {}, gctx);
         case 'maintainSum': return maintainSumGuide(constraint.options || {}, gctx);
         case 'snap': return snapGuide(constraint.options || {}, gctx);
-        // No guide, by design, for the rest:
-        //   count / unique  cardinality rules (how many rows / per category), not
-        //                   value bounds — there's no line on a value axis to draw.
-        //   ordering / monotonic / spacing
-        //                   their bound is the NEIGHBOUR's current value, which is
-        //                   already on screen: the other handle, or the next point.
-        //                   Drawing a line on top of a mark you can see says nothing.
-        // A custom constraint can still supply its own drawer via meta.guide above.
+        // No guide for the rest: count/unique are not value bounds, and
+        // ordering/monotonic/spacing are bounded by a neighbour already on screen.
         default: return [];
     }
 }
 
-// A snap grid denser than this is unreadable as ticks — and at that point it isn't
-// telling you anything a continuous axis doesn't already say.
+// Beyond this many stops a snap grid draws no ticks.
 const MAX_SNAP_TICKS = 200;
 
 /**
- * snap -> a tick per stop along the value axis, drawn at the plot edge. Unlike a
- * clamp (two bounds) a snap has no boundary to draw; what's worth showing is WHERE
- * the value can land, so the handle appearing to lag the pointer reads as a grid
- * rather than as lost input.
- *
- * Only for a continuous value axis: a band/point scale already draws its own slots,
- * and its categories aren't `step` apart in pixels anyway.
+ * snap -> a tick per stop along the value axis, at the plot edge. Continuous
+ * value axes only.
  * @param {{ step?: number, origin?: number }} options
  * @param {any} gctx
  * @returns {import('../types').FeatureNode[]}
@@ -332,16 +267,12 @@ function snapGuide({ step = 1, origin = 0 }, gctx) {
 
     const onX = axisOf(primary.name) === 'x';
     const [rLo, rHi] = rangeExtent(scale);
-    // A stop's tick sits at the plot edge, which is also where the axis spine is,
-    // so the default is short and faint deliberately — raise `bounds.tickLength` /
-    // `bounds.tickOpacity` to pull the stops clear of the axis.
-    const len = (style && style.tickLength) || 6;
-    const tickOpacity = (style && style.tickOpacity) != null ? style.tickOpacity : 0.5;
+    const len = style.tickLength || 6;
+    const tickOpacity = style.tickOpacity ?? 0.5;
     /** @type {import('../types').FeatureNode[]} */
     const nodes = [];
 
-    // Walk by index, not by accumulating `v += step` — repeated float addition
-    // drifts off the stops the constraint itself computes (origin + n * step).
+    // Walk by index (origin + n * step) so float error doesn't accumulate.
     const firstN = Math.ceil((lo - origin) / step);
     const lastN = Math.floor((hi - origin) / step);
     for (let n = firstN; n <= lastN; n++) {
@@ -367,12 +298,9 @@ function snapGuide({ step = 1, origin = 0 }, gctx) {
  * @returns {import('../types').FeatureNode[]}
  */
 function boundaryLine(value, label, gctx) {
-    const { primary, width, height, color, style } = gctx;
+    const { primary, width, height, color, style: st } = gctx;
     if (value === undefined) return [];
     const at = primary.scale(value);
-    // Appearance comes from the RESOLVED guide (resolveGuide), so `guide: { bounds:
-    // { dash, width, opacity, fontSize } }` reaches the ink. These were literals.
-    const st = style || {};
     const line = {
         stroke: color, strokeDasharray: st.dash, strokeWidth: st.width,
         opacity: st.opacity, pointerEvents: 'none', guide: true,
@@ -409,8 +337,7 @@ function clampGuide({ min, max }, gctx) {
         const a = primary.scale(min);
         const b = primary.scale(max);
         const lo = Math.min(a, b), hi = Math.max(a, b);
-        const bandOpacity = (gctx.style && gctx.style.bandOpacity) != null
-            ? gctx.style.bandOpacity : 0.07;
+        const bandOpacity = gctx.style.bandOpacity ?? 0.07;
         nodes.push(onX
             ? { type: 'rect', x: lo, y: 0, width: hi - lo, height,
                 fill: color, opacity: bandOpacity, pointerEvents: 'none', guide: true }
@@ -450,10 +377,10 @@ function clampBoxGuide(invariants, resolved, gctx) {
         width: Math.abs(x1 - x0),
         height: Math.abs(y1 - y0),
         fill: color,
-        opacity: (gctx.style && gctx.style.bandOpacity) != null ? gctx.style.bandOpacity : 0.08,
+        opacity: gctx.style.bandOpacity ?? 0.08,
         stroke: color,
-        strokeWidth: (gctx.style && gctx.style.width) || 1,
-        strokeDasharray: (gctx.style && gctx.style.dash) || '4 4',
+        strokeWidth: gctx.style.width || 1,
+        strokeDasharray: gctx.style.dash || '4 4',
         pointerEvents: 'none',
         guide: true
     }];
@@ -461,13 +388,7 @@ function clampBoxGuide(invariants, resolved, gctx) {
 
 /**
  * maintainSum -> a cap tick over each mark at the highest value it can reach given
- * the current total of the others. The category axis is the non-value positional
- * channel; the tick sits at that mark's slot, on the value axis.
- *
- * The per-mark cap tick only makes sense when the category axis is a BAND (bars /
- * ticks — discrete slots to sit a cap over). On two continuous axes (a line /
- * scatter) there is no slot geometry, so the guide draws nothing (the maintainSum
- * data invariant still holds; only its visualization is band-specific).
+ * the others' total. Drawn only when the category axis is a band.
  * @param {{ total?: number }} options
  * @param {any} gctx
  * @returns {import('../types').FeatureNode[]}
@@ -482,7 +403,6 @@ function maintainSumGuide({ total }, gctx) {
     const catKey = catName === 'y' ? (feature.yKey || 'y') : (feature.xKey || 'x');
     const valueScale = primary.scale;
     const catScale = scales[catName];
-    // Band category axis only — otherwise there is no slot to draw a cap over.
     if (!catScale || !isBand(catScale)) return [];
 
     const [dMin, dMax] = [Math.min(...valueScale.domain()), Math.max(...valueScale.domain())];
@@ -492,7 +412,7 @@ function maintainSumGuide({ total }, gctx) {
 
     data.forEach((/** @type {any} */ d) => {
         const sumOthers = data.reduce(
-            (/** @type {number} */ s, /** @type {any} */ o) => (o[catKey] === d[catKey] ? s : s + o[valueKey]), 0
+            (/** @type {number} */ s, /** @type {any} */ o) => (o[catKey] === d[catKey] ? s : s + (o[valueKey] || 0)), 0
         );
         const cap = total - sumOthers;
         if (cap < dMin || cap > dMax) return; // off-chart
@@ -501,9 +421,9 @@ function maintainSumGuide({ total }, gctx) {
         const at = valueScale(cap);
         const cap$ = {
             stroke: color,
-            strokeDasharray: (gctx.style && gctx.style.dash) || '3 3',
-            strokeWidth: ((gctx.style && gctx.style.width) || 1) * 1.5,
-            opacity: (gctx.style && gctx.style.opacity) != null ? gctx.style.opacity : 0.9,
+            strokeDasharray: gctx.style.dash || '3 3',
+            strokeWidth: (gctx.style.width || 1) * 1.5,
+            opacity: gctx.style.opacity ?? 0.9,
             pointerEvents: 'none', guide: true,
         };
         nodes.push(valueAxis === 'y'
@@ -514,25 +434,31 @@ function maintainSumGuide({ total }, gctx) {
 }
 
 /**
- * The `select` interaction effect: a snap ring at the pointer + a highlight
- * outline around the selected mark, read from the transient nearest-selection
- * state the drivers write into ui.session. Appearance comes from the customizable
- * appearance comes from the edit's own `guide.catchment`.
- * @param {any} feature
- * @param {import('../types').Edit} edit
- * @param {any} ctx
+ * The catchment ring of a proximity pick: a circle of the pick's threshold at the
+ * pointer, read from the session a selecting driver writes. Empty with no session.
+ * @param {any} info the feature's driver session
+ * @param {{ color?: string, dash?: string, width?: number, opacity?: number }} spec
  * @returns {import('../types').FeatureNode[]}
  */
-function catchmentGuide(feature, edit, ctx) {
-    const info = ctx.ui && ctx.ui.session && ctx.ui.session[feature.id];
+export function catchmentRing(info, spec) {
     if (!info || info.px == null || info.py == null || info.threshold == null) return [];
-    const spec = resolveGuide(edit, ctx).catchment;
-    if (!spec) return [];
     return [{
         type: 'circle', cx: info.px, cy: info.py, r: info.threshold,
         fill: 'none', stroke: spec.color, strokeDasharray: spec.dash,
         strokeWidth: spec.width, opacity: spec.opacity,
         guide: true, effect: true, pointerEvents: 'none',
     }];
+}
+
+/**
+ * The catchment ring for one feature, styled by the edit's resolved `guide.catchment`.
+ * @param {any} feature
+ * @param {any} ctx
+ * @param {any} spec the resolved catchment part, or null when it is off
+ * @returns {import('../types').FeatureNode[]}
+ */
+function catchmentGuide(feature, ctx, spec) {
+    if (!spec) return [];
+    return catchmentRing(ctx.ui && ctx.ui.session && ctx.ui.session[feature.id], spec);
 }
 

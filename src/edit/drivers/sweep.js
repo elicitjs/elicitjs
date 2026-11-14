@@ -1,17 +1,10 @@
 // @ts-check
-// sweep driver — you-draw-it painting: like nearest, but the target is measured
-// along the domain axis only (1D) or by euclidean distance (2D) and RE-RESOLVED
-// every drag event (no dragstart lock), so one horizontal sweep paints each
-// point's value as the pointer crosses its column. The drag is series-scoped: it
-// locks onto the nearest line at dragstart so overlapping lines don't fight.
-//
-// On a BAND (an area with y1/y2 edges) it also locks onto an EDGE at dragstart —
-// the edge whose handle is nearest in 2-D — and paints that edge alone: only the
-// edits governing it run, and only its handles are candidates (both edges of a
-// row share the domain coordinate the 1-D search measures). Without that lock
-// every edit on the mark ran each tick and the band collapsed onto the pointer.
+// sweep driver — re-resolves the target every drag event (along the domain axis,
+// or in 2D), so one stroke paints each point it crosses. At dragstart it locks the
+// nearest series and, on a band, the nearest edge, which it then paints alone.
 
 import { nearestMark, nearestMarkOnAxis, nearestNode, nearestSeries, pickThreshold } from '../pick.js';
+import { markCenter } from '../shared.js';
 
 /** @type {import('./index.js').Driver} */
 export const sweepDriver = {
@@ -22,9 +15,7 @@ export const sweepDriver = {
     targetsRow: true,
     onEvent({ event, edits, marks, session, runEdit }) {
         const threshold = pickThreshold(edits[0]);
-        // The channels the sweep governs: one positional axis -> paint that value
-        // along the OTHER (a function line); both x AND y -> a 2D sweep (connected
-        // scatter), retargeting by euclidean distance.
+        // One positional channel: sweep along the other axis. Both x and y: 2D.
         const chans = edits[0].channels || ['y'];
         const twoD = chans.includes('x') && chans.includes('y');
         const valueName = chans[0] || 'y';
@@ -42,12 +33,8 @@ export const sweepDriver = {
                 (m) => edge == null || m.channel == null || m.channel === edge);
 
         /**
-         * The EDGE a press at the pointer locks onto: on a band, the edge whose
-         * handle is nearest in 2-D, wherever the press lands — above the band or
-         * below it — so a band sweep always paints one edge. (A press outside the
-         * catchment used to run both edges' edits and collapse the band.) Null on a
-         * mark with untagged handles (a plain line). Hover and dragstart both ask,
-         * so what is highlighted is what the stroke paints.
+         * The edge a press here locks onto: the tagged handle nearest in 2D, with no
+         * distance limit. Null on a mark with untagged handles.
          * @param {any} lockSeries
          * @returns {string | null}
          */
@@ -60,11 +47,8 @@ export const sweepDriver = {
         };
 
         /**
-         * Run the edits that govern this tick's edge. An edit placed at MARK level
-         * names no channel, so its apply would resolve none and write nothing: it
-         * runs with the channels this driver sweeps (the engine warns when that
-         * default was taken — see warnMissingEditChannels). An edit naming several
-         * channels runs a view narrowed to the locked edge.
+         * Run the edits that govern this tick's edge. An edit with no channels runs
+         * with the swept channels; one naming several is narrowed to the edge.
          * @param {number} index @param {string | null} edge @param {{ x: number, y: number }} [at]
          */
         const paint = (index, edge, at) => {
@@ -82,9 +66,8 @@ export const sweepDriver = {
         };
 
         /**
-         * The rows a 1-D stroke PASSED between the previous pointer event and this
-         * one, each with the pointer interpolated to its column — so a fast swipe
-         * paints every column it crossed, not only the one under each event.
+         * The rows a 1D stroke crossed since the last event, each with the pointer
+         * interpolated to its column.
          * @param {number} x0 @param {number} y0 @param {any} lockSeries @param {string | null} edge
          * @returns {{ index: number, at: { x: number, y: number } }[]}
          */
@@ -100,8 +83,11 @@ export const sweepDriver = {
                 if (!m || m.index == null || m.locked || seen.has(m.index)) continue;
                 if (lockSeries !== undefined && m.series !== lockSeries) continue;
                 if (edge != null && m.channel != null && m.channel !== edge) continue;
-                const c = axis === 'x' ? m.cx : m.cy;
-                if (c == null || c < lo || c > hi) continue;
+                // markCenter, so a bar's rect counts as well as a handle circle.
+                const centre = markCenter(m);
+                if (!centre) continue;
+                const c = axis === 'x' ? centre.cx : centre.cy;
+                if (c < lo || c > hi) continue;
                 const t = (c - a0) / ((a1 - a0) || 1);
                 const v0 = axis === 'x' ? y0 : x0, v1 = axis === 'x' ? event.y : event.x;
                 const v = v0 + (v1 - v0) * t;
@@ -113,10 +99,7 @@ export const sweepDriver = {
 
         let changed = false;
         if (event.type === 'hover') {
-            // Resolve the target a press HERE would take — edge included — so the
-            // hover highlight names the handle the stroke will paint. Resolving with
-            // no edge took a band's first handle in the column (its lower edge)
-            // while the press then locked the upper one.
+            // Resolve as a press would (edge included), so hover matches the stroke.
             const s = nearestSeries(marks, event.x, event.y, threshold);
             const lock = s == null ? undefined : s;
             const edge = edgeAt(lock);
@@ -127,8 +110,7 @@ export const sweepDriver = {
             session.clear();
             changed = true;
         } else if (event.type === 'dragstart') {
-            // Lock onto the nearest line for the whole drag — and, on a band, onto
-            // the edge whose handle is nearest in 2-D.
+            // Lock the nearest line, and on a band the nearest edge.
             const s = nearestSeries(marks, event.x, event.y, threshold);
             const lock = s == null ? undefined : s;
             const edge = edgeAt(lock);
@@ -141,8 +123,7 @@ export const sweepDriver = {
             if (info) { info.activeIndex = null; info.series = null; info.channel = null; info.lastX = null; info.lastY = null; }
             changed = true;
         } else if (event.type === 'drag') {
-            // Paint: retarget within the locked series (and edge) each event, so one
-            // stroke fills the whole line.
+            // Retarget within the locked series (and edge) each event.
             const info = session.get();
             const lock = info && info.series != null ? info.series : undefined;
             const edge = info && info.channel != null ? info.channel : null;

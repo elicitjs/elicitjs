@@ -3,34 +3,12 @@
 //
 //   plot.node({ channels: { x: {field:'x'}, y: {field:'y'}, text: {field:'label'} } })
 //
-// A PRESET over `composite`, in the same sense `pie`/`donut` are presets over `arc`
-// and `path` is a preset over `line`: it desugars into ordinary
-// marks and the engine learns nothing. What it removes is the repetition of writing
-// the same `x`/`y` on two marks:
+// A preset over plain-mode `composite`: a `text` label and a `point` dot, with x/y
+// stated once on the composite so both parts inherit them. It knows nothing about
+// networks, reads no schema, and attaches no edits.
 //
-//   composite({ channels: { x, y }, parts: [
-//     text({ dy: -16, channels: { text } }),
-//     point({ channels: { …style } }),
-//   ]})
-//
-// The composite's channels trickle to both parts (plain mode), so `x`/`y` are
-// stated once. That is the whole trick — no new mechanism.
-//
-// ── Not a network mark ─────────────────────────────────────────────────────
-// Nothing here knows about networks. It is a dot with a label over whatever table
-// it is pointed at, and it reads no schema — a preset runs at factory time, before
-// there is a chart to ask. It invents no field names either: `positionalKeys`
-// already owns the "column named after the channel" fallback, with its warning.
-//
-// ── Inert, like every mark ─────────────────────────────────────────────────
-// It attaches no edits. Put `move()` on `x`, `editText()` on `text`, and
-// `edit.network.connect()` in `edits` — exactly as on any other mark.
-//
-// ORDER IS LOAD-BEARING: the dot is the LAST part. A composite hands its channel
-// edits to its last part only (so one gesture can't fire twice), and it draws the
-// parts in order — so putting the dot last is both what makes `x: { edit: move() }`
-// grab the dot rather than the label, and what keeps the dot above the label for
-// picking.
+// The dot is the last part on purpose: a composite gives channel edits to its last
+// part, and later parts draw on top, so `x: { edit: move() }` grabs the dot.
 
 import { normalizeMarkOptions, markCommon } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
@@ -39,16 +17,13 @@ import { point } from './point.js';
 import { text } from './text.js';
 
 /**
- * Channels that belong to the LABEL rather than the dot. Everything else — fill,
- * stroke, size, opacity, angle, symbol — is the dot's, so `node({ fill: 'red' })`
- * colours the dot and leaves the label its own colour.
+ * Channels that belong to the label. Everything else (fill, size, …) is the dot's.
  * @type {string[]}
  */
-const LABEL_CHANNELS = ['text', 'fontSize', 'textAnchor', 'lineAnchor', 'dx'];
+const LABEL_CHANNELS = ['text', 'fontSize', 'fontWeight', 'fontStyle', 'fontFamily', 'textAnchor', 'lineAnchor', 'dx'];
 
 /**
- * Channels that must be SHARED — stated once on the composite so both parts get
- * them, which is the repetition this preset exists to remove.
+ * Channels stated once on the composite so both parts get them.
  * @type {string[]}
  */
 const SHARED_CHANNELS = ['x', 'y'];
@@ -59,8 +34,7 @@ const SHARED_CHANNELS = ['x', 'y'];
  * @returns {any} the parts, flattened by Elicit like any composite
  */
 export function node(options = {}) {
-    // `dy` stays a raw option rather than desugaring into a channel: it is the
-    // LABEL's offset, and a channel would trickle it onto the dot as well.
+    // `dy` stays a raw option: it is the label's offset and must not reach the dot.
     const opts = normalizeMarkOptions(options, {
         mark: 'node',
         except: ['dy'],
@@ -84,8 +58,7 @@ export function node(options = {}) {
 
     /** @type {any[]} */
     const parts = [];
-    // No `text` channel, no label — the same rule every mark follows about a
-    // channel it wasn't given.
+    // No `text` channel, no label.
     if (channels.text) {
         parts.push(text({
             id: `${name}/label`,
@@ -94,7 +67,7 @@ export function node(options = {}) {
             channels: { textAnchor: { value: 'middle' }, ...label },
         }));
     }
-    // LAST: see the header — it takes the composite's channel edits, and draws on top.
+    // Last: takes the composite's channel edits and draws on top.
     parts.push(point({
         id: `${name}/dot`,
         ...(shape !== undefined ? { shape } : {}),

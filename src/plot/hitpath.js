@@ -1,39 +1,19 @@
 // @ts-check
-// hitpath.js — how a curved path becomes grabbable.
-//
-// A stroked path is a few pixels wide, so grabbing one is nearly impossible, and
-// the pick layer can't help: `edit/pick.js` measures distance along a node's
-// `points` polyline and has no branch for a `d`-only path at all. A path that
-// carries geometry ONLY as `d` is therefore invisible to proximity picking under
-// every renderer, and untouchable under canvas, which hit-tests entirely in JS.
-//
-// So a curved mark emits its visible path plus a fat TRANSPARENT one over the same
-// geometry, sampled into `points`. `curve` (the mark) established the pattern;
-// `link` needs exactly the same thing for its bodies, and two copies of a Bézier
-// sampler is one copy too many.
-//
-// The hit path leaves `pointerEvents` UNSET on purpose: the engine silences any
-// mark with no direct-pick edit, so an inert path can't swallow a sibling handle's
-// drag, while an editable one gets the pointer back automatically. It must also
-// never be raised above the real marks — it is a fallback for a shape with no area
-// to hit, not something that outranks a node genuinely drawn there.
+// hitpath.js — Bézier samplers for the wide transparent hit path a curved mark
+// draws over its visible `d` path. Picking only measures `points` polylines, so a
+// `d`-only path can't be grabbed (and canvas can't hit-test it at all).
+// The hit path leaves `pointerEvents` unset so the engine decides, and is never
+// raised above the real marks.
 
-// How many segments a Bézier is sampled into. Enough that the straight-line error
-// stays well under the hit stroke's own width at any curvature this library draws.
-export const HIT_SAMPLES = 16;
+// Segments per sampled Bézier.
+const HIT_SAMPLES = 16;
 
 // Minimum grab width for an invisible hit path, in px.
 export const HIT_WIDTH = 16;
 
 /**
- * Sample a quadratic Bézier into a polyline.
- *
- * `samples` exists for the one caller that is not building a hit path: a rounded
- * corner (linkGeometry.js) IS a quadratic, and rounding it through this sampler is
- * what keeps an elbow a `points` polyline instead of a `d` string with a companion
- * hit path. A corner spans a few px, so it needs far fewer segments than a link
- * body — but a second sampler for the difference would be one copy too many.
- *
+ * Sample a quadratic Bézier into a polyline. `samples` lets a rounded corner
+ * (linkGeometry.js) use fewer segments.
  * @param {[number, number]} p1 @param {[number, number]} c @param {[number, number]} p2
  * @param {number} [samples] segments to divide the curve into
  * @returns {[number, number][]}

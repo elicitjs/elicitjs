@@ -1,16 +1,8 @@
 // @ts-check
 import { defineConstraint, constraintOptions, changedCells } from './define.js';
 
-// clamp: restricts a field's value to a [min, max] range — a data invariant.
-//
-// Every cell the proposal changed in `field` is bounded to [min, max]. When a
-// bound is omitted it falls back to that column's declared domain (in data
-// space). `field` names the column(s) it governs; omitted, it is the column the
-// dispatching edit writes.
-//
-// It clamps CELLS, not "the value": a rule that read only the active datum let a
-// `monotonic` push carry a neighbour past the bound, and did nothing at all for
-// an edit that appends several rows (there is no single active row).
+// clamp: bounds every changed cell of `field` to [min, max]. An omitted bound
+// falls back to the column's declared domain.
 
 /**
  * @param {{ min?: number, max?: number, field?: string | string[] }} [options]

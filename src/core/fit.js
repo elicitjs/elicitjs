@@ -1,39 +1,18 @@
-// fit.js — keeping a hierarchy's GEOMETRY settled.
-//
-// A container's box is not elicited: it follows from what is inside it. That is a
-// rule the SCHEMA declares (a nesting table) and the CHANNEL MAP details (`fit: true`
-// on a size channel), so the ENGINE holds it, the way it holds a `ref` — after every
-// commit, and for data arriving from outside.
-//
-// The rule is held in the DATA, not in the drawing. A fitted channel names a column,
-// and this pass writes the fitted value into it through the channel's own scale —
-// an edit is the inverse of encoding, and the fit is an engine-run edit. Two things
-// follow, and both are the point:
-//
-//   · No mark changes. A rect still draws `width` from its column; a link still
-//     docks to `Mark.nodeBox`. Neither knows the column was derived.
-//   · `getData()` reports the exact fitted geometry, because it IS the data.
-//
-// Four steps, in order:
-//
-//   PLACE   a nested row with no position gets one inside its container (a caller
-//           saying "add C to group B" has no coordinates to give)
-//   CARRY   a container whose position this commit changed takes its whole subtree
-//           along by the same pixel delta — so the universal `move` moves a group
-//   SPACE   bottom-up, the contents of each container (and last the roots): a
-//           container whose size is NOT fitted keeps its contents inside its padding,
-//           and rows that `dodge` are pushed apart until no two overlap
-//   FIT     in the same bottom-up walk, every container with fitted channels takes
-//           the union of its children's boxes, padded, written back into its columns
-//
-// Everything is measured in pixels through the mark's own `nodeBox` and written back
-// through the same scales, so a log or a temporal axis fits like a linear one.
+// fit.js — settles a hierarchy's geometry after every commit and for outside data.
+// A container's box follows from its children (`contains`, `fit: true`). Results
+// are written into the data through the channels' own scales, so no mark changes
+// and `getData()` reports the fitted geometry. Steps, in order:
+//   PLACE  a nested row with no position gets one inside its container
+//   CARRY  a container the commit moved takes its subtree by the same pixel delta
+//   SPACE  bottom-up, an unfitted container keeps its contents inside its padding,
+//          and `dodge` rows are pushed apart
+//   FIT    in the same walk, a fitted container takes its children's union, padded
 
-import { scaleKey } from './scales.js';
+import { scaleFor } from './scales.js';
 import { treeOf, nestingOf } from './hierarchy.js';
 
 /** Padding between a container's edge and its contents, when `contains` states none. */
-export const DEFAULT_PADDING = 10;
+const DEFAULT_PADDING = 10;
 
 /** How far apart PLACE staggers siblings that arrive with no position, in px. */
 const PLACE_STEP = 18;
@@ -48,13 +27,12 @@ export const DEFAULT_GAP = 8;
 const DODGE_PASSES = 40;
 
 /**
- * A container's padding as four sides. `contains: { padding }` takes one number or
- * `{ top, right, bottom, left }` (a side left out takes the default) — a container
- * with a title along its top wants more room there than along the other three.
+ * A container's padding as four sides: `contains: { padding }` is a number or
+ * `{ top, right, bottom, left }` (a missing side takes the default).
  * @param {any} contains the mark's `contains` channel
  * @returns {{ top: number, right: number, bottom: number, left: number }}
  */
-export function paddingOf(contains) {
+function paddingOf(contains) {
     const p = contains ? contains.padding : undefined;
     const side = (/** @type {any} */ v) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(0, v) : DEFAULT_PADDING);
     if (p && typeof p === 'object') {
@@ -65,18 +43,14 @@ export function paddingOf(contains) {
 }
 
 /**
- * Which component of a container's box each channel receives. `inner` is the union
- * of the children's boxes, `pad` the container's padding by side (in pixels, so
- * `top` is toward smaller y).
- *
- * A static channel -> value table, like AXIS_OF: a mark gains a fittable channel by
- * a row here, never by a branch in the pass. A round shape takes the circle (or
- * ellipse) that ENCLOSES the union's rectangle, since its children may sit in the
- * corners; uneven padding moves its centre and it keeps the smaller side's gap.
+ * Which component of a container's box each channel receives: `inner` is the union
+ * of the children's boxes, `pad` the padding by side in px. A mark gains a fittable
+ * channel by a row here. A round shape takes the circle/ellipse that encloses the
+ * union's rectangle.
  * @typedef {{ top: number, right: number, bottom: number, left: number }} Sides
  * @type {Record<string, (inner: { cx: number, cy: number, hw: number, hh: number }, pad: Sides) => number>}
  */
-export const FIT_OF = {
+const FIT_OF = {
     x: (b, p) => b.cx + (p.right - p.left) / 2,
     y: (b, p) => b.cy + (p.bottom - p.top) / 2,
     width: (b, p) => 2 * b.hw + p.left + p.right,
@@ -91,7 +65,7 @@ export const FIT_OF = {
     y2: (b, p) => b.cy + b.hh + p.bottom,
 };
 
-/** The channels that state a box's EXTENT; a fitted one pulls the centre with it. */
+/** The channels that state a box's extent; a fitted one pulls the centre with it. */
 const EXTENT_AXIS = { width: 'x', size: 'xy', rx: 'x', height: 'y', ry: 'y' };
 
 /** The channels whose fit decides a box's extent along each pixel axis. */
@@ -133,7 +107,7 @@ function channelIO(scales, channels, name) {
     if (spec.scale === null) {
         return { field: spec.field, encode: (v) => +v, invert: (px) => px };
     }
-    const scale = /** @type {any} */ (scales[scaleKey(name, spec.field)] || scales[name]);
+    const scale = scaleFor(scales, name, spec.field);
     if (!scale || !scale.invertible || typeof scale.invertValue !== 'function') return null;
     return { field: spec.field, encode: (v) => scale.encode(v), invert: (px) => scale.invertValue(px) };
 }
@@ -152,20 +126,18 @@ function channelIO(scales, channels, name) {
  *   (the ancestors of a row in mid-drag — see the nest driver)
  * @property {((row: any, i: number) => boolean) | null} [locked]  read-only rows
  * @property {((row: any, i: number, rows: any[]) => number | null) | null} [dodges]
- *   the gap a row keeps from its siblings, or null for a row that takes no part.
- *   Omit to push nothing apart (a stroke in progress: rows must not scatter under
- *   a node being carried past them)
+ *   the gap a row keeps from its siblings, or null for none. Omit to push nothing
+ *   apart (mid-stroke, rows must not scatter under a carried node)
  * @property {import('../types').Datum[] | null} [since]  the node rows before the
- *   gesture that is now settling; a row whose box differs HOLDS its place and its
+ *   gesture that is now settling; a row whose box differs holds its place and its
  *   siblings make room for it
  * @property {number[] | null} [anchors]  further rows that hold their place
  */
 
 /**
- * Settle a hierarchy's node rows: place, carry, space, fit. Returns the SAME array when
- * nothing needed writing, and otherwise a new array in which only the rows that
- * changed are new objects — which is what lets the ghost pass find them by identity
- * and keeps a locked row the same object.
+ * Settle a hierarchy's node rows: place, carry, space, fit. Returns the same array
+ * when nothing changed; otherwise only changed rows are new objects, so the ghost
+ * pass finds them by identity and a locked row stays the same object.
  * @param {SettleOptions} options
  * @returns {import('../types').Datum[]}
  */
@@ -234,9 +206,8 @@ export function settleHierarchy({ spec, tables, hosts, scales, width, height, be
     }
 
     // ── CARRY ────────────────────────────────────────────────────────────────
-    // Only a container the COMMIT moved: its row differs from the committed one and
-    // its box centre with it. One nested inside another mover rides along as a
-    // descendant, so it is not carried twice.
+    // Only a container the commit moved. A mover nested in another mover rides
+    // along as a descendant, so it is not carried twice.
     if (before && before.length === rows.length) {
         /** @type {Map<number, { dx: number, dy: number }>} */
         const movers = new Map();
@@ -257,7 +228,7 @@ export function settleHierarchy({ spec, tables, hosts, scales, width, height, be
 
     // ── SPACE ────────────────────────────────────────────────────────────────
     // Who holds their place when two rows overlap: the row the gesture just put
-    // there, and every container around it (it grew to take that row, so ITS
+    // there, and every container around it (it grew to take that row, so its
     // siblings make room). Everything else gives way; two of a kind split it.
     /** @type {Set<number>} */
     const held = new Set(anchors || []);
@@ -280,12 +251,9 @@ export function settleHierarchy({ spec, tables, hosts, scales, width, height, be
         for (const j of tree.descendantsOf(i)) shift(j, dx, dy);
     };
     /**
-     * Space one group of siblings: keep them inside `bounds` (the padded inside of a
-     * container that does not fit itself) and push the ones that dodge apart. Each
-     * overlapping pair separates along the axis of LEAST overlap — the smallest move
-     * that clears it — and the push goes to whichever of the two does not hold its
-     * place. A repair, like the link router's: bounded, and when there is no room
-     * the rows are left as close to clear as the walls allow.
+     * Space one group of siblings: keep them inside `bounds` and push dodging rows
+     * apart along the axis of least overlap, moving whichever does not hold its
+     * place. Bounded; with no room, rows end as close to clear as the walls allow.
      * @param {number[]} kids
      * @param {{ x: boolean, y: boolean, x0: number, x1: number, y0: number, y1: number } | null} bounds
      */

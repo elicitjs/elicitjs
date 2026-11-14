@@ -1,25 +1,17 @@
 // @ts-check
-// Painting: typed FeatureNodes -> canvas 2D calls. The mirror image of the D3
-// renderer's semantic draws — same node types, same role layers + array z-order,
-// same per-draw style defaults — but emitting `ctx.fill()`/`ctx.stroke()` instead
-// of SVG attributes. No interaction here; this module is a pure function of
-// (context, nodes).
-import * as d3 from 'd3';
+// Paints FeatureNodes with canvas 2D calls: same node types, layers and style
+// defaults as the D3 renderer. No interaction here.
 import { markCenter } from '../../edit/shared.js';
-import { STYLE_FIELDS, resolveCurve, lineGenerator, partitionScene } from '../shared.js';
+import { STYLE_FIELDS, lineGenerator, partitionScene } from '../shared.js';
 
-// The active theme's font tokens for this paint pass. Set once at the top of
-// paintScene (synchronous, single-threaded — so a module-level slot is safe) and
-// read by text(), which fires from several draw paths. Null family => 'sans-serif',
-// matching the pre-theme canvas default.
+// The theme's font tokens for the current paint pass, set by paintScene and read by text().
 /** @type {{ family: string | null, size: number } | null} */
 let activeFont = null;
 
 // SVG text-anchor -> canvas textAlign. `middle` is the only rename.
 /** @type {Record<string, CanvasTextAlign>} */
 const ALIGN = { start: 'start', middle: 'center', end: 'end', left: 'left', right: 'right', center: 'center' };
-// SVG dominant-baseline -> canvas textBaseline. Unset falls back to alphabetic
-// (SVG's default), matching how axis tick labels render.
+// SVG dominant-baseline -> canvas textBaseline. Unset falls back to alphabetic.
 /** @type {Record<string, CanvasTextBaseline>} */
 const BASELINE = {
     middle: 'middle', central: 'middle', hanging: 'hanging',
@@ -28,18 +20,9 @@ const BASELINE = {
 };
 
 /**
- * Resolve a node's style channels against per-draw defaults, exactly like the D3
- * renderer's `_applyStyle`: per-node value wins, else the caller's default, else the
- * shared base (null).
- *
- * An interaction effect the engine's state pass stamped on the node
- * (`node.effectStyle` — see core/effects.js) wins over all of it, which is this
- * renderer's equivalent of a CSS style property beating an SVG presentation
- * attribute. It cannot leak: a canvas is repainted from scene state every frame, so
- * an effect that ended simply isn't there next pass. `filter` and `cursor` are the
- * two properties with no canvas equivalent here (there is no element to hover and no
- * per-shape filter), so they are skipped rather than faked — everything the effects
- * vocabulary can PAINT works in both renderers.
+ * Resolve a node's style: `node.effectStyle` wins, then the node's own value, then
+ * the caller's default, then the shared base. `filter` and `cursor` have no canvas
+ * equivalent and are skipped.
  * @param {any} node
  * @param {Record<string, any>} defaults
  * @returns {Record<string, any>}
@@ -68,9 +51,7 @@ function setDash(ctx, dash) {
 }
 
 /**
- * Fill then stroke a path (SVG paints fill under stroke). `opacity` composites both;
- * `fillOpacity`/`strokeOpacity` scale each pass — approximated with globalAlpha,
- * which is close enough to the SVG semantics for every mark in this library.
+ * Fill then stroke a path. Opacities are approximated with globalAlpha.
  * @param {CanvasRenderingContext2D} ctx
  * @param {Record<string, any>} s resolved style
  * @param {Path2D} [path] optional Path2D (else the ctx's current path)
@@ -96,9 +77,8 @@ function paint(ctx, s, path) {
 }
 
 /**
- * Run `draw` with the node's `angle` (math degrees, 0°=+x CCW) applied about its
- * centre. SVG uses rotate(-deg); the canvas equivalent is a negative rotation about
- * the same pivot (markCenter), so both renderers agree on where a rotated mark lands.
+ * Run `draw` rotated by the node's `angle` (math degrees, CCW) about markCenter,
+ * the same pivot the SVG renderer uses.
  * @param {CanvasRenderingContext2D} ctx
  * @param {any} node
  * @param {() => void} draw
@@ -140,10 +120,8 @@ function ellipse(ctx, node, defaults) {
     });
 }
 
-/** @param {CanvasRenderingContext2D} ctx @param {any} node @param {Record<string,any>} defaults */
 /**
- * A node's gradient fill as a canvas gradient over its box — the canvas twin of
- * the SVG renderer's objectBoundingBox <linearGradient>.
+ * A node's gradient fill as a canvas gradient over its box.
  * @param {CanvasRenderingContext2D} ctx @param {any} node
  * @param {{ x: number, y: number, width: number, height: number }} box
  * @returns {CanvasGradient | null}
@@ -173,10 +151,7 @@ function rect(ctx, node, defaults) {
     withAngle(ctx, node, () => {
         const h = Math.max(0, node.height);
         ctx.beginPath();
-        // Corner radius, when the node carries one and the platform can draw it.
-        // `roundRect` is recent enough (Chrome 99, Safari 16) to be worth guarding;
-        // a square corner is a graceful loss where it is missing, and this path is
-        // shared with the effect overlay so a rounded shape's outline rounds too.
+        // Rounded corners where `roundRect` exists; square otherwise.
         if (node.rx != null && typeof (/** @type {any} */ (ctx).roundRect) === 'function') {
             const rx = Math.max(0, node.rx);
             const ry = node.ry != null ? Math.max(0, node.ry) : rx;
@@ -207,8 +182,7 @@ function path(ctx, node, defaults) {
     if (node.d) {
         p = new Path2D(node.d);
     } else {
-        // d3 shape generators accept any object with the canvas path methods; Path2D
-        // qualifies, so the SAME curve factory that SVG feeds `d3.line()` draws here.
+        // The d3 line generator draws into a Path2D, so curves match the SVG renderer.
         p = new Path2D();
         lineGenerator(node.curve).context(/** @type {any} */(p))(node.points || []);
     }
@@ -233,13 +207,10 @@ function text(ctx, node, defaults, anchorDefault) {
         ctx.textAlign = ALIGN[node.textAnchor || anchorDefault] || 'start';
         ctx.textBaseline = BASELINE[node.dominantBaseline] || 'alphabetic';
 
-        // A WRAPPED label paints its `lines`; `text` stays the whole string, so
-        // the single-line case is just a one-element list. The block is centred on
-        // the node's own y — the anchor means the same thing at any line count.
+        // A wrapped label paints its `lines`; otherwise one line of `text`.
         const lines = Array.isArray(node.lines) ? node.lines : [String(node.text)];
         const step = node.lineHeight != null ? node.lineHeight : Math.round(size * 1.35);
-        // `lineAnchor` places the block about the anchor (top hangs, bottom
-        // stacks, else centred) — the same rule the SVG renderer applies.
+        // `lineAnchor` places the block about y: top hangs, bottom stacks, else centred.
         const first = node.lineAnchor === 'top' ? node.y
             : node.lineAnchor === 'bottom' ? node.y - (lines.length - 1) * step
                 : node.y - ((lines.length - 1) * step) / 2;
@@ -264,9 +235,8 @@ function text(ctx, node, defaults, anchorDefault) {
 }
 
 /**
- * Draw a background raster tile. Images load asynchronously, so a cache miss kicks
- * off a load and repaints on arrival (via `requestRepaint`); until then the tile is
- * simply absent, exactly as an <image> with an unfetched href would be.
+ * Draw a background raster tile. A cache miss starts a load and repaints when it
+ * arrives; until then the tile is skipped.
  * @param {CanvasRenderingContext2D} ctx @param {any} node
  * @param {Map<string, any>} cache @param {() => void} requestRepaint
  */
@@ -290,8 +260,7 @@ function image(ctx, node, cache, requestRepaint) {
 }
 
 /**
- * Paint one ordinary mark node (non-background, non-guide). Defaults mirror the
- * D3 per-type draws.
+ * Paint one ordinary mark node (non-background, non-guide).
  * @param {CanvasRenderingContext2D} ctx
  * @param {any} n
  */
@@ -313,12 +282,11 @@ function paintMark(ctx, n) {
             line(ctx, n, { stroke: 'black', strokeWidth: 1, opacity: 1 });
             break;
         case 'text':
-            // Editable text marks centre-anchor; inert label marks start-anchor —
-            // same split the D3 renderer uses between text.mark and guide-label.
+            // Editable text marks default to a middle anchor, others to start.
             text(ctx, n, { fill: 'black', opacity: 1 }, n.editable ? 'middle' : 'start');
             break;
         case 'image':
-            // Non-background images are rare; treat like a mark if they land here.
+            // Only background images are painted.
             break;
         default:
             break;
@@ -326,8 +294,7 @@ function paintMark(ctx, n) {
 }
 
 /**
- * Paint a guide-front node (rules, ticks, labels). Defaults match the
- * D3 guide draws; per-node stroke/fill win via styleOf.
+ * Paint a guide-front node (rules, ticks, labels).
  * @param {CanvasRenderingContext2D} ctx
  * @param {any} n
  */
@@ -354,12 +321,8 @@ function paintGuideFront(ctx, n) {
 }
 
 /**
- * Paint an interaction-effect overlay (proximity ring / state outline).
- *
- * Every shape `outlineNodes` can emit, matching the D3 renderer's effect layer.
- * Circle and rect were the only two, so an ellipse's or a path's outline was built
- * and then dropped — the mark read as unresponsive. Each primitive routes through
- * `withAngle`, so an overlay carrying its source's `angle` turns with the mark.
+ * Paint an interaction-effect overlay (proximity ring / state outline). Handles
+ * every shape `outlineNodes` can emit.
  * @param {CanvasRenderingContext2D} ctx
  * @param {any} n
  */
@@ -387,22 +350,17 @@ function paintEffect(ctx, n) {
 }
 
 /**
- * Paint the whole scene in z-order. Role layers (background → guide regions →
- * marks → guide front → effects) are fixed; within the mark layer,
- * `scene.children` order is z-order (later features / parts on top). Draw
- * order IS z-order on a canvas (last wins).
+ * Paint the whole scene in z-order: background, guide regions, marks, guide front,
+ * effects. Within the mark layer, `scene.children` order is z-order.
  * @param {CanvasRenderingContext2D} ctx
  * @param {any[]} children scene nodes
  * @param {{ images: Map<string, any>, requestRepaint: () => void, theme?: any, clip?: { x: number, y: number, width: number, height: number } | null, innerWidth?: number, innerHeight?: number }} io
  */
 export function paintScene(ctx, children, io) {
-    // The theme's font tokens for this pass (read by text()); null family keeps the
-    // pre-theme 'sans-serif' default so an un-themed chart is unchanged.
     activeFont = (io && io.theme && io.theme.font) || null;
     const { background, guideRegions, marks, chrome, guideFront, effects, effectsChrome } =
         partitionScene(children, { clip: !!(io && io.clip) });
-    // The clip rect (the plot rect, grown by any `pad`), for what `clip` confines
-    // (the data's marks and effects).
+    // The clip rect confines marks and effects.
     const clip = io && io.clip;
     const clipped = (/** @type {() => void} */ paint) => {
         if (!clip) { paint(); return; }
@@ -414,34 +372,28 @@ export function paintScene(ctx, children, io) {
         ctx.restore();
     };
 
-    // Background: tiles (floor), then legend chips/ramps + axis chrome, then
-    // vector basemap paths (geoBasemap) so they sit above grids the way they did
-    // in the old path pass. Rects/circles are the legend mark's inert swatches —
-    // without them a non-interactive legend draws labels with no colour chips.
+    // Background: tiles (floor), then everything else in scene order, as SVG does.
     background.filter((n) => n.type === 'image')
         .forEach((n) => image(ctx, n, io.images, io.requestRepaint));
     for (const n of background) {
-        if (n.type === 'image' || n.type === 'path') continue;
+        if (n.type === 'image') continue;
         if (n.type === 'rect') rect(ctx, n, { fill: 'none', stroke: 'none', strokeWidth: 1, opacity: 1 });
         else if (n.type === 'circle') circle(ctx, n, { fill: 'none', stroke: 'none', strokeWidth: 1, opacity: 1 });
         else if (n.type === 'line') line(ctx, n, { stroke: '#6b7280', strokeWidth: 1, opacity: 1 });
         else if (n.type === 'text') text(ctx, n, { fill: '#374151', opacity: 1 }, 'middle');
+        else if (n.type === 'path') path(ctx, n, { fill: 'none', stroke: 'black', strokeWidth: 1, opacity: 1 });
     }
-    background.filter((n) => n.type === 'path')
-        .forEach((n) => path(ctx, n, { fill: 'none', stroke: 'black', strokeWidth: 1, opacity: 1 }));
 
     guideRegions.forEach((n) => rect(ctx, n, { fill: 'none', stroke: 'none', strokeWidth: 1, opacity: 1 }));
 
-    // Ordinary marks in features/parts array order — confined to the plot rect
-    // under `clip` — then a chart element's interactive chrome, which is not.
+    // Marks (clipped), then unclipped chrome.
     clipped(() => marks.forEach((n) => paintMark(ctx, n)));
     chrome.forEach((n) => paintMark(ctx, n));
 
     // Rules, constraint ticks, guide labels — in scene order.
     guideFront.forEach((n) => paintGuideFront(ctx, n));
 
-    // Interaction overlays (proximity ring, select outline) — above everything,
-    // and clipped with the marks they are about.
+    // Interaction overlays on top, clipped with their marks.
     clipped(() => effects.forEach((n) => paintEffect(ctx, n)));
     effectsChrome.forEach((n) => paintEffect(ctx, n));
 }

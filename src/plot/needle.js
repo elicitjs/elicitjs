@@ -1,27 +1,20 @@
 // @ts-check
-// needle.js — a pivoted pointer (NYT-style gauge / software dial). Encodes a
-// value on the `angle` channel (degrees via the channel's scale) and draws a
-// tapered triangle + hub about a pivot. Pair with axisRadial for chrome and
-// text for a center readout — compose via composite / features.
+// needle.js — a pivoted pointer (a gauge or dial). The value is on the `theta`
+// channel; the sweep is the theta scale's range. Draws a tapered outline plus a
+// hub handle about a pivot.
 //
 //   needle({
-//     orient: 'top',         // default semi: left → right through the top
-//     // orient: 'right' | 'bottom' | 'left', or arc: 'full', or start/end
 //     length: 100,
 //     channels: {
-//       angle: { field: 'n', scale: { range: [180, 0] },
-//                edit: rotate({ pivot: 'mark', fold: false, pick: 'direct' }) },
+//       theta: { field: 'n', scale: { range: [180, 0] },
+//                edit: rotate({ pivot: 'mark' }) },
 //       fill: { value: '#c00' },
 //     },
 //   })
 //
-// Pivot defaults to the plot centre; optional x/y channels place it on a
-// categorical or linear axis (many small needles across a chart).
-// discreteScale is 'point' so categorical fields land on ticks.
-//
-// Affordance map (pair with rotate({ pivot:'mark', pick:'direct' }) on angle):
-//   tapered path + hub → the mark itself; hub is the shared-contract handle
-//   handles: true|false|'hit' — false emits no hub and silences the path
+// The pivot defaults to the plot centre; x/y channels place it. `length` (or the
+// `size` channel) sets the length. `handles: false` emits no hub.
+// arc/orient/start/end and an `angle` channel do nothing here and warn.
 
 import { encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions, markDefaults, resolveHandles, markCommon, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
@@ -57,10 +50,7 @@ function needleOutline(cx, cy, len, deg, baseWidth, tipWidth) {
  */
 export function needle(options = {}) {
     const opts = normalizeMarkOptions(options, { mark: 'needle', allow: MARK_OPTIONS.needle });
-    // A needle's SPAN is its theta scale's RANGE — `[180, 0]` by default, the left
-    // semicircle through the top. It used to accept arc/orient/start/end here too,
-    // and computed a span it never applied: a scale is resolved by the engine, not
-    // owned by a mark. Say where the knob actually is.
+    // The sweep is the theta scale's range, so span options do nothing.
     for (const dead of ['arc', 'orient', 'start', 'end']) {
         if (options && options[dead] !== undefined) {
             warn(
@@ -72,11 +62,8 @@ export function needle(options = {}) {
             );
         }
     }
-    // A needle's direction is `theta` — a POLAR POSITION, which is what axisRadial
-    // draws and what a fan legend keys. `angle` is a mark's rotation in place, and
-    // it is a universal style shorthand, so it reaches every mark: left unchecked, a
-    // needle given `angle` would accept the channel, read nothing from it, and point
-    // at 0° in silence. That is the exact failure this library treats as worst.
+    // The direction is `theta`. `angle` is accepted on every mark but this one
+    // ignores it, so warn instead of pointing at 0° silently.
     if (opts.channels && opts.channels.angle && !opts.channels.theta) {
         warn(
             'needle:angle',
@@ -88,25 +75,17 @@ export function needle(options = {}) {
     }
     const {
         channels = {},
-        id,
-        edits,
         length: lengthOpt,
-        // The hub is this needle's handle (the pivot you grab), so it takes the
-        // library-wide sub-element radius name — `handleSize`, as on line/area/
-        // trend/arc/face — not a per-mark synonym.
+        // The hub is the handle.
         handles = true,
         handleSize,
         handleColor,
         baseWidth = 10,
-        // The tip's width. 0 tapers to a point (a gauge's pointer); equal to
-        // baseWidth draws a bar of even width (a limb pivoting at a joint, which
-        // you grab far from the pivot — where a taper is thinnest).
+        // 0 tapers to a point; equal to baseWidth draws an even bar.
         tipWidth = 0,
     } = opts;
 
-    // The belief sits on `theta`; x/y only place the pivot. The keys used to be
-    // derived from `angle` — the very channel the warning above says this mark
-    // does not read — so with the documented spelling both were undefined.
+    // The value is `theta`; x/y only place the pivot.
     const thetaField = channels.theta && channels.theta.field;
     const xField = channels.x && channels.x.field;
     const yField = channels.y && channels.y.field;
@@ -128,20 +107,14 @@ export function needle(options = {}) {
         build: (currentData, scales, width, height) => {
             /** @type {import('../types').FeatureNode[]} */
             const nodes = [];
-            // Shared handle contract (plot/mark.js). The hub IS this mark's handle,
-            // so it takes the same radius default and themed paint as every other.
             const handleStyle = resolveHandles(scales, { handles, handleSize, handleColor });
 
             currentData.forEach((/** @type {any} */ d, /** @type {number} */ i) => {
-                // A row with no bearing (or no hub position it binds) has no needle:
-                // draw nothing (it pointed at 0°).
+                // No needle for a row missing its bearing or a bound pivot position.
                 if (['theta', 'x', 'y'].some((c) => missingValue(channels, c, d))) return;
                 const cx = encodeChannel(scales, channels, 'x', d, width / 2, i, currentData);
                 const cy = encodeChannel(scales, channels, 'y', d, height / 2, i, currentData);
-                // Through encodeAngle like every other angle-reading mark, so a scaled
-                // angle field inverts exactly under rotate() and an unscaled one still
-                // reads as raw degrees. (needle used to call encodeChannel directly —
-                // the only mark that read this channel a different way.)
+                // Scaled theta inverts under rotate(); unscaled reads as raw degrees.
                 const deg = encodeAngle(scales, channels, 'theta', d, 0, i, currentData);
                 const len = lengthOpt != null
                     ? lengthOpt
@@ -154,6 +127,9 @@ export function needle(options = {}) {
                 nodes.push({
                     type: 'path',
                     d: dPath,
+                    // The outline, so a geometric pick (canvas, tips) can hit the body.
+                    points: pts,
+                    polygon: true,
                     ...style,
                     cx, cy,
                     data: d,
@@ -161,8 +137,7 @@ export function needle(options = {}) {
                     cursor: handleStyle.grabbable ? 'grab' : undefined,
                 });
 
-                // Hub = this mark's handle. Respect the shared contract: false emits
-                // nothing; 'hit' keeps an invisible grab target.
+                // The hub: none for `handles: false`; invisible for 'hit'.
                 if (handleStyle.grabbable) {
                     nodes.push({
                         type: 'circle',

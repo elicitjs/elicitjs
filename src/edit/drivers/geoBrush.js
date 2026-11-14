@@ -1,51 +1,17 @@
 // @ts-check
-// geoBrush driver — the geographic sibling of brushRect: edge / corner / body
-// editing of a geoRect's west/south/east/north.
-//
-// Why a driver and not a per-tick classification: the zone MUST be decided once,
-// at dragstart, and locked for the gesture. Classifying every tick against the
-// rendered AABB looks equivalent but isn't — as the pointer travels it drifts
-// near the box's *other* edges and the zone silently flips (a body move turns
-// into a corner resize halfway through the drag). Same lesson as brush.js /
-// brushRect.js; see the `zone` lock they keep in the feature's session.
-//
-// The session also latches the grab anchor (pointer lon/lat) and the box as it
-// stood at dragstart, so a body move TRANSLATES by the geographic delta instead
-// of teleporting its center onto the pointer.
-//
-// At dragend the edit is re-invoked once with zone 'canonicalize' to swap any
-// pair the drag inverted (dragging the west edge past the east one) — a one-time
-// data cleanup, invisible because the mark already draws min/max.
+// geoBrush driver — edge / corner / body editing of a geoRect's
+// west/south/east/north. Locks the zone at dragstart, along with the grab lon/lat
+// and the starting box so a body move translates. At dragend re-runs the edit
+// with `zone: 'canonicalize'`.
 
-import { edgeInsetOf } from '../pick.js';
+import { edgeInsetOf, rectAt } from '../pick.js';
+import { boundsFields } from '../geo.js';
+import { brushDrag, brushRelease } from './brush.js';
 import { invertPoint } from '../../core/projection.js';
 
 /**
- * The topmost geoRect hit-node containing the pointer (grown by `inset`),
- * addressed by its datum index. geoRect emits a transparent `rect` as the
- * hit-target alongside the projected ring path.
- * @param {any[]} marks
- * @param {number} px @param {number} py
- * @param {number} inset
- * @returns {number | null}
- */
-function hitRect(marks, px, py, inset) {
-    /** @type {number | null} */
-    let hit = null;
-    (marks || []).forEach((m) => {
-        if (m.type !== 'rect' || m.index == null || m.width == null) return;
-        if (px >= m.x - inset && px <= m.x + m.width + inset
-            && py >= m.y - inset && py <= m.y + m.height + inset) {
-            hit = m.index; // last match wins: drawn on top
-        }
-    });
-    return hit;
-}
-
-/**
- * Classify a grab against a rect node's rendered bounds. Edge names are
- * geographic (west/east/south/north); the node's AABB is screen space, where
- * north is the LOW y (a projection flips latitude).
+ * Classify a grab against a rect node's screen bounds, naming edges
+ * geographically (north is the low y).
  * @param {any} node
  * @param {number} px @param {number} py
  * @param {number} edgeInset
@@ -85,21 +51,6 @@ function cursorForZone(zone, edges) {
     return 'default';
 }
 
-/**
- * Field names for the four extents, read off the mark's channels.
- * @param {any} feature
- * @returns {{ west: string, south: string, east: string, north: string }}
- */
-function boundsFields(feature) {
-    const ch = (feature && feature.channels) || {};
-    return {
-        west: (ch.west && ch.west.field) || 'west',
-        south: (ch.south && ch.south.field) || 'south',
-        east: (ch.east && ch.east.field) || 'east',
-        north: (ch.north && ch.north.field) || 'north',
-    };
-}
-
 /** @type {import('./index.js').Driver} */
 export const geoBrushDriver = {
     name: 'geoBrush',
@@ -115,7 +66,8 @@ export const geoBrushDriver = {
 
         /** @param {number} px @param {number} py */
         const classifyAt = (px, py) => {
-            const hit = hitRect(marks, px, py, edgeInset);
+            // geoRect emits a transparent `rect` hit node beside its projected ring.
+            const hit = rectAt(marks, px, py, edgeInset);
             if (hit == null) return { hit: null, zone: null };
             const node = marks.find((m) => m.index === hit && m.type === 'rect');
             if (!node) return { hit: null, zone: null };
@@ -137,14 +89,14 @@ export const geoBrushDriver = {
             const { hit, zone } = classifyAt(event.x, event.y);
             const datum = hit != null ? data[hit] : null;
             const grab = invertPoint(projection, { x: event.x, y: event.y });
-            const f = boundsFields(feature);
+            const f = boundsFields((feature && feature.channels) || {});
             session.set({
                 px: event.x, py: event.y,
                 hoverIndex: hit,
                 activeIndex: zone ? hit : null,
                 zone: zone ? zone.zone : null,
                 edges: zone ? zone.edges : null,
-                // Latched at dragstart: a body move is a translation from HERE.
+                // A body move translates from this grab point.
                 grab,
                 box0: datum ? {
                     west: datum[f.west], south: datum[f.south],
@@ -154,23 +106,11 @@ export const geoBrushDriver = {
             });
             changed = true;
         } else if (event.type === 'drag') {
-            const info = session.get();
-            if (info) { info.px = event.x; info.py = event.y; }
-            const index = info ? info.activeIndex : null;
-            if (index != null && info && info.zone) {
-                if (runEdit(edit, index)) changed = true;
-            }
+            brushDrag(session, event, edit, runEdit);
             changed = true;
         } else if (event.type === 'dragend') {
-            const info = session.get();
-            const index = info ? info.activeIndex : null;
-            if (index != null && info && info.zone) {
-                // One-time cleanup tick: un-invert any pair the drag crossed.
-                info.zone = 'canonicalize';
-                runEdit(edit, index);
-            }
+            const info = brushRelease(session, edit, runEdit);
             if (info) {
-                info.activeIndex = null;
                 info.zone = null;
                 info.edges = null;
                 info.grab = null;

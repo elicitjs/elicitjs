@@ -1,90 +1,28 @@
 // @ts-check
-// schema.js — the OWNER of the elicited dataset's schema.
+// schema.js — the owner of the elicited dataset's schema: every column's measurement
+// type, and optionally its domain and creation default. Nothing else defines it.
+// It normalizes the author's spelling (normalizeSchema, normalizeData), mints
+// creation defaults (schemaDefaults) and checks the seed rows once per Elicit() /
+// setData() (validateTables). Scales are resolved in core/resolve.js.
 //
-// The schema is the contract of the thing being elicited: for every column of the
-// output dataset it declares the measurement TYPE and (optionally) the DOMAIN and a
-// creation DEFAULT. Everything else in the library reads it and nothing else may
-// define it — a channel has no `domain`/`range`, a mark has no data type of its own.
-//
-// Before this module existed the schema had no home: elicit.js cloned it,
-// resolve.js inferred from it, edit/shared.js minted from it and elicit.js's axis
-// edits wrote to it — four files, and NOWHERE that checked the data against it. So
-// a typo'd column, a value outside a declared domain, or a whole spec with `data`
-// and no `schema` all rendered a chart that quietly disagreed with its own contract.
-// For a belief-elicitation library that is the worst class of bug available: the
-// chart looks right and the elicited data is wrong.
-//
-// This module holds these and only these:
-//   normalizeSchema(schema)         author spelling -> the canonical SchemaSpec
-//   denormalizeSchema(spec)         the canonical form -> the author's spelling back
-//   normalizeData(data, spec)       author `data` -> one rows array per table
-//   schemaDefaults(schema)          the starting row a creator mints
-//   inferSchema(data)               best-effort schema FROM rows (diagnostics only)
-//   inferMeasureOfDomain(domain)    measure type of a domain an axis edit just wrote
-//   validateDataset(schema, data)   the diagnostics below
-//
-// It deliberately does NOT resolve scales. `core/resolve.js` owns that and calls the
-// inference helpers here; the split is "what the data IS" (here) vs "how a channel
-// draws it" (there).
-//
-// ── STRUCTURE: which tables a dataset has ───────────────────────────────────
-// A chart elicits ONE dataset, and the dataset's STRUCTURE says what shape it is:
-// a set of named tables, each filling a ROLE the structure defines.
-//
-//   structure: 'table'    (the default)  one table, role `data`
-//   structure: 'network'                 roles `nodes` and `links`
-//
-// The NAME is the data key; the ROLE is what the structure means by it. They are
-// separate so an argument map can call its tables `claims` and `supports` and still
-// have `link` marks and `edit.network.*` find them — those resolve by ROLE, never by
-// name, which is what makes renaming free.
-//
-// `structure` is deliberately not spelled `type`: `type` is always a MeasureType
-// here (see types.d.ts), and a third meaning inside a map of FieldSchemas is exactly
-// the drift the API-consistency pass removed.
-//
-// Three sugars keep every pre-structure spec valid, forever:
-//   1. a bare field map IS a single-table schema
-//        { gdp: {…} }  ->  { structure:'table', tables:{ data:{ role:'data', … } } }
-//   2. a table entry that is a bare field map takes its role from its own NAME
-//        tables: { nodes: { id: {…} } }  ->  role 'nodes'
-//   3. `spec.data` as a bare array is the primary table's rows
-//
-// Detection never guesses. A FieldSchema is always an OBJECT, so a string-valued
-// `structure` cannot collide with a column called `structure`, and a string-valued
-// `role` cannot collide with a column called `role` (a very plausible column name —
-// `role: { type:'categorical', domain:['claim','reason'] }` stays a column). The one
-// genuine collision is a column named `fields` in the bare-map sugar of a table
-// entry, which is why that single name is reserved THERE and reported rather than
-// misread. The wrapper form has no such restriction.
-//
-// ── When validation runs ────────────────────────────────────────────────────
-// Once per Elicit() and once per setData()/reseed — on the SEED rows, not on every
-// render and not after an edit. Seed rows are the author's input, so that is the
-// only place a mismatch can originate: an edit mints rows from schemaDefaults and
-// writes through a channel's own field, so it cannot invent a column.
+// `structure` names the tables' roles (`table` -> `data`; `network` -> `nodes`,
+// `links`; `hierarchy` -> `nodes`, `nesting`, optional `links`); readers resolve by
+// role, never by name. Sugars: (1) a bare field map is a single-table schema, (2) a
+// bare table entry takes its role from its name, (3) a bare-array `data` is the
+// primary table. See .claude/rules/data-and-schema.md.
 
 import { warn } from './dev.js';
 import { inferMeasureType, inferDomainFromValues } from './encoding.js';
 import { nestingOf, treeProblems } from './hierarchy.js';
 
-// Rows scanned when checking columns/types/domains. A schema violation is a
-// property of the dataset, not of a particular row, so a bounded scan finds it just
-// as well as a full one — and keeps validation flat for a 100k-row seed.
+// Rows scanned when validating. A violation is a property of the dataset, so a
+// bounded scan finds it.
 const SAMPLE_ROWS = 200;
 
 // ── Structures ──────────────────────────────────────────────────────────────
-// A structure is nothing but a ROLE LIST plus which role is primary. That is the
-// whole extension point: a new structure is a row in this table, not a branch
-// anywhere else. (A role list of one is an ordinary single-table schema.)
-//
-// `optional` lists the roles a dataset of this structure may leave out. A
-// `hierarchy` is nodes that sit inside each other (`nesting`: one row per "child is
-// in parent" — see core/hierarchy.js) and MAY also be linked, so its `links` table
-// is optional, where a network without links is not a network.
-//
-// Values are singular nouns naming the data's STRUCTURE, never the visual:
-// `network` rather than `graph`, because "graph" means "chart" in a viz library.
+// A structure is a role list plus its primary role; a new structure is a row here.
+// `optional` roles may be left out (a hierarchy may have no links; a network must).
+// Names describe the data, never the visual (`network`, not `graph`).
 /** @type {Record<string, { roles: string[], primary: string, optional?: string[] }>} */
 export const STRUCTURES = {
     table: { roles: ['data'], primary: 'data' },
@@ -93,10 +31,10 @@ export const STRUCTURES = {
 };
 
 /** The structure assumed when a schema declares none — one table, named `data`. */
-export const DEFAULT_STRUCTURE = 'table';
+const DEFAULT_STRUCTURE = 'table';
 
 /**
- * The one name reserved inside a table entry's BARE-MAP sugar. `role` is NOT
+ * The one name reserved inside a table entry's bare-map sugar. `role` is not
  * reserved: the wrapper's `role` is a string and a FieldSchema is an object, so a
  * column called `role` is unambiguous. `fields` is the only real collision.
  */
@@ -111,10 +49,8 @@ const RESERVED_FIELD = 'fields';
  */
 function looksLikeFieldSchema(v) {
     if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
-    // A field MAP's values are all FieldSchema objects; a FieldSchema always holds
-    // a primitive or an array (its `type` string, a `domain` list, `key: true`).
-    // Testing for the key NAMES misread a table with a column called `key` or
-    // `domain` as one field.
+    // A field map's values are all objects; a FieldSchema holds primitives or
+    // arrays. Testing key names would misread a column called `key` or `domain`.
     const values = Object.values(v);
     if (values.length && values.every((x) => x && typeof x === 'object' && !Array.isArray(x))) return false;
     return typeof v.type === 'string'
@@ -122,35 +58,27 @@ function looksLikeFieldSchema(v) {
 }
 
 /**
- * What a links table says about its PAIRS — the three facts that tell a graph from
- * a digraph, a multigraph or a multidigraph, and whether a node may link to itself:
+ * What a links table says about its pairs:
  *
  *   directed   source→target is a direction (tri-state; see normalizeTable)
  *   multi      one pair may be joined by more than one link
  *   selfLoops  a link may join a node to itself
  *
- * Each is a statement about the DATA, so the network edits read it here rather than
- * taking an option each: `connect` and `rewire` deciding separately whether a second
- * A→B is allowed is exactly how two gestures on one chart would come to disagree.
+ * Facts about the data, read here so the network edits cannot disagree.
  */
-export const LINK_FACTS = ['directed', 'multi', 'selfLoops'];
+const LINK_FACTS = ['directed', 'multi', 'selfLoops'];
 
 /**
- * The keys a table WRAPPER may carry beside its columns. `role` is what the
+ * The keys a table wrapper may carry beside its columns. `role` is what the
  * structure means by the table; the LINK_FACTS are what a pair of its `ref` columns
  * means (see normalizeTable).
  */
 const WRAPPER_KEYS = ['role', 'fields', ...LINK_FACTS];
 
 /**
- * Is this a table entry in WRAPPER form (`{ role?, directed?, fields }`) rather than
- * the bare field-map sugar?
- *
- * A string `role` settles it: the wrapper's role is a string and a FieldSchema is
- * an object, so a COLUMN called `role` never trips this. Otherwise the entry must
- * consist of nothing BUT the wrapper keys — checking only for a `fields` key would
- * read `{ fields: {type:'quantitative'}, x: {…} }` (a table with a column called
- * `fields`) as a wrapper and silently drop every other column.
+ * Is this a table entry in wrapper form (`{ role?, directed?, fields }`) rather than
+ * the bare field-map sugar? A string `role` settles it. Otherwise every key must be
+ * a wrapper key, so a table with a column called `fields` keeps its other columns.
  * @param {any} entry
  * @returns {boolean}
  */
@@ -198,24 +126,12 @@ function linkFactsOf(entry) {
 /**
  * Bring a table entry to `{ role, fields, key, directed, multi, selfLoops }`.
  *
- * `directed` is a fact about what an ORDERED PAIR of this table's `ref` columns
- * means, which is why it lives on the table rather than on a channel or on the
- * schema root: it survives renaming (it is resolved through `byRole` like
- * everything else), and it leaves room for further link semantics later without
- * adding a key to the root that only one structure would ever read.
- *
- * It is deliberately TRI-STATE. `true` says source→target is a direction (arrows
- * by default, reciprocal pairs drawn apart, `edit.network.reverse` meaningful);
- * `false` says the pair is unordered (A→B and B→A are the same edge, so `connect`
- * refuses the duplicate); `undefined` says the schema has no opinion, which is
- * every chart written before this existed and must keep behaving identically.
- *
- * `multi` and `selfLoops` say whether a GESTURE may make a second link between one
- * pair, or a link from a node to itself. Both default to no: dropping a link where
- * one already runs, or back on the node you dragged from, is far more often a slip
- * than a statement. Rows that already break them still draw — a parallel pair fans
- * apart and a loop is drawn — and only an explicit `false` reports them (see
- * `validateDataset`).
+ * `directed` lives on the table (resolved via `byRole`) and is tri-state: `true`
+ * (arrows, reciprocal pairs apart, `reverse` meaningful), `false` (A→B and B→A are
+ * one edge), `undefined` (no opinion; must behave as before the flag existed).
+ * `multi` and `selfLoops` say whether a gesture may add a parallel link or a loop;
+ * both default to no. Existing rows still draw; only an explicit `false` reports
+ * them (`validateTables`).
  *
  * @param {string} name the table's name (its data key)
  * @param {any} entry
@@ -229,11 +145,8 @@ function normalizeTable(name, entry) {
         );
     }
     if (isTableWrapper(entry)) {
-        // The one genuinely undecidable case: a lone `fields` key whose value is
-        // itself a FieldSchema. That is either a wrapper, or a one-column table
-        // whose column is called `fields` — nothing in the value says which. Report
-        // it rather than pick, because either reading silently produces the wrong
-        // dataset, and a wrong dataset that still draws is the worst failure here.
+        // Undecidable: a lone `fields` whose value is itself a FieldSchema (a
+        // wrapper, or a column named `fields`). Report it rather than guess.
         if (typeof entry.role !== 'string' && looksLikeFieldSchema(entry.fields)) {
             throw new Error(
                 `[elicit] table "${name}" is ambiguous: \`fields\` is its only key and its ` +
@@ -252,13 +165,8 @@ function normalizeTable(name, entry) {
             ...linkFactsOf(entry),
         };
     }
-    // Bare field-map sugar: the role is the table's own name.
-    //
-    // A boolean under a LINK_FACTS name is a fact about the TABLE stated in the
-    // short form (`links: { directed: false, source: {…}, target: {…} }`), never a
-    // column — a FieldSchema is an object. Read it as the fact it is, and say so,
-    // because taking it as a column named `directed` left the fact unread and the
-    // chart drawing an undirected network with arrowheads.
+    // Bare field-map sugar: the role is the table's own name. A boolean under a
+    // LINK_FACTS name is the table's fact (a FieldSchema is an object), not a column.
     const facts = linkFactsOf(entry);
     if (Object.keys(facts).length) {
         warn(
@@ -284,13 +192,10 @@ function normalizeTable(name, entry) {
 }
 
 /**
- * Bring any schema spelling to the canonical `SchemaSpec` — the shape every
- * internal reader takes, so no other module ever re-sniffs how it was written.
- *
- * Applies the three sugars (see the header) and VALIDATES the role binding: every
- * role of the structure filled exactly once, no unknown roles, no duplicates.
- * These are ERRORS, not warnings: unlike a bad value, an unbound role means there
- * is no dataset to build, so there is nothing to draw and nothing to elicit.
+ * Bring any schema spelling to the canonical `SchemaSpec`, so no other module
+ * re-sniffs how it was written. Applies the three sugars and validates the role
+ * binding (every role filled once, no unknown roles, no duplicates). These throw:
+ * without a role binding there is no dataset.
  *
  * @param {any} schema the author's `spec.schema`
  * @returns {import('../types').SchemaSpec}
@@ -298,7 +203,7 @@ function normalizeTable(name, entry) {
 export function normalizeSchema(schema) {
     const declared = schema && typeof schema === 'object' ? schema : {};
     // A string-valued `structure` is the discriminator; anything else means the
-    // whole object is a bare field map (sugar 1) — including a COLUMN called
+    // whole object is a bare field map (sugar 1) — including a column called
     // `structure`, whose value is a FieldSchema object.
     const isCanonical = typeof declared.structure === 'string';
     const structure = isCanonical ? declared.structure : DEFAULT_STRUCTURE;
@@ -311,10 +216,8 @@ export function normalizeSchema(schema) {
         );
     }
 
-    // Reference rows are not a table of their own: they are rows of the elicited
-    // table, marked by `spec.context`. The one-time `{ context: true, fields }`
-    // table form declared every shared column twice (and let the two copies
-    // disagree on a type), so it is named precisely rather than read as columns.
+    // Context rows belong to the elicited table (`spec.context`), not a table of
+    // their own; the table form is reported precisely.
     const entries = isCanonical && declared.tables && typeof declared.tables === 'object'
         ? Object.entries(declared.tables) : Object.entries(declared);
     for (const [name, entry] of entries) {
@@ -336,7 +239,7 @@ export function normalizeSchema(schema) {
     } else if (declared.tables && typeof declared.tables === 'object') {
         rawTables = declared.tables;
     } else if (declared.fields && typeof declared.fields === 'object') {
-        // A near-miss worth naming precisely: `fields` at the TOP level looks right
+        // A near-miss worth naming precisely: `fields` at the top level looks right
         // but skips the table that owns them, so nothing can be named or referenced.
         throw new Error(
             `[elicit] schema declares \`fields\` at the top level. Columns belong to a ` +
@@ -385,9 +288,7 @@ export function normalizeSchema(schema) {
         );
     }
 
-    // The link facts say what a pair of `ref` columns means, so they are only
-    // meaningful on the table that HAS such a pair. Declared anywhere else they read
-    // as a statement that quietly does nothing.
+    // The link facts only mean something on the links table; warn elsewhere.
     for (const [name, table] of Object.entries(tables)) {
         if (table.role === 'links') continue;
         for (const fact of LINK_FACTS) {
@@ -405,13 +306,8 @@ export function normalizeSchema(schema) {
 }
 
 /**
- * Is the network this schema describes DIRECTED? The one place the flag is read, so
- * `link`, `connect` and `reverse` cannot disagree about it — and so nothing outside
- * here has to know it lives on a table rather than on the structure.
- *
- * Returns `undefined` when the schema has no opinion, which callers must keep
- * distinct from `false`: "unordered pair" and "not stated" ask for different
- * defaults (see link's `arrow: 'auto'`).
+ * Is the network this schema describes directed? The one reader of the flag.
+ * `undefined` (no opinion) must stay distinct from `false` (unordered pairs).
  * @param {import('../types').SchemaSpec} spec
  * @returns {boolean | undefined}
  */
@@ -435,10 +331,18 @@ export function linkRulesOf(spec) {
 }
 
 /**
- * Is this dataset spelled the SHORT way — exactly what sugars 1 and 3 produce, one
- * table named `data` under the default structure? That is every pre-structure chart,
- * and it is what decides whether the schema and the rows go back out to the caller
- * bare (`getSchema()` -> a field map, `getData()` -> an array) or keyed by table.
+ * A table's field map; an unknown or missing name reads the primary table.
+ * @param {import('../types').SchemaSpec} spec
+ * @param {string | null} [table]
+ * @returns {Record<string, import('../types').FieldSchema>}
+ */
+export function fieldsOf(spec, table) {
+    return (spec.tables[/** @type {string} */ (table)] || spec.tables[spec.primary]).fields;
+}
+
+/**
+ * Is this dataset in the short form (one table named `data` under the default
+ * structure)? Decides whether getSchema()/getData() return bare or keyed by table.
  * @param {import('../types').SchemaSpec} spec
  * @returns {boolean}
  */
@@ -449,10 +353,8 @@ export function isBareForm(spec) {
 }
 
 /**
- * The canonical form back in the author's spelling — the inverse of sugar 1, so
- * `el.getSchema()` on an ordinary single-table chart returns the bare field map it
- * has always returned. Without this the engine going canonical internally would be
- * a silent breaking change for every existing consumer.
+ * The canonical form back in the author's spelling (the inverse of sugar 1), so
+ * `el.getSchema()` on a single-table chart returns the bare field map.
  * @param {import('../types').SchemaSpec} spec
  * @returns {any}
  */
@@ -471,12 +373,9 @@ export function denormalizeSchema(spec) {
 }
 
 /**
- * Where a `ref` field points: the table and column that hold the identities it
- * names. `to` is optional because the answer is almost always "the nodes table's
- * key", and a reference you have to spell out twice is one that can disagree with
- * itself.
+ * Where a `ref` field points: the table and column holding the identities it names.
  *
- *   omitted      -> the NODES-role table (or the primary), at its `key: true` field
+ *   omitted      -> the nodes-role table (or the primary), at its `key: true` field
  *   'id'         -> that same table, at the named column
  *   'links.id'   -> another table, at the named column
  *
@@ -484,7 +383,7 @@ export function denormalizeSchema(spec) {
  * @param {import('../types').FieldSchema} field the `ref` field's schema
  * @returns {{ table: string, field: string } | null} null when it cannot be resolved
  */
-export function refTargetOf(spec, field) {
+function refTargetOf(spec, field) {
     const to = field && typeof field.to === 'string' ? field.to : null;
     const defaultTable = spec.byRole.nodes || spec.primary;
 
@@ -522,28 +421,16 @@ export function refDomain(spec, field, tables) {
 }
 
 /**
- * Drop every row whose `ref` names an identity that no longer exists.
- *
- * This is enforced by the ENGINE off the schema, not by a constraint the author
- * opts into, because `type: 'ref'` already declares the rule — a reference that
- * names nothing is not a preference about the data, it is a contradiction of what
- * the schema says the column IS. Deleting a node has to take its links with it, and
- * making that optional would mean the default behaviour of a graph editor is to
- * accumulate invisible garbage in the elicited output.
- *
- * A plain constraint could not do this anyway: constraints judge ONE table's rows
- * and return that table's rows, while a dangling reference is created in one table
- * (delete a node) and repaired in another (drop its links).
- *
- * Runs after a commit, and repeatedly, so a chain of references settles (a ref to a
- * row that was itself dropped for a dangling ref goes too).
+ * Drop every row whose `ref` names an identity that no longer exists (deleting a
+ * node removes its links). Enforced by the engine because `type: 'ref'` declares
+ * the rule, and it spans tables, which a constraint cannot. Repeats until a chain
+ * of references settles.
  * @param {import('../types').SchemaSpec} spec
  * @param {Record<string, import('../types').Datum[]>} tables mutated in place
  * @returns {boolean} whether anything was dropped
  */
 export function enforceRefs(spec, tables) {
-    // Which (table, field) pairs are references, and where each points. Computed
-    // once per call — the schema doesn't change mid-commit.
+    // Which (table, field) pairs are references, and where each points.
     /** @type {{ table: string, field: string, target: { table: string, field: string } }[]} */
     const refs = [];
     for (const [name, table] of Object.entries(spec.tables)) {
@@ -568,9 +455,7 @@ export function enforceRefs(spec, tables) {
                 const v = row ? row[ref.target.field] : undefined;
                 if (v !== undefined && v !== null) known.add(v);
             }
-            // A ref that is not yet SET (null) is a half-built row, not a dangling
-            // one — a gesture mints the row before it names the far end. Only a
-            // value that IS set and names nothing is a contradiction.
+            // A ref that is not yet set (null) is a half-built row, not a dangling one.
             const kept = rows.filter((row) => {
                 const v = row ? row[ref.field] : undefined;
                 return v === undefined || v === null || known.has(v);
@@ -587,11 +472,8 @@ export function enforceRefs(spec, tables) {
 }
 
 /**
- * Bring `spec.data` to one rows array per table, keyed by table NAME.
- *
- * A bare array is the primary table (sugar 3) — which is why every existing chart
- * passes its data unchanged. A table the author omits seeds `[]`, so a blank-canvas
- * diagram (build the whole graph by gesture) needs no `data` at all.
+ * Bring `spec.data` to one rows array per table, keyed by table name. A bare array
+ * is the primary table (sugar 3); an omitted table seeds `[]`.
  * @param {any} data
  * @param {import('../types').SchemaSpec} spec
  * @returns {Record<string, import('../types').Datum[]>}
@@ -655,7 +537,7 @@ export function schemaDefaults(schema) {
 }
 
 /**
- * Best-effort measure type for a DOMAIN a caller left undeclared but an axis edit
+ * Best-effort measure type for a domain a caller left undeclared but an axis edit
  * just wrote (a numeric range, or a discrete value list). Only used to synthesize a
  * missing schema entry — a declared field keeps its own type.
  * @param {any[]} domain
@@ -698,14 +580,12 @@ function valuesOf(data, field) {
 }
 
 /**
- * Derive a schema from rows: the shape the author should have declared. Used to
- * make the "you passed data but no schema" warning actionable (it prints a
- * paste-ready schema) — NOT as a runtime substitute for a declared schema, which
- * stays the contract. Scale resolution does its own per-channel inference.
+ * Derive a schema from rows, only for the paste-ready "data but no schema" warning;
+ * never a runtime substitute for a declared schema.
  * @param {any[]} data
  * @returns {Record<string, import('../types').FieldSchema>}
  */
-export function inferSchema(data) {
+function inferSchema(data) {
     /** @type {Record<string, import('../types').FieldSchema>} */
     const out = {};
     if (!Array.isArray(data) || !data.length) return out;
@@ -716,11 +596,8 @@ export function inferSchema(data) {
         out[field] = {
             type,
             domain: inferDomainFromValues(discrete ? 'band' : 'linear', values),
-            // A discrete domain read off the seed rows is a GUESS — the categories
-            // that happened to be present — not a vocabulary the author fixed. Mark
-            // it open so the suggestion doesn't quietly become a ceiling the moment
-            // it's pasted in (a continuous [min,max] is a genuine extent, so it
-            // stays closed).
+            // A discrete domain read off the seed is a guess, so mark it open; a
+            // continuous [min, max] stays closed.
             ...(discrete ? { open: true } : {})
         };
     }
@@ -741,15 +618,10 @@ function schemaSource(schema) {
 }
 
 /**
- * Does a value contradict a declared measure type? Deliberately lenient — this
- * reports contradictions, not style. A temporal field may legitimately hold an
- * epoch number or an ISO string (createScale coerces both), so neither is flagged.
- *
- * Only the CONTINUOUS measures are checkable. For `categorical`/`ordinal` there is
- * no value that contradicts the type — anything can serve as a category key, and a
- * geo mark legitimately declares a whole GeoJSON geometry object as a categorical
- * column. What actually constrains a discrete field is its DOMAIN, which is checked
- * separately; a runtime-type check there is a false positive by construction.
+ * Does a value contradict a declared measure type? Lenient: a temporal field may
+ * hold an epoch number or an ISO string. Only continuous measures are checked; any
+ * value can be a category key (a geo mark declares GeoJSON categorical), so a
+ * discrete field is constrained by its domain instead.
  * @param {any} value
  * @param {import('../types').MeasureType} type
  * @returns {boolean}
@@ -770,17 +642,10 @@ function contradictsType(value, type) {
 }
 
 /**
- * Bring a value a gesture produced (a typed string, a snapped number) into the
- * form a field's declared MEASURE stores. A quantitative column takes a number
- * (a numeric string is parsed; an empty one is null), a temporal column a Date
- * (kept, or parsed from a number or string), and a discrete column takes the
- * value as given — any value can be a category key. Returns `undefined` for a
- * value the measure cannot hold (letters in a number column), so the caller can
- * refuse the write rather than store it.
- *
- * This is the one coercion site. It exists because `editText` on a quantitative
- * field stored the typed STRING, and nothing downstream warned — a bar chart
- * whose numbers were "250" still drew.
+ * Bring a value a gesture produced (a typed string, a snapped number) into the form
+ * the field's measure stores: a number for quantitative (empty string -> null), a
+ * Date for temporal, anything for discrete. `undefined` for a value the measure
+ * cannot hold, so the caller refuses the write. The one coercion site.
  * @param {any} value
  * @param {import('../types').FieldSchema | undefined} field
  * @returns {any} the stored form, or `undefined` to refuse
@@ -835,26 +700,13 @@ function outsideDomain(value, type, domain) {
 }
 
 /**
- * Compare a seed dataset against the schema that is supposed to describe it, and
- * report every disagreement through `warn` (on by default, deduped per key, off via
- * setWarnings(false)). Never throws and never mutates — a chart with a bad seed
- * still renders; the author just gets told.
- *
- * The five checks, and why each is a real defect:
- *   schema:missing        data with no schema — the elicited output has no contract.
- *   schema:extra:<col>    a data column the schema doesn't declare. The schema is the
- *                         contract of the OUTPUT dataset, so an undeclared column
- *                         either belongs in the schema or doesn't belong in the data;
- *                         it also silently escapes domain unioning and creation
- *                         defaults, so a minted row won't have it.
- *   schema:notype:<f>     a FieldSchema with a domain but no `type`. `type` is
- *                         required, and without it the measure is inferred from data
- *                         — which can disagree with the domain that was declared.
- *   schema:type:<f>       a value contradicting the declared measure type.
- *   schema:domain:<f>     a value outside the declared domain. The domain is what
- *                         the axis spans, so such a row draws clipped or off-plot.
- *                         Skipped for an `open` field, whose domain is a starting
- *                         set rather than a ceiling.
+ * Compare a seed dataset against its schema and report every disagreement through
+ * `warn`. Never throws or mutates; a chart with a bad seed still renders.
+ *   schema:missing        data with no schema
+ *   schema:extra:<col>    a column the schema doesn't declare (a minted row lacks it)
+ *   schema:notype:<f>     a FieldSchema with a domain but no `type`
+ *   schema:type:<f>       a value contradicting the declared measure type
+ *   schema:domain:<f>     a value outside the declared domain; skipped for `open` fields
  *
  * @param {Record<string, import('../types').FieldSchema> | undefined} schema
  * @param {any[]} data
@@ -918,10 +770,7 @@ export function validateDataset(schema, data, label = 'data') {
         }
 
         const domain = spec.domain;
-        // An OPEN domain is a starting set, not a ceiling: it admits values it has
-        // not seen (edit.stack.cut appends one, and resolveScales widens the scale on
-        // the next render), so a value outside it is the declared behaviour rather
-        // than a defect. Every other check above still applies.
+        // An open domain is a starting set, not a ceiling, so a value outside it is fine.
         if (!domain || spec.open) continue;
         const out = values.find((v) => outsideDomain(v, spec.type, domain));
         if (out !== undefined) {
@@ -936,12 +785,8 @@ export function validateDataset(schema, data, label = 'data') {
 }
 
 /**
- * Run the seed checks over every table of a dataset. The per-table checker is
- * `validateDataset` above and is unchanged — this only says WHICH rows go with
- * WHICH field map, which is the whole difference a structure makes.
- *
- * The table name only enters a message when there is more than one table to
- * confuse it with, so a single-table chart's diagnostics read exactly as before.
+ * Run the seed checks over every table: `validateDataset` per table, plus refs,
+ * link pairs and the tree. A table name enters a message only when there are several.
  * @param {import('../types').SchemaSpec} spec
  * @param {Record<string, import('../types').Datum[]>} tables
  * @param {string} [label] how this dataset is named in a message ('data' | 'setData()')
@@ -994,10 +839,8 @@ function validateTree(spec, tables, label) {
 }
 
 /**
- * A links table that says `multi: false` or `selfLoops: false` and then seeds a
- * parallel pair or a loop contradicts itself. Only an EXPLICIT false is checked:
- * unstated means "a gesture won't make one", and plenty of seeded diagrams already
- * hold a loop or a parallel pair that they draw on purpose.
+ * A links table that declares `multi: false` or `selfLoops: false` and seeds a
+ * parallel pair or a loop contradicts itself. Only an explicit `false` is checked.
  * @param {import('../types').SchemaSpec} spec
  * @param {Record<string, import('../types').Datum[]>} tables
  * @param {string} name @param {string} label
@@ -1038,13 +881,8 @@ function validatePairs(spec, tables, name, label) {
 }
 
 /**
- * The sixth check, and the one a structure adds: a `ref` naming an identity that
- * does not exist. It is the schema-level defect a network can have — the row draws
- * (or, for a link, silently doesn't) while the dataset says a thing is connected to
- * something that isn't there.
- *
- * Only reachable across tables, which is why it lives in validateTables rather than
- * in the per-table checker.
+ * A `ref` naming an identity that does not exist. Cross-table, so it lives here
+ * rather than in validateDataset.
  * @param {import('../types').SchemaSpec} spec
  * @param {Record<string, import('../types').Datum[]>} tables
  * @param {string} name the table being checked

@@ -1,65 +1,30 @@
 // @ts-check
-// linkGeometry.js — the SHAPES a link can take between its two endpoints.
+// linkGeometry.js — the shapes a link can take between its two endpoints.
 //
-// One table keyed by kind, the way `plot/stack.js` answers its two stack
-// geometries: a new connector style is a ROW here, never a branch in link's
-// build(). Each entry takes a segment plus a signed bow and returns a shape
-// descriptor — the mark itself does no geometry.
+// One table keyed by kind: a new connector style is a row here, never a branch in
+// link's build(). Each row is `{ anchors, build }`; `build(seg, bow, opts)` returns
 //
 //   { d?, points?, curve?, hit?, start, end, mid, tangentIn, tangentOut }
 //
-// ── A row DECLARES how it anchors ──────────────────────────────────────────
-// An entry is `{ anchors, build }`, not a bare function, because the two families
-// want different input:
+//   anchors: 'chord'  `seg` is already inset along the chord.
+//   anchors: 'box'    `seg` is the two node centres, with the boxes in `opts`; the
+//                     shape picks its own anchors on the box edges.
 //
-//   anchors: 'chord'  the segment arrives already pulled in by `inset` along the
-//                     chord. Every original kind — a line, an elbow, an arc — runs
-//                     between two POINTS and needs nothing else.
-//   anchors: 'box'    the segment arrives as the two node CENTRES, with each node's
-//                     half-extents alongside. `orthogonal` computes its own anchors
-//                     on the box edges and insets along the SIDE NORMAL, which a
-//                     chord-radial trim cannot express — and it must still route
-//                     when a chord inset would have consumed the whole segment.
+// `start`/`end` are the shape's own endpoints, where arrowheads and handles go;
+// `mid` is where the label sits; the tangents are unit vectors arrowheads point
+// down. Prefer `points`: only polylines are pickable and canvas-drawable, so a `d`
+// shape also returns a sampled `hit` polyline (plot/hitpath.js).
 //
-// Reading that off the row is what keeps the decision out of link.build(): the mark
-// asks the shape how to feed it rather than branching on the kind name, the same way
-// a `Mark` declares `requires` instead of the engine testing for known mark names.
-//
-// `start`/`end` are the shape's OWN endpoints. A chord shape hands back the segment
-// ends it was given; a box shape hands back the points it chose on the two edges.
-// The mark draws arrowheads and endpoint handles there — before this it used the
-// segment's ends with the shape's tangents, two things that disagree the moment a
-// shape stops running along the chord (a step's arrowhead sat off the end of its own
-// line for exactly that reason).
-//
-// `points` is preferred wherever it can express the shape, because a polyline both
-// renderers already draw is also the ONLY geometry the pick layer can measure —
-// so the straight and step kinds are hit-testable and canvas-drawable for free.
-// The genuinely curved kinds emit `d` and hand back a sampled `hit` polyline
-// instead (see plot/hitpath.js for why a `d`-only path is untouchable).
-//
-// `mid` is where a link's own label sits. `tangentIn`/`tangentOut` are unit
-// vectors along the path at each end, which is what an arrowhead points down —
-// before this the mark reconstructed the direction from a quadratic's control
-// point inline, and every new shape would have needed its own version of that.
-//
-// ── Curvature is signed and dimensionless ───────────────────────────────────
-// `bow` is an apex offset as a fraction of the chord, the same convention
-// `plot/curve.js` uses. Positive bows one way, negative the other, and 0 is
-// straight — which is what lets `link` flip the sign by direction so that A→B and
-// B→A separate instead of drawing on top of each other.
+// `bow` is a signed apex offset as a fraction of the chord (as in plot/curve.js);
+// 0 is straight.
 
 import { sampleQuadratic, sampleCubic } from './hitpath.js';
 import { routeOrthogonal, SIDE_NORMALS, LINK_SIDES } from './linkRouter.js';
 
-// How many segments a rounded corner is sampled into. A corner spans a few px, so
-// it needs nothing like a whole Bézier's resolution — but it goes through the same
-// sampler, because two Bézier samplers is one too many.
+// How many segments a rounded corner is sampled into.
 const CORNER_SAMPLES = 6;
 
-// The sides an author may name live with the router that chooses among them; they
-// are re-exported here because this is the module a mark imports its link
-// vocabulary from.
+// Re-exported from the router so a mark imports its link vocabulary from here.
 export { LINK_SIDES };
 
 /**
@@ -71,8 +36,8 @@ export { LINK_SIDES };
  * @property {{ x: number, y: number }} start the shape's own source endpoint
  * @property {{ x: number, y: number }} end the shape's own target endpoint
  * @property {{ x: number, y: number }} mid where a label sits
- * @property {{ x: number, y: number }} tangentIn unit vector INTO the source end
- * @property {{ x: number, y: number }} tangentOut unit vector OUT OF the target end
+ * @property {{ x: number, y: number }} tangentIn unit vector into the source end
+ * @property {{ x: number, y: number }} tangentOut unit vector out of the target end
  */
 
 /**
@@ -82,8 +47,7 @@ export { LINK_SIDES };
  */
 
 /**
- * A node's rectangle, in scene coordinates. Half-extents rather than width/height
- * because every test here is "how far out from the centre".
+ * A node's rectangle in scene coordinates, as centre plus half-extents.
  * @typedef {object} LinkBox
  * @property {number} cx @property {number} cy
  * @property {number} hw @property {number} hh
@@ -97,7 +61,7 @@ export { LINK_SIDES };
  * @property {LinkBox} [target] the target node's box
  * @property {number} [sourceGap] clearance from the source edge, in px
  * @property {number} [targetGap] clearance from the target edge, in px
- * @property {string | null} [sourceSide] a named edge, or null/'auto' to slide — sugar for `sourcePort.side`
+ * @property {string | null} [sourceSide] a named edge, or null/'auto' to slide; shorthand for `sourcePort.side`
  * @property {string | null} [targetSide] a named edge, or null/'auto' to slide
  * @property {import('./linkRouter.js').LinkPort} [sourcePort] where the route leaves the source box
  * @property {import('./linkRouter.js').LinkPort} [targetPort] where it enters the target box
@@ -130,8 +94,7 @@ function chordTangent(seg) {
 }
 
 /**
- * A straight line. Emitted as `points` rather than a `d` so the body is pickable
- * and canvas-drawable without a hit path of its own.
+ * A straight line, as `points`.
  * @param {LinkSegment} seg
  * @returns {LinkShape}
  */
@@ -149,23 +112,14 @@ function lineShape(seg) {
 }
 
 /**
- * An orthogonal elbow: the flowchart connector. Emitted as an explicit `points`
- * polyline with `curve: 'linear'` rather than as two points under d3's step
- * interpolation, for one reason — d3's step always jogs at the exact midpoint, so
- * a reciprocal pair drew the SAME polyline reversed and lay perfectly on top of
- * each other. Here the jog is `0.5 + bow` of the way across, so the same
- * separation pass that fans arcs apart fans elbows apart too.
+ * An elbow connector, as an explicit polyline. The jog sits `0.5 + bow` of the way
+ * across (not d3's fixed midpoint), so separated pairs don't overlap.
  *
  *   step         out along x, jog, in along x   (the jog is what `bow` moves)
  *   stepAfter    all the way along x, then y
  *   stepBefore   along y first, then x
  *
- * The two pinned variants need no bow: A→B turns at the target's corner and B→A at
- * the source's, so a reciprocal pair is already two different paths.
- *
- * Tangents are axis-aligned rather than along the chord, because a step arrives at
- * its endpoint square-on — an arrowhead pointed down the chord would sit askew to
- * the line it caps.
+ * The pinned variants ignore `bow`. Tangents are axis-aligned, so arrowheads sit square.
  * @param {string} name
  * @returns {(seg: LinkSegment, bow: number) => LinkShape}
  */
@@ -194,8 +148,7 @@ function stepShape(name) {
             tangentIn = vertical;
             tangentOut = horizontal;
         } else {
-            // Keep the jog inside the span, so a large bow can't fold the elbow
-            // back past an endpoint.
+            // Keep the jog inside the span.
             const t = Math.min(0.85, Math.max(0.15, 0.5 + bow));
             const xm = seg.x1 + dx * t;
             points = [[seg.x1, seg.y1], [xm, seg.y1], [xm, seg.y2], [seg.x2, seg.y2]];
@@ -216,7 +169,7 @@ function stepShape(name) {
 }
 
 /**
- * A quadratic bowed to one side — the original `curve: 'arc'`, unchanged in shape.
+ * A quadratic bowed to one side.
  * @param {LinkSegment} seg
  * @param {number} bow
  * @returns {LinkShape}
@@ -234,8 +187,7 @@ function arcShape(seg, bow) {
         hit: sampleQuadratic([seg.x1, seg.y1], [cx, cy], [seg.x2, seg.y2]),
         start: { x: seg.x1, y: seg.y1 },
         end: { x: seg.x2, y: seg.y2 },
-        // The apex of a quadratic at t=0.5, not the chord midpoint — a label on
-        // the chord of a strongly bowed arc sits off the line entirely.
+        // The curve's point at t=0.5, so the label sits on the line.
         mid: { x: 0.25 * seg.x1 + 0.5 * cx + 0.25 * seg.x2, y: 0.25 * seg.y1 + 0.5 * cy + 0.25 * seg.y2 },
         tangentIn: unit(cx - seg.x1, cy - seg.y1),
         tangentOut: unit(seg.x2 - cx, seg.y2 - cy),
@@ -243,10 +195,8 @@ function arcShape(seg, bow) {
 }
 
 /**
- * A cubic S-curve whose tangents leave both endpoints along the DOMINANT axis of
- * the chord — the flowchart/node-graph connector. Unlike the arc it stays
- * symmetric about the chord, so a `bow` of 0 still reads as a curve rather than
- * collapsing to a line.
+ * A cubic S-curve whose tangents leave both ends along the chord's dominant axis
+ * (or a pinned edge's normal). A `bow` of 0 is still a curve.
  * @param {LinkSegment} seg
  * @param {number} bow
  * @param {LinkShapeOptions} [opts] `sourceNormal`/`targetNormal` for a pinned end
@@ -256,21 +206,17 @@ function bezierShape(seg, bow, opts = {}) {
     const dx = seg.x2 - seg.x1;
     const dy = seg.y2 - seg.y1;
     const horizontal = Math.abs(dx) >= Math.abs(dy);
-    // How far the control points run out from each end. Half the dominant span is
-    // the classic look; `bow` stretches it, so a fanned pair of siblings reads as
-    // two distinct curves rather than one thick one.
+    // Control-point reach: half the dominant span, stretched by `bow`.
     const reach = (horizontal ? Math.abs(dx) : Math.abs(dy)) * (0.5 + Math.abs(bow));
-    // A PINNED end leaves perpendicular to its edge — the curve honours the side
-    // the way an elbow does. A sliding end keeps the dominant-axis tangent.
+    // A pinned end leaves perpendicular to its edge.
     const nA = opts.sourceNormal;
     const nB = opts.targetNormal;
-    // A pinned edge that faces AWAY from the other end would throw the curve out by
-    // the full reach and back — a loop. It leaves square-on but turns tightly instead.
+    // A pinned edge facing away from the other end gets a short arm, so it doesn't loop.
     const chord = Math.hypot(dx, dy);
-    const armOf = (/** @type {{ x: number, y: number }} */ n, /** @type {number} */ toward) =>
+    const armOf = (/** @type {number} */ toward) =>
         (toward < 0 ? Math.min(reach, Math.max(20, chord * 0.2)) : reach);
-    const armA = nA ? armOf(nA, nA.x * dx + nA.y * dy) : reach;
-    const armB = nB ? armOf(nB, -(nB.x * dx + nB.y * dy)) : reach;
+    const armA = nA ? armOf(nA.x * dx + nA.y * dy) : reach;
+    const armB = nB ? armOf(-(nB.x * dx + nB.y * dy)) : reach;
     const c1 = nA
         ? [seg.x1 + nA.x * armA, seg.y1 + nA.y * armA]
         : horizontal
@@ -300,27 +246,15 @@ function bezierShape(seg, bow, opts = {}) {
     };
 }
 
-/** How far past a loop's apex its label's centre sits, in px — half a 12px label plus a little air. */
+/** How far past a loop's apex its label's centre sits, in px. */
 const LOOP_LABEL_GAP = 12;
 
 /**
- * A self-loop: a link that leaves a node and comes back to it. Reached when a row's
- * source and target name the SAME node, whatever curve the spec asked for — there is
- * no sensible line between a node and itself, and the alternative (drawing nothing)
- * is what made a self-reference silently invisible.
- *
- * With a box (`opts.source`, and the edges `opts.loopOut`/`opts.loopIn` from
- * `loopSides`) the loop docks on the node, as every other link does:
- *
- *   one edge     a teardrop off that edge, out at one end of it and back at the other,
- *                so its two end handles stay apart and the arrowhead reads
- *   two edges    an elbow around the node at `radius`, out of one edge and into the
- *                other — what a node with an `out` on the right and an `in` on the
- *                left has to draw
- *
- * Each `nest` pushes it a further 60% of `radius` out, so loops sharing an edge stay
- * apart. With no box it falls back to a teardrop above the node's centre, its sign
- * following the bow so a pair separates.
+ * A self-loop, used whenever a row's source and target are the same node. With a
+ * box and `loopOut`/`loopIn` (from `loopSides`) it docks on the node: a teardrop
+ * off one edge, or an elbow around the node between two edges. Each `nest` pushes
+ * it 60% of `radius` further out. With no box, a teardrop above the centre, its
+ * side following the bow's sign.
  * @param {LinkSegment} seg the node centre (`x1`/`y1`)
  * @param {number} bow
  * @param {number} radius how far the loop reaches from the node, in px
@@ -357,8 +291,7 @@ function loopShape(seg, bow, radius, opts = {}) {
     const nB = SIDE_NORMALS[back];
 
     if (out === back) {
-        // A teardrop: out at one end of a short span along the edge, back at the
-        // other, travelling clockwise. The span stays inside the edge on a small node.
+        // A teardrop out and back along a short span of the edge, clockwise.
         const n = nA;
         const t = { x: -n.y, y: n.x };
         const edgeHalf = n.x ? box.hh : box.hw;
@@ -374,17 +307,15 @@ function loopShape(seg, bow, radius, opts = {}) {
             hit: sampleCubic(a, c1, c2, b),
             start: { x: a[0], y: a[1] },
             end: { x: b[0], y: b[1] },
-            // The label sits just past the loop's apex (1.35 R out), not on it: a
-            // teardrop is narrower than most labels, and a plate on its apex hides it.
+            // Past the apex, since a label plate on the apex would hide the loop.
             mid: { x: mx + n.x * (R * 1.35 + LOOP_LABEL_GAP), y: my + n.y * (R * 1.35 + LOOP_LABEL_GAP) },
             tangentIn: unit(c1[0] - a[0], c1[1] - a[1]),
             tangentOut: unit(b[0] - c2[0], b[1] - c2[1]),
         };
     }
 
-    // Two edges: walk the box's outline, `R` out, from one edge to the other. Each
-    // step clockwise passes one corner; of the two directions take the shorter, and
-    // between opposite edges the one over the top (or, top↔bottom, round the right).
+    // Two edges: walk the box's outline, `R` out, the shorter way round; between
+    // opposite edges, over the top (or, top↔bottom, round the right).
     const i = LINK_SIDES.indexOf(out);
     const j = LINK_SIDES.indexOf(back);
     const cw = (j - i + 4) % 4;
@@ -430,21 +361,11 @@ function loopShape(seg, bow, radius, opts = {}) {
 }
 
 // ── The routed connector ────────────────────────────────────────────────────
-//
-// Where the route GOES is linkRouter.js's question — candidate sides scored, a
-// straight snap for near-aligned boxes, a grid search around other nodes. This
-// row only turns the router's polyline into a shape: rounded corners, a label
-// position, and axis-aligned tangents at the two edges it chose.
+// linkRouter.js picks the route; this turns its polyline into a shape.
 
 /**
- * Replace each interior vertex with a quadratic through it — the rounded elbow.
- *
- * The corner stays a POLYLINE rather than becoming an arc in a `d` string, which is
- * the whole reason this is affordable: `points` is the only geometry edit/pick.js
- * can measure and the only one canvas draws directly, so a rounded connector is
- * grabbable and canvas-safe for free. Each leg gives up at most half its length, so
- * a large radius on a short leg shortens the curve instead of overshooting the
- * neighbouring corner.
+ * Replace each interior vertex with a sampled quadratic, keeping a polyline. Each
+ * leg gives up at most half its length, so corners never overshoot.
  * @param {[number, number][]} points
  * @param {number} r
  * @returns {[number, number][]}
@@ -473,9 +394,7 @@ function roundCorners(points, r) {
 }
 
 /**
- * The point half a polyline's LENGTH along it. A routed connector's chord midpoint
- * can sit inside a node — a C-route's chord midpoint is nowhere near the line — so a
- * label and the inline editor that follows it go here instead.
+ * The point half a polyline's length along it, where a routed link's label goes.
  * @param {[number, number][]} points
  * @returns {{ x: number, y: number }}
  */
@@ -503,8 +422,7 @@ function polylineMid(points) {
 }
 
 /**
- * A port from the options: the explicit `sourcePort`/`targetPort`, or the older
- * side-only spelling with the midpoint offset.
+ * A port from the options: `sourcePort`/`targetPort`, else the side alone at the midpoint.
  * @param {import('./linkRouter.js').LinkPort | undefined} port
  * @param {string | null | undefined} side
  * @returns {import('./linkRouter.js').LinkPort}
@@ -516,19 +434,10 @@ function portOf(port, side) {
 }
 
 /**
- * The box-anchored orthogonal connector: leaves each node PERPENDICULAR to one of
- * its edges, and picks which edges from where the two nodes actually sit — and
- * from what else sits between them.
- *
- * This is the one shape that needs more than two points to work from. Anchoring on
- * an edge means insetting along that edge's NORMAL rather than along the chord, and
- * it has to keep routing when two boxes overlap — the case a chord inset reports as
- * "nothing sensible to draw". Hence `anchors: 'box'` on its row.
- *
- * `bow` is the reciprocal-pair separation every kind takes: here it slides the
- * two ports in OPPOSITE directions along their edges, on top of whatever offset
- * the ports declare, so a pair of siblings splays rather than translating together.
- * @param {LinkSegment} seg the two node CENTRES
+ * The box-anchored orthogonal connector, routed by `routeOrthogonal`: it leaves
+ * each node perpendicular to an edge. `bow` slides the two ports in opposite
+ * directions along their edges, so siblings splay apart.
+ * @param {LinkSegment} seg the two node centres
  * @param {number} bow
  * @param {LinkShapeOptions} opts
  * @returns {LinkShape | null}
@@ -559,21 +468,18 @@ function orthogonalShape(seg, bow, opts) {
         start: { x: first[0], y: first[1] },
         end: { x: last[0], y: last[1] },
         mid: polylineMid(points),
-        // Travel leaves the source along its outward normal and arrives at the
-        // target against the target's, so both arrowheads cap the edge square-on.
+        // Along the edge normals, so arrowheads sit square on the edges.
         tangentIn: nA,
         tangentOut: { x: -nB.x || 0, y: -nB.y || 0 },
     };
 }
 
 /**
- * The shapes, keyed by kind. `smooth` is an alias of `bezier`; `loop` is not
- * spellable by an author — it is reached only by a row referencing one node twice.
+ * The link shapes, keyed by kind. `smooth` builds the same shape as `bezier`;
+ * `loop` is used only for a row referencing one node twice.
  *
- * `anchors` says what the `seg` handed to `build` MEANS: the chord already pulled in
- * by `inset` for every point-to-point kind, or the two node centres for a kind that
- * docks to a box. See the header — this is a declared capability so that the mark
- * never branches on a kind name.
+ * `anchors` says what the `seg` passed to `build` means: `'chord'`, the chord already
+ * inset; `'box'`, the two node centres, with the boxes in `opts`.
  * @type {Record<string, { anchors: string, build: (seg: LinkSegment, bow: number, opts: LinkShapeOptions) => LinkShape | null }>}
  */
 export const LINK_SHAPES = {

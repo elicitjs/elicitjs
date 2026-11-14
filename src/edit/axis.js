@@ -1,29 +1,18 @@
 // @ts-check
-// axis.js — the EDITABLE-AXIS edits (scope 'axis'). Unlike every other edit these
-// write the SCHEMA's DOMAIN, not the dataset: they carry `target: 'domain'`, and
-// their apply returns { domains, data?, resize? } for the engine's domain-commit
-// path (see core/elicit.js). The domain is the data's own property, so reshaping it
-// IS the edit — grids, guides and marks then reflow from it on the next render.
-//
-// Three edits, all on a numeric/temporal axis (a categorical axis's add / rename /
-// remove are `edit.scale.categories`):
+// axis.js — edits on a numeric/temporal axis (scope 'axis'). They write the
+// schema's domain (`target: 'domain'`), returning { domains, resize? }:
 //   edit.axis.scale()       drag an end-handle to rescale the range
 //   edit.axis.zoom()        the wheel narrows / widens the domain about the pointer
 //   edit.axis.pan()         drag the plot to slide the domain along
-// Zoom and pan treat the domain as a WINDOW over the data (`viewport: true`), so
-// the chart clips its marks to the plot rect by default when one is present.
-//
-// All are namespaced under `edit.axis.*` so the scope shows in the name, mirroring
-// `edit.line.*`. The axis mark wires them (plot/axis.js): it forwards the edit and,
-// per the scale's kind, emits the handle / label / add / remove affordance nodes.
+// Zoom and pan declare `viewport: true`, which turns on clipping.
 
 import { makeEdit, numOf } from './shared.js';
 import { warn } from '../core/dev.js';
+import { DEFAULT_MARGINS } from '../core/scene.js';
 
 /**
- * The schema fields whose domain a domain edit writes: an explicit `field` (when the
- * axis pins one) else every field unioned onto the axis (scale.fields, stamped by
- * resolveScales). A single-field axis -> one field; an error bar's y -> mean/lo/hi.
+ * The fields whose domain the edit writes: `field` if given, else every field on
+ * the axis's scale (`scale.fields`).
  * @param {any} scale @param {string | undefined} field @returns {string[]}
  */
 function targetFields(scale, field) {
@@ -56,10 +45,8 @@ function ceilingOf(limit, ctx, fields) {
 }
 
 /**
- * Fit the window [lo, hi] inside the ceiling, keeping its SPAN where it can: a
- * window wider than the ceiling becomes the ceiling, and one that overhangs an
- * end slides back inside. Zoom and pan share it, so a pan stops at the same wall
- * a zoom-out does.
+ * Fit the window [lo, hi] inside the ceiling, keeping its span where it can: too
+ * wide becomes the ceiling, an overhang slides back inside.
  * @param {number} lo @param {number} hi @param {any[] | null} ceiling
  * @returns {[number, number]}
  */
@@ -77,17 +64,12 @@ function fitWithin(lo, hi, ceiling) {
 }
 
 /**
- * edit.axis.scale — drag an end-handle of a numeric/temporal axis to grow or shrink
- * its range. The axisDrag driver locks the grabbed handle at dragstart (which end,
- * the anchored extreme's pixel+value, this extreme's pixel+value, the slope) into
- * ctx.session; this apply turns that snapshot + the live pointer into the new
- * [min,max]:
+ * edit.axis.scale — drag an end-handle to change the axis's range. The axisDrag
+ * driver stores the grabbed handle's dragstart snapshot in ctx.session.
  *
- *   rescale (default) — the pixel range is fixed; the anchored extreme keeps its
- *     value, and the grabbed extreme moves so its handle follows the pointer. The
- *     chart stays the same size (marks compress/expand into it).
- *   grow — the pixels-per-unit is held constant and the chart RESIZES instead, so
- *     the data keeps its scale (a `resize` hint rides along in the result).
+ *   rescale (default) — the pixel range is fixed; the other end keeps its value
+ *     and the grabbed end follows the pointer.
+ *   grow — pixels-per-unit is fixed and the chart resizes (`resize` in the result).
  *
  * @param {{ field?: string, mode?: 'rescale' | 'grow', pick?: string, [k: string]: any }} [options]
  * @returns {import('../types').Edit}
@@ -95,28 +77,14 @@ function fitWithin(lo, hi, ceiling) {
 export function scale(options = {}) {
     const { field, mode = 'rescale', ...rest } = options;
     const MIN_PX = 6; // guard: never divide by a near-zero anchor→pointer distance
-    // The axisDrag driver claims this edit by CAPABILITY (its type), so it runs its
-    // dragstart lock from the handle node the press landed on and the plane is
-    // never raised — an axis you can rescale no longer silences every mark drag on
-    // the chart. Under any other pick the edit would reach a driver by name too.
-    if (rest.pick != null && rest.pick !== 'direct') {
-        warn(
-            'axis.scale:pick',
-            `edit.axis.scale() is served by the axis-drag driver from its own handles, ` +
-            `so { pick: "${rest.pick}" } is ignored (direct pick).`
-        );
-        delete rest.pick;
-    }
+    // Direct-pick, claimed by the axisDrag driver by type, so the plane stays down.
+    dropPick(rest, 'axis.scale', 'direct', 'is served by the axis-drag driver from its own handles,', ' (direct pick)');
     return makeEdit({
         type: 'axis.scale',
         gesture: 'drag',
         pick: 'direct',
         scope: 'axis',
         target: 'domain',
-        // The rest of the caller's options — `name` (so el.control() can drive it),
-        // `stage`, `guide`, `constrain`, `when`. This factory used to read only
-        // `field`/`mode` and drop everything else without a word, so an axis edit
-        // could not be staged, named or guided at all.
         ...rest,
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
             const lock = ctx.session;
@@ -138,13 +106,11 @@ export function scale(options = {}) {
 
             let newExtreme;
             if (mode === 'grow') {
-                // Hold the slope (pixels per data unit) constant; the grabbed extreme
-                // tracks the pointer, and the chart grows to fit it (below).
+                // Hold pixels per data unit; the chart grows to fit (below).
                 const k = /** @type {number} */ (lock.pxPerUnit) || (Lg / (gV - aV || 1));
                 newExtreme = aV + Lp / (k || 1);
             } else {
-                // Fixed pixel range: keep the anchored extreme's value, move the
-                // grabbed value under the pointer -> the range end becomes newExtreme.
+                // Fixed pixel range: put the grabbed value under the pointer.
                 newExtreme = aV + (gV - aV) * (Lg / Lp);
             }
 
@@ -157,12 +123,10 @@ export function scale(options = {}) {
             const result = { domains: domainsFor(fields, domain) };
 
             if (mode === 'grow') {
-                // Keep the data's pixels-per-unit: the inner axis length must span the
-                // whole new domain at the locked slope. Report the OUTER size (inner +
-                // the two margins on that axis) for the engine to resize the chart to.
+                // Outer chart size that fits the new domain at the locked slope.
                 const k = Math.abs(/** @type {number} */ (lock.pxPerUnit) || 1);
                 const inner = (hiNum - loNum) * k;
-                const m = ctx.margins || { top: 20, right: 20, bottom: 30, left: 40 };
+                const m = ctx.margins || DEFAULT_MARGINS;
                 result.resize = lock.axis === 'x'
                     ? { width: inner + m.left + m.right }
                     : { height: inner + m.top + m.bottom };
@@ -173,19 +137,48 @@ export function scale(options = {}) {
 }
 
 /**
- * edit.axis.zoom — the wheel over the plot narrows or widens a positional
- * axis's DOMAIN about the value under the pointer. Zoom is a schema change: a
- * domain describes the data, so zooming writes the field's domain exactly as a
- * handle drag (`edit.axis.scale`) does, and everything downstream — scales,
- * axes, marks, guides — reflows from it. It goes through the same domain-commit
- * path, so it is undoable (wheel ticks coalesce into one entry) and
- * `el.setDomain(field, domain)` is its external twin.
- *
- * A wheel tick has no press and no lifecycle, so it is a plain PLANE edit
- * (`pick: 'plane'`): the plane driver runs it on its gesture and the plane is
- * never raised above the marks. Place it on an axis (`axes: { x: { edit:
- * edit.axis.zoom() } }`), one per axis; gate one with a modifier for one-axis
- * zoom (`when: when.shift`).
+ * Drop a `pick` an axis edit cannot honour, and say so.
+ * @param {any} rest the caller's options (mutated)
+ * @param {string} type @param {string} pick the pick the edit is bound to
+ * @param {string} why @param {string} [note]
+ */
+function dropPick(rest, type, pick, why, note = '') {
+    if (rest.pick == null || rest.pick === pick) return;
+    warn(`${type}:pick`, `edit.${type}() ${why} so { pick: "${rest.pick}" } is ignored${note}.`);
+    delete rest.pick;
+}
+
+/**
+ * What zoom and pan read off the axis: the fields it writes, its scale, and the
+ * current domain with its pixel ends. Null when the axis can't be moved.
+ * @param {import('../types').EditContext} ctx
+ * @param {string | undefined} field
+ */
+function axisWindow(ctx, field) {
+    const ch = ctx.channels[0];
+    if (!ch || !ch.scale || ch.scale.kind !== 'continuous' || !ch.scale.invertible) return null;
+    const fields = targetFields(ch.scale, field);
+    if (!fields.length) return null;
+    const sc = /** @type {any} */ (ch.scale);
+    const dom = typeof sc.domain === 'function' ? sc.domain() : null;
+    if (!dom || dom.length < 2 || typeof sc.invert !== 'function') return null;
+    const r0 = Number(sc.encode(dom[0]));
+    const r1 = Number(sc.encode(dom[dom.length - 1]));
+    if (!Number.isFinite(r0) || !Number.isFinite(r1)) return null;
+    return {
+        fields, sc, r0, r1,
+        axis: ch.name === 'y' ? 'y' : 'x',
+        lo: numOf(dom[0]),
+        hi: numOf(dom[dom.length - 1]),
+        temporal: dom[0] instanceof Date || dom[dom.length - 1] instanceof Date,
+    };
+}
+
+/**
+ * edit.axis.zoom — the wheel narrows or widens an axis's domain about the value
+ * under the pointer. Undoable (ticks coalesce); `el.setDomain` is its external twin.
+ * A plane edit that never raises the plane. Place one per axis
+ * (`axes: { x: { edit: edit.axis.zoom() } }`); gate with `when` for one-axis zoom.
  *
  *   factor   how much one notch (100 px of wheel delta) scales the span (default 1.2)
  *   limit    the widest the domain may zoom OUT to: 'declared' (the field's domain
@@ -197,14 +190,7 @@ export function scale(options = {}) {
  */
 export function zoom(options = {}) {
     const { field, factor = 1.2, limit = 'declared', minSpan, ...rest } = options;
-    if (rest.pick != null && rest.pick !== 'plane') {
-        warn(
-            'axis.zoom:pick',
-            `edit.axis.zoom() is a plane gesture (a wheel tick has no press), so ` +
-            `{ pick: "${rest.pick}" } is ignored.`
-        );
-        delete rest.pick;
-    }
+    dropPick(rest, 'axis.zoom', 'plane', 'is a plane gesture (a wheel tick has no press),');
     return makeEdit({
         type: 'axis.zoom',
         gesture: 'wheel',
@@ -212,37 +198,20 @@ export function zoom(options = {}) {
         scope: 'axis',
         target: 'domain',
         inverts: true,
-        // The domain becomes a WINDOW over the data, so rows legitimately fall
-        // outside it: the chart clips its marks to the plot rect by default.
         viewport: true,
         ...rest,
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
-            const ch = ctx.channels[0];
-            if (!ch || !ch.scale || ch.scale.kind !== 'continuous' || !ch.scale.invertible) return undefined;
-            const fields = targetFields(ch.scale, field);
-            if (!fields.length) return undefined;
-            const axis = ch.name === 'y' ? 'y' : 'x';
-            const dom = typeof ch.scale.domain === 'function' ? ch.scale.domain() : null;
-            if (!dom || dom.length < 2) return undefined;
-            const temporal = dom[0] instanceof Date || dom[dom.length - 1] instanceof Date;
-            const lo = numOf(dom[0]);
-            const hi = numOf(dom[dom.length - 1]);
+            const win = axisWindow(ctx, field);
+            if (!win) return undefined;
+            const { fields, sc, axis, r0, r1, lo, hi, temporal } = win;
             // A Shift-wheel arrives as horizontal travel in most browsers.
             const delta = Number(ctx.deltaY) || Number(ctx.deltaX) || 0;
             if (!delta) return undefined;
-            // The value under the pointer stays put; the span scales about it — in
-            // the scale's own space (pixels), so a log or time axis zooms about the
-            // anchor too. Scaling data units drifted the anchor off-screen on a log
-            // axis within a few ticks.
+            // Scale the span about the pointer in pixel space, so log/time axes work.
             const p = axis === 'x' ? ctx.pointer.x : ctx.pointer.y;
             const k = Math.pow(factor, delta / 100);
-            const r0 = Number(ch.scale.encode(dom[0]));
-            const r1 = Number(ch.scale.encode(dom[dom.length - 1]));
-            const sc = /** @type {any} */ (ch.scale);
-            const raw = typeof sc.invert === 'function' ? (/** @param {number} px */ (px) => numOf(sc.invert(px))) : null;
-            if (!raw || !Number.isFinite(r0) || !Number.isFinite(r1)) return undefined;
-            const a = raw(p + (r0 - p) * k);
-            const b = raw(p + (r1 - p) * k);
+            const a = numOf(sc.invert(p + (r0 - p) * k));
+            const b = numOf(sc.invert(p + (r1 - p) * k));
             let nlo = Math.min(a, b);
             let nhi = Math.max(a, b);
             // Zoom-out ceiling: the declared domain (or an explicit one).
@@ -261,22 +230,12 @@ export function zoom(options = {}) {
 }
 
 /**
- * edit.axis.pan — drag the plot to slide a positional axis's DOMAIN along, the
- * companion of `edit.axis.zoom`. Like zoom it writes the field's domain, never
- * the dataset, through the same domain commit: one drag is one undo step, and
- * `el.setDomain` is its external twin. Zoom and pan compose because they share
- * the one piece of state they change — the domain — so either picks up wherever
- * the other left it.
+ * edit.axis.pan — drag the plot to slide an axis's domain. One drag is one undo
+ * step. Served by the pan driver (`pick: 'pan'`); a press on a mark with an
+ * accepting direct edit still grabs the mark. Put one on each axis to pan.
  *
- * A pan resolves no target (it moves the whole view), so it is served by its own
- * driver (`pick: 'pan'`, drivers/pan.js), which raises the plane. A press that
- * lands on a mark whose direct edit accepts it still grabs the mark; a press on
- * empty plot pans. Put one on each axis you want to pan: a diagonal drag pans x
- * by the pointer's horizontal travel and y by its vertical travel.
- *
- * Each tick shifts the window by the pointer's travel since the last tick, in
- * the scale's own (pixel) space — so a log or time axis pans evenly — and
- * through the LIVE scale, so a wheel zoom mid-drag composes.
+ * Each tick shifts by the pointer's travel since the last tick, through the live
+ * scale, so a mid-drag zoom composes.
  *
  *   limit   how far it may pan: 'declared' (the declared domain, the default),
  *           an explicit [lo, hi], or false for no limit
@@ -285,14 +244,7 @@ export function zoom(options = {}) {
  */
 export function pan(options = {}) {
     const { field, limit = 'declared', ...rest } = options;
-    if (rest.pick != null && rest.pick !== 'pan') {
-        warn(
-            'axis.pan:pick',
-            `edit.axis.pan() is served by the pan driver (it moves the whole view, ` +
-            `so it picks no target), so { pick: "${rest.pick}" } is ignored.`
-        );
-        delete rest.pick;
-    }
+    dropPick(rest, 'axis.pan', 'pan', 'is served by the pan driver (it moves the whole view, so it picks no target),');
     return makeEdit({
         type: 'axis.pan',
         gesture: 'drag',
@@ -303,30 +255,18 @@ export function pan(options = {}) {
         viewport: true,
         ...rest,
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
-            const ch = ctx.channels[0];
             const from = ctx.session && ctx.session.panFrom;
-            if (!from || !ch || !ch.scale || ch.scale.kind !== 'continuous' || !ch.scale.invertible) return undefined;
-            const fields = targetFields(ch.scale, field);
-            if (!fields.length) return undefined;
-            const axis = ch.name === 'y' ? 'y' : 'x';
+            if (!from) return undefined;
+            const win = axisWindow(ctx, field);
+            if (!win) return undefined;
+            const { fields, sc, axis, r0, r1, lo, hi, temporal } = win;
             const d = axis === 'x' ? ctx.pointer.x - from.x : ctx.pointer.y - from.y;
             if (!d || !Number.isFinite(d)) return undefined;
-            const dom = typeof ch.scale.domain === 'function' ? ch.scale.domain() : null;
-            if (!dom || dom.length < 2) return undefined;
-            const temporal = dom[0] instanceof Date || dom[dom.length - 1] instanceof Date;
-            const sc = /** @type {any} */ (ch.scale);
-            if (typeof sc.invert !== 'function') return undefined;
-            const r0 = Number(sc.encode(dom[0]));
-            const r1 = Number(sc.encode(dom[dom.length - 1]));
-            if (!Number.isFinite(r0) || !Number.isFinite(r1)) return undefined;
-            // Dragging the content right shows what lay to its left: the window
-            // moves AGAINST the pointer, by the same number of pixels.
+            // The window moves against the pointer.
             const a = numOf(sc.invert(r0 - d));
             const b = numOf(sc.invert(r1 - d));
             let [nlo, nhi] = fitWithin(Math.min(a, b), Math.max(a, b), ceilingOf(limit, ctx, fields));
             if (!Number.isFinite(nlo) || !Number.isFinite(nhi) || nhi <= nlo) return undefined;
-            const lo = numOf(dom[0]);
-            const hi = numOf(dom[dom.length - 1]);
             if (nlo === Math.min(lo, hi) && nhi === Math.max(lo, hi)) return undefined;
             const domain = temporal ? [new Date(nlo), new Date(nhi)] : [nlo, nhi];
             return { domains: domainsFor(fields, domain) };

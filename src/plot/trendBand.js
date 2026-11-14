@@ -1,57 +1,35 @@
 // @ts-check
-// trendBand.js — the UNCERTAINTY around a parametric line. Where `trend` draws
-// y = intercept + slope*x, this draws the whole family of lines the belief allows:
-// an interval on the intercept, an interval on the slope, and everything between.
+// trendBand.js: the uncertainty around a parametric line, drawn as the family of
+// lines allowed by an interval on the intercept and on the slope. The model is in
+// plot/trendGeometry.js; this file is the paint.
 //
 //   trendBand({ channels: {
 //     intercept: { field: 'a' }, interceptSpread: { field: 'aSd' },
 //     slope:     { field: 'b' }, slopeSpread:     { field: 'bSd' },
 //   }})
 //
-// The uncertainty is named EITHER symmetrically (`interceptSpread` / `slopeSpread`,
-// a half-width in the field's own units — one pointer distance sets one) or as an
-// explicit asymmetric range (`intercept1`/`intercept2`, `slope1`/`slope2`, the same
-// 1/2 span spelling `area` and `rect` use). See plot/trendGeometry.js for the model
-// and the envelope formula; this file is only the paint.
+// `render`:
+//   'region'   (default) one polygon, the exact envelope.
+//   'gradient' `levels` nested envelopes stacked at low opacity, darkening toward
+//              the line.
+//   'samples'  `samples` lines drawn from the family; `distribution` is 'normal'
+//              (bounds = `sigma` envelope) or 'uniform'.
 //
-// ── Three readings of one band ──────────────────────────────────────────────
-//   'region'   (default) one polygon: the exact envelope. Crisp, cheap, and the
-//              honest shape — the family really is a convex region with a kink
-//              where x crosses zero.
-//   'gradient' `levels` nested envelopes stacked at low opacity, so the ink
-//              darkens toward the line. The renderer has no gradients; a ramp here
-//              is N shapes, the same idiom `legend`'s continuous ramp uses.
-//   'samples'  `samples` individual lines drawn from the family. The ensemble
-//              reading — you see the individual hypotheses rather than their hull.
-//              `distribution` picks how: 'normal' treats the bounds as a `sigma`
-//              envelope (~95% of draws land inside it), 'uniform' spreads flat.
+// The band nodes are inert and painted in the background layer. `handles` defaults
+// to false (unlike `trend`); when on, the spread grips follow trend's `grip`:
+//   circle at `anchor`      → channel:'interceptSpread'
+//   circle at each edge end → channel:'slopeSpread' (grip: 'end', the default)
+//   circle at `probe`       → channel:'slopeSpread' (grip: 'probe')
 //
-// Every node is inert (`pointerEvents: 'none'`) and painted in the BACKGROUND
-// layer, because the band is a view of parameters the reader edits elsewhere —
-// on the `trend` line's handles, or straight off the plane. `handles` defaults
-// FALSE (unlike `trend`) so a band+line pair doesn't double the grab targets;
-// turn it on for standalone spread edits. The spread grips follow `trend`'s `grip`
-// contract exactly — a PAIR mounted on the ends of the band's own upper edge by
-// default, so opening the cone is not capped by how far the pinned column reaches,
-// and one pinned at x = `probe` under `grip: 'probe'`. Affordance when handles are
-// on:
-//   circle at `anchor`     → channel:'interceptSpread' (or intercept1/2)
-//   circle at each EDGE END→ channel:'slopeSpread' (grip: 'end', the default)
-//   circle at `probe`      → channel:'slopeSpread' (grip: 'probe')
-//   handles: true|false|'hit' — shared contract
-//
-// It declares NO edits of its own. A band and a line over the same rows are two
-// views of one belief, and a whole-dataset (plane/probe) edit declared on both
-// would run twice per gesture — see warnDuplicatePlaneEdits. Declare the edit on
-// the mark the reader grabs; the band re-derives on the next render.
+// Declare a plane/probe edit on the band or the line, not both, or it runs twice
+// per gesture (see warnDuplicatePlaneEdits).
 
 import { resolveStyle, normalizeMarkOptions, markDefaults, themeOf, encodeValue, positionalKeys, resolveHandles, handlesAreAffordance, markCommon, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 import {
-    paramChannels, readParams, anchorsOf, valueAt,
+    trendChannels, trendRequires, warnProbeIgnored, readParams, anchorsOf, valueAt,
     lineSegment, segmentEnds, envelopePolygon, nestedEnvelopes, sampleLines
 } from './trendGeometry.js';
-import { warn } from '../core/dev.js';
 
 /**
  * @param {import('../types').TrendBandOptions} [options]
@@ -68,9 +46,7 @@ export function trendBand(options = {}) {
         levels = 5,
         samples = 60,
         seed = 7,
-        // The bounds are the HALF-WIDTH the gesture points at, not a raw SD: the
-        // line under the cursor is the edge of the fan. Samples are drawn with
-        // sd = spread / sigma, so ~95% of them land inside it.
+        // The bounds are the fan's edge, not an SD: samples use sd = spread / sigma.
         sigma = 1.96,
         distribution = 'normal',
         anchor: anchorOpt,
@@ -81,18 +57,9 @@ export function trendBand(options = {}) {
         handleColor
     } = opts;
 
-    // Same contract as trend(): `probe` places a grip only under `grip: 'probe'`.
-    if (probeOpt != null && grip !== 'probe') {
-        warn('trendBand:probe-ignored',
-            "trendBand(): `probe` places the slopeSpread handle only under "
-            + "`grip: 'probe'`. The default grip mounts the handles on the band's own "
-            + "edge ends; add `grip: 'probe'` to pin one at that column instead.");
-    }
+    warnProbeIgnored('trendBand', 'slopeSpread', "the band's own edge ends", probeOpt, grip);
 
-    const channels = paramChannels(opts.channels || {}, {
-        intercept: { field: 'intercept' },
-        slope: { field: 'slope' }
-    });
+    const channels = trendChannels(opts.channels || {});
     const anchors = { anchor: anchorOpt, probe: probeOpt };
     // Spread grips are row handles unless an inert band asks for them as ink.
     const rowHandle = handlesAreAffordance(opts.handles, { edits, channels });
@@ -102,20 +69,11 @@ export function trendBand(options = {}) {
         type: 'trendBand',
         channels,
         supportsTrend: true,
-        // Shares the trend's origin-crossing axis frame — a band without its line
-        // is still a statement about intercept and slope.
+        // Gets the trend's origin-crossing axes.
         isTrend: true,
         ...positionalKeys(channels),
-        // A trend is PARAMETRIC: its line is evaluated at the x domain's ends, not
-        // read off any row, so it cannot draw at all without both continuous axes.
-        // build() bails to [] in that case — which looks exactly like a spec that
-        // silently failed to render, so the engine says why (warnScaleRequirements).
-        requires: [{
-            channels: ['x', 'y'],
-            kind: 'continuous',
-            match: 'all',
-            why: 'an intercept and a slope are only defined over two continuous axes.',
-        }],
+        // build() bails to [] without both continuous axes; this says why.
+        requires: trendRequires(),
         /**
          * @param {any[]} currentData
          * @param {import('../types').ScaleMap} scales
@@ -129,25 +87,17 @@ export function trendBand(options = {}) {
 
             /** @type {import('../types').FeatureNode[]} */
             const nodes = [];
-            // Shared handle contract (plot/mark.js). `handles` still defaults to
-            // FALSE here, unlike every other mark: the band is a view of parameters
-            // the reader edits on the trend line, so grabs on it are opt-in.
             const handleStyle = resolveHandles(scales, { handles, handleSize, handleColor });
             const bandInk = themeOf(scales).ink;
-            // The two renders ink differently and each gets its own default, both
-            // ordinary style channels the author (or a theme) overrides: a filled
-            // region is one shape at `fillOpacity`, a fan is N strokes at
-            // `strokeOpacity`. Deriving one from the other looks clever and reads as
-            // a bug — a fan whose alpha fell off with `samples` was invisible at the
-            // default count, and silently ignored a `strokeOpacity` the author set.
+            // A region uses `fillOpacity`, a fan of samples `strokeOpacity`; neither
+            // is derived from the other.
             const bandDefaults = markDefaults(scales, 'trendBand',
                 { fill: bandInk, stroke: bandInk, fillOpacity: 0.18, strokeOpacity: 0.15 });
 
             /**
-             * The end of a straight edge's clipped segment on the given side of the x
-             * axis: `1` for the largest data-x, `-1` for the smallest. Read back through
-             * the scale rather than compared in pixels, so a reversed x range picks the
-             * same END rather than the same SIDE OF THE SCREEN.
+             * The end of a straight edge's clipped segment: `1` for the largest
+             * data-x, `-1` for the smallest. Compared in data space so a reversed x
+             * range still picks the same end.
              * @param {{ a: number, b: number }} line
              * @param {number} side
              * @returns {{ x: number, y: number } | null}
@@ -171,8 +121,7 @@ export function trendBand(options = {}) {
                 const style = resolveStyle(scales, channels, d, bandDefaults, i, currentData);
                 const paint = style.fill || bandDefaults.fill;
                 const alpha = style.fillOpacity;
-                // A zero-width band has nothing to draw — the belief has no
-                // uncertainty yet (the state a two-step elicitation starts in).
+                // A zero-width band draws nothing (handles still draw).
                 const flat = params.aLo === params.aHi && params.bLo === params.bHi;
 
                 if (!flat && render === 'samples') {
@@ -184,18 +133,14 @@ export function trendBand(options = {}) {
                             ...seg,
                             stroke: style.stroke || bandDefaults.stroke,
                             strokeWidth: style.strokeWidth != null ? style.strokeWidth : 1,
-                            // Per LINE, so the fan's density is the author's to pick:
-                            // raising `samples` darkens the overlap, and lowering
-                            // `strokeOpacity` thins it back out.
+                            // Per line, so more samples darken the overlap.
                             strokeOpacity: style.strokeOpacity,
                             pointerEvents: 'none',
                             background: true
                         });
                     }
                 } else if (!flat && render === 'gradient') {
-                    // Stacked at a per-level alpha that COMPOUNDS to `alpha` at the
-                    // centre, so the outermost level is faint and the ink builds
-                    // toward the line without the author tuning N opacities.
+                    // Per-level alpha that compounds to `alpha` at the centre.
                     const n = Math.max(1, Math.round(levels));
                     const perLevel = 1 - Math.pow(1 - Math.min(0.99, alpha), 1 / n);
                     for (const ring of nestedEnvelopes(params, n, scales, channels, width, height)) {
@@ -227,10 +172,8 @@ export function trendBand(options = {}) {
                 }
 
                 if (!handleStyle.grabbable) return;
-                // One grab per spread, on the band's upper edge. The intercept's sits
-                // at `anchor`, where the slope range contributes nothing — its place is
-                // fixed by the pivot, so it needs no grip contract. The slope's is
-                // where that spread has the leverage: the edge's own ends, or `probe`.
+                // Grips sit on the band's upper edge: intercept spread at `anchor`,
+                // slope spread at the edge's ends or at `probe`.
                 const edge = (/** @type {number} */ x) =>
                     params.aHi + Math.max(params.bLo * x, params.bHi * x);
                 const handle = (/** @type {string} */ channel, /** @type {number} */ cx, /** @type {number} */ cy) => {
@@ -239,9 +182,7 @@ export function trendBand(options = {}) {
                         cx, cy,
                         r: handleStyle.size,
                         fill: handleStyle.visible ? (handleColor || paint) : 'transparent',
-                        // The mark's anchor/probe and grip ride along, so the spread
-                        // edits pivot where the handle sits and read the gesture the way
-                        // that handle affords — see plot/trend.js.
+                        // anchor/probe/grip ride along for the spread edits (see plot/trend.js).
                         data: d, index: i, channel, anchor, probe, grip,
                         rowHandle, // dropped where no live edit reaches the row
                     });
@@ -259,10 +200,8 @@ export function trendBand(options = {}) {
                         encodeValue(scales, channels, 'y', flat ? valueAt(params, probe) : edge(probe), 0));
                     return;
                 }
-                // The upper edge is PIECEWISE — `bHi` governs it where x > 0 and `bLo`
-                // where x < 0 — so each end comes off its own straight piece, clipped
-                // like the line it is. A domain that doesn't cross zero puts both ends
-                // on the same piece, which is simply both ends of one segment.
+                // The upper edge is piecewise: `bHi` where x > 0, `bLo` where x < 0.
+                // Each end comes off its own piece.
                 for (const [side, b] of /** @type {[number, number][]} */ ([[1, params.bHi], [-1, params.bLo]])) {
                     const end = edgeEnd({ a: params.aHi, b }, side);
                     if (end) handle('slopeSpread', end.x, end.y);

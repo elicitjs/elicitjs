@@ -1,66 +1,33 @@
 // @ts-check
-// move driver — the drag lifecycle for a RELATIVE `move` edit (edit.move with
-// mode:'relative'). Absolute move is stateless and needs no driver; a relative one
-// must remember where the grab began, and only a driver can stash that in the
-// per-feature session.
-//
-// It is the same shape as the slide driver, one axis wider: at dragstart it freezes
-// the grab pixel and, per FIELD the move writes, that field's current value. Each
-// drag tick the edit re-encodes the frozen value, adds the pointer's displacement
-// on that field's axis, and inverts — so the grab offset is preserved and the
-// inversion still goes through the channel's own scale.
-//
-// Claimed by CAPABILITY (`type: 'move'` + relative), never by a pick name. A
-// relative move is direct-pick by construction — it measures from the mark you
-// pressed — so `ctx.index` already names the datum, no proximity search happens and
-// the plane is never raised. That is what lets it sit beside the other direct edits
-// on a mark (a sticker's `cycle` on fill, its `editText`, a `slide` resizing it).
-//
-// Anchors are keyed by FIELD rather than by axis+field (slide's key): one move edit
-// owns both axes of one datum, and a field appears on exactly one of them.
-//
-// EVERYTHING it stores lives under the one `move` key, and dragend nulls THAT key
-// rather than calling session.clear(). The session is per FEATURE, not per driver,
-// and a mark can carry two lifecycles at once — a sticker on a network board has a
-// relative move AND edit.network.connect. Drivers run in registry order, so a
-// wholesale clear() here ran before the connect driver's dragend and deleted the
-// `fromIndex` it was about to build the link from: shift-drag drew a rubber band the
-// whole way across and then created nothing.
+// move driver — the lifecycle for a relative `move`. Claimed by capability; the
+// edit is direct-pick, so `ctx.index` names the datum and the plane stays down.
+// At dragstart it stores, per field, the grab pixel and the field's value under
+// the `move` session key; dragend nulls only that key (see drivers/index.js).
 
 import { nearestMark, pickThreshold } from '../pick.js';
 import { axisOf } from '../../core/encoding.js';
 import { markCenter } from '../shared.js';
 
-const GRAB_THRESHOLD = 40;
-
 /** @type {import('./index.js').Driver} */
 export const moveDriver = {
     name: 'move',
     sessionKeys: ['move'],
-    // Exactly `edit.move`, never `edit.geo.move`. Both used to report `type: 'move'`,
-    // and this test does not look at `scope`, so `edit.geo.move({ mode: 'relative' })`
-    // was silently claimed HERE and anchored its deltas through `axisOf` and the
-    // channel scales — while geo's own apply inverts through the projection
-    // (`invertPoint`). Every scoped edit's type is now its full dotted path, so the
-    // two names no longer collide.
+    // Exactly `edit.move`; scoped edits have dotted types ('geo.move').
     wants: (e) => e.type === 'move' && /** @type {any} */ (e).mode === 'relative',
     onEvent({ feature, event, edits, marks, data, index, session, runEdit }) {
         if (!edits.length) return false;
         let changed = false;
 
         if (event.type === 'dragstart') {
-            // Direct pick already names the datum. The fallback is for a gesture that
-            // arrives with no node (a mark whose nodes were re-keyed mid-drag).
+            // Direct pick names the datum; fall back to the nearest mark.
             const target = index != null
                 ? index
-                : nearestMark(marks, event.x, event.y, pickThreshold(edits[0], GRAB_THRESHOLD));
+                : nearestMark(marks, event.x, event.y, pickThreshold(edits[0]));
             if (target == null) return false;
             const row = data[target];
             /** @type {Record<string, { startPx: number, startValue: any, radial?: boolean }>} */
             const anchors = {};
-            // A RADIAL channel (`radius`, `size`) moves with the pointer's distance
-            // from the mark's centre, not with its x — dragging a rose slice upward
-            // used to read as dragging it left.
+            // A radial channel (`radius`, `size`) anchors on distance from the centre.
             const node = (marks || []).find((m) => m && m.index === target);
             const centre = node ? markCenter(node) : null;
             for (const edit of edits) {
@@ -68,9 +35,7 @@ export const moveDriver = {
                     const spec = feature.channels && feature.channels[name];
                     const field = spec && spec.field;
                     if (!field || !row || row[field] === undefined) continue;
-                    // Which pointer coordinate this field moves along is the
-                    // CHANNEL's axis (axisOf, the one accessor) — a field on y must
-                    // not follow pointer x.
+                    // The pointer coordinate is the channel's axis.
                     const axis = axisOf(name);
                     const radial = axis === 'radius' || name === 'size';
                     if (radial && !centre) continue;

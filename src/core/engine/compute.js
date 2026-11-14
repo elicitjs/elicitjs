@@ -1,7 +1,7 @@
 // @ts-check
 import { resolveChannels } from '../../edit/route.js';
 import { applyConstraint } from '../../constraints/define.js';
-import { enforceRefs, inferMeasureOfDomain } from '../schema.js';
+import { enforceRefs, inferMeasureOfDomain, fieldsOf } from '../schema.js';
 import { axisOf } from '../encoding.js';
 import { treeOf, treeProblems } from '../hierarchy.js';
 import { fitChannelsOf } from '../fit.js';
@@ -9,14 +9,10 @@ import { warn } from '../dev.js';
 import { constraintLabel, describe } from '../guards.js';
 
 /**
- * An edit, from gesture to commit: the inverse of encoding.
- *
- * `editContext` builds what an edit's apply() sees; `computeEdit` runs apply and
- * judges the proposal by the DATA-LAYER INVARIANTS (the table's constraints, the
- * edit's own `constrain`, the lock, tree-ness); `runEdit` commits it to the belief
- * store, `commitDomainEdit` writes a domain edit to the schema, and `previewEdit`
- * parks the same proposal as a ghost instead. `reachableKeys` / `portAvailable` are
- * trial commits — "could a drop land here?" — run through the same path.
+ * Runs an edit from gesture to commit. `editContext` builds apply()'s ctx,
+ * `computeEdit` runs apply and the data invariants, `runEdit` / `commitDomainEdit`
+ * commit, `previewEdit` parks the proposal as a ghost, and `reachableKeys` /
+ * `portAvailable` are trial commits.
  *
  * @param {import('./state.js').ChartState} chart
  * @param {{
@@ -56,11 +52,8 @@ export function createCompute(chart, deps) {
     } = deps;
     const applyResize = deps.applyResize;
 
-    // The scale map an edit on this node should resolve against. A part of a
-    // composite in box mode is drawn inside a per-datum local FRAME, and each of its nodes
-    // carries the frame scales it was encoded through — overlaying them is how a
-    // gesture inverts back through the same mapping. Returns null when no frame is
-    // in play, so the caller keeps the global map unchanged.
+    // The scales an edit on this node inverts through: the global map overlaid with
+    // the node's composite frame scales, or null when there is no frame.
     /**
      * @param {any} feature
      * @param {any} node the node a direct-pick gesture landed on, if any
@@ -77,54 +70,32 @@ export function createCompute(chart, deps) {
         return framed ? { ...chart.scales, ...framed.frame } : null;
     };
 
-    // Compute one edit's proposed dataset WITHOUT committing it. `index` addresses
-    // the datum being edited (null for create, which appends). The gesture is
-    // inverted through the scales in apply(), producing a data-space proposal; that
-    // proposal is then judged by the DATA-LAYER INVARIANTS (the dataset's
-    // constraints, plus any edit-scoped constrain sugar). Constraints never see
-    // pixels. Returns the accepted dataset, or null when the edit is a no-op /
-    // rejected.
-    //
-    // Split out from `runEdit` so a hover can PREVIEW the very same proposal (same
-    // apply, same invariants) without writing it to the belief store — see
-    // previewEdit + the probe driver.
+    // Builds the ctx an edit's apply() sees. `index` is the touched datum (null
+    // for create).
     /**
      * @param {any} feature
      * @param {import('../../types').Edit} edit
      * @param {any} event
      * @param {number | null} index
-     * @param {boolean} [preview] is this a PREVIEW (a ghost) rather than a commit?
-     *   An edit may propose a half-made row for a ghost — a link with no target
-     *   yet — that it must never commit; the flag is how it tells the two apart.
-     * @param {any} [sessionOverride] a session to run against instead of the
-     *   feature's own — a trial commit asking "could a drag from HERE land?"
+     * @param {boolean} [preview] true for a ghost; an edit may propose a half-made
+     *   row (a link with no target) that it must never commit.
+     * @param {any} [sessionOverride] a session to use instead of the feature's own,
+     *   for a trial commit.
      * @returns {{ ctx: any, targetTable: string, currentData: any[], resolved: any[], derivedOnly: boolean }}
      */
     const editContext = (feature, edit, event, index, preview = false, sessionOverride = undefined) => {
-        // WHERE the gesture landed and WHAT it writes are usually the same table, and
-        // for every edit that existed before structures they are the same by
-        // construction. They come apart for a cross-table edit — `edit.network.connect`
-        // is placed on a NODE mark (so `index` addresses a node row) but proposes a
-        // LINK row — so the edit may name its target by ROLE, and the two are tracked
-        // separately rather than conflated.
+        // The touched table and the written table differ for a cross-table edit
+        // (`connect` sits on a node mark but writes a link row).
         const sourceRows = tableOf(feature);
         const targetTable = targetTableOf(feature, edit);
         const currentData = chart.tables[targetTable] || [];
         const markChannels = feature.channels || {};
-        // A node built inside a composite's local FRAME carries the very scales it was
-        // encoded through (plot/composite.js stamps `node.frame`). Overlay them so the
-        // edit inverts through the same objects — "an edit is the inverse of
-        // encoding" holds per datum, with no second inversion path: this is channel
-        // resolution honouring which scale drew the thing you grabbed, not a new
-        // dispatch branch. A plane-pick gesture carries no node, so fall back to the
-        // framed node for this datum.
+        // Invert through the scales that drew the grabbed node (composite frames).
         const editScales = frameScalesFor(feature, event.node, index) || chart.scales;
         let resolved = resolveChannels(edit.channels, markChannels, editScales, feature);
         let derivedOnly = false;
-        // A container's FITTED size is derived from its contents, so no gesture may
-        // write it: an edit loses those channels on a row that holds others, and an
-        // edit left with none does nothing. A leaf's size — and a container's
-        // position, which carries its contents along — stay editable.
+        // A container's fitted size is derived from its contents, so drop those
+        // channels on a row with children. Its position stays editable.
         if (hierarchyNodes && feature.table === hierarchyNodes && index != null && resolved.length
             && treeOf(schemaSpec, chart.tables).hasChildren(index)) {
             const derived = fitChannelsOf(markChannels).filter((ch) => axisOf(ch) !== 'x' && axisOf(ch) !== 'y');
@@ -133,100 +104,68 @@ export function createCompute(chart, deps) {
             resolved = free;
         }
         const ctx = {
-            // The rows the proposal is ABOUT (apply returns rows for this table)...
+            // The rows of the written table.
             data: currentData,
-            // ...while `index`/`datum` address the row the gesture actually touched,
-            // which belongs to the mark's own table. Identical on every same-table
-            // edit, which is all of them but the graph pair.
+            // The touched row, from the mark's own table.
             datum: index != null ? sourceRows[index] : undefined,
             index,
-            // The whole dataset, for an edit that has to look ACROSS tables (rewire
-            // resolves a node id from the node rows while writing a link row). Named
-            // by table, and read-only by convention like every other ctx member.
+            // Every table, read-only, for cross-table edits.
             tables: chart.tables,
             table: targetTable,
             pointer: { x: event.x, y: event.y },
             node: event.node || null,
             event: event.rawEvent,
-            // A wheel gesture's travel, normalized to pixels by the renderer.
+            // Wheel travel in pixels.
             deltaX: event.deltaX,
             deltaY: event.deltaY,
-            // A non-pixel gesture payload (the text mark's `commit` typed string).
+            // A non-pixel payload (the text mark's typed string).
             value: event.value,
             channels: resolved,
             scales: editScales,
             markChannels,
-            // Chart projection context (null on cartesian charts). Geo edits invert
-            // through the same object geo marks use for apply/path.
+            // Null on cartesian charts.
             projection: /** @type {import('../../types').ProjectionContext | null} */ (
                 /** @type {any} */ (chart.scales).projection || null
             ),
-            // Plot pixel dimensions, so a gesture whose geometry is the whole plane
-            // (rotate about the centre) can measure against it without a mark node —
-            // the angular sibling of resize reading the mark centre.
+            // Plot size in px.
             width: chart.innerWidth,
             height: chart.innerHeight,
-            // The chart margins (effective: author + legend bands), so a grow-mode
-            // axis edit recovers the outer size from an inner axis length (inner +
-            // margins). Harmless to other edits.
+            // Effective margins (author + legend bands), for grow-mode axis edits.
             margins: chart.effectiveMargins,
-            // The engine-owned schema of the table this edit WRITES, so a mint
-            // (create) populates every declared field with its default (or null) —
-            // not just the positional ones — and an axis domain edit reads a field's
-            // domain. Table-scoped, so a connect() mints a link row from the link
-            // table's defaults rather than the node table's.
-            schema: (schemaSpec.tables[targetTable] || schemaSpec.tables[schemaSpec.primary]).fields,
-            // The same table's schema as DECLARED, before any domain edit (a zoom's
-            // ceiling).
-            seedSchema: (seedSchemaSpec.tables[targetTable] || seedSchemaSpec.tables[seedSchemaSpec.primary]).fields,
-            // The whole canonical schema, for a cross-table edit that has to find
-            // another table's key column (rewire reads the node table's key).
+            // The written table's schema (mint defaults, field domains).
+            schema: fieldsOf(schemaSpec, targetTable),
+            // The written table's schema as declared, before any domain edit.
+            seedSchema: fieldsOf(seedSchemaSpec, targetTable),
             schemaSpec,
-            // Which rows of the table this edit writes are read-only (spec.lock), so
-            // an edit that CHOOSES a row to extend (a draw continuing the last
-            // series) can skip one the lock would revert anyway.
+            // Read-only rows of the written table (spec.lock).
             locked: isLockedIn(targetTable),
             xKey: feature.xKey || 'x',
             yKey: feature.yKey || 'y',
-            // The feature's series (grouping) field and its current scene nodes, so
-            // proximity-aware edits (anchor / newSeries) and `when.near|far` can
-            // resolve WHICH line a plane gesture means. Harmless to other edits.
+            // Series field and scene nodes, to resolve which line a plane gesture means.
             seriesKey: feature.seriesKey || null,
             marks: featureNodes[feature.id] || [],
-            // The line's ordering knob and the engine's per-gesture driver session
-            // (zone/handle locks, draw mode), for edits that read their driver's
-            // lock (draw, brushSpan/brushRect, axis.scale). Harmless to the rest.
+            // The line's ordering knob and the per-feature driver session.
             connect: feature.connect || null,
             session: sessionOverride !== undefined
                 ? sessionOverride
                 : (ui.session && ui.session[feature.id]) || null,
-            // The node table's box and port rules, for an edit that tests a drop
-            // against a node's edges, and the channels of the mark drawing the
-            // table this edit writes (when that is not its own mark's table).
             nodeBox: nodeBoxRule(),
             nodePorts: nodePortsRule,
-            // Which node rows may HOLD others (a node mark's `contains` channel),
-            // for an edit that drops one node into another.
+            // Which node rows may hold others.
             contains: containsRule,
+            // Channels of the mark drawing the written table, when it is another table.
             targetChannels: targetTable !== feature.table ? channelsDrawing(targetTable) : null,
-            // The primary selected datum index (transient pipeline state), so an
-            // edit's apply/when can target or arbitrate on the selection — e.g. a
-            // `select` edit that reads whether the touched row is already selected.
+            // The primary selected index.
             selection: selectionPrimary(),
-            // The edit itself, so a `when` predicate can arbitrate against the
-            // edit's own knobs (when.near reads its `threshold`). Descriptors are
-            // data; self-reference adds no dispatch path.
+            // The edit itself, so `when` can read its options.
             edit,
             preview,
         };
         return { ctx, targetTable, currentData, resolved, derivedOnly };
     };
 
-    // Does this edit's `when` accept the gesture? Asked BEFORE a plane gesture is
-    // handed to the drivers, so an edit whose modifier is not held is not merely
-    // refused at commit time (computeEdit checks `when` too) but never consumes
-    // the gesture at all — which is what lets a direct edit beside a `when`-gated
-    // sweep receive the drag the sweep declined (see handleEvent's fallback).
+    // Does this edit's `when` accept the gesture? Asked before a plane gesture
+    // reaches the drivers, so a declined edit never consumes it.
     /**
      * @param {any} feature
      * @param {import('../../types').Edit} edit
@@ -255,30 +194,18 @@ export function createCompute(chart, deps) {
         const result = edit.apply(ctx);
         if (result === undefined) return null;
 
-        // Which datum the gesture touched, for invariants that resolve a violation
-        // relative to it. Read from the edit's DECLARED cardinality (see makeEdit),
-        // never from its type — a custom append/delete edit gets the same treatment
-        // as the built-in create/remove without the engine knowing either exists.
+        // The touched datum in the proposed rows, read from the declared cardinality.
         /** @param {any[]} rows @returns {number | null} */
         const activeIndexOf = (rows) => (edit.cardinality === 'append' ? rows.length - 1
             : edit.cardinality === 'delete' ? null
                 : /** @type {number | null} */ (index));
 
-        // Data-layer invariants: the dataset's first (they hold for every edit from
-        // every mark), then any edit-scoped guard sugar. Pure data context — no
-        // scales-as-geometry. A constraint may reject the proposal (false) or repair
-        // it (return an array); the marks re-derive from the repaired rows.
-        //
-        // The lock (spec.lock) runs LAST so it has the final word: a repair by any
-        // other invariant still can't write a read-only row.
+        // Runs the table's constraints, then `edit.constrain`, then the lock. The
+        // lock runs last so no repair can write a read-only row.
         /**
          * @param {any[]} rows
-         * @param {string} [forTable] the table these rows ARE. Defaults to the one
-         *   the edit writes; a cross-table domain edit passes each other table it
-         *   touches, so those rows meet their OWN table's invariants and lock.
-         *   `edit.constrain` is edit-scoped sugar about the edit's own proposal, so
-         *   it runs on the edit's table only — applying a rule written for node rows
-         *   to the link rows a rename swept along would be a different rule.
+         * @param {string} [forTable] the table these rows belong to (default: the
+         *   written table). `edit.constrain` runs on the written table only.
          * @returns {any[] | null} the repaired rows, or null if rejected
          */
         const runInvariants = (rows, forTable = targetTable) => {
@@ -289,18 +216,10 @@ export function createCompute(chart, deps) {
             ];
             const cctx = {
                 activeIndex: own ? activeIndexOf(rows) : null, scales: chart.scales, markChannels,
-                // The column the dispatching edit writes — what a constraint that
-                // names no `field` of its own is about (see applyConstraint).
+                // The column the edit writes, for a constraint with no `field`.
                 field: own && resolved[0] ? resolved[0].field : undefined,
-                // The rest of the dataset and which table these rows are, for an
-                // invariant that spans tables. Pure data, like everything else a
-                // constraint sees — still no pixels.
                 tables: chart.tables, table: forTable,
-                // The table's field schema, so a rule can honour a column's MEASURE
-                // (snap keeps a temporal value a Date), and which of its rows are
-                // read-only, so a rule that pushes neighbours (monotonic) pivots
-                // around a locked row instead of writing it and being reverted.
-                schema: (schemaSpec.tables[forTable] || schemaSpec.tables[schemaSpec.primary]).fields,
+                schema: fieldsOf(schemaSpec, forTable),
                 locked: isLockedIn(forTable),
             };
             let out = rows;
@@ -309,13 +228,8 @@ export function createCompute(chart, deps) {
                 const r = applyConstraint(constraint, out, before, cctx);
                 if (r === false) return null;
                 if (r === true || r === undefined) continue;
-                // A constraint may GATE (false) or REPAIR (the corrected rows). Anything
-                // else is a bug in the constraint, and unvalidated it becomes the dataset:
-                // a number or object makes `for (const d of dataset)` throw from inside
-                // resolve.js with nothing naming the culprit, and a string iterates its
-                // CHARACTERS and blanks the chart. Constraints built with defineConstraint
-                // are normalized, so this only catches the hand-written form — which
-                // spec.constraints accepts with no type checking at all.
+                // Anything but an array would become the dataset, so warn and ignore it.
+                // Only hand-written constraints can get here; defineConstraint normalizes.
                 if (!Array.isArray(r)) {
                     warn(
                         `constraint:return:${constraintLabel(constraint)}`,
@@ -330,19 +244,8 @@ export function createCompute(chart, deps) {
             return out;
         };
 
-        // A DOMAIN edit (edit.axis.*, edit.stack.cut on an open field) writes the
-        // SCHEMA: apply returns { domains, data?, resize? }. The schema half bypasses
-        // the datum-splice and the data-layer constraints — a domain is not a datum,
-        // the same reason setData is trusted.
-        //
-        // Its COUPLED `data`, though, is an ordinary datum proposal (a category rename
-        // relabels rows, a remove drops them, an open-domain cut splices one in), so it
-        // meets the invariants like any other. Skipping them there let a constraint the
-        // author declared — `count({ max })` capping how many categories may exist — be
-        // silently ignored by exactly the edits that change how many there are.
-        //
-        // runEdit's domain-commit path handles the write; wrap it so runEdit/previewEdit
-        // can tell it apart from a dataset proposal.
+        // A domain edit returns { domains, data?, tables?, resize? }. The domains
+        // skip the invariants; any coupled row data still runs them.
         if (edit.target === 'domain') {
             if (!(result && typeof result === 'object' && result.domains)) return null;
             /** @type {any} */
@@ -352,11 +255,8 @@ export function createCompute(chart, deps) {
                 if (!checked) return null;
                 out.data = checked;
             }
-            // Rows the edit swept along in OTHER tables (a cross-table category
-            // rename) are datum proposals too, and each meets ITS table's
-            // invariants. One rejection rejects the whole edit: half a rename —
-            // the schema written, one table's rows left on the old value — is
-            // worse than none.
+            // Rows in other tables run their own table's invariants. One rejection
+            // rejects the whole edit, so a rename never half-applies.
             if (result.tables) {
                 /** @type {any} */
                 const others = {};
@@ -372,10 +272,7 @@ export function createCompute(chart, deps) {
             return { kind: 'domain', result: out };
         }
 
-        // A SELECTION edit (edit.select) writes transient pipeline state, not the
-        // dataset: apply returns a selection descriptor. Same shape as the domain
-        // path — it bypasses the datum-splice, the data constraints, and undo — but
-        // its destination is ui.selection. runEdit's selection-commit path handles it.
+        // A selection edit returns a selection descriptor; it skips the invariants and undo.
         if (edit.target === 'selection') {
             return (result && typeof result === 'object' && 'index' in result)
                 ? { kind: 'selection', selection: result }
@@ -390,18 +287,14 @@ export function createCompute(chart, deps) {
 
         const rows = runInvariants(newData);
         if (!rows) return null;
-        // Tree-ness is the SCHEMA's statement about a nesting table, so the engine
-        // holds it for every edit that writes one, the way it holds a `ref`: a
-        // proposal giving a node a second parent, or nesting it inside its own
-        // descendant, is refused. Refused HERE, not repaired after the commit, so a
-        // trial commit refuses it too and such a drop is never offered as a target.
+        // Refuse a proposal that breaks the nesting tree. Refused here, not repaired
+        // after commit, so trial commits never offer such a drop.
         if (targetTable === schemaSpec.byRole.nesting
             && treeProblems(schemaSpec, { ...chart.tables, [targetTable]: rows }).length) return null;
         return { kind: 'rows', rows };
     };
 
-    // Commit an edit: compute its proposal, write it to the belief store, drop any
-    // preview it supersedes, and notify. Returns whether data changed.
+    // Commits an edit's proposal and notifies. Returns whether data changed.
     /**
      * @param {any} feature
      * @param {import('../../types').Edit} edit
@@ -421,30 +314,20 @@ export function createCompute(chart, deps) {
             return commitSelectionEdit(proposed.selection, targetTableOf(feature, edit));
         }
         recordHistory();
-        // A proposal replaces the table the EDIT targets, which is not always the
-        // table its mark draws (see computeEdit). Getting this wrong would overwrite
-        // the wrong table wholesale, so the target is resolved the one way, there.
+        // Replace the table the edit writes, which may not be the one its mark draws.
         const nodesBefore = hierarchyNodes ? chart.tables[hierarchyNodes] : null;
         chart.tables[targetTableOf(feature, edit)] = proposed.rows;
-        // Deleting a row can strand REFERENCES to it in another table, which no
-        // single-table constraint can see or repair. The schema already declares the
-        // rule (`type: 'ref'`), so the engine enforces it — see enforceRefs.
+        // Drop rows whose `ref` no longer resolves.
         enforceRefs(schemaSpec, chart.tables);
-        // A hierarchy's geometry follows from its contents: a moved container takes
-        // its subtree along, and every fitted container re-fits. Same standing as
-        // enforceRefs — the schema's rule, repaired across rows after the commit.
+        // Move subtrees with their container and re-fit fitted containers.
         settleNodes(nodesBefore, heldStill(), { since: chart.strokeNodes || nodesBefore });
         ui.preview = null;
         notifyChange();
         return true;
     };
 
-    // Commit a DOMAIN edit's proposal: write each field's schema domain (creating a
-    // schema entry, with an inferred measure type, for a field the caller left
-    // undeclared), replace the dataset when the edit coupled a data change (category
-    // remove/rename deletes/relabels rows), and resize the chart for grow-mode
-    // numeric drag. Then notify. The next update() re-resolves scales from the new
-    // schema, so axis/grid/guides/marks all reflow.
+    // Commits a domain edit: writes each field's schema domain (inferring a type for
+    // an undeclared field), replaces any coupled rows, resizes, and notifies.
     /**
      * @param {import('../../types').DomainEditResult} result
      * @param {string} [table] the table the edit writes; its schema owns the domains,
@@ -453,12 +336,8 @@ export function createCompute(chart, deps) {
      */
     const commitDomainEdit = (result, table = schemaSpec.primary) => {
         recordHistory();
-        // One scale can span several TABLES — `fill` over both `nodes.kind` and
-        // `links.kind` — and renaming that category has to write every schema and
-        // every row set, or the two halves of one vocabulary drift apart. The flat
-        // `domains`/`data` are the edit's own table; `tables` carries the rest.
-        // Normalized to one list so there is a single write path rather than a
-        // special case bolted beside it.
+        // One write per table: the flat `domains`/`data` are the edit's own table,
+        // `result.tables` holds the others a shared scale spans.
         /** @type {Record<string, { domains?: any, data?: any }>} */
         const writes = { [table]: { domains: result.domains, data: result.data } };
         for (const [name, w] of Object.entries(result.tables || {})) {
@@ -478,7 +357,7 @@ export function createCompute(chart, deps) {
 
         let touchedRows = false;
         for (const [name, w] of Object.entries(writes)) {
-            const fields = (schemaSpec.tables[name] || schemaSpec.tables[schemaSpec.primary]).fields;
+            const fields = fieldsOf(schemaSpec, name);
             for (const [field, domain] of Object.entries(w.domains || {})) {
                 const prev = fields[field];
                 fields[field] = { ...(prev || { type: inferMeasureOfDomain(domain) }), domain };
@@ -493,10 +372,8 @@ export function createCompute(chart, deps) {
         return true;
     };
 
-    // Preview an edit: compute the SAME proposal (same apply, same invariants) but
-    // park it in the transient preview store instead of the belief store. The next
-    // render draws it in place of the committed rows, so a hover shows exactly what
-    // a click would commit — and `getData`/`onChange` never see it.
+    // Computes the same proposal as runEdit but parks it in ui.preview as a ghost.
+    // getData/onChange never see it.
     /**
      * @param {any} feature
      * @param {import('../../types').Edit} edit
@@ -506,33 +383,19 @@ export function createCompute(chart, deps) {
      */
     const previewEdit = (feature, edit, event, index) => {
         const proposed = computeEdit(feature, edit, event, index, true);
-        // Only a dataset proposal can be previewed; a domain edit commits directly
-        // (numeric drag commits each tick, categorical add/remove is one-shot).
+        // Only row proposals preview; domain edits commit directly.
         if (!proposed || proposed.kind !== 'rows') return false;
         const newData = proposed.rows;
-        // Park the proposal under THIS feature's id, so a second probe mark's preview
-        // can't overwrite it. update()'s ghost pass renders only the changed rows.
-        //
-        // It carries the TABLE it is about, because the ghost is drawn by whichever
-        // marks view that table — which is not always the mark that proposed it. A
-        // connect drag proposes a link row from a node mark, and it is the link mark
-        // that has to draw the rubber band.
-        // The POINTER rides along: a proposal may have a free end (a link being
-        // drawn toward the pointer, with no target yet), and the mark that ghosts
-        // it needs to know where that end is.
+        // Keyed by feature id, but carries its table: the ghost is drawn by every
+        // mark over that table (a connect from a node mark is drawn by the link mark).
+        // The pointer locates a free end, such as a link with no target yet.
         if (!ui.preview) ui.preview = {};
         const pointer = typeof event.x === 'number' && typeof event.y === 'number'
             ? { x: event.x, y: event.y }
             : undefined;
         const table = targetTableOf(feature, edit);
-        // A proposal about a hierarchy's NESTING has nothing of its own to draw: a
-        // membership is not a shape. What it changes is the containers — the one
-        // about to take the node grows to hold it, the one losing it draws in — so
-        // the proposal parked is the NODE rows that nesting implies, settled exactly
-        // as the commit would settle them (nothing held still: this is the picture
-        // after the drop). The ghost pass then redraws the rows that differ. The
-        // container that would receive the node rides along as `dropInto`, for the
-        // `target` effect.
+        // A nesting proposal has no shape of its own, so park the settled node rows
+        // it implies instead. `dropInto` is the receiving container, for the `target` effect.
         if (hierarchyNodes && table === schemaSpec.byRole.nesting && boxHosts.length) {
             const overlay = { ...chart.tables, [table]: newData };
             const tree = treeOf(schemaSpec, overlay);
@@ -548,11 +411,8 @@ export function createCompute(chart, deps) {
         return true;
     };
 
-    // ── Could a drop land here? ────────────────────────────────────────────────
-    // An edit whose drag ends ON something declares where (`Edit.targets`); each
-    // place is tried as a COMMIT — apply, then every constraint — without committing.
-    // What passes is what a release there would make, so the ports shown are exactly
-    // the ones that work: a node at its constraint's limit shows none.
+    // Tries each place in `Edit.targets` as a commit (apply + invariants) without
+    // committing, and returns the keys that pass.
     /**
      * @param {any} feature
      * @param {import('../../types').Edit} edit
@@ -570,15 +430,14 @@ export function createCompute(chart, deps) {
             nodeBox: nodeBoxRule(), nodePorts: nodePortsRule, contains: containsRule,
             width: chart.innerWidth, height: chart.innerHeight,
             node: node || null, edit, pointer: { x: 0, y: 0 },
-            // The row the drag started on, and the feature's own channel map: a
-            // rewire needs both to know which node holds its OTHER end.
+            // The start row and channels, so a rewire knows its other end.
             index, datum: index != null ? tableOf(feature)[index] : undefined,
             markChannels: feature.channels || {},
         });
         /** @type {string[]} */
         const keys = [];
         const places = edit.targets(probeCtx);
-        // No places to try (a chart with no ports): nothing to light, nothing ruled out.
+        // No places to try (no ports).
         if (!places) return null;
         for (const t of places) {
             const trial = computeEdit(feature, edit, { x: t.x, y: t.y, node }, index, false, session);
@@ -587,8 +446,7 @@ export function createCompute(chart, deps) {
         return keys;
     };
 
-    // Can a link START from this port? Asked by the state pass for lit ports only,
-    // and cached until the data changes (any table array is replaced on a commit).
+    // Can a link start from this port? Cached until any table array is replaced.
     /** @type {Map<string, boolean>} */
     const availCache = new Map();
     /** @type {any[]} */
@@ -619,7 +477,7 @@ export function createCompute(chart, deps) {
     };
 
     return {
-        frameScalesFor, editContext, arbitrates, computeEdit, runEdit,
+        frameScalesFor, arbitrates, runEdit,
         commitDomainEdit, previewEdit, reachableKeys, portAvailable,
     };
 }

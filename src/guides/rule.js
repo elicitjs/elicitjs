@@ -1,51 +1,32 @@
 // @ts-check
 import { GUIDE_OPTIONS } from '../vocabulary.js';
-// guides.rule — a declarative reference line, positioned in DATA space through
-// the scales. It's the guide counterpart of a mark: you give it a value on a
-// channel and it draws a line across the plot at that position, using the SAME
-// scale.encode() a mark would. Non-interactive.
+// guides.rule: a reference line at a data value, positioned through scale.encode.
 //
 //   elicit.guides.rule({ y: 50, label: "target" })   // horizontal line at y = 50
 //   elicit.guides.rule({ x: "Neutral" })             // vertical line at a category
-//
-// Any option may instead be a function of the guide context, so a reference line
-// can be DERIVED from the elicited data rather than fixed:
-//
 //   elicit.guides.rule({ y: ({ data }) => d3.mean(data, (d) => d.y), label: "mean" })
-//
-// Because it positions through scale.encode, it works on any scale type (linear
-// pixel, band centre) with no special-casing — a reference line on a Likert band
-// axis is the same call as one on a continuous axis.
 
 import { resolveGuideOptions, warnUnknownGuideOptions } from './shared.js';
-
-/**
- * `rule`'s option vocabulary. Exported so one list drives the diagnostics,
- * the docs table, and (later) the JSON grammar.
- * @type {string[]}
- */
-export const RULE_OPTIONS = GUIDE_OPTIONS.rule;
 
 /**
  * @param {{ x?: any, y?: any, stroke?: any, strokeDash?: any, strokeWidth?: any, opacity?: any, label?: any }} [options]
  * @returns {import('../types').Guide}
  */
 export function rule(options = {}) {
-    warnUnknownGuideOptions('rule', options, RULE_OPTIONS);
+    warnUnknownGuideOptions('rule', options, GUIDE_OPTIONS.rule);
     return {
         views: 'state',
         type: 'rule',
         build: (_rows, _scales, _w, _h, ctx) => {
             const { scales, width, height } = ctx;
-            // Colour/dash default to the theme's rule tokens (a theme can restyle
-            // every reference line); an explicit option still wins.
-            const rt = (ctx.theme && ctx.theme.guide && ctx.theme.guide.rule) || {};
+            // Colour/dash default to the theme's rule tokens; an option wins.
+            const rt = ctx.theme?.guide?.rule || {};
             const {
                 x, y, label,
                 stroke = rt.stroke, strokeDash: strokeDasharray = rt.strokeDash,
                 strokeWidth = rt.strokeWidth, opacity = rt.opacity,
             } = resolveGuideOptions(options, ctx);
-            const fontSize = (ctx.theme && ctx.theme.font && ctx.theme.font.labelSize) || 10;
+            const fontSize = ctx.theme?.font?.labelSize || 10;
 
             /** @type {import('../types').FeatureNode[]} */
             const nodes = [];

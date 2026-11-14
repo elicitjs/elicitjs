@@ -1,30 +1,8 @@
 // @ts-check
-// point.js — a channel-driven mark. It reads a `channels` map and resolves every
-// channel — positional or not — through the same GLOBAL scale (Observable Plot
-// model): the engine builds one scale per channel and the mark just looks it up
-// by name. Adding a colour or size channel is data, not new mark code:
-//
-//   elicit.plot.point({
-//     channels: {
-//       x:    { field: "gdp" },        // linear   (schema: quantitative)
-//       y:    { field: "region" },     // point    (schema: categorical)
-//       fill: { field: "region" },     // ordinal palette
-//       size: { field: "population" }, // radius
-//     }
-//   })
-//
-// Channel resolution + the standard style surface (fill, stroke, strokeWidth,
-// opacity, fillOpacity, strokeOpacity) come from the shared mark foundation, so
-// point stays styleable in one line and matches every other mark. `size` is the
-// dot's radius channel, in px — as a field it ramps, and `point({ size: 9 })` is
-// the constant shorthand.
-//
-// `shape: 'circle' | 'square'` (default circle) picks the glyph. A square is a
-// centred rect with side `2 * size`, so it can carry an `angle` channel and
-// rotate about its centre — a circle is rotation-invariant.
-//
-// A missing positional channel parks the dot at the centre of that dimension —
-// symmetric across x and y, so 1D-along-x and 1D-along-y are the same code path.
+// point.js — one dot per row at (x, y). `size` is the radius in px.
+// `shape: 'circle' | 'square'` picks the glyph; a square has side `2 * size`.
+// A `symbol` channel draws a text glyph instead. A missing positional channel
+// puts the dot at the centre of that dimension.
 
 import { encodeChannel, encodeAngle, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
@@ -36,7 +14,7 @@ import { warn } from '../core/dev.js';
  */
 export function point(options = {}) {
     const opts = normalizeMarkOptions(options, { mark: 'point', allow: MARK_OPTIONS.point });
-    const { channels = {}, id, edits, shape = 'circle' } = opts;
+    const { channels = {}, shape = 'circle' } = opts;
 
     return {
         ...markCommon(opts),
@@ -84,9 +62,7 @@ export function point(options = {}) {
                 const cy = encodeChannel(scales, channels, 'y', d, height / 2, i, currentData);
                 const size = encodeChannel(scales, channels, 'size', d, pointDefaults.size ?? 5, i, currentData);
                 const angle = encodeAngle(scales, channels, 'angle', d, 0, i, currentData);
-                // A `symbol` channel turns the dot into a glyph (emoji / unicode
-                // shape) — the same category->encoding path, rendered as text. `size`
-                // still sets its px extent so a glyph point and a circle point match.
+                // A `symbol` channel draws a text glyph sized by `size`.
                 const glyph = resolveSymbol(scales, channels, d, i, currentData);
                 if (glyph !== undefined && /^\s*[Mm]/.test(glyph)) {
                     warn(
@@ -104,8 +80,7 @@ export function point(options = {}) {
                     });
                 }
                 if (shape === 'square') {
-                    // Side = diameter of the circle the same `size` would draw, so
-                    // a square point and a circle point occupy the same visual box.
+                    // Side = the circle's diameter, so both fill the same box.
                     const side = Math.max(0, size * 2);
                     return {
                         type: 'rect',

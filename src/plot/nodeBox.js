@@ -1,21 +1,13 @@
 // @ts-check
-// nodeBox.js — a NODE's rectangle, as the marks and edits that dock to it see it.
-//
-// A link docks to a box, a port sits on its edges, and a connect gesture tests
-// whether the pointer is inside one. All three must agree on where a node's edge
-// is, and none may read the geometry another mark DREW. So the mark that draws the
-// nodes DECLARES its box as a rule over the row (`Mark.nodeBox`: a point's radius, a
-// rect's extent, and therefore a sticker's paper), the engine hands that one rule to
-// every reader, and this helper turns it into boxes. One rule, three readers.
-//
-// With no rule — a network whose nodes are drawn by nothing that declares one, or
-// not drawn at all — a node is a small square about its position, so a routed
-// connector still leaves it square-on.
+// nodeBox.js — a node's rectangle, as links, ports and connect edits see it.
+// The node mark declares its box as a rule over the row (`Mark.nodeBox`); this
+// turns that rule into boxes. Without a rule, a node is a small square about its
+// position.
 
 import { encodeChannel } from './mark.js';
 
 /**
- * Which channels place a NODE when no box rule does: the mark's own `x`/`y`, else
+ * Which channels place a node when no box rule does: the mark's own `x`/`y`, else
  * the node table's columns of those names.
  * @param {Record<string, any>} channels
  * @param {any} nodes the nodes TableSchema
@@ -30,13 +22,8 @@ export function nodeChannelsOf(channels, nodes) {
 }
 
 /**
- * The row whose box a point is inside, or null. Only a DECLARED box counts — a
- * guessed extent is not something a pointer can be "inside".
- *
- * `accepts` says which rows may be answered at all; `rank` breaks a tie between
- * boxes that both contain the point, highest first (the innermost of two nested
- * containers), and the nearer centre wins among equals — the rule a link's body
- * drop has always used.
+ * The row whose declared box contains a point, or null. `accepts` filters rows;
+ * among hits the highest `rank` wins, then the nearest centre.
  * @param {{ x: number, y: number }} point
  * @param {any[]} rows
  * @param {import('../types').NodeBoxRule} rule

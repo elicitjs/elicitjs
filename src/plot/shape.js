@@ -1,24 +1,10 @@
 // @ts-check
-// shape — one PATH per row, centred at (x, y): a pictogram, a d3 symbol, any SVG
-// path. The custom-shape mark: it behaves like every x/y mark (the universal
-// edits, handles, effects, a network's node box and ports), and differs from
-// `point` only in what it draws.
-//
-// WHERE the shape comes from, two tiers, the same rule `curve` follows on a line:
-//   symbol channel  a field through an ORDINAL scale whose range is shape names
-//                   (`DEFAULT_SHAPES`: circle square triangle diamond star cross
-//                   wye) or SVG path strings — `symbol: { field: 'animal',
-//                   scale: { range: [cowPath, pigPath] } }`. The same channel
-//                   `point` draws as a text glyph; this mark draws it as a path.
-//   path option     a constant (a name or a path) or a function of the row, when
-//                   no symbol channel is declared. Default 'circle'.
-//
-// A shape is kept in UNIT form and placed per row (plot/shapes.js), so `size`
-// is the radius of the box it fits — the meaning it has on a point — and
-// `angle` rotates it in place. The transform is BAKED into the path (a path
-// node carries no `angle`), and the node also carries its outline polygon and
-// its centre, so both renderers pick it, effects outline it, and `resize` /
-// `rotate` pivot on it like any other mark.
+// shape — one path per row, centred at (x, y): a d3 symbol name or an SVG path.
+// The shape comes from the `symbol` channel (an ordinal scale onto names or
+// paths), else the `path` option (a constant or a function of the row; default
+// 'circle'). `size` is the radius of the box it fits; `angle` rotates it.
+// Size, angle and position are baked into `d` (a path node carries no `angle`),
+// plus an outline `points` polygon and `cx`/`cy` for picking.
 import { encodeChannel, resolveStyle, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, encodeAngle, resolveSymbol, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 import { warn } from '../core/dev.js';
@@ -85,8 +71,7 @@ export function shape(options = {}) {
         build: (currentData, scales, width, height) => {
             const defaults = markDefaults(scales, 'shape', { fill: themeOf(scales).ink });
             return currentData.flatMap((d, i) => {
-                // A row with no x or y value has no position: no shape (it sat at
-                // the centre of the plot).
+                // A row with no x or y value has no position: no shape.
                 if (missingValue(channels, 'x', d) || missingValue(channels, 'y', d)) return [];
                 const style = resolveStyle(scales, channels, d, defaults, i, currentData);
                 const cx = encodeChannel(scales, channels, 'x', d, width / 2, i, currentData);

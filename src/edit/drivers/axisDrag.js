@@ -1,19 +1,7 @@
 // @ts-check
-// axisDrag driver — the drag lifecycle for an EDITABLE numeric/temporal axis.
-//
-// The axis mark (plot/axis.js) emits draggable end-handles, one per domain extreme,
-// each carrying the FROZEN drag geometry it was drawn with (which end, the axis it
-// runs along, the anchored extreme's pixel+value, this extreme's pixel+value, and
-// the pixels-per-unit). At dragstart this driver locks the grabbed handle's geometry
-// into the feature session (mirrors brush.js's dragstart zone lock), then runs the
-// edit each tick so the domain rescales live. The edit itself (edit.axis.scale)
-// turns the locked snapshot + the pointer into the new domain — the driver owns only
-// target selection and the multi-event lifecycle, never the domain math.
-//
-// It is claimed by CAPABILITY (`type: 'axis.scale'`), the way the relative slide
-// is, so the gesture arrives through the DIRECT path: the press landed on a handle
-// node the axis drew, and the plane stays down. Under its old pick name the plane
-// was raised chart-wide for one axis handle, and every mark drag went dead.
+// axisDrag driver — the drag lifecycle for `edit.axis.scale`, claimed by type so
+// the plane stays down. At dragstart it copies the grabbed end-handle's geometry
+// into the session; the edit turns that plus the pointer into the new domain.
 
 import { pickThreshold } from '../pick.js';
 
@@ -38,10 +26,8 @@ function nearestHandle(marks, px, py, threshold) {
 }
 
 /**
- * Copy a handle node's frozen drag geometry into the session lock. Snapshotting at
- * dragstart (not re-reading the live node) is what lets the domain grow smoothly:
- * the handle moves under the pointer every tick, but the anchor + slope it rescales
- * against stay the values it started from.
+ * Copy a handle's drag geometry into the session at dragstart, so the anchor and
+ * slope stay fixed while the handle moves.
  * @param {any} handle
  * @returns {import('../../types').Session}
  */
@@ -69,8 +55,7 @@ export const axisDragDriver = {
         let changed = false;
 
         if (event.type === 'dragstart') {
-            // Lock onto the grabbed handle for the whole gesture (or nothing, if the
-            // press didn't start on a handle — then the axis drag is a no-op).
+            // Lock onto the grabbed handle; no handle means a no-op drag.
             const hit = nearestHandle(marks, event.x, event.y, threshold);
             if (hit) { session.set(lockFrom(hit)); changed = true; }
         } else if (event.type === 'drag') {

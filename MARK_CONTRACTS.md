@@ -272,7 +272,7 @@ N/A = use a different edit family (documented).
 <td>data</td>
 <td>lon/lat rows or coordinates</td>
 <td>natural</td>
-<td>vertices when <code>showVertices</code></td>
+<td>vertices when <code>showVertices</code>; shared <code>handles</code></td>
 <td><code>supportsGeo</code> (+ series in row mode)</td>
 </tr>
 <tr>

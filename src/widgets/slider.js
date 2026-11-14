@@ -1,9 +1,7 @@
 // @ts-check
-// slider.js — a continuous (or stepped) slider as a survey instrument. The knob
-// FOLLOWS the pointer along the track and a click sets it (`drag` under the
-// `probe` driver — the same hover/click flow as the line+cone, applied to a
-// single positional channel). `clamp` keeps it in range and an optional `snap`
-// lands it on `step` ticks.
+// slider.js: a continuous or stepped slider. The knob follows the pointer and a
+// click sets it (`drag` under the `probe` driver). `clamp` keeps it in range; an
+// optional `snap` lands it on `step` ticks.
 //
 // Returns an ElicitSpec: Elicit(slider({ question, domain, step })).
 
@@ -58,8 +56,7 @@ export function slider(opts = {}) {
                 channels: {
                     x: { field: 'value' }
                 },
-                // The knob tracks the pointer; a click settles it. No `create` — the
-                // value always exists, so there is exactly one knob to move.
+                // No `create`: the value always exists, so there is one knob.
                 edits: [move({ pick: 'probe', channels: ['x'], advance: false, stage })]
             })
         ]

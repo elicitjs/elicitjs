@@ -1,19 +1,8 @@
 // @ts-check
-// curves.js — the one curve vocabulary and the two path GENERATORS built on it.
-//
-// A mark's path is a list of points; how those points become a stroke (which
-// interpolator, and what a MISSING point does) is decided here, once, for both
-// renderers and for every mark that hands them `points`. Mirrors Observable
-// Plot's `curve` option; unknown names fall back to a straight polyline.
-//
-// A missing value BREAKS the path. A row whose value is null/undefined/NaN is a
-// point with no position, and `defined` leaves a gap there rather than drawing
-// through it — Plot's behaviour, and the one thing a NaN used to do instead was
-// corrupt the whole `d` string so the path vanished. A line is the one shape
-// `d3.line` handles directly; an AREA is `d3.area`, with top and bottom edges
-// generated together so the same curve applies to both in the same direction (a
-// closed polygon through one `d3.line` curved its bottom edge backwards: a
-// `stepAfter` top came back with a `stepBefore` bottom).
+// curves.js — the curve vocabulary and the line/area path generators built on it.
+// Unknown names fall back to linear. A missing value (null/NaN) breaks the path.
+// An area generates top and bottom edges together so the curve runs the same
+// direction on both.
 import * as d3 from 'd3';
 
 /** @type {Record<string, any>} */

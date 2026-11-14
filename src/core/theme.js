@@ -1,25 +1,11 @@
 // @ts-check
-// theme.js — the STYLE layer: one place that owns every default colour, font, and
-// affordance token the library draws with. Kept deliberately separate from the two
-// existing customization seams it complements:
-//
-//   · a mark's per-datum STYLE channels (fill/stroke/opacity/…) — the most specific
-//     override, resolved in plot/mark.js. A channel always wins over the theme.
-//   · the interaction-EFFECTS layer (core/effects.js) — transient feedback for
-//     interaction STATE (grab, proximity-select). The theme supplies its DEFAULTS
-//     but effects stay their own resolved object.
-//
-// The model mirrors `spec.effects → resolveEffects → ctx.effects`: a chart passes
-// `spec.theme`, the engine resolves it once (`resolveTheme`), stamps it on the scale
-// map (the same transport `projection` uses, so build() and edit ctx share one
-// object without widening any signature), and marks/chrome/renderers read defaults
-// from it. Precedence, most specific first:
+// theme.js — the style layer: every default colour, font and affordance token the
+// library draws with. A theme is data (no functions), so it deep-merges and a
+// caller can override one token (`{ ink: 'crimson' }`) or a family. The engine
+// resolves it once and stamps it on the scale map. Precedence, most specific first:
 //
 //   per-mark channel/option  >  theme.marks[name]  >  theme token  >  renderer base
 //   spec.theme               >  setTheme() base    >  DEFAULT_THEME
-//
-// A theme is DATA — no functions, no closures — so it deep-merges cleanly and a
-// caller can override one token (`{ ink: 'crimson' }`) or a whole family.
 
 import { DEFAULT_PALETTE, DEFAULT_RAMP, DEFAULT_DIVERGING } from './encoding.js';
 import { DEFAULT_EFFECTS } from './effects.js';
@@ -27,34 +13,23 @@ import { themes } from './themes.js';
 import { warn } from './dev.js';
 
 /**
- * The built-in defaults. Every value here is the literal the library drew with
- * BEFORE the theme layer existed, so `resolveTheme()` with no user theme is
- * pixel-identical to the pre-theme output. Change a value here and it recolours the
- * whole library from one place.
+ * The built-in defaults. A new default must reproduce the existing look exactly;
+ * changing a value restyles the whole library.
  * @type {import('../types').Theme}
  */
 export const DEFAULT_THEME = {
-    // The primary mark colour. Every mark that historically defaulted to
-    // 'steelblue' (bar/point/line/area/rect/dotStack/waffle/tick/geo) reads this,
-    // so one token restyles the chart's ink.
+    // The primary mark colour, the default ink of every mark.
     ink: 'steelblue',
-    // Interactive emphasis: draggable handles, a committed survey answer, an axis
-    // edit handle. Matches the widgets' historical accent.
+    // Interactive emphasis: handles, a committed survey answer, an axis edit handle.
     accent: '#2563eb',
     // Secondary chrome / de-emphasised marks.
     muted: '#9ca3af',
-    // Draggable-handle ink, shared by every mark that draws one (see
-    // resolveHandles in plot/mark.js). Split out from `accent` so a theme can make
-    // handles read differently from other interactive emphasis without changing
-    // both. `handleStroke` is the halo that keeps a handle legible on top of the
-    // mark it belongs to — arc, face, axis, legend and geo each hard-coded '#fff'
-    // for exactly this, which meant none of them worked on a dark theme.
+    // Draggable-handle ink (resolveHandles in plot/mark.js), separate from `accent`.
+    // `handleStroke` is the halo that keeps a handle legible on its own mark.
     handle: '#2563eb',
     handleStroke: '#fff',
-    // The chart's backdrop, applied as the CSS background of the svg/canvas (so it
-    // covers the margin band too). Defaults to null = transparent (the host page's
-    // background shows through, exactly as before); a dark theme sets it to paint the
-    // whole chart. This is the one piece a dark-mode chart needs beyond light ink.
+    // The chart's backdrop: the CSS background of the svg/canvas, margins included.
+    // null = transparent.
     background: null,
 
     // Colour scales fed to resolveScales when a channel names no explicit range or
@@ -63,29 +38,20 @@ export const DEFAULT_THEME = {
     ramp: DEFAULT_RAMP,
     diverging: DEFAULT_DIVERGING,
 
-    // Typography. `family`, when non-null, is emitted on the root svg (and used by
-    // the canvas renderer) so every label inherits it. It defaults to null so the
-    // built-in look inherits the host page's font exactly as before — a theme
-    // (e.g. themes.survey) opts into a specific family. `size` matches the
-    // historical geom-text fallback (10).
+    // Typography. A non-null `family` is set on the root svg (and the canvas) so
+    // every label inherits it; null inherits the host page's font.
     font: { family: null, size: 10, labelSize: 12, titleSize: 13 },
 
-    // Chart titles (spec.title / subtitle / caption — core/titles.js). A null fill
-    // takes the axis label ink, so a dark theme's titles follow its labels. A null
-    // fontFamily inherits `font.family`; a headline may set its own (a serif title
-    // over sans-serif labels is the commonest house style there is).
+    // Chart titles (core/titles.js). A null fill takes the axis label ink; a null
+    // fontFamily inherits `font.family`.
     title: { fill: null, fontSize: 16, fontWeight: 600, fontFamily: null, fontStyle: null },
     subtitle: { fill: null, fontSize: 12, fontWeight: 'normal', fontFamily: null, fontStyle: null },
     caption: { fill: null, fontSize: 11, fontWeight: 'normal', fontFamily: null, fontStyle: null },
 
-    // Chart chrome. Axis spine/ticks (stroke), tick labels + title (labelFill), the
-    // edit handle on a draggable axis (handle). Grid lines are separate.
-    //
-    // Every token is also an `axis()` option of the same name, and the option wins.
-    // `discrete` / `continuous` hold per-KIND overrides of any token, read off the
-    // scale's capability flag — which is how a theme says "no spine on the value
-    // axis, a spine under the categories" (the newsroom look Flint's presets share,
-    // https://github.com/microsoft/flint-chart, `structure.axis.measure|categorical`).
+    // Chart chrome: spine/ticks (stroke), tick labels and title (labelFill), the
+    // axis edit handle (handle). Every token is also an `axis()` option of the same
+    // name, and the option wins. `discrete` / `continuous` override any token per
+    // scale kind (Flint's `structure.axis.measure|categorical`).
     axis: {
         stroke: '#6b7280',
         labelFill: '#374151',
@@ -112,50 +78,37 @@ export const DEFAULT_THEME = {
         titlePadding: 0,
         // The title's place along the axis: 'start', 'middle', 'end' (right / top).
         titleAnchor: 'middle',
-        // A label's text-anchor ('start' | 'middle' | 'end'); null is the side's own
-        // (centred under an x tick, flush against a y axis). `labelOffset` moves
-        // every label along the axis, px. With a negative `tickPadding` these put
-        // the labels inside the plot — the space-saving axis.
+        // A label's text-anchor; null is the side's own. `labelOffset` moves labels
+        // along the axis (px). With a negative `tickPadding` these put labels inside
+        // the plot.
         labelAlign: null,
         labelOffset: 0,
         // Per-kind overrides (any token above). Empty: both kinds look alike.
         discrete: {},
         continuous: {},
     },
-    // Gridlines. `show` decides which IMPLICIT axes get a grid without the spec
-    // asking (`axes: { y: { grid: true } }` still works either way): 'none' keeps
-    // the historical look; 'value' grids the axis the value runs along (the
-    // continuous one, y when both are — Flint's "measure" grid); 'continuous'
-    // every continuous axis; 'all' every axis.
-    // `zero` emphasises the line at 0 on a continuous grid (a baseline rule):
-    // null for none, or `{ stroke, strokeWidth, strokeDash }`.
-    // `bandPosition` puts a band axis's gridlines at that fraction of each band
-    // (0 = between the categories); null is the centre.
+    // Gridlines. `show` picks which implicit axes get a grid: 'none', 'value' (the
+    // axis the value runs along), 'continuous', or 'all'. `zero` emphasises the line
+    // at 0 (null, or `{ stroke, strokeWidth, strokeDash }`). `bandPosition` places a
+    // band axis's gridlines at that fraction of each band (0 = between categories);
+    // null is the centre.
     grid: { stroke: '#e5e7eb', strokeWidth: 1, strokeDash: null, opacity: null, show: 'none', zero: null, bandPosition: null },
 
-    // The PLOT AREA's own surface, distinct from `background` (which covers the
-    // margins too). `fill` paints behind the grid — the ggplot2 grey panel — and
-    // `stroke` draws a frame around it. Both null: no panel node at all.
+    // The plot area's own surface (core/panel.js): `fill` behind the grid, `stroke`
+    // a frame. Both null: no panel.
     panel: { fill: null, stroke: null, strokeWidth: 1 },
 
-    // Inner padding of a band scale (the gap between bars), as a fraction of the
-    // step. A channel's own `scale: { padding }` still wins. Flint calls the
-    // complement `bandFraction` (bar width / step).
+    // Inner padding of a band scale, as a fraction of the step. A channel's own
+    // `scale: { padding }` wins.
     bandPadding: 0.1,
 
-    // Non-interactive annotation guides (guides/*) PLUS the per-part tokens an
-    // edit's self-drawn guide reads (edit/guide.js — bounds / catchment / track).
-    // Annotation literals keep the historical look; edit-guide parts merge under
-    // GUIDE_PARTS defaults, then under a per-edit `guide: { … }` override.
+    // Annotation guides (guides/*) and the parts an edit's self-drawn guide reads
+    // (edit/guide.js), merged under GUIDE_PARTS and a per-edit `guide: { … }`.
     guide: {
         rule: { stroke: '#64748b', strokeDash: '5 4', strokeWidth: 1, opacity: 0.9 },
         region: { fill: '#64748b', opacity: 0.1 },
-        // `currentStroke`/`currentWidth` ring the swatch(es) the target row(s)
-        // currently hold, so a picker says what a click would REPLACE as well as
-        // what it can set — and, by its absence, that there is nothing to write to.
-        // That ring is the whole unarmed-state signal: a legend is a key first, so
-        // it may not dim its own swatches to report a picker's state (their fill is
-        // the encoding, and a faded key reports a colour the marks do not have).
+        // `currentStroke`/`currentWidth` ring the swatch(es) the target row(s) hold:
+        // the only picker-state signal. Never dim swatches; their fill is the encoding.
         legend: {
             stroke: '#374151', labelFill: '#374151', fontSize: 11,
             currentStroke: '#111827', currentWidth: 2,
@@ -175,17 +128,14 @@ export const DEFAULT_THEME = {
     // `guide: { color }` still wins.
     constraint: { color: '#e4572e' },
 
-    // Interaction-effects defaults. Merged UNDER spec.effects by resolveEffects, so
-    // a theme can restyle grab/select while a chart's own effects spec still wins.
+    // Effects defaults, merged under spec.effects by resolveEffects.
     effects: DEFAULT_EFFECTS,
 
-    // Ghost-preview styling (probe driver, Phase 2). A ghost node multiplies its
-    // opacity by `opacity`; a non-null fill/stroke/strokeDash overrides the
-    // committed mark's paint so the preview reads as tentative.
+    // Ghost-preview styling (probe driver): `opacity` multiplies; a non-null
+    // fill/stroke/strokeDash overrides the mark's paint.
     ghost: { opacity: 0.45, fill: null, stroke: null, strokeDash: null },
 
-    // Survey-instrument affordance tokens (widgets/theme.js). The historical
-    // module-level THEME const, now injectable per-chart.
+    // Survey-instrument tokens (widgets/theme.js).
     widget: {
         accent: '#2563eb',      // a committed answer
         ring: '#cbd5e1',        // an empty option
@@ -199,11 +149,8 @@ export const DEFAULT_THEME = {
         radius: 11
     },
 
-    // Sparse per-mark overrides, keyed by mark name. Empty by default — a mark's
-    // own built-in fallback (passed to markDefaults) stands unless a theme fills a
-    // slot here. e.g. `marks: { bar: { fill: 'crimson' } }`. Beyond the paint
-    // channels, a few marks read a geometry default here too: `bar.rx` / `rect.rx`
-    // (corner radius) and `point.size` (radius).
+    // Sparse per-mark overrides keyed by mark name (`marks: { bar: { fill: 'crimson' } }`).
+    // A few marks read geometry here too: `bar.rx`, `rect.rx`, `point.size`.
     marks: {}
 };
 
@@ -233,9 +180,7 @@ export function deepMerge(base, over) {
     return out;
 }
 
-// The app-wide base, settable via setTheme(). A per-chart spec.theme layers over
-// this, which layers over DEFAULT_THEME. Starts empty so DEFAULT_THEME is the
-// baseline until an app opts in.
+// The app-wide base set by setTheme(); spec.theme layers over it.
 /** @type {import('../types').ThemeSpec} */
 let globalTheme = {};
 
@@ -250,13 +195,8 @@ export function setTheme(partial) {
 }
 
 /**
- * Flatten a theme's `extends` chain into one partial. `extends` names a built-in
- * theme (a key of `themes`) to start from; the theme's own tokens deep-merge over
- * it. The idea and the word are Flint's (`ThemeSpec.extends`,
- * https://github.com/microsoft/flint-chart/blob/main/docs/theme-spec.md), where a
- * preset like `pop` is a remix of `swiss`. A bare string is shorthand for
- * `{ extends: name }`. An unknown name warns and contributes nothing, so a typo
- * shows the default look instead of throwing.
+ * Flatten a theme's `extends` chain into one partial (Flint's `extends`). A bare
+ * string means `{ extends: name }`. An unknown name warns and contributes nothing.
  * @param {any} user a partial theme, a theme name, or null
  * @param {number} [depth] cycle guard
  * @returns {any} a partial with no `extends` key
@@ -278,7 +218,7 @@ function expandTheme(user, depth = 0) {
 
 /**
  * Resolve a chart's effective theme: DEFAULT_THEME < setTheme() base < spec.theme.
- * Either layer may be a built-in theme's NAME (`'dark'`, `'nyt'`) or a partial,
+ * Either layer may be a built-in theme's name (`'dark'`, `'nyt'`) or a partial,
  * and a partial may `extends` a named theme.
  * @param {import('../types').ThemeSpec | null} [user]
  * @returns {import('../types').Theme}
@@ -307,9 +247,8 @@ export function axisToken(theme, scale, token) {
 }
 
 /**
- * The theme a mark's build() can see: the engine stamps the resolved theme on the
- * scale map (the projection-transport pattern) so no build() signature changes.
- * Falls back to DEFAULT_THEME for a bare scale map (a mark unit-tested in isolation).
+ * The theme a mark's build() sees, stamped on the scale map by the engine.
+ * DEFAULT_THEME for a bare scale map (a mark tested in isolation).
  * @param {any} scales
  * @returns {import('../types').Theme}
  */

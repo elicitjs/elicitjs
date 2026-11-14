@@ -1,62 +1,20 @@
 // @ts-check
-// define.js — the CONSTRAINT descriptor, its normalizer, and the one place a
-// constraint is applied.
+// define.js: the constraint descriptor, option checking, and `applyConstraint`,
+// the one place a constraint runs.
 //
-// A constraint is a DATA-LAYER INVARIANT: a pure rule over one table's rows. By
-// the time it runs, every gesture has already been inverted through the scales
-// (in the edit's apply), so the proposed rows are entirely in data space. The
-// invariant never sees pixels, scales-as-geometry, pointers or node geometry — it
-// only judges the data:
-//
-//   gesture -> inverse scale -> data-space proposal -> invariant(data)? -> commit
-//
-// This is why the same invariant holds no matter which edit produced the change
-// (move / resize / create / remove / paste): it is a property of the dataset, not
-// of the gesture. Attaching "sum = 100" to one edit would let another edit bypass
-// it; a data invariant runs on every commit and cannot be bypassed.
-//
-// ── The descriptor ──────────────────────────────────────────────────────────
-// A constraint is a plain descriptor, the parallel of an Edit's:
-//
+// A constraint is a data invariant over one table's rows, checked on every commit:
 //   { type, field?, options, table?, guide?, apply(ctx) }
-//
-//   type     which keyword built it (`'clamp'`) — the one identity key every feature
-//            kind carries; edit/guide.js draws a rule's bounds by it
-//   field    the column(s) the rule is ABOUT. OMITTED, it is the column the
-//            dispatching EDIT writes — so `clamp({ min: 0 })` on a one-column widget
-//            names nothing twice. (It used to default to the literal 'y', a column
-//            name baked into the library, which silently governed the wrong column
-//            on any chart whose value field was called anything else.)
-//   options  the rule's own configuration, kept so a guide can read it
-//   table    the table the rule is about, by role or name (default: the primary)
-//   guide    an optional DRAWER of the rule's boundary (see edit/guide.js)
-//   apply    the RULE, against a clean data-only context, returning whatever shape
-//            is natural:
-//              number    -> the constrained value for the active datum's `field`
-//              object    -> fields merged into the active datum
-//              array     -> a full replacement dataset (cross-datum rules)
-//              false     -> reject the whole interaction
-//              true / undefined -> accept unchanged
-//
-// The context `apply` receives:
-//   { data, oldData, activeIndex, active, field, value, domain, table, tables }
-// where `active` is the datum the gesture touched/created (by index), `value` is
-// its `field`, `domain` is that field's declared data range, and `table`/`tables`
-// let a rule look across the dataset. No scales, no pointer — just data.
-//
-// A BARE FUNCTION `(newData, oldData, ctx) => rows | boolean | undefined` is still
-// accepted in `spec.constraints` as the low-level form; `applyConstraint` runs
-// either shape. `constraints.custom(apply, meta)` (= `defineConstraint`) is how a
-// spec author writes one; `makeConstraint` is what the built-ins are made with.
+// `apply` returns a number (the active datum's `field`), an object (merged into
+// the active datum), an array (replacement rows), `false` (reject) or
+// `true` / `undefined` (accept). `field` omitted is the column the dispatching
+// edit writes. A bare function `(newData, oldData, ctx) => rows | boolean` also works.
 
-import { scaleKey } from '../core/scales.js';
+import { scaleFor } from '../core/scales.js';
 import { warn, warningsEnabled } from '../core/dev.js';
 import { CONSTRAINT_OPTIONS } from '../vocabulary.js';
 
 /**
- * Resolve the declared data range of a field, for constraints that default a
- * bound to it (e.g. clamp with an omitted max). Purely a convenience lookup — the
- * value is in DATA space (the channel's domain), not pixels.
+ * The declared data range of a field, from the scale of the channel that encodes it.
  * @param {string | undefined} field
  * @param {any} scales
  * @param {any} markChannels
@@ -67,9 +25,7 @@ function domainOfField(field, scales, markChannels) {
   for (const key of Object.keys(markChannels)) {
     const spec = markChannels[key];
     if (!spec || spec.field !== field) continue;
-    // A scale is one ENCODING, so it is found by (channel, field); the bare name
-    // is the positional path and the fallback. The field is already in hand here.
-    const s = scales[scaleKey(key, field)] || scales[key];
+    const s = scaleFor(scales, key, field);
     if (!s) continue;
     if (s.domainConfig) return s.domainConfig;
     if (typeof s.domain === "function") return s.domain();
@@ -78,8 +34,7 @@ function domainOfField(field, scales, markChannels) {
 }
 
 /**
- * Option keys that are WRONG in a specific way, with the correction — the
- * constraint layer's `MISTAKEN_OPTIONS`. Each was a real spelling once.
+ * Mistaken option keys, with the correction to show.
  * @type {Record<string, string>}
  */
 const MISTAKEN_CONSTRAINT_OPTIONS = {
@@ -91,9 +46,7 @@ const MISTAKEN_CONSTRAINT_OPTIONS = {
 };
 
 /**
- * Validate a constraint factory's options against its vocabulary, and hand them
- * back. Constraints were the one grammar namespace with no option checking: a
- * `clamp({ maximum: 5 })` accepted every edit in silence.
+ * Warn on options a constraint factory does not read, and return them unchanged.
  * @template T
  * @param {string} type the factory name
  * @param {T} options
@@ -129,16 +82,9 @@ function sameCell(a, b) {
 }
 
 /**
- * The cells a proposal CHANGED, over the columns a rule is about: every
- * `(row, field)` in `ctx.fields` whose value differs from `oldData` (every field
- * of a row that has no counterpart, i.e. an appended one), always including the
- * active datum's own `field`.
- *
- * This is what lets a one-column rule (snap, clamp) hold for the WHOLE proposal
- * rather than the one cell the gesture touched: an `ordering` push moves a
- * neighbouring column, a `monotonic` push moves other rows, a stack edge moves
- * two rows at once — and a rule that only ever read `ctx.value` left all of those
- * unsnapped and unclamped. A rule iterates these and returns the repaired rows.
+ * Every `(row, field)` in `ctx.fields` that differs from `oldData` (all fields of
+ * an appended row), plus the active datum's `field`. A rule repairs every one of
+ * these, not just `ctx.value`, since pushes and stacks move other cells too.
  * @param {import('../types').ConstraintContext} ctx
  * @returns {{ i: number, field: string }[]}
  */
@@ -169,8 +115,7 @@ export function changedCells(ctx) {
 }
 
 /**
- * Normalize a constraint spec into the canonical descriptor. The mirror of
- * `makeEdit` (edit/shared.js).
+ * Normalize a constraint spec into the descriptor (the counterpart of `makeEdit`).
  * @param {{ type: string, field?: string | string[], options?: Record<string, any>,
  *   table?: string, guide?: (ctx: any) => any[], apply: (ctx: import('../types').ConstraintContext) => any }} spec
  * @returns {import('../types').ConstraintSpec}
@@ -187,10 +132,9 @@ export function makeConstraint(spec) {
 }
 
 /**
- * Author a constraint from a RULE against the data-only context. The extension
- * point (`constraints.custom` is this function): write the rule, return the
- * natural shape, and the plumbing — active datum, field, domain, result
- * normalization — is done for you.
+ * Author a constraint from a rule over the data-only context (`constraints.custom`).
+ * The rule returns a value, an object, replacement rows, or `false` to reject;
+ * the active datum, field, domain and result handling are done for you.
  * @param {(ctx: import('../types').ConstraintContext) => any} reducer
  * @param {{ type?: string, field?: string | string[], options?: Record<string, any>,
  *   table?: string, guide?: (ctx: any) => any[] }} [meta]
@@ -201,14 +145,9 @@ export function defineConstraint(reducer, meta = {}) {
 }
 
 /**
- * Run ONE constraint over a proposal — the single place either shape is applied.
- * A bare function is the low-level form and is called as it always was; a
- * descriptor gets the data-only context built for it and its result normalized.
- *
- * `field` resolves in two steps: the constraint's own, else the column the
- * dispatching edit writes (`cctx.field`, threaded by the engine). A rule that is
- * about one column (clamp, snap) applies to the column being edited when it names
- * none, which is what a one-column widget's `clamp({ min: 0 })` means.
+ * Run one constraint over a proposal. A bare function is called directly; a
+ * descriptor gets the data-only context and its result normalized. `field` is
+ * the constraint's own, else the column the dispatching edit writes.
  * @param {import('../types').Constraint} constraint
  * @param {any[]} newData
  * @param {any[]} oldData
@@ -229,10 +168,8 @@ export function applyConstraint(constraint, newData, oldData, context) {
   const fields = Array.isArray(c.field) ? c.field : (field != null ? [field] : []);
   /** @type {Record<string, number[] | undefined>} */
   const domains = {};
-  // A column's declared range: the scale's when the dispatching mark encodes it,
-  // else the SCHEMA's. Reading only the dispatching mark's channels left a field
-  // another mark draws unbounded (a clamp over lo/mean/hi from the line that only
-  // draws the mean let a sweep write lo past the domain).
+  // A column's range: the scale's when the dispatching mark encodes it, else the
+  // schema's, so a field only another mark draws is still bounded.
   for (const f of fields) {
     domains[f] = domainOfField(f, context.scales, context.markChannels)
       || (context.schema && context.schema[f] && Array.isArray(context.schema[f].domain) ? context.schema[f].domain : undefined);

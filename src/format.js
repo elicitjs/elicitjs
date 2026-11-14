@@ -1,14 +1,7 @@
 // @ts-check
-// format.js — display formatters for text marks (and anywhere else a value is
-// shown as a string). Specs stay declarative: a mark takes `format` as a
-// d3-format / d3-time-format string OR a function — the same shape axis already
-// uses for `tickFormat`. These helpers just mint common formatters so authors
-// write `format: format.number('.1f')` instead of importing d3 themselves.
-//
-// Formatters are DISPLAY-ONLY. The underlying field stays the raw value, so a
-// drag on a numeric readout still inverts through the scale correctly, and
-// editText commits the typed string into the field without round-tripping
-// through the display formatter.
+// format.js: display formatters. A `format` option takes a function or a
+// d3-format specifier string (dates need a function, e.g. `format.time()`).
+// Formatting is display-only; the field keeps its raw value.
 
 import * as d3 from 'd3';
 

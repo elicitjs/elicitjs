@@ -7,16 +7,14 @@ import { warn } from '../dev.js';
 import { markLabel } from '../guards.js';
 
 /**
- * Where features are FLATTENED: the spec's marks, elements and implicit layers
- * become the one ordered feature list the engine builds, dispatches and paints,
- * and the channel-level sugars (`ports`, `contains`/`dodge`/`fit`, `tip`) are
- * desugared here, once. Everything in this file runs at Elicit() time and reads
- * no chart state — the passes are pure functions of the spec and the schema.
+ * Flattens the spec's marks, elements and implicit layers into one ordered
+ * feature list, and desugars `ports`, `contains`/`dodge`/`fit` and `tip`.
+ * Runs once at Elicit() time; reads no chart state.
  */
 
 /**
  * The flattened feature list: auto axes, the author's elements and marks, then
- * the implicit legends — with an engine id stamped on every feature that has none.
+ * the implicit legends. Stamps an id on every feature that has none.
  *
  * @param {import('../../types').ElicitSpec} spec
  * @param {any} theme the resolved theme
@@ -24,23 +22,10 @@ import { markLabel } from '../guards.js';
  */
 export function assembleFeatures(spec, theme) {
     const { marks: userMarks = [], elements: userElements = [], axes, legends } = spec;
-    // Prepend auto-injected axis/grid marks (drawn behind marks via the background
-    // layer). Explicit axis/element the user composed into `marks` or `elements`
-    // are preserved. A projection chart has no cartesian axes — skip autoAxes
-    // unless the caller forced them (axes !== undefined still respected via
-    // autoAxes(false)). Flattened because a composite mark desugars to
-    // an ARRAY of features.
+    // Auto axes go first (behind the marks); a projection chart gets none unless
+    // `axes` is set. Legends go last. Flattened because a composite is an array.
     const userFeatures = [...userElements, ...userMarks];
     const axesOpt = spec.projection != null && axes === undefined ? false : axes;
-    // …and append auto-injected LEGEND marks, the same IMPLICIT layer for the
-    // non-positional scales (core/legends.js). `axes` had this convenience and
-    // `legends` did not, so an axis was one spec key and a legend was a mark you had
-    // to compose by hand. Appended (not prepended) because a legend draws its own
-    // reserved band beside the plot rather than behind the marks.
-    // A legend-scoped edit declared on a MARK's channel moves to that channel's
-    // legend, taking the mark's field and table with it (core/legends.js). Runs
-    // before autoLegends so a minted legend counts as "explicit" for its channel
-    // and the implicit layer doesn't add a second one beside it.
     const features = [
         ...autoAxes(userFeatures, axesOpt, theme),
         ...userFeatures,
@@ -48,21 +33,15 @@ export function assembleFeatures(spec, theme) {
     ].flat(Infinity);
 
     features.forEach((feature, index) => {
-        // `autoId` marks the id as ENGINE-assigned, so a diagnostic can tell an id the
-        // author chose (worth quoting back) from a positional placeholder (worth
-        // naming the factory instead). Without it every guard reported
-        // `mark "feature-3"`, since `id` is optional and most specs omit it.
+        // `autoId` lets diagnostics tell an engine id from one the author chose.
         if (!feature.id) { feature.id = `feature-${index}`; feature.autoId = true; }
     });
     return features;
 }
 
 /**
- * Which TABLE each feature is a view over, resolved once. A mark states a table
- * by NAME (`table: 'links'`); with none, it takes the table filling its ROLE —
- * `link` asks for `links`, every other mark for the structure's primary. Going
- * through the role is what makes renaming free: a schema that calls its tables
- * `claims`/`supports` needs no `table:` written anywhere.
+ * Resolve the table each feature draws: its `table` name, else the table
+ * filling its `tableRole`, else the primary.
  *
  * @param {any[]} features
  * @param {import('../../types').SchemaSpec} schemaSpec
@@ -85,14 +64,9 @@ export function bindFeatureTables(features, schemaSpec) {
 }
 
 /**
- * ── Ports: a channel that becomes a feature ────────────────────────────────
- * `ports` on a mark drawing a network's nodes says where links may meet it. It
- * desugars HERE, once, into a sibling PORT feature (plot/port.js) — the composite
- * precedent: one declared mark, several features. A separate feature is what
- * keeps a drag on a port off the host's own edits (its `move`), and placing it
- * after the host's whole glyph keeps it painted on top of the node.
- *
- * Splices the port features into `features` in place.
+ * Desugar a node mark's `ports` channel into a sibling port feature
+ * (plot/port.js), spliced in place after the host's glyph so it paints on top.
+ * Being a separate feature keeps a port drag off the host's own edits.
  *
  * @param {any[]} features
  * @param {string | null} nodesTableName the table filling the `nodes` role
@@ -130,14 +104,9 @@ export function desugarPorts(features, nodesTableName) {
 }
 
 /**
- * ── Containers: two statements in the channel map ──────────────────────────
- * Under a hierarchy, a mark drawing the nodes says which rows may HOLD others
- * (`contains`: a constant, a field or a fn — the `ports` precedent: a per-row
- * capability the ENGINE reads, never the mark) and which of its size channels
- * follow from a row's contents (`fit: true` — see core/fit.js). `contains` is
- * taken off the channel map here so no scale is built for it; `fit` stays, a
- * flag beside the channel's field. `dodge` is the third: which rows keep clear
- * of their siblings (and by what `gap`), read the same way.
+ * Desugar a hierarchy node mark's `contains` and `dodge` channels onto the
+ * feature (no scale is built for them) and check its `fit: true` size channels
+ * (core/fit.js).
  *
  * @param {any[]} features
  * @param {string | null} hierarchyNodes the nodes table, when the structure is a hierarchy
@@ -187,9 +156,7 @@ export function desugarContainers(features, hierarchyNodes) {
 }
 
 /**
- * A mark's `tip` shorthand is a tip GUIDE bound to that mark — desugared once,
- * here, the way `ports` becomes a port feature. The guide path is what makes
- * a tooltip harmless: it reads state and makes nothing pointer-active.
+ * Desugar each mark's `tip` shorthand into a tip guide bound to that mark.
  *
  * @param {any[]} features
  * @returns {any[]}
@@ -208,10 +175,8 @@ export function tipGuidesOf(features) {
 }
 
 /**
- * The channel map of the mark that DRAWS a table, for an edit that writes a table
- * its own mark doesn't draw (connect, on a node's ports, writes a link row). The
- * link's channels name the columns, so a column is named in one place only.
- * Memoized per table name.
+ * The channel map of the mark that draws a table, for an edit writing a table
+ * its own mark doesn't draw (connect writes a link row). Memoized per table.
  *
  * @param {any[]} features
  * @returns {(name: string) => Record<string, any> | null}

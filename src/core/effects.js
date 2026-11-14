@@ -1,76 +1,18 @@
 // @ts-check
 import { color as d3color } from 'd3';
-// effects.js — the interaction-EFFECTS layer: transient visual feedback for the
-// STATE of an interaction, kept deliberately separate from a mark's STYLE channels
-// (fill/stroke/opacity/…) and from its GUIDES.
+// effects.js — interaction effects: transient feedback for an interaction's state
+// (hovered, selected, target, grabbed), separate from style channels and guides.
+// See .claude/rules/guides-effects-rendering.md.
 //
-// ── The three-way split ─────────────────────────────────────────────────────
-// A chart says three different kinds of thing visually, and each has its own home:
+// Element effects restyle the mark's own node through `node.effectStyle`, applied
+// as CSS style properties so the mark's paint attributes are never overwritten.
+// `outline` is an overlay node tagged `effect: true` (topmost layer) and
+// `guide: true` (non-interactive). The engine's state pass decides effects;
+// renderers only apply them.
 //
-//   STYLE    what the data IS.        channels — fill, stroke, size, opacity.
-//   GUIDE    what the RULE is.        edit.guide — a clamp's bounds, a snap's
-//                                     stops, a pick's catchment, a handle's track.
-//                                     Persistent; describes what you MAY do.
-//   EFFECT   what is HAPPENING now.   this file — hovered, selected, grabbed.
-//                                     Transient; describes interaction state.
-//
-// The split was blurred before: `guide: true` on an edit drew constraint bounds
-// (a rule) AND the proximity ring + selected-mark outline (a state), while
-// `effects` separately owned `grab` and a `select` that overlapped the second half.
-// So the same feedback had two owners, "guide" meant two things, and only its
-// colour could be changed. Now a guide draws rules and an effect draws state.
-//
-// ── The states ──────────────────────────────────────────────────────────────
-//   hovered   the pointer is over this mark, or a proximity driver has resolved it
-//             as the one a gesture would take. Both routes feed this ONE state, so
-//             "this is the mark you are about to touch" reads identically whether
-//             it was found by pointing or by nearness.
-//   selected  the mark is in the chart's selection (edit.select / el.select).
-//   grabbed   a drag on this mark is in flight.
-//
-// ── How an effect is allowed to paint ───────────────────────────────────────
-// Two mechanisms, and the constraint behind both is that an effect must NEVER
-// destroy data-driven style:
-//
-//   element effects — the mark's OWN node, restyled: the engine stamps the state's
-//                     filter/opacity/fill/stroke/strokeWidth/cursor onto the node as
-//                     `node.effectStyle`, and the renderer applies them as CSS style
-//                     PROPERTIES (SVG) or as a paint override (canvas). A CSS
-//                     property beats an SVG presentation attribute, so the effect
-//                     wins while it is set and the mark's real paint reappears the
-//                     moment it is removed. The renderer writes `_applyStyle` to
-//                     ATTRIBUTES, so the two never collide and a mid-drag
-//                     re-render can't wipe the effect. (The original bug this
-//                     rule comes from: a grab highlight that set the `stroke`
-//                     attribute erased whatever stroke the mark's data had given
-//                     it, permanently.)
-//   overlay effects — extra scene nodes tagged `effect: true` (and `guide: true`
-//                     so they stay non-interactive) that the renderer paints in
-//                     the topmost layer. Without the `effect` pin an outline would
-//                     land in the behind-marks guide layer and draw UNDER the mark
-//                     it outlines.
-//
-// Why `outline` alone is an overlay: it is the one part of the vocabulary that needs
-// geometry the mark does not have — padding OUTSIDE the shape. Everything else has to
-// be the node itself, because a copy drawn on top cannot express half the vocabulary:
-// you cannot DIM a mark by drawing over it (`opacity`, `filter: brightness()`), and a
-// copied `fill` over a semi-transparent mark composites to the wrong colour. Restyling
-// the node is also aligned by construction — it IS the node, so it carries the node's
-// `angle` transform for free. An overlay has to be told (see `outlineNodes`).
-//
-// Every state accepts the same vocabulary, so there is one thing to learn:
+// Every state takes the same vocabulary; `false` disables it:
 //   { filter, opacity, fill, stroke, strokeWidth, cursor,
-//     outline: { color, width, pad, dash, opacity } }
-// `false` for a state disables it.
-//
-// ── One decider ─────────────────────────────────────────────────────────────
-// The ENGINE's state pass owns both halves. It was split before: outlines came from
-// the state pass, while the element half was applied by the D3 renderer straight off
-// its own `pointerenter`/`d3.drag` — so `hovered: { fill }` painted only under SVG
-// direct pick (never on a proximity driver's hover, never on canvas), `selected:
-// { fill }` did nothing at all, and `grabbed` read `filter` and ignored the other
-// five. The renderer is now a dumb applier of `node.effectStyle`, which is what makes
-// the two hover sources paint identically the way this file always claimed.
+//     outline: { color, darken, width, pad, dash, opacity } }
 
 
 /** The element-effect properties, applied as CSS style props by the renderer. */
@@ -81,11 +23,8 @@ export const EFFECT_STATES = ['hovered', 'selected', 'target', 'grabbed'];
 
 /** @type {any} */
 export const DEFAULT_EFFECTS = {
-    // Pre-press: an outline traced ON the mark's edge (pad 0), in a darker shade of
-    // the mark's own colour (`color: 'auto'`), so a teal bar lights up in deep teal
-    // and a coral dot in deep coral rather than every mark in one signal orange.
-    // Deliberately lighter than `selected` — hover is a question, selection is an
-    // answer — so it is a shallower shade and a hair thinner.
+    // Pre-press: an outline on the mark's edge in a darker shade of its own colour,
+    // lighter and thinner than `selected`.
     hovered: {
         outline: { color: 'auto', darken: 0.6, width: 3, pad: 0, dash: null, opacity: 1 },
     },
@@ -93,23 +32,18 @@ export const DEFAULT_EFFECTS = {
     selected: {
         outline: { color: 'auto', darken: 1.5, width: 3.5, pad: 0, dash: null, opacity: 1 },
     },
-    // Where the thing in flight would LAND if released now — a container about to
-    // take the node being dragged into it. Distinct from hover (which mark a press
-    // would take) and from selection, so it has its own colour.
+    // Where the dragged thing would land if released now (a container about to
+    // take a node).
     target: {
         outline: { color: '#2563eb', width: 2.5, pad: 3, dash: null, opacity: 0.9 },
     },
-    // Mid-drag. An element effect, so it survives the re-render each drag tick
-    // triggers without being re-derived from scene state.
+    // Mid-drag. An element effect, so it survives the re-render each drag tick.
     grabbed: { filter: 'brightness(0.82)' },
 };
 
 /**
- * The catchment ring a proximity driver draws at the pointer. It is a GUIDE, not an
- * effect — it shows the pick's reach (a rule about what a gesture will grab), not
- * the state of any mark — so it lives with the other guide defaults and is
- * customized through `edit.guide.catchment`. Kept here only as the shared default
- * appearance, next to the state it accompanies.
+ * The catchment ring a proximity driver draws at the pointer. It is a guide
+ * (customized through `edit.guide.catchment`); this is its shared default look.
  * @type {any}
  */
 export const DEFAULT_CATCHMENT = { color: '#ff9800', dash: '2 4', width: 1, opacity: 0.45 };
@@ -135,11 +69,8 @@ function resolveState(user, base) {
 }
 
 /**
- * Merge a user `effects` spec over the defaults, returning one resolved config per
- * interaction state.
- *
- * `base` lets a theme supply the defaults (theme.effects) that a chart's own
- * `effects` spec then layers over — so precedence is spec.effects > theme > built-in.
+ * Merge a user `effects` spec over the defaults, one resolved config per state.
+ * `base` lets a theme supply the defaults: spec.effects > theme > built-in.
  * @param {any} [user]
  * @param {any} [base]
  * @returns {any}
@@ -150,8 +81,7 @@ export function resolveEffects(user = {}, base = DEFAULT_EFFECTS) {
     /** @type {any} */
     const out = {};
     for (const state of EFFECT_STATES) {
-        // A theme written before a state existed states nothing for it; the
-        // built-in look stands in, or a new state would be invisible under a theme.
+        // A state the theme omits falls back to the built-in look.
         out[state] = resolveState(spec[state], d[state] || DEFAULT_EFFECTS[state]);
     }
     return out;
@@ -178,9 +108,8 @@ export function elementEffectOf(state) {
 
 /**
  * The element-effect props for a node in several states at once, merged in
- * EFFECT_STATES order so `grabbed` beats `selected` beats `hovered` — the more
- * committed the interaction, the more it gets to say. Returns null when none of the
- * states sets an element prop, so a caller can skip stamping anything.
+ * EFFECT_STATES order so `grabbed` beats `selected` beats `hovered`. Null when no
+ * state sets an element prop.
  * @param {any[]} states resolved state configs the node is currently in
  * @returns {Record<string, any> | null}
  */
@@ -221,16 +150,15 @@ function isPale(c) {
 /**
  * The colour an outline paints a node in.
  *
- *   'auto'    the mark's own colour: its fill, or its stroke when the fill is missing
- *             or near-white (a hollow dot, a line, a tick) — then darkened by
- *             `darken`. This is the default, so the highlight belongs to the mark.
+ *   'auto'    the mark's own colour (default): its fill, or its stroke when the fill
+ *             is missing or near-white, darkened by `darken`.
  *   'fill'    the mark's fill, darkened.      'stroke'  the mark's stroke, darkened.
- *   a colour  used as is (`darken` does not apply): the fixed look.
- *   a fn      `(color, node) => string`, given the darkened mark colour (or the
- *             fallback) and the node, for any other rule. Spec-only — a theme is data.
+ *   a colour  used as is (`darken` does not apply).
+ *   a fn      `(color, node) => string`, given the darkened colour and the node.
+ *             Spec-only: a theme is data.
  *
- * `darken` is d3's `color.darker(k)` amount; a negative value lightens instead (for
- * dark marks on a dark surface). `fallback` is used when no paint can be read.
+ * `darken` is d3's `color.darker(k)` amount; negative lightens. `fallback` is used
+ * when no paint can be read.
  * @param {any} node the scene node being outlined
  * @param {any} outline the resolved outline config
  * @returns {string}
@@ -251,30 +179,19 @@ export function outlineColor(node, outline) {
 }
 
 /**
- * An outline overlay around one scene node, in a state's appearance.
- *
- * Handles every node type a mark can emit. `circle`/`rect`/`line` were the only
- * three before, so outlining a `path` (an arc slice, a geo polygon, a needle), an
- * `ellipse` (a face's eye, a 2-D uncertainty blob) or a `text` label produced nothing
- * at all — the mark simply didn't respond, which reads as a broken interaction rather
- * than an unimplemented one.
- *
- * A datum drawn as MANY nodes (a waffle's grid of cells) states the shape of the
- * WHOLE datum as `node.effectShape`, and the outline traces that instead of the one
- * node it happened to be handed — see the FeatureNode field for why the mark, not
- * this file, is the one that knows it.
+ * An outline overlay around one scene node, in a state's appearance. A datum drawn
+ * as many nodes (a waffle's cells) declares its whole shape as `node.effectShape`,
+ * and the outline traces that instead.
  * @param {any} mark the scene node to outline
  * @param {any} state a resolved state config
  * @returns {import('../types').FeatureNode[]}
  */
 export function outlineNodes(mark, state) {
     if (!mark || !state || state.enabled === false || !state.outline) return [];
-    // The declared shape is an ordinary geometry node, so it goes through the very
-    // same cases below (and carries the mark's rotation with it). It never declares
-    // one of its own, so this recurses exactly once.
+    // Trace the declared shape instead. It has no effectShape itself, so this
+    // recurses once.
     if (mark.effectShape) {
-        // The declared shape carries no paint of its own; it reads the mark's, so an
-        // `auto` outline still takes the colour of the datum it rings.
+        // It reads the mark's paint, so an `auto` outline takes the datum's colour.
         return outlineNodes(
             {
                 fill: mark.fill, stroke: mark.stroke,
@@ -285,9 +202,8 @@ export function outlineNodes(mark, state) {
     }
     const { width, dash, opacity } = state.outline;
     const pad = state.outline.pad || 0;
-    // A stroked-only node (a line, a tick, an unfilled path) is outlined by
-    // re-stroking it WIDER than itself, so the trace engulfs the stroke rather than
-    // running down its middle; a filled shape takes the plain width on its edge.
+    // A stroked-only node is re-stroked wider than itself so the trace engulfs the
+    // stroke; a filled shape takes the plain width on its edge.
     const strokeOnly = !readColor(mark.fill) && mark.type !== 'text';
     const ownWidth = Number(mark.strokeWidth) || 1;
     // `effect: true` pins these into the topmost paint layer (above marks and
@@ -295,14 +211,9 @@ export function outlineNodes(mark, state) {
     const paint = {
         fill: 'none', stroke: outlineColor(mark, state.outline), strokeWidth: width, opacity,
         ...(dash ? { strokeDasharray: dash } : {}),
-        // Carry the mark's rotation. Both renderers rotate a node by -angle about
-        // `markCenter`, and every overlay below is CONCENTRIC with its source — a
-        // padded box keeps the box's centre, a line's bbox centre IS the segment
-        // midpoint, a text ring sits on the anchor, which is its own pivot — so
-        // markCenter resolves the same point for both and the outline turns in
-        // lockstep. Without this an outline stayed axis-aligned at the mark's
-        // unrotated position, which read as the effect tracking the wrong mark.
-        // Keep any new shape concentric with its source, or it needs a pivot too.
+        // Carry the mark's rotation. Every overlay below is concentric with its
+        // source, so `markCenter` gives the same pivot. Keep any new shape
+        // concentric, or it needs a pivot too.
         ...(mark.angle ? { angle: mark.angle } : {}),
         // An outline about chrome (an axis handle) escapes the mark clip with it.
         ...(mark.unclipped ? { unclipped: true } : {}),
@@ -352,10 +263,8 @@ export function outlineNodes(mark, state) {
         }];
     }
     if (mark.type === 'path') {
-        // A path's geometry is opaque (it may be an arc sector or a coastline), so
-        // re-stroke the SAME `d` rather than inventing a box around it: the outline
-        // then traces the actual shape, which is the only reading that makes sense
-        // for a slice or a polygon.
+        // A path's geometry is opaque (an arc sector, a coastline), so re-stroke the
+        // same `d`.
         return mark.d
             ? [{ type: 'path', d: mark.d, ...paint, ...(strokeOnly ? { strokeWidth: ownWidth + width, strokeLinecap: 'round' } : {}) }]
             : [];
@@ -370,11 +279,8 @@ export function outlineNodes(mark, state) {
 }
 
 /**
- * The overlay nodes for one feature in one state: outline every node whose DATUM
- * index is in `indices`.
- *
- * Indices are datum indices, not positions — a feature may emit extra nodes (a
- * line's connecting path, a face's chrome) that offset a handle from its row.
+ * The overlay nodes for one feature in one state: outline every node whose datum
+ * index (not position) is in `indices`. A feature may emit extra nodes, so the two differ.
  * @param {any[]} marks the feature's current scene nodes
  * @param {Iterable<number>} indices datum indices in this state
  * @param {any} state a resolved state config

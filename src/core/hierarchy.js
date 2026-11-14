@@ -1,33 +1,21 @@
-// Hierarchy — the ONE reader of a `hierarchy` structure's nesting table.
-//
-// A hierarchy is three tables: `nodes` (what is elicited ABOUT each thing),
-// `nesting` (one row = "child is inside parent", two `ref` columns) and, optionally,
-// `links`. Containment is its own table rather than a `parent` column on the node so
-// a node row stays about the node, and so a membership can carry columns of its own.
-//
-// Everything that asks "who is inside whom" — the engine's fit pass, the nest edit,
-// paint order, the link router — goes through `treeOf`. Nothing else reads the
-// nesting rows, for the reason `isDirected` is the one reader of `directed`: two
-// readers are two answers.
-//
-// Pure data: no scales, no pixels, no scene.
+// Hierarchy — the one reader of a `hierarchy` structure's nesting table.
+// A hierarchy is `nodes`, `nesting` (one row = child inside parent, two `ref`
+// columns) and optional `links`. Everything that asks "who is inside whom" goes
+// through `treeOf`. Pure data: no scales, no pixels, no scene.
 
 /**
  * @typedef {object} NestingSpec
- * @property {string} table   the nesting table's NAME
+ * @property {string} table   the nesting table's name
  * @property {string} child   the column naming the contained node
  * @property {string} parent  the column naming the container
- * @property {string} nodes   the nodes table's NAME
+ * @property {string} nodes   the nodes table's name
  * @property {string} key     the nodes table's key column
  */
 
 /**
- * Where containment lives in this schema, or null when it declares none (any
- * structure but `hierarchy`, or a nesting table without its two `ref` columns).
- *
- * The two ends are the nesting table's first two `ref` fields in declaration order
- * — child, then parent — the same convention a links table uses for source/target.
- * Resolved by ROLE, so the tables may be named anything.
+ * Where containment lives in this schema, or null when it declares none. The two
+ * ends are the nesting table's first two `ref` fields (child, then parent),
+ * resolved by role.
  * @param {import('../types').SchemaSpec} spec
  * @returns {NestingSpec | null}
  */
@@ -71,13 +59,10 @@ const FLAT = {
 const cache = new WeakMap();
 
 /**
- * The containment tree of a dataset, addressed by NODE ROW INDEX (what a mark's
- * nodes, an edit's `ctx.index` and the selection all use).
- *
- * Tolerant by construction, because it also has to describe data that breaks the
- * rules (a seed, a proposal about to be rejected): a child's FIRST nesting row
- * wins, a row naming a missing node is skipped, and a cycle is cut where the walk
- * re-enters it. `treeProblems` is what reports those; this never throws on them.
+ * The containment tree of a dataset, addressed by node row index. Tolerant of
+ * broken data (a seed, a proposal about to be rejected): a child's first nesting
+ * row wins, a row naming a missing node is skipped, and a cycle is cut.
+ * `treeProblems` reports those; this never throws.
  * @param {import('../types').SchemaSpec} spec
  * @param {Record<string, import('../types').Datum[]>} tables
  * @returns {Tree}
@@ -157,20 +142,15 @@ export function treeOf(spec, tables) {
 /**
  * @typedef {object} TreeProblem
  * @property {'second-parent' | 'self' | 'cycle'} kind
- * @property {number} row   index of the offending NESTING row
+ * @property {number} row   index of the offending nesting row
  * @property {any} child
  * @property {any} parent
  */
 
 /**
- * The nesting rows that contradict what a hierarchy IS: a child with a second
- * parent, a node inside itself, or a row that closes a loop. Rows are judged in
- * order, so the EARLIER row stands and the later one is the problem — the same
- * reading `treeOf` takes, which is what keeps the drawn tree and the reported one
- * identical.
- *
- * A half-built row (an end not yet set) and a row naming a missing node are not
- * reported here: the first is a gesture in progress, the second is `enforceRefs`'s.
+ * The nesting rows that contradict a tree: a second parent, a node inside itself,
+ * or a row that closes a loop. The earlier row stands, matching `treeOf`.
+ * Half-built rows and rows naming a missing node (`enforceRefs`'s job) are skipped.
  * @param {import('../types').SchemaSpec} spec
  * @param {Record<string, import('../types').Datum[]>} tables
  * @returns {TreeProblem[]}
@@ -200,12 +180,8 @@ export function treeProblems(spec, tables) {
 }
 
 /**
- * Drop the nesting rows `treeProblems` reports, so what the engine holds is a tree.
- *
- * For data that arrives from OUTSIDE a gesture (the seed, `setData`), where there is
- * no proposal to reject: the caller's rows are trusted for their values, but a
- * dataset that says a node sits in two places has no drawing. A gesture never needs
- * this — its proposal is refused instead (see computeEdit).
+ * Drop the nesting rows `treeProblems` reports, for data from outside a gesture
+ * (the seed, `setData`). A gesture's proposal is refused instead (computeEdit).
  * @param {import('../types').SchemaSpec} spec
  * @param {Record<string, import('../types').Datum[]>} tables mutated in place
  * @returns {TreeProblem[]} what was dropped

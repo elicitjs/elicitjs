@@ -1,26 +1,16 @@
 // @ts-check
-// brushRect driver — the 2-D sibling of the brush driver: composable edge / corner
-// / body editing of a rect's four extents (x1/x2 AND y1/y2). Like brush.js it
-// classifies the grab ONCE at dragstart and locks it in the feature's session for
-// the whole gesture (so a continuous drag never re-decides zone mid-drag, which
-// matters because endpoint fields can cross — rect.js always renders min/max, so it
-// never cares which field holds which value). At dragend the same edit is
-// re-invoked once with the zone forced to 'canonicalize' to swap any inverted
-// pair's values (both axes) — an invisible, one-time data cleanup.
-//
-// The interaction is opt-in and composable via the edit's `resize` ('both' | 'x' |
-// 'y' | 'none') and `move` (bool) options, read directly off the edit here (as the
-// brush driver reads edit.edgeInset). A disabled resize zone degrades to `body`
-// (when move is on), so one driver covers move-only, resize-only, single-axis, and
-// full edges+corners.
+// brushRect driver — edge / corner / body editing of a rect's x1/x2 and y1/y2.
+// Classifies the grab once at dragstart and locks it in the session; at dragend
+// re-runs the edit with `zone: 'canonicalize'`. Reads the edit's `resize` and
+// `move` options; a disabled resize zone falls back to `body`.
 
-import { edgeInsetOf } from '../pick.js';
+import { edgeInsetOf, rectAt } from '../pick.js';
+import { brushDrag, brushRelease } from './brush.js';
 import { encodeChannel } from '../../plot/mark.js';
 
 /**
- * Which datum field currently sits at the low-pixel and high-pixel edge of one
- * axis's span. Resolved fresh (not assumed from the channel name) because a prior
- * crossover can leave x1 holding the larger value — mirrors brush.js's classifyZone.
+ * Which field currently sits at the low- and high-pixel edge of one axis's span.
+ * Resolved from pixels, since x1 may hold the larger value after a crossover.
  * @param {any} feature
  * @param {import('../../types').ScaleMap} scales
  * @param {any} datum
@@ -41,9 +31,8 @@ function edgeFields(feature, scales, datum, axis) {
 }
 
 /**
- * Classify a grab against a rect's CURRENT rendered bounds (its scene node's
- * x/y/width/height), honoring the edit's resize/move gates. Returns the zone and
- * the field(s) it locks (1 for an edge, 2 for a corner, none for a body move).
+ * Classify a grab against the rect node's bounds, honouring resize/move. Returns
+ * the zone and the field(s) it locks (1 for an edge, 2 for a corner, none for body).
  * @param {any} feature
  * @param {import('../../types').ScaleMap} scales
  * @param {any} datum
@@ -84,26 +73,6 @@ function classifyZone2D(feature, scales, datum, node, px, py, edgeInset, resize,
 }
 
 /**
- * The topmost rect whose bounds (grown by `inset`) contain the pointer, addressed
- * by its DATUM index. Iterates all rects and keeps the last match (drawn on top).
- * @param {any[]} marks
- * @param {number} px @param {number} py
- * @param {number} inset
- * @returns {number | null}
- */
-function hitRect(marks, px, py, inset) {
-    let hit = null;
-    (marks || []).forEach((m) => {
-        if (m.type !== 'rect' || m.index == null || m.width == null) return;
-        if (px >= m.x - inset && px <= m.x + m.width + inset &&
-            py >= m.y - inset && py <= m.y + m.height + inset) {
-            hit = m.index;
-        }
-    });
-    return hit;
-}
-
-/**
  * CSS cursor for a classified brushRect zone.
  * @param {'corner' | 'edgeX' | 'edgeY' | 'body' | null} zone
  * @returns {string}
@@ -121,8 +90,7 @@ export const brushRectDriver = {
     name: 'brushRect',
     options: ['edgeInset', 'resize', 'move'],
     sessionKeys: ['px', 'py', 'hoverIndex', 'activeIndex', 'zone', 'fields', 'cursor'],
-    // Writes hoverIndex/activeIndex (no radial threshold — a rect brush has edge
-    // zones, not a snap radius), so the select effect draws the mark highlight.
+    // Writes hoverIndex/activeIndex (no threshold, so no catchment ring is drawn).
     selects: true,
     onEvent({ feature, event, edits, marks, data, scales, session, runEdit }) {
         const edit = edits[0];
@@ -132,7 +100,7 @@ export const brushRectDriver = {
         let changed = false;
 
         if (event.type === 'hover') {
-            const hit = hitRect(marks, event.x, event.y, edgeInset);
+            const hit = rectAt(marks, event.x, event.y, edgeInset);
             const node = hit != null ? marks.find((m) => m.index === hit) : null;
             const zone = (hit != null && node)
                 ? classifyZone2D(feature, scales, data[hit], node, event.x, event.y, edgeInset, resize, move)
@@ -147,7 +115,7 @@ export const brushRectDriver = {
             session.clear();
             changed = true;
         } else if (event.type === 'dragstart') {
-            const hit = hitRect(marks, event.x, event.y, edgeInset);
+            const hit = rectAt(marks, event.x, event.y, edgeInset);
             const node = hit != null ? marks.find((m) => m.index === hit) : null;
             const zone = (hit != null && node)
                 ? classifyZone2D(feature, scales, data[hit], node, event.x, event.y, edgeInset, resize, move)
@@ -161,25 +129,11 @@ export const brushRectDriver = {
             });
             changed = true;
         } else if (event.type === 'drag') {
-            const info = session.get();
-            if (info) { info.px = event.x; info.py = event.y; }
-            const index = info ? info.activeIndex : null;
-            if (index != null && info && info.zone) {
-                if (runEdit(edit, index)) changed = true;
-            }
+            brushDrag(session, event, edit, runEdit);
             changed = true;
         } else if (event.type === 'dragend') {
-            const info = session.get();
-            const index = info ? info.activeIndex : null;
-            if (index != null && info && info.zone) {
-                // One-time cleanup tick: canonicalize both pairs, then commit.
-                info.zone = 'canonicalize';
-                runEdit(edit, index);
-            }
-            if (info) {
-                info.activeIndex = null;
-                info.cursor = 'default';
-            }
+            const info = brushRelease(session, edit, runEdit);
+            if (info) info.cursor = 'default';
             changed = true;
         }
         return changed;

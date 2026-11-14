@@ -34,10 +34,8 @@ export function labeledValue(opts = {}) {
             height,
             theme,
             margins: { top: 40, right: 24, bottom: 24, left: 24 },
-            // x/y are declared even though no axis is drawn: the label is draggable,
-            // so they're elicited fields like any other, and the schema is what owns
-            // a field's domain. Leaving them out let them be inferred from the single
-            // seed row (a zero-width domain) and tripped the resolver's warning.
+            // x/y are declared (though no axis is drawn) because the label is
+            // draggable; inferring them from one seed row gives a zero-width domain.
             schema: {
                 label: { type: 'categorical' },
                 x: { type: 'quantitative', domain: [0, 10] },

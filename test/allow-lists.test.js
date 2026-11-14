@@ -6,7 +6,7 @@
 // `opts.key` / `options.key` member access in the factory's file.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { MARK_OPTIONS, MARK_UNIVERSAL_OPTIONS, MARK_SHORTHANDS } from '../src/vocabulary.js';
+import { MARK_OPTIONS, MARK_UNIVERSAL_OPTIONS, MARK_SHORTHANDS, GUIDE_OPTIONS, GUIDE_UNIVERSAL_OPTIONS } from '../src/vocabulary.js';
 
 const FILE = {
     arc: 'arc', area: 'area', bar: 'bar', composite: 'composite', curve: 'curve', dotStack: 'dotStack',
@@ -55,6 +55,55 @@ describe('mark option vocabularies match the factory bodies', () => {
             const undeclared = [...reads].filter((k) => !universal.has(k) && !allow.includes(k) && k !== 'channels');
             const unread = allow.filter((k) => !reads.has(k));
             expect({ undeclared, unread }).toEqual({ undeclared: [], unread: [] });
+        });
+    }
+});
+
+// Guides: the same two-way check against each guide factory's body.
+const GUIDE_FILE = {
+    rule: 'guides/rule', region: 'guides/region', remaining: 'guides/remaining', proximity: 'guides/proximity',
+    tip: 'guides/tip', crosshair: 'guides/crosshair', custom: 'guides/custom',
+    prompt: 'widgets/theme', optionRings: 'widgets/theme', cellGrid: 'widgets/theme',
+    sliderTrack: 'widgets/theme', quadrants: 'widgets/theme',
+};
+
+/** The guide factory's source: from its `export function` to the next one (or EOF). */
+function guideSource(name) {
+    const src = readFileSync(new URL(`../src/${GUIDE_FILE[name]}.js`, import.meta.url), 'utf8');
+    const start = src.indexOf(`export function ${name}(`);
+    if (start < 0) throw new Error(`no guide factory ${name}`);
+    const next = src.indexOf('export function ', start + 1);
+    return src.slice(start, next < 0 ? undefined : next);
+}
+
+/** Option names a guide factory reads off its options (`options`, or quadrants' `labels`). */
+function guideReadsOf(src) {
+    const keys = new Set();
+    // Drop block comments first: an inline JSDoc cast carries braces of its own.
+    src = src.replace(/\/\*[\s\S]*?\*\//g, '');
+    for (const m of src.matchAll(/const \{([^{}]*)\} = (?:options|labels|resolveGuideOptions\(options, ctx\));/g)) {
+        for (const part of m[1].split(',')) {
+            const k = part.trim().split(/[:=\s]/)[0];
+            if (k) keys.add(k);
+        }
+    }
+    for (const m of src.matchAll(/\boptions\.(\w+)/g)) keys.add(m[1]);
+    return keys;
+}
+
+describe('guide option vocabularies match the factory bodies', () => {
+    it('every guide has a source file listed', () => {
+        expect(Object.keys(GUIDE_OPTIONS).sort()).toEqual(Object.keys(GUIDE_FILE).sort());
+    });
+    for (const [name, allow] of Object.entries(GUIDE_OPTIONS)) {
+        it(`${name}`, () => {
+            const src = guideSource(name);
+            const reads = guideReadsOf(src);
+            const undeclared = [...reads].filter((k) => !GUIDE_UNIVERSAL_OPTIONS.includes(k) && !allow.includes(k));
+            const unread = allow.filter((k) => !reads.has(k));
+            expect({ undeclared, unread }).toEqual({ undeclared: [], unread: [] });
+            // custom takes a builder, so its options are not validated.
+            if (name !== 'custom') expect(src).toContain(`warnUnknownGuideOptions('${name}'`);
         });
     }
 });

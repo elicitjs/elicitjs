@@ -1,72 +1,41 @@
 // @ts-check
-// linkRouter.js — where an orthogonal connector GOES between two node boxes.
+// linkRouter.js — where an orthogonal connector goes between two node boxes.
+// Boxes in, a polyline out; nothing here knows about marks, scales or rows.
 //
-// `linkGeometry.js` is the table of SHAPES a link can take; this is the one shape
-// that has to decide a route rather than draw a formula, so it lives apart. Nothing
-// here knows about marks, scales, rows or rendering: boxes in, a polyline out.
+// Each end is a port `{ side, offset }`. A null side slides: it docks where the
+// centre-to-centre ray leaves the box (`perimeterPort`), so it moves continuously
+// and never flips edges. A side pins it at that edge. Nothing chooses a side for a
+// portless node, since a chosen side flips as nodes cross a decision boundary.
 //
-// ── A port is where a link meets a box ──────────────────────────────────────
-// `{ side, offset }`: which edge, and how far along it from the midpoint as a signed
-// fraction of that edge (0 is the middle, clamped to ±MAX_SLIDE so a link never
-// leaves from a corner). A port whose side is null SLIDES: it docks where the line
-// toward the other end crosses the box, so it moves continuously as either node
-// moves and never jumps. A port with a side is PINNED at that edge's midpoint. The
-// router takes both as given, so an author pinning a side, a gesture that started
-// on a port, an offset column, or a later pass distributing ports along an edge all
-// reach the same code unchanged.
-//
-// ── Sliding, not choosing ────────────────────────────────────────────────────
-// A side that is CHOSEN — by an axis test, or by scoring every pair of edges — is
-// re-chosen on every render, so a link flips edges as a node is dragged across a
-// decision boundary. Both were tried here. A sliding end has no decision to make:
-// `perimeterPort` intersects the ray between the two centres with the box, and the
-// side is simply whichever edge that point lies on. At a corner the POSITION is
-// continuous and only the perpendicular exit direction flips, which is inherent to
-// an orthogonal connector; a straight or curved kind docked the same way has no
-// discontinuity at all. Two near-aligned boxes come out straight for free, because
-// both anchors slide toward each other; a steep diagonal with a tight gap becomes a
-// gentle Z instead of a squiggle, for the same reason.
-//
-// ── Obstacles are a REPAIR ───────────────────────────────────────────────────
-// The route between the two resolved ports is the plain Z / C / L of
-// `joinOrthogonal`. Only when it crosses a node box does the grid search run: the
-// classic orthogonal visibility grid — every box edge pushed out by the margin, the
-// midline of every gap between them, and the two stub points of this link — with an
-// A* over (point, heading) that charges a turn. With no path (boxes overlapping) the
-// plain route stands, so a chart always draws something.
+// The route is the plain Z / C / L of `joinOrthogonal`. Only when it crosses a
+// node box does an A* over an orthogonal visibility grid run (`searchGrid`); if
+// that finds no path, the plain route stands.
 
-/** The shortest leg a connector leaves a node by, in px. Long enough that the turn reads as deliberate rather than as a kink on the edge. */
+/** The shortest leg a connector leaves a node by, in px. */
 export const MIN_STUB = 16;
 
-/** How far along its edge a port may sit, as a fraction of that edge. Beyond this the connector leaves from a corner and stops reading as square-on. */
+/** How far from its edge's midpoint a port may sit, as a fraction of the edge. */
 export const MAX_SLIDE = 0.4;
 
-/** How close a leg may pass a node it does not touch, in px. Smaller than MIN_STUB so a stub's own first leg is never "crossing" its neighbour. */
-export const OBSTACLE_MARGIN = 8;
+/** How close a leg may pass a node it does not touch, in px. Keep it below MIN_STUB. */
+const OBSTACLE_MARGIN = 8;
 
-// A turn costs as much as this many px of travel in the grid search, so a detour
-// prefers fewer bends over a slightly shorter path.
+// A turn costs as much as this many px of travel in the grid search.
 const BEND_COST = 30;
 
-// How much dearer a grid step is when it hugs a box's padded edge rather than the
-// middle of a corridor, per px. Enough to prefer the centre line, not enough to
-// take a longer route for it.
+// Extra cost per px for a grid step hugging a box's padded edge.
 const HUG_COST = 0.25;
 
-// Past this many grid points the A* is skipped and the plain route stands, so a
-// very large board never stalls a render tick on one crossing link.
+// Past this many grid points the A* is skipped and the plain route stands.
 const MAX_GRID_POINTS = 250000;
 
-// Index order matters here: `DIRS` and the heading state below are indexed the
-// same way.
+// Order matters: `DIRS` and the search's heading state use the same indices.
 /** The four edges of a node box: what a side may name. */
 export const LINK_SIDES = ['top', 'right', 'bottom', 'left'];
 
 /**
- * Of the sides a node allows, the one FACING a point: the side whose midpoint is
- * nearest it. This is how an unpinned end meets a node that has ports — at the
- * usable port facing the other end — and, like any choice, it changes edge when the
- * other node crosses a diagonal. A node without ports never asks: its ends slide.
+ * Of the sides a node allows, the one whose midpoint is nearest a point. Used for
+ * an unpinned end on a node with ports.
  * @param {LinkBox} box
  * @param {string[]} sides at least one
  * @param {{ x: number, y: number }} toward
@@ -84,18 +53,14 @@ export function facingSide(box, sides, toward) {
 }
 
 /**
- * The edges a SELF-LOOP leaves and returns by, and how far out it nests. A loop has
- * no other end to face, so where it goes is decided here, from what the node allows:
+ * The edges a self-loop leaves and returns by, and how far out it nests:
  *
- *   a side both ends may use   a teardrop on that edge; the k-th loop on a node takes
- *                              the k-th such side (top, right, bottom, left), and
- *                              only once every side holds one does a loop nest
- *                              outside the last
- *   no shared side             out by one edge and back by the nearest other, around
- *                              the corner (or the top, for opposite edges)
+ *   a side both ends may use   a teardrop on it; the k-th loop takes the k-th such
+ *                              side, and nests once every side holds one
+ *   no shared side             out by one edge, back by the nearest other
  *
- * A pinned end keeps its side; an unpinned one takes the pinned one's if it may, else
- * the nearest it may. `outs`/`ins` null means "any side" (a node without ports).
+ * A pinned end keeps its side; an unpinned one takes the pinned one's if allowed, else
+ * the nearest allowed. `outs`/`ins` null means any side.
  * @param {string[] | null} outs sides the loop may leave by
  * @param {string[] | null} ins sides it may return by
  * @param {string | null} pinnedOut @param {string | null} pinnedIn
@@ -140,8 +105,7 @@ export const SIDE_NORMALS = {
 const OPPOSITE = { top: 'bottom', bottom: 'top', left: 'right', right: 'left' };
 
 /**
- * A node's rectangle, in scene coordinates. Half-extents rather than width/height
- * because every test here is "how far out from the centre".
+ * A node's rectangle in scene coordinates, as centre plus half-extents.
  * @typedef {object} LinkBox
  * @property {number} cx @property {number} cy
  * @property {number} hw @property {number} hh
@@ -196,14 +160,12 @@ function clamp(v, lo, hi) {
 }
 
 /**
- * Drop coincident points, then interior vertices that don't actually turn. Both
- * matter before rounding: a corner routine handed a straight-through vertex would
- * round a corner that isn't there, and one handed a zero-length leg divides by it.
- * A reversal (doubling straight back) is a real turn and is kept.
+ * Drop coincident points, then interior vertices that don't turn, so corner
+ * rounding never sees a zero-length leg. A reversal is kept.
  * @param {[number, number][]} points
  * @returns {[number, number][]}
  */
-export function simplify(points) {
+function simplify(points) {
     /** @type {[number, number][]} */
     const out = [];
     for (const p of points) {
@@ -223,18 +185,13 @@ export function simplify(points) {
 }
 
 /**
- * Where a PINNED port sits: the edge's midpoint, pushed OUT by `gap`, then slid
- * along the edge by `offset` (a fraction of that edge, clamped to ±MAX_SLIDE).
+ * Where a pinned port sits: the edge's midpoint, pushed out by `gap`, then slid
+ * along the edge by `offset` (a fraction of the edge, clamped to ±limit).
  *
- * A positive offset runs CLOCKWISE around the box — rightward along the top,
- * downward along the right, leftward along the bottom, upward along the left.
- * Rotational rather than screen-axis on purpose: it is what lets one signed
- * number separate a reciprocal pair by arithmetic. `+bow` on the source and
- * `-bow` on the target shifts A→B one way along both its edges, and the same
- * rule shifts B→A the other way, so the two never draw on top of each other.
+ * A positive offset runs clockwise around the box, not along a screen axis, on
+ * purpose: `+bow` on the source and `-bow` on the target then separate A→B from B→A.
  * @param {LinkBox} box @param {string} side @param {number} gap @param {number} offset
- * @param {number} [limit] how far from the midpoint the port may go; a sliding end
- *   may reach the corner (0.5) so its position stays continuous across it
+ * @param {number} [limit] how far from the midpoint the port may go (0.5 reaches the corner)
  * @returns {LinkAnchor}
  */
 export function anchorOn(box, side, gap, offset, limit = MAX_SLIDE) {
@@ -251,20 +208,10 @@ export function anchorOn(box, side, gap, offset, limit = MAX_SLIDE) {
 }
 
 /**
- * Where a SLIDING port sits: the point where the ray from the box's centre toward
- * `toward` leaves the box, pushed out by `gap`, clamped MAX_SLIDE off the corner.
- * The side is whichever edge that point lies on, so it follows from the geometry
- * rather than from a decision — the whole reason a sliding end never jumps. `offset`
- * (a clockwise fraction, as on anchorOn) is added on top, which is how the
- * reciprocal-pair bow still separates two sliding links.
- *
- * Which edge the ray exits is the standard aspect test: compare the ray's slope to
- * the box's diagonal. A zero-length ray (concentric boxes) has no exit; it is the
- * caller's degenerate case and is reported as the right edge's midpoint.
- *
- * The port may reach the corner. Holding it MAX_SLIDE short, as a declared offset
- * is, would move it a tenth of the edge at the moment the side flips — the one
- * jump a sliding end exists to avoid.
+ * Where a sliding port sits: where the ray from the box's centre toward `toward`
+ * leaves the box, pushed out by `gap`, plus the clockwise `offset`. The side is the
+ * edge that point lies on. It may reach the corner (not clamped to MAX_SLIDE), so
+ * it doesn't jump when the side flips. A zero-length ray gives the right edge.
  * @param {LinkBox} box @param {{ x: number, y: number }} toward @param {number} gap
  * @param {number} [offset]
  * @returns {LinkAnchor}
@@ -279,7 +226,7 @@ export function perimeterPort(box, toward, gap, offset = 0) {
     /** @type {number} */
     let along; // signed px along the edge from its midpoint, in anchorOn's clockwise sense
     if (Math.abs(dx) * hh >= Math.abs(dy) * hw) {
-        // Exits a vertical edge. Position along it: where the ray meets x = ±hw.
+        // Exits a vertical edge, where the ray meets x = ±hw.
         side = dx >= 0 ? 'right' : 'left';
         const y = dx === 0 ? 0 : dy * (hw / Math.abs(dx));
         // Clockwise along the right edge is +y; along the left edge it is -y.
@@ -296,13 +243,8 @@ export function perimeterPort(box, toward, gap, offset = 0) {
 }
 
 /**
- * Pull two facing sliding ends into line when they nearly are. A chord crosses the
- * two boxes at different points along their edges, so an orthogonal route between
- * them is a Z with a small jog — the one thing a sliding end cannot absorb on its
- * own. Each sliding end may move up to MIN_STUB toward the other, so a jog of less
- * than two stubs closes to a straight leg and a larger one shrinks by that much:
- * continuous in the offset, with no threshold to flip across. A pinned end never
- * moves; a side the schema or an author fixed is fixed.
+ * Pull two facing sliding ends into line, closing a small Z jog. Each sliding end
+ * may move up to MIN_STUB toward the other; a pinned end never moves.
  * @param {LinkAnchor} a @param {LinkAnchor} b
  * @param {LinkBox} A @param {LinkBox} B
  * @param {boolean} slideA @param {boolean} slideB
@@ -336,8 +278,8 @@ function alignFacing(a, b, A, B, slideA, slideB) {
 }
 
 /**
- * Does the axis-aligned leg a→b pass through `box` padded by `pad`? A leg that only
- * touches the padded edge does not count — that is the lane a route runs down.
+ * Whether the axis-aligned leg a→b passes through `box` padded by `pad`. Touching
+ * the padded edge doesn't count.
  * @param {[number, number]} a @param {[number, number]} b @param {LinkBox} box @param {number} pad
  */
 export function legCrossesBox(a, b, box, pad) {
@@ -353,8 +295,7 @@ export function legCrossesBox(a, b, box, pad) {
 }
 
 /**
- * Is `b` the same box as `a` — the same object, or the same rectangle? A caller
- * that copies its boxes must still get the own-box exemption.
+ * Whether `b` is the same box as `a`: the same object or the same rectangle.
  * @param {LinkBox} a @param {LinkBox} b
  */
 function sameBox(a, b) {
@@ -362,8 +303,7 @@ function sameBox(a, b) {
 }
 
 /**
- * How many (leg, box) pairs a route runs through. The first leg is exempt from the
- * box it leaves and the last from the box it enters: those are the stubs.
+ * How many (leg, box) pairs a route runs through, exempting the two stubs' own boxes.
  * @param {[number, number][]} points
  * @param {LinkBox} A @param {LinkBox} B @param {LinkBox[]} obstacles
  */
@@ -381,7 +321,7 @@ function countCrossings(points, A, B, obstacles) {
 }
 
 /**
- * Is `to` on the outward side of `from` along `n` (or level with it)?
+ * Whether `to` is on the outward side of `from` along `n` (or level with it).
  * @param {{x:number,y:number}} from @param {{x:number,y:number}} to @param {{x:number,y:number}} n
  */
 function ahead(from, to, n) {
@@ -389,12 +329,9 @@ function ahead(from, to, n) {
 }
 
 /**
- * Join two stubs with axis-aligned legs. Four cases, decided by how the two side
- * NORMALS relate — not by where the nodes are, which the sides already encode:
+ * Join two stubs with axis-aligned legs, by how the two side normals relate:
  *
- *   opposite, with room     a Z, jogging halfway between the two anchors (the stubs
- *                           shrink when the boxes are closer than two of them —
- *                           a tight Z is what adjacent boxes want, not a detour)
+ *   opposite, with room     a Z, jogging halfway between the two anchors
  *   opposite, without room  a C, detouring past both boxes on the other axis
  *   the same side           a C on that axis, out past the further stub
  *   perpendicular           an L, at whichever of the two corners lies ahead of both
@@ -405,7 +342,7 @@ function ahead(from, to, n) {
  * @param {LinkBox} A @param {LinkBox} B @param {number} stub
  * @returns {[number, number][]}
  */
-export function joinOrthogonal(p0, p1, p3, p4, nA, nB, A, B, stub) {
+function joinOrthogonal(p0, p1, p3, p4, nA, nB, A, B, stub) {
     /** @type {[number, number]} */
     const a0 = [p0.x, p0.y];
     /** @type {[number, number]} */
@@ -457,10 +394,8 @@ export function joinOrthogonal(p0, p1, p3, p4, nA, nB, A, B, stub) {
 }
 
 /**
- * Resolve the two ends of a link against each other: a pinned port sits at its
- * edge; a sliding port aims at the other end — at its anchor when that end is
- * pinned, at its centre otherwise — so one pinned end pulls the other toward the
- * place the route will actually arrive.
+ * Resolve the two ends of a link: a pinned port sits at its edge; a sliding port
+ * aims at the other end's anchor if pinned, else its centre.
  * @param {LinkBox} A @param {LinkPort} portA @param {number} gapA
  * @param {LinkBox} B @param {LinkPort} portB @param {number} gapB
  * @returns {{ a: LinkAnchor, b: LinkAnchor }}
@@ -483,7 +418,7 @@ export function resolveEnds(A, portA, gapA, B, portB, gapB) {
 export function routeOrthogonal(req) {
     const A = req.source.box;
     const B = req.target.box;
-    // Concentric boxes have no side facing anything. Draw nothing rather than guess.
+    // Concentric boxes have no side facing anything.
     if (A.cx === B.cx && A.cy === B.cy) return null;
     const gapA = req.sourceGap || 0;
     const gapB = req.targetGap || 0;
@@ -509,8 +444,7 @@ export function routeOrthogonal(req) {
 // ── The grid ────────────────────────────────────────────────────────────────
 
 /**
- * Sorted, deduplicated, with the midline between each consecutive pair added so a
- * corridor between two boxes has a centre line to run down.
+ * Sorted and deduplicated, with the midline between each consecutive pair added.
  * @param {number[]} values
  * @returns {number[]}
  */
@@ -531,8 +465,7 @@ function gridLines(values) {
 }
 
 /**
- * The orthogonal visibility grid over every node box. Built once per chart build
- * and shared by every link that needs a repair.
+ * The orthogonal visibility grid over every node box, shared by every link in a build.
  * @param {LinkBox[]} boxes
  * @param {number} [margin]
  * @returns {RoutingGrid}
@@ -635,21 +568,16 @@ const DIRS = [[0, -1], [1, 0], [0, 1], [-1, 0]];
  * A* over the grid from the source anchor to the target anchor, detouring around
  * every box. Heading is part of the state so a turn can be charged.
  *
- * The search starts and ends at the ANCHORS, not at the stub points, with the
- * first step forced along the source normal and the arrival forced along the
- * target's. A stub point can sit inside a neighbouring box — a node parked a few
- * px from the one a link enters — and a search started there found nothing, so the
- * route fell back to the very crossing it was meant to repair. The stub points are
- * still added as grid lines, so the natural first turn is available when it is
- * clear; the anchor's own line is what makes a shorter first leg possible when it
- * is not.
+ * It runs anchor to anchor (not stub to stub, since a stub point can sit inside a
+ * neighbouring box), leaving along the source normal and arriving along the
+ * target's. The stub points are added as grid lines too.
  * @param {RoutingGrid} grid
  * @param {LinkBox} A @param {LinkBox} B
  * @param {LinkAnchor} a the resolved source end @param {LinkAnchor} b the resolved target end
  * @param {number} stub
  * @returns {RouteResult | null}
  */
-export function searchGrid(grid, A, B, a, b, stub) {
+function searchGrid(grid, A, B, a, b, stub) {
     const nA = SIDE_NORMALS[a.side];
     const nB = SIDE_NORMALS[b.side];
     const start = { x: a.x, y: a.y };
@@ -686,8 +614,7 @@ export function searchGrid(grid, A, B, a, b, stub) {
     const gi = lineIndex(xs, goal.x);
     const gj = lineIndex(ys, goal.y);
     if (si < 0 || sj < 0 || gi < 0 || gj < 0) return null;
-    // An anchor sits on its own box's edge, inside that box's padding by
-    // construction; it is blocked only by ANOTHER box (two nodes overlapping).
+    // An anchor is inside its own box's padding; only another box blocks it.
     const insideOther = (/** @type {{x:number,y:number}} */ p, /** @type {LinkBox} */ own) =>
         boxes.some((bx) => !sameBox(bx, own)
             && Math.abs(p.x - bx.cx) - bx.hw < pad && Math.abs(p.y - bx.cy) - bx.hh < pad);
@@ -716,8 +643,7 @@ export function searchGrid(grid, A, B, a, b, stub) {
         const j = (p - i) / nx;
         const gk = g[k];
         if (f > gk + h(i, j) + 1e-9) continue; // stale entry
-        // The goal counts only when reached square-on: the last leg runs into the
-        // target along its normal, as every other route's does.
+        // The goal counts only when reached along the target's normal.
         if (i === gi && j === gj && dir === goalDir) {
             if (gk < bestTotal) { bestTotal = gk; bestState = k; }
         }
@@ -750,7 +676,6 @@ export function searchGrid(grid, A, B, a, b, stub) {
         points.push([xs[i], ys[(p - i) / nx]]);
     }
     points.reverse();
-    // The chain runs anchor to anchor already.
     const route = simplify(points);
     return { points: route, sourceSide: a.side, targetSide: b.side, crossings: 0 };
 }

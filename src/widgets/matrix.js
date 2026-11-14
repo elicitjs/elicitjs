@@ -1,12 +1,8 @@
 // @ts-check
-// matrix.js — a question matrix (a grid of Likert rows) as a survey instrument.
-// One chart: a band y of the questions crossed with a band x of the shared
-// options. The cell grid, the column headers and the row labels are guides, so the
-// grid reads as clickable area without ever capturing the gesture.
-//
-// `toggle` on the (x, y) tuple names a CELL: hovering previews the answer landing
-// there, clicking commits it, and `unique({ field: 'question', strategy: 'replace' })`
-// keeps exactly one answer per row — a second pick in a row replaces the first.
+// matrix.js: a question matrix (a grid of Likert rows). A band y of questions
+// crossed with a band x of options; the cell grid and labels are guides. `toggle`
+// on (x, y) picks a cell, and `unique({ field: 'question', strategy: 'replace' })`
+// keeps one answer per row.
 //
 // Returns an ElicitSpec: Elicit(matrix({ questions, options })).
 
@@ -48,12 +44,9 @@ export function matrix(opts = {}) {
             question: { type: 'categorical', domain: questions }
         },
         scales: {
-            // A `point` would give each option a tick; the cell grid wants the
-            // interval a band provides.
+            // A band, so each cell gets an interval rather than a tick.
             x: { type: 'band' },
-            // A y band defaults to the range [height, 0] (a value axis grows upward),
-            // so the first question would sit at the BOTTOM. A questionnaire reads
-            // top-down, so pin the range explicitly.
+            // A y band defaults to [height, 0]; pin it so the first question is on top.
             y: { type: 'band', range: [0, innerHeight] }
         },
         // The elicited dataset: one row per answered question.

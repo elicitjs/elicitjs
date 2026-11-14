@@ -61,16 +61,15 @@ export function arcSpan(opts = {}) {
 }
 
 /**
- * Sweep from startDeg to endDeg as a signed delta in (-360, 360], preferring the
- * shorter arc when both ends are given as an unordered pair is NOT the goal —
- * we honour the directed span [start, end] as authored (scale.range order).
+ * Signed sweep from startDeg to endDeg, normalized to [-360, 360]. The direction
+ * is kept as given (scale.range order), not the shorter arc.
  * @param {number} startDeg
  * @param {number} endDeg
  * @returns {number}
  */
-export function sweepDegrees(startDeg, endDeg) {
+function sweepDegrees(startDeg, endDeg) {
     let sweep = endDeg - startDeg;
-    // Normalize to (-360, 360] so a full circle can be ±360.
+    // Keep ±360 so a full circle stays a full circle.
     while (sweep > 360) sweep -= 360;
     while (sweep < -360) sweep += 360;
     return sweep;
@@ -154,9 +153,8 @@ export function arcSpine(cx, cy, radius, startDeg, endDeg) {
 }
 
 /**
- * Angular interval [lo, hi] in degrees for one discrete category on an angle
- * scale (band → band edges; point → midpoints between neighbours; continuous →
- * undefined). Mirrors bandSpan for the degree range.
+ * Angular interval [lo, hi] in degrees for one category on an angle scale
+ * (band → band edges; point → midpoints between neighbours; continuous → null).
  * @param {any} scale
  * @param {any} value
  * @returns {[number, number] | null}
@@ -172,9 +170,8 @@ export function angularBand(scale, value) {
         return [start, start + scale.bandwidth()];
     }
 
-    // point: place boundaries halfway to neighbours (and to the range ends).
-    // Honour the directed range — a descending angle span [180, 0] puts the first
-    // category at the high end, so Math.min/max would paint the end-caps wrong.
+    // point: boundaries halfway to neighbours and to the range ends. Keep the
+    // range's direction (no min/max): a span of [180, 0] is descending.
     const range = scale.range();
     const start = range[0];
     const end = range[range.length - 1];

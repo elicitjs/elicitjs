@@ -1,33 +1,13 @@
 // @ts-check
-// port.js — the PORTS of a node: where a link may meet it.
+// port.js — the ports of a node: where a link may meet it.
 //
 //   sticker({ channels: { …, ports: { value: { out: ['right'], in: ['left'] },
 //                                     edit: edit.network.connect() } } })
 //
-// Ports are a CHANNEL on the mark that draws the nodes, not a mark of their own. A
-// port belongs to a node, so it is stated where the node is: the channel's value
-// says which edges a link may use (per row, through `{ fn }` or `{ field }`), and
-// its edit says what dragging one does. That is the whole API; this file is what
-// the engine desugars it into.
-//
-// ── One channel, one extra feature ─────────────────────────────────────────
-// The engine turns a `ports` channel into a sibling PORT feature over the host's
-// table (`portFeature`, called once while features are flattened — the composite
-// precedent: one declared mark, several features). It is a separate feature for the
-// same reason a sticker's label is: dispatch is per feature, so a drag that starts
-// on a port reaches the channel's `connect` and never the host's `move`.
-//
-// ── Placed on the host's own box ───────────────────────────────────────────
-// The port reads its node's rectangle from the HOST's `nodeBox` rule — the box the
-// host draws (a dot's radius, a sticker's paper). The same rule is what `link`
-// docks to and what a drop is tested against, so a port sits exactly where a link
-// pinned to its edge will end. The port restates no size.
-//
-// ── Shown only while usable ────────────────────────────────────────────────
-// Every port node is `onHover`, and the ENGINE's state pass decides when one shows
-// (a state, so the engine's call — see core/elicit.js): at rest, the ports a link
-// can START from on the row you hover; during a drag, exactly the ports a release
-// could land on. A port nobody can use is never drawn.
+// `ports` is a channel on the node mark. The engine desugars it into a sibling port
+// feature (`portFeature`) placed on the host's `nodeBox`, so a drag on a port
+// reaches `connect`, never the host's `move`. Port nodes are `onHover`; the
+// engine's state pass decides which ones show.
 
 import { rawChannel, resolveHandles } from './mark.js';
 import { anchorOn, LINK_SIDES } from './linkRouter.js';
@@ -94,10 +74,8 @@ export function portRolesOf(value, directed) {
 }
 
 /**
- * The identity of one port as a DROP TARGET: which node row of which table, and
- * which edge. A drag's driver lists the keys a release could land on, and the
- * engine lights the port nodes that carry them — across features, since the link
- * mark's rewire and the node mark's ports are different features.
+ * The key of one port as a drop target: table, node row and edge. The engine
+ * lights the port nodes whose keys a drag could land on, across features.
  * @param {string} table @param {number} index @param {string} side
  */
 export function portKey(table, index, side) {
@@ -105,7 +83,7 @@ export function portKey(table, index, side) {
 }
 
 /**
- * Can a link END of this kind use `role`? A source end leaves, a target end enters.
+ * Whether a link end can use `role`. A source end leaves, a target end enters.
  * @param {'out' | 'in' | 'both' | undefined} role
  * @param {'source' | 'target'} end
  */
@@ -115,10 +93,9 @@ export function roleAllows(role, end) {
 }
 
 /**
- * The PORT feature a `ports` channel desugars into. Called by the engine once per
- * host, after the host's table is resolved. The channel's edit becomes the port
- * feature's own (mark-level, because it writes the LINK table, not a column of
- * this one); the value is read raw, per row.
+ * The port feature a `ports` channel desugars into, built once per host. The
+ * channel's edit becomes a mark-level edit (it writes the link table); the value
+ * is read raw, per row.
  * @param {any} host the feature carrying `channels.ports`
  * @param {any} spec that channel (`{ value | fn | field, edit? }`)
  * @returns {import('../types').Mark}
@@ -129,8 +106,7 @@ export function portFeature(host, spec) {
     return /** @type {any} */ ({
         id: `${host.id}/ports`,
         type: 'port',
-        // Same table and same glyph as the node it belongs to, so overlapping notes
-        // still paint as whole objects, ports included.
+        // Same table and glyph as its node, so it paints with it.
         table: host.table,
         ...(host.glyph ? { glyph: host.glyph } : {}),
         // A node drawn past the clip keeps its ports with it.

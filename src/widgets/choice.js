@@ -1,8 +1,7 @@
 // @ts-check
-// choice.js — multiple choice as a survey instrument. Same rings as `likert`, but
-// the answer is a set: `toggle` under the `probe` driver means hovering an option
-// previews picking it (or un-picking it, if it is already yours) and the click
-// commits that. `unique` blocks a double-pick of one option; `count` caps the total.
+// choice.js: multiple choice. Likert rings, but the answer is a set: hover
+// previews picking or un-picking an option, a click commits. `unique` blocks a
+// double pick; `count` caps the total.
 //
 // Returns an ElicitSpec: Elicit(multipleChoice({ question, options, max })).
 
@@ -41,8 +40,7 @@ export function multipleChoice(opts = {}) {
         margins: { top: 34, right: 60, bottom: 44, left: 60 },
         // The contract of the elicited dataset: one categorical pick per row.
         schema: { choice: { type: 'categorical', domain: options } },
-        // A `point` would give each option a tick; the rings want the interval a
-        // band provides, so the chart overrides the mark's preference.
+        // A band, so each ring gets an interval rather than a tick.
         scales: { x: { type: 'band' } },
         // The elicited dataset: one row per pick.
         data: value.map((v) => ({ choice: v })),
@@ -58,8 +56,7 @@ export function multipleChoice(opts = {}) {
                 channels: {
                     x: { field: 'choice' }
                 },
-                // One gesture, both directions: click an empty option to pick it,
-                // click a pick to take it back. The hover shows which it will be.
+                // A click picks an empty option or takes a pick back; hover previews which.
                 edits: [toggle({ pick: 'probe', channels: ['x'], advance: false, stage })]
             })
         ]

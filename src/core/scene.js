@@ -1,5 +1,8 @@
 // @ts-check
 
+/** The chart margins when a spec states none. */
+export const DEFAULT_MARGINS = Object.freeze({ top: 20, right: 20, bottom: 30, left: 40 });
+
 export class SceneGraph {
     constructor() {
         /** @type {import('../types').FeatureNode[]} */
@@ -25,26 +28,16 @@ export class SceneGraph {
  * @returns {[number, number]}
  */
 const glyphKey = (node) => [
-    // A composite's box is an invisible grab target for the whole glyph, so it is
-    // the same FALLBACK a `.mark-hit` rect is: it must never outrank a node that
-    // is really drawn there. Interleaved with the parts it would, because a box
-    // covers its glyph entirely — row 2's box would eat every handle of row 1.
+    // A composite's hit box is a fallback grab target: it paints beneath every
+    // drawn node, or row 2's box would eat row 1's handles.
     node.hit ? 0 : 1,
     typeof node.index === 'number' ? node.index : -1,
 ];
 
 /**
- * Paint order for one chart's built features.
- *
- * Array order is z-order, and for ordinary marks that is exactly the feature
- * order: a whole mark paints over the mark before it. A GLYPH is the exception.
- * Its parts are separate features (see plot/composite.js), so painting them
- * feature by feature draws every row's body, then every row's label — and two
- * overlapping stickers come out interleaved, the lower note's text sitting on
- * top of the upper note's paper. A glyph is one OBJECT, so its features are
- * grouped (`Mark.glyph`) and their nodes are ordered by ROW first: each glyph
- * paints whole, in its parts' declared order, and a later row covers an earlier
- * one completely. A node flagged `raise` goes last of all.
+ * Paint order for one chart's built features. Array order is z-order. A glyph's
+ * features (`Mark.glyph`) are grouped and ordered by row, then part, so each glyph
+ * paints whole. Hierarchy nodes order by depth; a `raise`d node goes last.
  *
  * @param {{ glyph?: string, nodes: any[] }[]} built features in scene order,
  *   each with the nodes its `build()` returned
@@ -69,8 +62,7 @@ export function paintOrder(built) {
             j++;
         }
         i = j - 1;
-        // Stable, so within one row the parts keep their declared order — the
-        // half of the ordering that was already right.
+        // Stable, so within one row the parts keep their declared order.
         group.sort((a, b) => {
             const [ha, ra] = glyphKey(a);
             const [hb, rb] = glyphKey(b);
@@ -78,11 +70,8 @@ export function paintOrder(built) {
         });
         out.push(...group);
     }
-    // A hierarchy's nodes carry their DEPTH (stamped by the engine's tagging pass),
-    // and a container must paint beneath its contents whichever feature draws either
-    // and wherever their rows fall. Reordered among THEMSELVES, in the slots they
-    // already hold, so every other mark keeps its place; stable, so one row's glyph
-    // still paints whole and in its parts' order.
+    // Hierarchy nodes (stamped `depth`) reorder among their own slots so containers
+    // paint beneath their contents; every other node keeps its place.
     if (out.some((n) => n && typeof n.depth === 'number')) {
         /** @type {number[]} */
         const slots = [];
@@ -90,9 +79,8 @@ export function paintOrder(built) {
         const byDepth = slots.map((i) => out[i]).sort((a, b) => a.depth - b.depth);
         slots.forEach((slot, k) => { out[slot] = byDepth[k]; });
     }
-    // A RAISED node (a link's end handle) sits on another mark's edge, so it paints
-    // above every mark — and it is a visible handle, shown only while its row is lit,
-    // not a hit overlay that could outrank a node really drawn there.
+    // A raised node (a link's end handle) paints above every mark. It is a visible
+    // handle, not a hit overlay.
     if (!out.some((n) => n && n.raise)) return out;
     return [...out.filter((n) => !(n && n.raise)), ...out.filter((n) => n && n.raise)];
 }
@@ -100,17 +88,10 @@ export function paintOrder(built) {
 const CLIP_SIDES = ['top', 'right', 'bottom', 'left'];
 
 /**
- * The rect the marks are confined to under `spec.clip`, in plot-local pixels
- * (the plot's top-left is 0, 0), or null when the chart does not clip.
- *
- * `clip` is `true` (the plot rect, axis to axis), `false`, or `{ pad }`: the plot
- * rect grown by `pad` pixels on every side (a number) or per side (`{ top, right,
- * bottom, left }`), so a point sitting ON a domain edge draws whole instead of
- * cut in half by its own axis. `auto` is what an unset `clip` resolved to.
- *
- * One function decides the rect, and the renderers' clip paths and the engine's
- * hit filter (`clipVisible`) all read it, so what is drawn and what can be
- * grabbed cannot disagree.
+ * The rect marks are confined to under `spec.clip`, in plot-local px, or null when
+ * the chart does not clip. `clip` is `true`, `false`, or `{ pad }` (a number or per
+ * side). `auto` is what an unset `clip` resolves to. The renderers and the hit
+ * filter (`clipVisible`) both read this, so drawn and grabbable agree.
  * @param {boolean | { pad?: number | { top?: number, right?: number, bottom?: number, left?: number } } | null | undefined} clip
  * @param {boolean} auto
  * @param {number} width   inner plot width

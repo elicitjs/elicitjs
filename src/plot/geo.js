@@ -1,16 +1,15 @@
 // @ts-check
-// geo.js — geographic marks for map elicitation (mini GIS surface).
-//
-// Position goes through the chart's shared projection (`scales.projection` from
-// `spec.projection`) — NOT through x/y 1D scales. Style channels (fill, stroke,
-// size, …) remain ordinary. Static basemap topology is a mark option; editable
-// geometry lives on the dataset.
+// geo.js — geographic marks. Position goes through the chart's projection
+// (`scales.projection`), not x/y scales; style channels are ordinary. A basemap's
+// topology is a mark option; editable geometry lives in the dataset.
 //
 //   geoBasemap  — inert GeoJSON chrome (background)
+//   geoTile     — inert raster tiles (Web Mercator only)
 //   geoPoint    — lon/lat circles
-//   geoPolygon  — GeoJSON geometries from rows (fill-editable)
-//   geoLine     — coordinate lists / MultiLineString paths + vertex handles
-//   geoRect     — geographic AABB (west/south/east/north)
+//   geoPolygon  — GeoJSON geometries from rows
+//   geoLine     — per-row vertex lists, or a trail across rows
+//   geoText     — labels at lon/lat
+//   geoRect     — geographic box (west/south/east/north)
 
 import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, resolveHandles, markCommon, rawChannel, orderFieldOf, seriesKeyOf } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
@@ -54,10 +53,9 @@ function fieldOf(channels, name) {
 }
 
 /**
- * Inert basemap from static GeoJSON. Not elicited — topology is a **mark option**
- * (`geojson` / `features`), not the chart dataset. Pass a FeatureCollection,
- * Feature, GeometryCollection, or Geometry. FeatureCollections emit one path per
- * feature so shared boundaries stay visible.
+ * Inert basemap from static GeoJSON passed as the `geojson` option (a
+ * FeatureCollection, Feature, GeometryCollection or Geometry). A FeatureCollection
+ * draws one path per feature.
  *
  * @param {any} [options]
  * @returns {import('../types').Mark}
@@ -65,16 +63,11 @@ function fieldOf(channels, name) {
 export function geoBasemap(options = {}) {
     const opts = normalizeMarkOptions(options, {
         mark: 'geoBasemap', allow: MARK_OPTIONS.geoBasemap,
-        // Basemap paint is CHROME: there is no datum to resolve it against, so it
-        // stays a plain option (as an axis's stroke does) rather than desugaring
-        // into a channel — which is what silently turned every one of these into
-        // `undefined` and drew the default map whatever the author wrote.
+        // Basemap paint is chrome with no datum, so it stays a plain option, not a channel.
         except: ['stroke', 'strokeWidth', 'fill'],
     });
     const {
         channels = {},
-        id,
-        edits,
         geojson,
         stroke = '#94a3b8',
         strokeWidth = 0.75,
@@ -104,7 +97,7 @@ export function geoBasemap(options = {}) {
             const strokeV = style.stroke != null ? style.stroke : stroke;
             const sw = style.strokeWidth != null ? style.strokeWidth : strokeWidth;
 
-            // One path per Feature so neighborhood/state outlines read clearly.
+            // One path per Feature.
             const list = object.type === 'FeatureCollection' && Array.isArray(object.features)
                 ? object.features
                 : [object];
@@ -136,36 +129,26 @@ export function geoBasemap(options = {}) {
 }
 
 /**
- * Raster tile basemap — real OSM/Carto/satellite imagery under the marks, the
- * Leaflet model. Chrome like geoBasemap, but the source is a tile server rather
- * than GeoJSON, so it is NOT elicited and takes no data.
+ * Raster tile basemap from a tile server. Inert chrome, like geoBasemap.
  *
  *   geoTile()                                   // OSM standard
  *   geoTile({ url: "https://…/{z}/{x}/{y}.png", attribution: "…" })
  *   geoTile({ url: (t) => `…/${t.z}/${t.x}/${t.y}.png` })
  *
- * REQUIRES `projection: "mercator"` (unrotated). Tiles are pre-rendered pictures
- * baked in Web Mercator; under any other projection they cannot be made to line
- * up with the data without resampling each image, so the mark draws nothing and
- * dev-warns rather than quietly showing a misregistered map.
- *
- * Attribution is a licence condition of every tile service (OSM's included), so
- * it is drawn by default — pass `attribution: null` only if you are rendering the
- * credit yourself. Public OSM tiles are rate-limited and not for heavy production
- * traffic: see the OSM tile usage policy and use your own server or a paid
- * provider when you ship.
+ * Requires `projection: "mercator"` (unrotated); under any other projection it
+ * draws nothing and warns. Attribution is drawn by default, since tile services
+ * require it; pass `attribution: null` only if you credit them yourself. Public
+ * OSM tiles are rate-limited: use your own server or a paid provider in production.
  *
  * @param {any} [options]
  * @returns {import('../types').Mark}
  */
 export function geoTile(options = {}) {
     const opts = normalizeMarkOptions(options, { mark: 'geoTile', allow: MARK_OPTIONS.geoTile,
-        // Tile opacity is chrome, like a basemap's paint — see geoBasemap.
+        // Tile opacity is chrome, like a basemap's paint.
         except: ['opacity'] });
     const {
         channels = {},
-        id,
-        edits,
         url = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
         subdomains = [],
         tileSize = 256,
@@ -181,8 +164,6 @@ export function geoTile(options = {}) {
         ...markCommon(opts),
         type: 'geoTile',
         channels,
-        // Verbatim — map chrome rarely edits, but dropping these after normalize
-        // made geoTile the only mark that silently discarded author-supplied edits.
         supportsGeo: true,
         /**
          * @param {any[]} _currentData
@@ -208,9 +189,7 @@ export function geoTile(options = {}) {
                 type: 'image',
                 x: t.px,
                 y: t.py,
-                // Half-pixel overdraw: adjacent tiles land on fractional pixels at a
-                // fitted (non-power-of-two) scale, and without it the seams show as
-                // hairlines through the map.
+                // Half-pixel overdraw hides seams between tiles at fractional pixels.
                 width: t.size + 0.5,
                 height: t.size + 0.5,
                 href: tileUrl(url, t, subdomains),
@@ -246,7 +225,7 @@ export function geoTile(options = {}) {
  */
 export function geoPoint(options = {}) {
     const opts = normalizeMarkOptions(options, { mark: 'geoPoint', allow: MARK_OPTIONS.geoPoint });
-    const { channels = {}, id, edits } = opts;
+    const { channels = {} } = opts;
     const lonKey = fieldOf(channels, 'lon') || 'lon';
     const latKey = fieldOf(channels, 'lat') || 'lat';
 
@@ -274,9 +253,7 @@ export function geoPoint(options = {}) {
             const nodes = [];
             const geoDefaults = markDefaults(scales, 'geoPoint', { fill: themeOf(scales).ink });
             currentData.forEach((d, i) => {
-                // A coordinate is a VALUE read raw: a field, a `{ fn }`, or a
-                // `{ value }` / `{ datum }` constant — `fieldOf` saw only the field,
-                // so `lat: { datum: 49 }` projected nothing.
+                // Read raw, so a field, `{ fn }`, `{ value }` or `{ datum }` all work.
                 const lon = rawChannel(channels, 'lon', d, d[lonKey], i, currentData);
                 const lat = rawChannel(channels, 'lat', d, d[latKey], i, currentData);
                 const pt = projectPoint(projection, lon, lat);
@@ -304,7 +281,7 @@ export function geoPoint(options = {}) {
  */
 export function geoPolygon(options = {}) {
     const opts = normalizeMarkOptions(options, { mark: 'geoPolygon', allow: MARK_OPTIONS.geoPolygon });
-    const { channels = {}, id, edits } = opts;
+    const { channels = {} } = opts;
     const geomKey = fieldOf(channels, 'geometry') || 'geometry';
 
     return {
@@ -332,16 +309,14 @@ export function geoPolygon(options = {}) {
                     fill: '#93c5fd',
                     stroke: '#1e3a8a',
                     strokeWidth: 0.75,
-                });
+                }, i, currentData);
                 nodes.push({
                     type: 'path',
                     d: pathD,
                     ...style,
                     data: d,
                     index: i,
-                    // The region in lon/lat, so a pointer read (a tip) can test
-                    // containment through the projection — a `d` string alone
-                    // gives the pick layer nothing to measure.
+                    // The region in lon/lat, so the pick layer can test containment.
                     geoShape: geometry,
                 });
             });
@@ -351,7 +326,7 @@ export function geoPolygon(options = {}) {
 }
 
 /**
- * Order a series' rows for connection: by the `order` CHANNEL's column when one is
+ * Order a series' rows for connection: by the `order` channel's column when one is
  * given, else array order as drawn (a geo trail's natural default).
  * @template {{ d: any }} P
  * @param {P[]} group
@@ -369,20 +344,15 @@ function orderRows(group, channels) {
 }
 
 /**
- * A line over geographic positions. Two shapes, picked by the channels:
+ * A line over geographic positions. Two forms, picked by the channels:
  *
- *   coordinates / geometry  -> ONE LINE PER ROW. Each row carries its own vertex
- *                              list ([[lon,lat], …]) or LineString geometry. Pair
- *                              with edit.geo.draw / edit.geo.dragVertex; vertex
- *                              handles carry `channel: 'vertex'` + `vertexIndex`.
+ *   coordinates / geometry  -> one line per row, from its vertex list ([[lon,lat], …])
+ *                              or LineString geometry. Vertex handles carry
+ *                              `channel: 'vertex'` + `vertexIndex` (edit.geo.dragVertex).
  *
- *   lon / lat               -> ONE PATH ACROSS ROWS, connecting the dataset's
- *                              points by the `order` channel when given, else in
- *                              array order (`connect`, default 'sequence'), grouped by
- *                              `series`. This is the geographic connected scatter
- *                              — the geo sibling of the `path` mark. Put the
- *                              draggable dots on a sibling geoPoint mark and the
- *                              trail re-derives on every render.
+ *   lon / lat               -> one trail across rows per `series`, ordered by the
+ *                              `order` channel, else array order. Put draggable dots
+ *                              on a sibling geoPoint.
  *
  * @param {any} [options]
  * @returns {import('../types').Mark}
@@ -391,8 +361,6 @@ export function geoLine(options = {}) {
     const opts = normalizeMarkOptions(options, { mark: 'geoLine', allow: MARK_OPTIONS.geoLine });
     const {
         channels = {},
-        id,
-        edits,
         curve = 'linear',
         handles = true,
         handleSize,
@@ -407,12 +375,10 @@ export function geoLine(options = {}) {
     const latKey = fieldOf(channels, 'lat') || 'lat';
     const seriesField = seriesFieldOf(channels);
     const connect = opts.connect || 'sequence';
-    // Per-row lines own their vertices; a connected scatter's dots belong to a
-    // sibling geoPoint (so they can be dragged independently).
+    // Per-row lines show their vertices; a trail's dots belong to a sibling geoPoint.
     const showVertices = opts.showVertices != null ? opts.showVertices : !rowMode;
-    // Defaulted vertices are a grab AFFORDANCE, so they are row handles the engine
-    // drops where no live edit reaches the row; `showVertices: true` asks for them
-    // as INK (a route's stops) and they always draw.
+    // Defaulted vertices are row handles (dropped where no edit reaches the row);
+    // explicit `showVertices: true` draws them as ink.
     const vertexHandles = opts.showVertices == null;
 
     if (rowMode) {
@@ -449,7 +415,7 @@ export function geoLine(options = {}) {
                     placed.push({ d, i, x: pt.x, y: pt.y, lon, lat, series: seriesField ? d[seriesField] : SINGLE });
                 });
 
-                // Grouped by KEY (a Date by its time), tagged with the first raw value.
+                // Grouped by key (a Date by its time), tagged with the first raw value.
                 /** @type {Map<any, any[]>} */
                 const groups = new Map();
                 for (const p of placed) {
@@ -467,9 +433,8 @@ export function geoLine(options = {}) {
                     const style = resolveStyle(scales, channels, group[0].d, {
                         stroke: '#1d4ed8',
                         strokeWidth: 2,
-                    });
-                    // One trail per SERIES, so a channel-bound curve resolves once
-                    // per series against its first row — as `line` and `area` do.
+                    }, group[0].i, currentData);
+                    // `curve` resolves once per series, against its first row.
                     const seriesCurve = String(
                         rawChannel(channels, 'curve', group[0].d, curve, group[0].i, currentData));
                     if (seriesCurve !== 'linear') {
@@ -479,12 +444,8 @@ export function geoLine(options = {}) {
                             'antimeridian), so `curve` does not apply to it and is ignored.'
                         );
                     }
-                    // The trail is a GEOGRAPHIC line: d3-geo resamples it along great
-                    // circles and clips it at the antimeridian, the same path the
-                    // per-row form takes. Joining projected points in pixel space drew
-                    // straight screen segments, which is wrong anywhere off a planar
-                    // projection. `points` (the projected vertices) stay for the pick
-                    // layer and the canvas.
+                    // A geographic line (great circles, antimeridian clipping) via
+                    // d3-geo; `points` stay for the pick layer and the canvas.
                     const geometry = { type: 'LineString', coordinates: pts.map((p) => [p.lon, p.lat]) };
                     const pathD = projection.path(geometry);
                     nodes.push({
@@ -493,23 +454,22 @@ export function geoLine(options = {}) {
                         points: pts.map((p) => /** @type {[number, number]} */ ([p.x, p.y])),
                         curve: seriesCurve,
                         ...style,
-                        // A stroked trail, never a filled blob. No pointerEvents set
-                        // here: with no direct-pick edit the engine silences the mark,
-                        // which keeps a sibling geoPoint's dots grabbable through it.
+                        // No pointerEvents: the engine silences an uneditable trail,
+                        // keeping a sibling geoPoint's dots grabbable.
                         fill: 'none',
                     });
                 }
 
-                if (showVertices) {
+                if (showVertices && handleStyle.grabbable) {
                     placed.forEach((p) => {
                         nodes.push({
                             type: 'circle',
                             cx: p.x,
                             cy: p.y,
                             r: handleStyle.size,
-                            fill: handleStyle.visible ? handleStyle.fill : 'transparent',
-                            stroke: '#fff',
-                            strokeWidth: 1,
+                            fill: handleStyle.fill,
+                            stroke: handleStyle.stroke,
+                            strokeWidth: handleStyle.visible ? 1 : 0,
                             data: p.d,
                             index: p.i,
                             rowHandle: vertexHandles,
@@ -558,7 +518,7 @@ export function geoLine(options = {}) {
                     fill: 'none',
                     stroke: '#1d4ed8',
                     strokeWidth: 2,
-                });
+                }, i, currentData);
                 if (pathD) {
                     nodes.push({
                         type: 'path',
@@ -571,7 +531,7 @@ export function geoLine(options = {}) {
                     });
                 }
 
-                if (showVertices) {
+                if (showVertices && handleStyle.grabbable) {
                     coords.forEach((c, vi) => {
                         const pt = projectPoint(projection, c[0], c[1]);
                         if (!pt) return;
@@ -581,8 +541,8 @@ export function geoLine(options = {}) {
                             cy: pt.y,
                             r: handleStyle.size,
                             fill: handleStyle.visible ? (handleColor || style.stroke || handleStyle.fill) : 'transparent',
-                            stroke: '#fff',
-                            strokeWidth: 1,
+                            stroke: handleStyle.stroke,
+                            strokeWidth: handleStyle.visible ? 1 : 0,
                             data: d,
                             index: i,
                             channel: 'vertex',
@@ -598,24 +558,16 @@ export function geoLine(options = {}) {
 }
 
 /**
- * Labels at lon/lat — the geographic sibling of `text`. Position is the ONLY thing
- * a projection changes about a label, so everything else (the string, font,
- * anchors, angle, dx/dy nudge, the editText opt-in, style) comes from the shared
- * `textNodeAt` in text.js rather than a second copy here.
- *
- * That means a geoText is editable exactly like a cartesian one:
- *   editText()      — double-click to retype the label's content
- *   edit.geo.move() — drag the label to a new lon/lat
- *   cycle()         — click to advance a categorical label
- * `dx`/`dy` nudge the glyph off the anchor point (e.g. dy: -12 to sit a name above
- * a geoPoint's dot) without moving the lon/lat a drag would write.
+ * Labels at lon/lat. Only the position is projected; everything else comes from
+ * `textNodeAt` (text.js), so editText(), edit.geo.move() and cycle() work as on
+ * `text`. `dx`/`dy` nudge the glyph without moving its lon/lat.
  *
  * @param {any} [options]
  * @returns {import('../types').Mark}
  */
 export function geoText(options = {}) {
     const opts = normalizeMarkOptions(options, { mark: 'geoText', allow: MARK_OPTIONS.geoText });
-    const { channels = {}, id, edits, format: formatOpt } = opts;
+    const { channels = {}, format: formatOpt } = opts;
     const lonKey = fieldOf(channels, 'lon') || 'lon';
     const latKey = fieldOf(channels, 'lat') || 'lat';
     const format = resolveFormat(formatOpt);
@@ -652,13 +604,13 @@ export function geoText(options = {}) {
 }
 
 /**
- * Geographic axis-aligned bbox as west/south/east/north.
+ * A geographic box from west/south/east/north.
  * @param {any} [options]
  * @returns {import('../types').Mark}
  */
 export function geoRect(options = {}) {
     const opts = normalizeMarkOptions(options, { mark: 'geoRect', allow: MARK_OPTIONS.geoRect });
-    const { channels = {}, id, edits } = opts;
+    const { channels = {} } = opts;
     const westKey = fieldOf(channels, 'west') || 'west';
     const southKey = fieldOf(channels, 'south') || 'south';
     const eastKey = fieldOf(channels, 'east') || 'east';
@@ -688,9 +640,7 @@ export function geoRect(options = {}) {
                 const w0 = d[westKey], s0 = d[southKey];
                 const e0 = d[eastKey], n0 = d[northKey];
                 if (w0 == null || s0 == null || e0 == null || n0 == null) return;
-                // Draw min/max, so a box the user dragged inside-out (west past
-                // east) still renders as a box. Without this the ring winds
-                // backwards and d3 fills its complement — the whole frame.
+                // Normalise, so a box dragged inside-out still draws as a box.
                 const west = Math.min(w0, e0), east = Math.max(w0, e0);
                 const south = Math.min(s0, n0), north = Math.max(s0, n0);
                 const box = projectBounds(projection, west, south, east, north);
@@ -699,13 +649,9 @@ export function geoRect(options = {}) {
                     fill: 'rgba(37, 99, 235, 0.2)',
                     stroke: '#1d4ed8',
                     strokeWidth: 1.5,
-                });
-                // Also emit a geographic ring path so the visual follows the
-                // projection (curved under Mercator); the rect node is the
-                // hit-target / brush AABB.
-                // Ring winding matters: d3-geo reads a reversed exterior ring as
-                // the *complement* of the polygon, which fills the whole frame and
-                // leaves the box itself blank.
+                }, i, currentData);
+                // The visible ring follows the projection; the rect below is the hit
+                // target. Winding matters: d3-geo fills a reversed ring's complement.
                 const ring = {
                     type: 'Polygon',
                     coordinates: [[

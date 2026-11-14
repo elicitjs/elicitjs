@@ -1,9 +1,6 @@
 // @ts-check
-// curve.js — a segment that BENDS. A tick draws a straight line between two
-// points; a curve draws the same span bowed off its chord by an amount that is
-// itself a channel, so "how much does this bend, and which way" becomes an
-// elicited number: a mouth's smile, an annotation's arc, a preference curve's
-// convexity, a flow's deflection.
+// curve.js — a segment bowed off its chord by a `curvature` channel, so the bend
+// is an elicited number (a mouth's smile, an annotation's arc).
 //
 //   curveY({
 //     channels: {
@@ -16,38 +13,18 @@
 //     }
 //   })
 //
-// ── The channels ────────────────────────────────────────────────────────────
-// `curvature` is dimensionless: the apex's offset from the chord as a fraction
-// of the HALF-chord, so 0 is a straight segment and ±1 bows out by half the
-// span's length. It scales with the chord, which is what keeps a glyph's curve
-// proportional when the glyph resizes. Sign: POSITIVE bows to the LEFT of travel
-// from the first endpoint to the second (rightward chord bows up, downward chord
-// bows right). Which way "more" should bend is the author's, and it belongs on
-// the scale — `scale: { range: [0.6, -0.6] }` maps a rising field to a deepening
-// ∪ rather than a rising ∩.
+// `curvature` is the apex's offset from the chord as a fraction of the
+// half-chord: 0 is straight, positive bows to the left of travel from the first
+// endpoint to the second. `angle` tilts the curve about its chord midpoint and is
+// baked into the path (renderers don't rotate paths).
 //
-// `angle` tilts the whole curve about its chord midpoint, in math degrees. It is
-// baked into the GEOMETRY rather than left on the node, because neither renderer
-// rotates a `path` (see FeatureNode.angle) — and a curve that can't tilt loses
-// the one gesture that distinguishes it from a bent tick.
+// `curveY` spans x and sits on y; `curveX` spans y and sits on x; bare `curve`
+// reads the declared channels. The span is an endpoint pair, or a centre channel
+// plus `length` in px.
 //
-// `curveY` spans x and is positioned on y; `curveX` spans y and is positioned on
-// x; bare `curve` reads the declared channels (a y1/y2 pair means curveX). The
-// span comes from the `x1`/`x2` (or `y1`/`y2`) endpoint pair, or from a centre
-// channel plus a `length` in px.
-//
-// ── Two nodes ───────────────────────────────────────────────────────────────
-// A stroked curve is a few pixels wide and would be nearly impossible to grab,
-// so the mark emits its visible path plus a fat transparent HIT path over the
-// same geometry. The hit path also carries a sampled `points` polyline, because
-// the pick layer measures distance along `points` and cannot hit a `d`-only path
-// at all (that is how a canvas-rendered curve would otherwise be undraggable).
-// Both stamp `cx`/`cy` at the chord midpoint so `markCenter` — and therefore
-// `slide`'s track and `rotate`'s pivot — resolve on a path mark.
-//
-// The hit path leaves `pointerEvents` unset ON PURPOSE: the engine silences a
-// mark with no direct-pick edit, so an inert curve can't swallow a sibling
-// handle's drag, while an editable one gets the pointer back automatically.
+// Emits the visible path plus a wide transparent hit path with sampled `points`
+// (see hitpath.js). Both carry `cx`/`cy` at the chord midpoint. The hit path
+// leaves `pointerEvents` unset so the engine decides.
 
 import {
     encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions,
@@ -56,9 +33,8 @@ import { MARK_OPTIONS } from '../vocabulary.js';
 import { HIT_WIDTH, sampleQuadratic } from './hitpath.js';
 
 /**
- * A point rotated about a pivot by `deg` MATH degrees (CCW, y-up), which in
- * screen space (y-down) is a clockwise rotation of the same magnitude — the same
- * convention `FeatureNode.angle` and the renderers' rotate(-deg) use.
+ * A point rotated about a pivot by `deg` math degrees (CCW, y-up), the same
+ * convention as `FeatureNode.angle`.
  * @param {[number, number]} p
  * @param {{ cx: number, cy: number }} pivot
  * @param {number} deg
@@ -75,20 +51,20 @@ function rotatePoint(p, pivot, deg) {
 }
 
 /**
- * @param {any} options
+ * A bending segment; the chord runs along x unless a y1/y2 pair says otherwise.
+ * @param {any} [options]
  * @returns {import('../types').Mark}
  */
-function buildCurve(options) {
+export function curve(options = {}) {
     const opts = normalizeMarkOptions(options, { mark: 'curve', allow: MARK_OPTIONS.curve });
-    const { channels = {}, id, edits, length } = opts;
+    const { channels = {}, length } = opts;
     const { xKey, yKey } = positionalKeys(channels);
 
     return {
         ...markCommon(opts),
         type: 'curve',
         channels,
-        // A curve sits on a tick, not in an interval — it marks a position, and its
-        // span is stated by its own endpoint channels.
+        // A curve sits on a tick, not in an interval.
         discreteScale: 'point',
         xKey,
         yKey,
@@ -101,10 +77,7 @@ function buildCurve(options) {
          * @returns {import('../types').FeatureNode[]}
          */
         build: (currentData, scales, width, height) => {
-            // The chord runs along x unless the spec says (or shows) otherwise: a
-            // declared y1/y2 pair is a vertical span.
-            // A declared pair is the CHORD; a lone x or y is the chord's centre, so the
-            // value (where the bow sits) runs along the other axis.
+            // A declared endpoint pair is the chord; a lone x or y is its centre.
             const valueAxis = resolveValueAxis(channels, scales, { orientation: opts.orientation, extent: 'span', single: 'other' });
             const spanAxis = valueAxis === 'x' ? 'y' : 'x';
             const spanFull = spanAxis === 'x' ? width : height;
@@ -119,8 +92,7 @@ function buildCurve(options) {
             /** @type {import('../types').FeatureNode[]} */
             const nodes = [];
             currentData.forEach((d, i) => {
-                // A row missing any positional value it binds has no chord: draw
-                // nothing (its ends fell to fixed fractions of the plot).
+                // No curve for a row missing any bound positional value.
                 if (['x', 'y', 'x1', 'x2', 'y1', 'y2'].some((c) => missingValue(channels, c, d))) return;
                 const style = resolveStyle(scales, channels, d, defaults, i, currentData);
                 const at = encodeChannel(scales, channels, valueAxis, d, valueFull / 2, i, currentData);
@@ -147,15 +119,13 @@ function buildCurve(options) {
                 const dx = p2[0] - p1[0];
                 const dy = p2[1] - p1[1];
                 const chord = Math.hypot(dx, dy) || 1;
-                // Unit normal to the LEFT of travel (rotate the chord direction a
-                // quarter turn CCW in math space / CW on screen).
+                // Unit normal to the left of travel.
                 const nx = dy / chord;
                 const ny = -dx / chord;
 
                 const curvature = encodeChannel(scales, channels, 'curvature', d, 0, i, currentData);
-                // The apex sits `curvature` half-chords off the chord; a quadratic
-                // passes through the midpoint between chord and control, so the
-                // control point is twice as far out as the apex.
+                // A quadratic's apex is halfway to its control point, so the
+                // control sits at twice the apex offset.
                 const apex = (curvature || 0) * (chord / 2);
                 /** @type {[number, number]} */
                 let c = [mid.cx + nx * apex * 2, mid.cy + ny * apex * 2];
@@ -199,15 +169,6 @@ function buildCurve(options) {
             return nodes;
         }
     };
-}
-
-/**
- * A bending segment; the chord runs along x unless a y1/y2 pair says otherwise.
- * @param {any} [options]
- * @returns {import('../types').Mark}
- */
-export function curve(options = {}) {
-    return buildCurve(options);
 }
 
 /**

@@ -1,46 +1,26 @@
 // @ts-check
 // tiles.js — slippy-map tile cover for a raster basemap (the OSM / Leaflet model).
-//
-// A tile server (OSM, Carto, Stamen, your own) serves 256px PNGs baked in Web
-// Mercator, addressed by {z}/{x}/{y}. Drawing them is not a projection of data —
-// it's laying pre-rendered images on the plane. That only lines up when the
-// chart's projection IS Web Mercator (unrotated): a tile is a rigid picture, so
-// any other projection would have to resample it pixel by pixel, which an <image>
-// cannot do. Leaflet gets away with never offering another projection; we have to
-// check (isWebMercator) and say so.
-//
-// Placement, given the chart's fitted d3.geoMercator:
-//   worldPx = 2π · scale            the whole world's width in OUR pixels
-//   z       = round(log2(worldPx / tileSize))     nearest integer zoom level
-//   size    = worldPx / 2^z         a tile's on-screen size (fractional zoom is
-//                                   fine — the image just scales, as in Leaflet)
+// Tiles are Web Mercator images, so they only register under a Web Mercator
+// projection (isWebMercator). Placement, from the chart's fitted d3.geoMercator:
+//   worldPx = 2π · scale                          the world's width in px
+//   z       = round(log2(worldPx / tileSize))     nearest integer zoom
+//   size    = worldPx / 2^z                       a tile's on-screen size
 //   origin  = projection([0,0]) − worldPx/2       the world's top-left corner
-// then tile (x, y) sits at origin + (x, y)·size. Deriving the origin FROM the
-// live projection (rather than re-deriving scale/translate) keeps the tiles and
-// the vector marks on one coordinate system by construction.
+// Tile (x, y) sits at origin + (x, y)·size. The origin comes from the live
+// projection, so tiles and vector marks share one coordinate system.
 
 /** Latitude where the Mercator world becomes square: atan(sinh(π)). */
 export const MAX_MERCATOR_LAT = 85.0511287798066;
 
 /**
- * Does this projection place lon/lat the way the tile pyramid does — i.e. will
- * tiles register with the data?
- *
- * Checked by BEHAVIOUR, not by a type name (same discipline as the scale
- * capability flags: a name is a label, a measurement is the truth). We derive the
- * world's top-left from the projection itself, then assert that probe points land
- * exactly where the Web Mercator formula says they must:
+ * Does this projection place lon/lat the way the tile pyramid does? Checked by
+ * behaviour: probe points must land where the Web Mercator formula puts them:
  *
  *   x = ox + worldPx · (lon + 180) / 360
  *   y = oy + worldPx · (0.5 − ln(tan(π/4 + φ/2)) / 2π)
  *
- * The LATITUDE probes are what carry the test: mercator and equirectangular agree
- * on the equator (both are linear in lon), so an equator-only check passes
- * equirectangular and would silently draw a stretched, misregistered map. The
- * probes also reject an oblique rotation, a clipped globe, and a hand-rolled d3
- * projection. A pure LONGITUDE rotation legitimately passes: it pans the sphere,
- * and since the tile grid is placed through the same projection, imagery and data
- * pan together.
+ * The latitude probes reject equirectangular, which agrees on the equator. A pure
+ * longitude rotation passes: tiles and data pan together.
  *
  * @param {import('./projection.js').ProjectionContext | null | undefined} projection
  * @returns {boolean}
