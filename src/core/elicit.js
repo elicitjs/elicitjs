@@ -3,7 +3,7 @@ import { SceneGraph, paintOrder, clipRect, clipProblem } from './scene.js';
 import { resolveScales } from './resolve.js';
 import { createProjection } from './projection.js';
 import { parsePath, flatten } from '../plot/shapes.js';
-import { resolveLock, resolveContext, lockConstraint, isNodeLocked } from './lock.js';
+import { isNodeLocked } from './lock.js';
 import { collectEdits, resolveChannels, warnMisplacedEdits } from '../edit/route.js';
 import { markCenter, nudgeTarget } from '../edit/shared.js';
 import { hitTest, hitTestAny, pointInPolygon, clipVisible } from '../edit/pick.js';
@@ -21,7 +21,7 @@ import { reserveLegends, legendsFromChannels } from './legends.js';
 import { reserveTitles, titleNodes } from './titles.js';
 import {
     validateTables, inferMeasureOfDomain,
-    normalizeSchema, denormalizeSchema, normalizeData, isBareForm, enforceRefs, isDirected,
+    normalizeSchema, denormalizeSchema, normalizeData, enforceRefs, isDirected,
 } from './schema.js';
 import { axisOf, pointerForChannel } from './encoding.js';
 import { nestingOf, treeOf, treeProblems, enforceTree } from './hierarchy.js';
@@ -29,6 +29,8 @@ import { settleHierarchy, fitChannelsOf, DEFAULT_GAP } from './fit.js';
 import { warn } from './dev.js';
 import { createChartState } from './engine/state.js';
 import { createHistory } from './engine/history.js';
+import { createTables } from './engine/tables.js';
+import { createSelection } from './engine/selection.js';
 import { applyConstraint } from '../constraints/define.js';
 import {
     markLabel, constraintLabel, describe,
@@ -200,102 +202,18 @@ export function Elicit(spec) {
     //    primary table, which is every single-table chart).
     chart.tables = normalizeData(structuredClone(spec.data ?? null), schemaSpec);
 
-    // Every mark draws exactly ONE table, so the engine hands `tableOf(feature)`
-    // wherever it used to hand the single dataset — which is why no mark's build(),
-    // no edit's apply() and no constraint body had to change for structures.
-    /** @param {any} feature @returns {any[]} */
-    const tableOf = (feature) => chart.tables[feature.table] || [];
-    // WHICH TABLE an edit writes. THE one place this is decided — computeEdit reads
-    // it to build the proposal and runEdit reads it to commit, so the two can never
-    // disagree and splice a link proposal over the node rows. An edit names its
-    // target by ROLE (`table: 'links'`) so a renamed schema still resolves; with none
-    // it writes the table its own mark draws, which is every pre-structure edit.
-    /** @param {any} feature @param {import('../types').Edit} edit @returns {string} */
-    const targetTableOf = (feature, edit) =>
-        (edit && edit.table && schemaSpec.byRole[edit.table]) || feature.table;
-    // The PRIMARY table: what a bare-array `data` seeds, what a mark with no `table`
-    // draws, and what the index-addressed selection API means.
-    const primaryRows = () => chart.tables[schemaSpec.primary];
+    // The belief store's accessors (engine/tables.js): which table a feature draws
+    // and an edit writes, which rows are context or locked, what the chart REPORTS,
+    // and the invariants that hold over each table.
+    const {
+        tableOf, targetTableOf, primaryRows,
+        seedContext, isContextRow, reportedRows, rowIndexOf, reportedIndexOf, shapeData,
+        recountSeed, isLockedIn, lockRowsIn, constraintsIn,
+    } = createTables(chart, { spec, schemaSpec });
 
-    // CONTEXT rows (spec.context, see core/lock.js): reference rows of a table —
-    // observed history behind a forecast — drawn and locked like any locked row,
-    // and left out of everything the chart REPORTS. Context is not a table of its
-    // own: the rows share the table's columns, so nothing is declared twice and the
-    // two can never disagree on a type.
-    //
-    // Membership is decided ONCE, over the seed, and held as row IDENTITY: a
-    // predicate re-asked of live rows would swallow an answer dragged into its
-    // region. The lock keeps the identity stable (a locked row survives every
-    // commit as the same object), undo carries it as indices, and setData keeps the
-    // context rows. A table is a key here exactly when `spec.context` speaks for it.
-    chart.contextRows = {};
-    const seedContext = () => {
-        chart.contextRows = {};
-        let seen = 0;
-        let matched = 0;
-        for (const name of Object.keys(chart.tables)) {
-            const pred = resolveContext(spec.context, name);
-            if (!pred) continue;
-            /** @type {WeakSet<object>} */
-            const set = new WeakSet();
-            chart.tables[name].forEach((d, i) => {
-                seen++;
-                if (d && typeof d === 'object' && pred(d, i)) { set.add(d); matched++; }
-            });
-            chart.contextRows[name] = set;
-        }
-        if (seen && !matched) {
-            warn(
-                'spec:context:none',
-                `spec.context matched none of the ${seen} seeded rows, so nothing is drawn as ` +
-                `context. It is asked once, of the rows in \`data\` (and kept by setData).`
-            );
-        }
-    };
+    // CONTEXT rows (spec.context): decided ONCE, over the seed, and held as row
+    // IDENTITY — see engine/tables.js.
     seedContext();
-    /** @param {string} name @param {any} d @returns {boolean} */
-    const isContextRow = (name, d) =>
-        !!(chart.contextRows[name] && d && typeof d === 'object' && chart.contextRows[name].has(d));
-    // What the chart REPORTS of a table: its rows minus the context rows. The
-    // index-addressed public API (selection, control) speaks THESE indices, so
-    // `getData()[i]` and `el.select(i)` always name the same row.
-    /** @param {string} name @returns {any[]} */
-    const reportedRows = (name) => {
-        const rows = chart.tables[name] || [];
-        return chart.contextRows[name] ? rows.filter((d) => !isContextRow(name, d)) : rows;
-    };
-    // A reported index -> the row's index in the table, or -1.
-    /** @param {string} name @param {number} i @returns {number} */
-    const rowIndexOf = (name, i) => {
-        if (!chart.contextRows[name]) return i;
-        const rows = chart.tables[name] || [];
-        let k = -1;
-        for (let j = 0; j < rows.length; j++) {
-            if (isContextRow(name, rows[j])) continue;
-            if (++k === i) return j;
-        }
-        return -1;
-    };
-    // A table index -> its reported index, or null for a context row.
-    /** @param {string} name @param {number} j @returns {number | null} */
-    const reportedIndexOf = (name, j) => {
-        if (!chart.contextRows[name]) return j;
-        const rows = chart.tables[name] || [];
-        if (isContextRow(name, rows[j])) return null;
-        let k = 0;
-        for (let m = 0; m < j && m < rows.length; m++) if (!isContextRow(name, rows[m])) k++;
-        return k;
-    };
-    // The dataset in the caller's own spelling, for getData/onChange: a bare array
-    // when that is how it came in (every single-table chart), else keyed by table.
-    // Context rows are drawn, never elicited, so they are left out.
-    const shapeData = () => {
-        if (isBareForm(schemaSpec)) return reportedRows(schemaSpec.primary);
-        /** @type {Record<string, any[]>} */
-        const out = {};
-        for (const name of Object.keys(chart.tables)) out[name] = reportedRows(name);
-        return out;
-    };
 
     // Which TABLE each feature is a view over, resolved once. A mark states a table
     // by NAME (`table: 'links'`); with none, it takes the table filling its ROLE —
@@ -583,44 +501,9 @@ export function Elicit(spec) {
         return viewerChannels[name];
     };
 
-    // Read-only rows (see core/lock.js). `lock: 'seed'` fixes the rows the chart was
-    // seeded with — they are given, not elicited — while leaving every later row
-    // free; a predicate locks rows by what they ARE. Two halves: a dataset invariant
-    // (run last in computeEdit, so a lock has the final word) and a `locked` stamp on
-    // those rows' scene nodes, which makes them pointer-transparent and invisible to
-    // proximity picking.
-    //
-    // Seeding is PER TABLE — "the rows this table started with" — so the predicate
-    // and its constraint are resolved per table and memoized. The counts are read
-    // live because setData re-seeds.
-    /** @type {Record<string, number>} */
-    let seedCounts = {};
-    for (const name of Object.keys(chart.tables)) seedCounts[name] = chart.tables[name].length;
-    /** @type {Record<string, ((d: any, i: number) => boolean) | null>} */
-    const lockPredicates = {};
-    /** @type {Record<string, import('../types').Constraint | null>} */
-    const lockConstraints = {};
-    /** @param {string} name @returns {((d: any, i: number) => boolean) | null} */
-    const isLockedIn = (name) => {
-        if (!(name in lockPredicates)) {
-            // A CONTEXT row is read-only: the lock's two halves (the invariant, and
-            // the pointer-transparent `locked` stamp) are exactly what "drawn, never
-            // elicited" means. Reads `contextRows` live — setData and undo rebuild it.
-            const lock = resolveLock(spec.lock, () => seedCounts[name] || 0, name);
-            lockPredicates[name] = !(name in chart.contextRows) ? lock
-                : lock ? (d, i) => isContextRow(name, d) || lock(d, i)
-                : (d) => isContextRow(name, d);
-        }
-        return lockPredicates[name];
-    };
-    /** @param {string} name @returns {import('../types').Constraint | null} */
-    const lockRowsIn = (name) => {
-        if (!(name in lockConstraints)) {
-            const pred = isLockedIn(name);
-            lockConstraints[name] = pred ? lockConstraint(pred) : null;
-        }
-        return lockConstraints[name];
-    };
+    // How many rows each table was SEEDED with, for `lock: 'seed'` (see
+    // engine/tables.js: isLockedIn). Counted here, once the seed is final.
+    recountSeed();
 
     // Check the SEED rows against that contract once, here (see core/schema.js for
     // the checks and why each is a defect). Seed rows are the only place a mismatch
@@ -635,38 +518,6 @@ export function Elicit(spec) {
     // colour-scale range fallback can read theme.palette/ramp/diverging.
     const liveSpec = { ...spec, schema, schemaSpec, theme };
 
-    // The dataset's invariants, gathered once, from `spec.constraints` — the ONE
-    // place they are declared. An invariant holds for EVERY edit over the rows,
-    // whichever mark fired it, which is what makes a rule gate a drag on any part of
-    // a glyph. Deduped by identity so the same constraint object listed twice runs
-    // once.
-    //
-    // A mark used to accept `constraints` as sugar and the engine promoted it here.
-    // That was a lie the spec could not see through: it READ as scoped to the mark
-    // that declared it and never was, so a `count({ max })` written on one of two
-    // marks silently capped the whole dataset. The mark option is gone; the
-    // correction is in MISTAKEN_OPTIONS (plot/mark.js).
-    //
-    // Bucketing is scoped to a TABLE, because a constraint is an invariant over ROWS
-    // and two tables' rows are different things — a rule written about nodes must not
-    // run on a link edit and see columns it has never heard of. A constraint takes
-    // the primary table unless it names another (`constraint.table`, a role or a
-    // name). On a single-table chart every constraint lands in the one bucket.
-    /** @type {Record<string, import('../types').Constraint[]>} */
-    const constraintsByTable = {};
-    /** @param {import('../types').Constraint} c @param {string} table */
-    const promoteConstraint = (c, table) => {
-        const list = constraintsByTable[table] || (constraintsByTable[table] = []);
-        if (!list.includes(c)) list.push(c);
-    };
-    for (const c of spec.constraints || []) {
-        const named = /** @type {any} */ (c).table;
-        promoteConstraint(c, (named && (schemaSpec.byRole[named] || (schemaSpec.tables[named] && named)))
-            || schemaSpec.primary);
-    }
-
-    /** @param {string} table @returns {import('../types').Constraint[]} */
-    const constraintsIn = (table) => constraintsByTable[table] || [];
     // The primary table's invariants, for the guide layer (a guide draws a rule about
     // a mark, and resolves the mark's own table through guideCtx.tableOf).
     const datasetConstraints = constraintsIn(schemaSpec.primary);
@@ -791,60 +642,23 @@ export function Elicit(spec) {
         ? `${node.index}\0${node.channel ?? ''}\0${node.side ?? ''}\0${node.vertexIndex ?? ''}`
         : '');
 
-    // Selection is stored QUALIFIED BY TABLE. A bare row index is ambiguous the
-    // moment a dataset has more than one table — node 3 and link 3 are different
-    // rows — and the effects pass keys its highlight by index, so an unqualified set
-    // would light up a link because a node with the same index was selected.
-    //
-    // The public surface stays index-based: every existing chart has one table, and
-    // `el.select(3)` / `getSelection()` mean that table's row 3. The qualification is
-    // internal, and only a multi-table chart ever sees it.
-    /** @param {string} table @param {number} index @returns {string} */
-    const selKey = (table, index) => `${table}\u0000${index}`;
-    /** @param {string} key @returns {{ table: string, index: number }} */
-    const selParse = (key) => {
-        const at = key.indexOf('\u0000');
-        return { table: key.slice(0, at), index: Number(key.slice(at + 1)) };
-    };
-    /** The selected row indices belonging to one table, as a Set. */
-    /** @param {string} table @returns {Set<number>} */
-    const selectionIn = (table) => {
-        /** @type {Set<number>} */
-        const out = new Set();
-        for (const key of ui.selection) {
-            const s = selParse(key);
-            if (s.table === table) out.add(s.index);
-        }
-        return out;
-    };
-
-    // The primary selected datum index (the FIRST member — under multi-select there
-    // may be several), or null. Stale indices — a selected row later removed — read
-    // as null rather than pointing at a shifted row. Reads the PRIMARY table, which
-    // is what a single-table chart's "the selection" has always meant.
-    const selectionPrimary = () => {
-        for (const i of selectionIn(schemaSpec.primary)) {
-            if (i >= 0 && i < primaryRows().length) return i;
-        }
-        return null;
-    };
-
-    // EVERY live selected index in one table, ascending. The counterpart to
-    // selectionPrimary for anything that has to reflect a multi-row selection rather
-    // than narrow it to one — a legend marking which categories the selection holds,
-    // or a caller reading getSelectionAll(). Same staleness rule.
-    /** @param {string} [table] @returns {number[]} */
-    const selectionList = (table = schemaSpec.primary) => {
-        const n = (chart.tables[table] || []).length;
-        return [...selectionIn(table)].filter((i) => i >= 0 && i < n).sort((a, b) => a - b);
-    };
-
     // Caller-facing observers. `change` fires on every committed edit; `stage` fires
     // when setStage advances; `select` fires when the selection changes (no data
     // moved, so it is NOT a `change`). Attached to the returned container as
     // `.on('change' | 'stage' | 'select', cb)`.
     /** @type {{ change: Set<Function>, stage: Set<Function>, select: Set<Function> }} */
     const listeners = { change: new Set(), stage: new Set(), select: new Set() };
+
+    // Selection (engine/selection.js): which rows the reader has picked, stored
+    // QUALIFIED BY TABLE, and the commit path both edit.select and el.select* use.
+    const selection = createSelection(chart, {
+        schemaSpec, ui, listeners, primaryRows, reportedRows, rowIndexOf, reportedIndexOf,
+        update: () => update(),
+    });
+    const {
+        selectionIn, selectionPrimary, selectionList,
+        commitSelectionEdit,
+    } = selection;
 
     // ---- Undo history --------------------------------------------------------
     // Snapshot store, one entry per GESTURE (see engine/history.js). Built here so
@@ -864,77 +678,6 @@ export function Elicit(spec) {
     const notifyChange = () => {
         if (spec.onChange) spec.onChange(shapeData());
         for (const cb of listeners.change) cb(structuredClone(shapeData()));
-    };
-
-    // Notify a selection change. Selection is not the belief data, so it is a
-    // SEPARATE channel from `change` — a `select` listener hears it, `onChange`/
-    // `getData` never do.
-    // The selection as the caller sees it: REPORTED indices (see reportedRows), so
-    // a selected row and `getData()` agree. A selected context row has no reported
-    // index and is left out.
-    /** @param {string} [table] @returns {number[]} */
-    const reportedSelection = (table = schemaSpec.primary) => /** @type {number[]} */ (
-        selectionList(table).map((i) => reportedIndexOf(table, i)).filter((i) => i != null)
-    );
-    const notifySelect = () => {
-        const list = reportedSelection();
-        const primary = list.length ? list[0] : null;
-        // A single-table chart reports bare row indices, as it always has. A
-        // multi-table one reports {table, index}, because a bare number there names
-        // no particular row.
-        const all = isBareForm(schemaSpec)
-            ? [...selectionIn(schemaSpec.primary)].map((i) => reportedIndexOf(schemaSpec.primary, i)).filter((i) => i != null)
-            : [...ui.selection].map(selParse)
-                .map((sel) => ({ ...sel, index: reportedIndexOf(sel.table, sel.index) }))
-                .filter((sel) => sel.index != null);
-        for (const cb of listeners.select) cb(primary, /** @type {any} */ (all));
-    };
-
-    // Commit a SELECTION edit's proposal. Like a domain edit it writes engine state
-    // that ISN'T the dataset — here `ui.selection` — so it bypasses the datum
-    // splice, the data-layer constraints, AND undo history: nothing about the belief
-    // data changed, so there is nothing to take back and `onChange` stays silent.
-    // The descriptor is `{ index, exclusive, toggle }` (see edit.select). Returns
-    // whether the selection actually moved, so the dispatch reports it as a render
-    // (via shouldRender) exactly as it does for a data edit — no self-render here, so
-    // the gesture path renders once. The external el.select* wrappers, which call
-    // this OUTSIDE a dispatch, render themselves.
-    /** @param {{ index?: number | null, exclusive?: boolean, toggle?: boolean, clear?: boolean }} sel */
-    const commitSelectionEdit = (sel, table = schemaSpec.primary) => {
-        const before = [...ui.selection].join(',');
-        applySelection(sel, table);
-        const after = [...ui.selection].join(',');
-        if (before === after) return false;
-        notifySelect();
-        return true;
-    };
-
-    // Mutate ui.selection from a selection descriptor. `clear` empties it; an
-    // `exclusive` write replaces the set; otherwise the write is ADDITIVE.
-    //
-    // `toggle` means "clicking what is already selected deselects it", and that
-    // reads differently in the two modes — which is the whole point of having them:
-    //   exclusive — deselect only when the row is the SOLE selection. Clicking one
-    //     of several replaces the set with it, which is what a plain click means.
-    //   additive  — deselect the row from the set, sole or not. Shift-clicking a
-    //     member is the only way to take it back out.
-    // Getting that second case wrong is invisible: `has && size === 1` is false for
-    // a member of a multi-row selection, so the row was re-added and shift-click
-    // could add but never remove.
-    /** @param {{ index?: number | null, exclusive?: boolean, toggle?: boolean, clear?: boolean }} sel */
-    const applySelection = (sel, table = schemaSpec.primary) => {
-        if (sel.clear || sel.index == null) { ui.selection.clear(); return; }
-        const key = selKey(table, sel.index);
-        const has = ui.selection.has(key);
-        if (sel.exclusive !== false) {
-            const sole = has && ui.selection.size === 1;
-            ui.selection.clear();
-            if (sel.toggle && sole) return; // toggled the sole selection off — leave empty
-        } else if (sel.toggle && has) {
-            ui.selection.delete(key);
-            return;
-        }
-        ui.selection.add(key);
     };
 
     // The most recently built scene nodes per feature, so plane-pick edits can
@@ -2743,8 +2486,7 @@ export function Elicit(spec) {
             stroking = false;
             strokeNodes = null;
         }
-        seedCounts = {};
-        for (const name of Object.keys(chart.tables)) seedCounts[name] = chart.tables[name].length;
+        recountSeed();
         ui.preview = null;
         ui.hover = null;   // the pointer's row index is new too
         ui.grab = null;    // and any in-flight grab points at a row that just moved
@@ -2787,91 +2529,16 @@ export function Elicit(spec) {
     // ── Selection: read/drive the transient selection from outside ────────────
     // Selection is pipeline state, not data — so it has its own small API beside
     // getData/setData, and its own `select` event. Driving it externally goes
-    // through the SAME applySelection the edit.select gesture does, so an external
-    // <select>, a keyboard, or a click all leave the selection in one shape.
-
-    // The primary selected index (number) or null. The counterpart of getData for
-    // selection; a caller reads it to drive its own UI (which row is highlighted).
-    // Stays scalar under multi-select — it reports the FIRST selected row, so a
-    // caller written against a single selection keeps working.
-    el.getSelection = () => { const list = reportedSelection(); return list.length ? list[0] : null; };
-
-    // EVERY selected index, ascending. What to read when the chart can hold more
-    // than one (edit.select({ multi: true }), el.select([…]), el.selectAll()).
-    el.getSelectionAll = () => reportedSelection();
-
-    // Drive the selection from outside, then render. Each wrapper renders itself (it
-    // runs OUTSIDE the dispatch, which is what renders the gesture path), and returns
-    // whether the selection moved.
-    /** @param {{ index?: number | null, exclusive?: boolean, toggle?: boolean, clear?: boolean }} sel */
-    const driveSelection = (sel) => {
-        const moved = commitSelectionEdit(sel);
-        if (moved) update();
-        return moved;
-    };
-
-    // Select a SPECIFIC ITEM by dataset index (the external counterpart of clicking
-    // a mark). `null` (or a negative / out-of-range index) clears the selection.
-    // Exclusive: the named row becomes the sole selection, replacing whatever was
-    // selected. An ARRAY selects exactly those rows — the whole set is replaced, so
-    // the call is idempotent and there is no clear-then-add for a caller to get
-    // half-right. An empty array clears, like `null`.
-    el.select = (/** @type {number | number[] | null} */ index) => {
-        // Reported indices in, table indices from here on (see reportedRows).
-        const rows = reportedRows(schemaSpec.primary);
-        const ok = (/** @type {any} */ i) => typeof i === 'number' && i >= 0 && i < rows.length;
-        const row = (/** @type {number} */ i) => rowIndexOf(schemaSpec.primary, i);
-        if (Array.isArray(index)) {
-            const list = index.filter(ok).map(row);
-            if (!list.length) return driveSelection({ index: null, clear: true });
-            // One commit, so `select` fires once and the render happens once: clear
-            // through the same descriptor path, then add the rest additively.
-            const before = [...ui.selection].join(',');
-            applySelection({ index: list[0], exclusive: true, toggle: false });
-            for (const i of list.slice(1)) applySelection({ index: i, exclusive: false, toggle: false });
-            if ([...ui.selection].join(',') === before) return false;
-            notifySelect();
-            update();
-            return true;
-        }
-        const i = ok(index) ? row(/** @type {number} */ (index)) : null;
-        return driveSelection({ index: i, exclusive: true, toggle: false, clear: i == null });
-    };
-
-    // Add or remove ONE row, leaving the rest of the selection alone — the external
-    // counterpart of a shift-click (edit.select({ multi: true })).
-    el.toggleSelection = (/** @type {number} */ index) => {
-        const i = typeof index === 'number' ? rowIndexOf(schemaSpec.primary, index) : -1;
-        return i < 0 ? false : driveSelection({ index: i, exclusive: false, toggle: true });
-    };
-
-    // Select every row of the primary table.
-    el.selectAll = () => el.select(reportedRows(schemaSpec.primary).map((_, i) => i));
-
-    // Select by CATEGORY / predicate: pick rows matching `{ field: value }` (or a
-    // predicate function) and select them. This is the "select a category" entry
-    // point — an external control names a value, the chart finds and selects the
-    // rows carrying it. No match clears the selection.
-    //
-    // `{ all: true }` selects EVERY match; the default is the first one only. A
-    // category is usually several rows, so `all` is what "select a category"
-    // normally means — but changing the default would silently widen every existing
-    // caller's selection, so it is opt-in.
-    el.selectWhere = (/** @type {any} */ where, /** @type {any} */ value, /** @type {any} */ options) => {
-        const match = typeof where === 'function'
-            ? /** @type {(d: any, i: number) => boolean} */ (where)
-            : (/** @type {any} */ d) => d && d[where] === value;
-        const rows = reportedRows(schemaSpec.primary);
-        if (options && options.all) {
-            const hits = rows.map((d, i) => (match(d, i) ? i : -1)).filter((i) => i >= 0);
-            return el.select(hits.length ? hits : null);
-        }
-        const i = rows.findIndex(match);
-        return el.select(i < 0 ? null : i);
-    };
-
-    // Clear the selection entirely.
-    el.clearSelection = () => driveSelection({ index: null, clear: true });
+    // through the SAME applySelection the edit.select gesture does (see
+    // engine/selection.js), so an external <select>, a keyboard, or a click all
+    // leave the selection in one shape.
+    el.getSelection = selection.api.getSelection;
+    el.getSelectionAll = selection.api.getSelectionAll;
+    el.select = selection.api.select;
+    el.toggleSelection = selection.api.toggleSelection;
+    el.selectAll = selection.api.selectAll;
+    el.selectWhere = selection.api.selectWhere;
+    el.clearSelection = selection.api.clearSelection;
 
     // ── External control: drive an edit from outside the chart ────────────────
     // An external controller (a slider, a `<select>`, a rotate icon, a plain
