@@ -7,31 +7,33 @@ import { isNodeLocked } from './lock.js';
 import { collectEdits, resolveChannels, warnMisplacedEdits } from '../edit/route.js';
 import { markCenter, nudgeTarget } from '../edit/shared.js';
 import { hitTest, hitTestAny, pointInPolygon, clipVisible } from '../edit/pick.js';
-import { encodeChannel, rawChannel } from '../plot/mark.js';
-import { portFeature, portRolesOf, portKey } from '../plot/port.js';
+import { encodeChannel } from '../plot/mark.js';
+import { portKey } from '../plot/port.js';
 import { drivers, driverFor, needsPlaneOnTop } from '../edit/drivers/index.js';
 import { autoEditGuides } from '../edit/guide.js';
-import { tip as tipGuide } from '../guides/tip.js';
 import { D3Renderer } from '../renderers/d3-renderer/index.js';
 import { resolveEffects, stateEffectNodes, outlineNodes, effectStyleFor, elementEffectOf } from './effects.js';
 import { resolveTheme } from './theme.js';
-import { autoAxes } from './axes.js';
 import { panelNodes } from './panel.js';
-import { reserveLegends, legendsFromChannels } from './legends.js';
+import { reserveLegends } from './legends.js';
 import { reserveTitles, titleNodes } from './titles.js';
 import {
     validateTables, inferMeasureOfDomain,
-    normalizeSchema, denormalizeSchema, normalizeData, enforceRefs, isDirected,
+    normalizeSchema, denormalizeSchema, normalizeData, enforceRefs,
 } from './schema.js';
 import { axisOf, pointerForChannel } from './encoding.js';
 import { nestingOf, treeOf, treeProblems, enforceTree } from './hierarchy.js';
-import { settleHierarchy, fitChannelsOf, DEFAULT_GAP } from './fit.js';
+import { fitChannelsOf } from './fit.js';
 import { warn } from './dev.js';
 import { createChartState } from './engine/state.js';
 import { createHistory } from './engine/history.js';
 import { createTables } from './engine/tables.js';
 import { createSelection } from './engine/selection.js';
 import { createStages } from './engine/stages.js';
+import { createNodes } from './engine/nodes.js';
+import {
+    assembleFeatures, bindFeatureTables, desugarPorts, desugarContainers, tipGuidesOf, viewerChannelsOf,
+} from './engine/features.js';
 import { applyConstraint } from '../constraints/define.js';
 import {
     markLabel, constraintLabel, describe,
@@ -69,21 +71,8 @@ export function Elicit(spec) {
         margins = { top: 20, right: 20, bottom: 30, left: 40 },
         // `schema` and `scales` are read straight off the spec by resolveScales:
         // the schema owns each field's data type and DOMAIN, and `scales` is the
-        // chart-level per-channel scale override.
-        marks: userMarks = [],
-        // Chart elements (axis / grid / legend / axisRadial) — the same factories
-        // as `elicit.elements.*`. Concatenated into the feature list with `marks`
-        // so authors can separate scale chrome from data marks without a second
-        // engine path. Elements in `marks` still work (and stay on `plot.*`).
-        elements: userElements = [],
-        // Global axis convenience: desugars into composable axis/grid marks (see
-        // autoAxes). Explicit axis marks in `marks`/`elements` take precedence per channel.
-        axes,
-        // The legend counterpart to `axes`: `true` for one legend per bound
-        // non-positional scale, or a per-channel config ({ fill: {...}, size: false }).
-        // Defaults to none — unlike axes, because a legend RESERVES layout space and
-        // silently shrinking the plot because a `fill` channel exists would surprise.
-        legends,
+        // chart-level per-channel scale override. `marks`, `elements`, `axes` and
+        // `legends` become the feature list (engine/features.js).
         guides = [],
         // Interaction-effects layer (grab / proximity-select), customizable and
         // kept separate from mark style channels. See core/effects.js.
@@ -117,28 +106,9 @@ export function Elicit(spec) {
     const theme = resolveTheme(spec.theme);
     const effects = resolveEffects(effectsSpec, theme.effects);
 
-    // Prepend auto-injected axis/grid marks (drawn behind marks via the background
-    // layer). Explicit axis/element the user composed into `marks` or `elements`
-    // are preserved. A projection chart has no cartesian axes — skip autoAxes
-    // unless the caller forced them (axes !== undefined still respected via
-    // autoAxes(false)). Flattened because a composite mark desugars to
-    // an ARRAY of features.
-    const userFeatures = [...userElements, ...userMarks];
-    const axesOpt = spec.projection != null && axes === undefined ? false : axes;
-    // …and append auto-injected LEGEND marks, the same IMPLICIT layer for the
-    // non-positional scales (core/legends.js). `axes` had this convenience and
-    // `legends` did not, so an axis was one spec key and a legend was a mark you had
-    // to compose by hand. Appended (not prepended) because a legend draws its own
-    // reserved band beside the plot rather than behind the marks.
-    // A legend-scoped edit declared on a MARK's channel moves to that channel's
-    // legend, taking the mark's field and table with it (core/legends.js). Runs
-    // before autoLegends so a minted legend counts as "explicit" for its channel
-    // and the implicit layer doesn't add a second one beside it.
-    const features = [
-        ...autoAxes(userFeatures, axesOpt, theme),
-        ...userFeatures,
-        ...legendsFromChannels(userFeatures, legends),
-    ].flat(Infinity);
+    // The flattened feature list: auto axes, elements, marks, implicit legends —
+    // each with an id (engine/features.js).
+    const features = assembleFeatures(spec, theme);
     // Whether any feature is a space-reserving legend (core/legends.js). Static —
     // the feature set doesn't change — so the reservation step is skipped entirely
     // for the common no-legend chart.
@@ -146,13 +116,50 @@ export function Elicit(spec) {
     // Does an axis carry a title that may need room past the author's margin?
     const hasAxisTitles = () => features.some((f) => f && f.isAxis && typeof f.measureTitle === 'function');
 
+    // The bindings a commit or a resize REASSIGNS live on one shared object, so the
+    // engine modules wired below read the live value (see engine/state.js).
+    const chart = createChartState();
+    // Transient interaction (UI) state, separate from the belief `dataset`. The
+    // interaction drivers keep a per-feature session here (proximity selection,
+    // sweep/draw locks) — those locks belong to one mark's gesture, so they stay
+    // keyed by feature id. `preview` holds THE UNCOMMITTED proposal a driver parked
+    // (the probe driver's hover/drag), keyed by feature id: each entry is the
+    // proposed dataset that feature would commit. The committed rows are still what
+    // every mark draws; a proposal is rendered as an inert GHOST of only the rows it
+    // would change, layered on top (see update()'s ghost pass). It never reaches the
+    // belief store, `onChange`, or `getData`. Cleared on commit, hoverout, and stage
+    // change. Per-feature (not one global slot) so two probe marks can't clobber
+    // each other's ghost.
+    // `selection` is transient PIPELINE state: which dataset rows are currently
+    // selected, an interaction concept the engine owns — never a `selected` data
+    // column. A Set (single-exclusive today, so at most one member; a Set so
+    // multi-select is a later widening, not an API break). Written only through the
+    // selection commit path (edit.select / el.select), reset on setData/stage
+    // change, and stamped onto the scale map each render (scales.selection) so a
+    // legend/mark can target "the selected row" without a widened build signature.
+    // `hover` is the OTHER transient pointer state: which feature+row the pointer is
+    // currently over, written by the renderer's hover/hoverout events on any editable
+    // node. It feeds the same `hovered` effect a proximity driver's session does, so
+    // "this is the mark you are about to touch" looks the same however it was
+    // resolved. Cleared on hoverout, stage change and reseed, like `session`.
+    // `grab` is its mid-gesture counterpart: which feature+row a drag is currently on,
+    // bracketed by the same dragstart/dragend the undo transaction uses. It exists so
+    // the `grabbed` effect is decided in the state pass with the other two, rather
+    // than being painted by the renderer straight off d3.drag — that split is why
+    // `grabbed` used to honour `filter` and silently ignore the rest of its vocabulary
+    // (and never drew an outline at all).
+    /** @type {{ session: Record<string, any>, preview: Record<string, { table: string, rows: any[], pointer?: { x: number, y: number }, dropInto?: number | null }> | null, selection: Set<string>, hover: { featureId: string, index: number, node?: any } | null, grab: { featureId: string, index: number } | null, pointer: { x: number, y: number } | null, hit: { featureId: string, index: number, node: any } | null, hits: { featureId: string, index: number, node: any }[] }} */
+    // `pointer` is where the pointer is over the plot (scene coordinates), and
+    // `hit` the row under it whether or not it is editable — recorded only when
+    // a guide reads them (`tracksPointer`), and never dispatched: a tip or a
+    // crosshair is STATE a guide draws, so no mark becomes pointer-active to
+    // show one and dispatch does not change.
+    const ui = { session: {}, preview: null, selection: new Set(), hover: null, grab: null, pointer: null, hit: null, hits: [] };
+
     // Working dims. In 'reflow' mode `curW` tracks the container's measured width
     // (height stays the given value); 'fixed'/'scale' keep the design dims. Marks
     // and scales read the inner (margin-subtracted) dims, so recomputing them on a
     // resize is all it takes for the whole scene to reflow.
-    // The bindings a commit or a resize REASSIGNS live on one shared object, so the
-    // engine modules wired below read the live value (see engine/state.js).
-    const chart = createChartState();
     const designW = typeof width === 'number' ? width : 600;
     const designH = typeof height === 'number' ? height : 400;
     chart.curW = designW;
@@ -162,17 +169,9 @@ export function Elicit(spec) {
     // margins = author margins + each side's legend band. Recomputed every render;
     // equals the author margins when there are no legends.
     const authorMargins = margins;
-    let effectiveMargins = { ...authorMargins };
-    let innerWidth = chart.curW - effectiveMargins.left - effectiveMargins.right;
-    let innerHeight = chart.curH - effectiveMargins.top - effectiveMargins.bottom;
-
-    features.forEach((feature, index) => {
-        // `autoId` marks the id as ENGINE-assigned, so a diagnostic can tell an id the
-        // author chose (worth quoting back) from a positional placeholder (worth
-        // naming the factory instead). Without it every guard reported
-        // `mark "feature-3"`, since `id` is optional and most specs omit it.
-        if (!feature.id) { feature.id = `feature-${index}`; feature.autoId = true; }
-    });
+    chart.effectiveMargins = { ...authorMargins };
+    chart.innerWidth = chart.curW - chart.effectiveMargins.left - chart.effectiveMargins.right;
+    chart.innerHeight = chart.curH - chart.effectiveMargins.top - chart.effectiveMargins.bottom;
 
     // The engine OWNS the schema — an editable axis (edit.axis.*) reshapes a field's
     // DOMAIN, which lives on the schema. Clone it so a domain edit never mutates the
@@ -216,291 +215,25 @@ export function Elicit(spec) {
     // IDENTITY — see engine/tables.js.
     seedContext();
 
-    // Which TABLE each feature is a view over, resolved once. A mark states a table
-    // by NAME (`table: 'links'`); with none, it takes the table filling its ROLE —
-    // `link` asks for `links`, every other mark for the structure's primary. Going
-    // through the role is what makes renaming free: a schema that calls its tables
-    // `claims`/`supports` needs no `table:` written anywhere.
-    features.forEach((feature) => {
-        const named = feature.table;
-        if (named != null && !schemaSpec.tables[named]) {
-            warn(
-                `${markLabel(feature)}:table:${named}`,
-                `mark ${markLabel(feature)} draws table "${named}", which the schema does not ` +
-                `declare. Declared tables: ${Object.keys(schemaSpec.tables).map((n) => `"${n}"`).join(', ')}. ` +
-                `Falling back to "${schemaSpec.primary}".`
-            );
-        }
-        feature.table = (named != null && schemaSpec.tables[named])
-            ? named
-            : (schemaSpec.byRole[feature.tableRole] || schemaSpec.primary);
-    });
+    // Which TABLE each feature is a view over, by name or by ROLE (engine/features.js).
+    bindFeatureTables(features, schemaSpec);
 
-    // ── Ports: a channel that becomes a feature ────────────────────────────────
-    // `ports` on a mark drawing a network's nodes says where links may meet it. It
-    // desugars HERE, once, into a sibling PORT feature (plot/port.js) — the composite
-    // precedent: one declared mark, several features. A separate feature is what
-    // keeps a drag on a port off the host's own edits (its `move`), and placing it
-    // after the host's whole glyph keeps it painted on top of the node.
+    // `ports` on a node mark desugars into a sibling PORT feature (engine/features.js).
     const nodesTableName = schemaSpec.byRole.nodes || null;
-    for (let i = 0; i < features.length; i++) {
-        const host = features[i];
-        // A port feature reads its own `ports` channel; it is not a host.
-        const spec = host && !host.portHost && host.views !== 'scale' && host.channels && host.channels.ports;
-        if (!spec) continue;
-        delete host.channels.ports;
-        if (typeof host.nodeBox !== 'function') {
-            warn(
-                `${markLabel(host)}:ports:box`,
-                `mark ${markLabel(host)} has a \`ports\` channel, but it does not declare the box ` +
-                'it draws, so there is no edge to put a port on. Put `ports` on a mark that draws ' +
-                'a node shape: point, rect, ellipse, text, sticker, node, face, or a composite.'
-            );
-            continue;
-        }
-        if (!nodesTableName || host.table !== nodesTableName) {
-            warn(
-                `${markLabel(host)}:ports:table`,
-                `mark ${markLabel(host)} has a \`ports\` channel, but it draws table ` +
-                `"${host.table}", which is not a network's nodes table. Ports are where links ` +
-                'meet NODES: declare schema: { structure: "network", … } and put `ports` on the ' +
-                'mark drawing the nodes.'
-            );
-            continue;
-        }
-        let at = i + 1;
-        while (host.glyph && at < features.length && features[at] && features[at].glyph === host.glyph) at++;
-        features.splice(at, 0, portFeature(host, spec));
-    }
+    desugarPorts(features, nodesTableName);
 
-    // ── Containers: two statements in the channel map ──────────────────────────
-    // Under a hierarchy, a mark drawing the nodes says which rows may HOLD others
-    // (`contains`: a constant, a field or a fn — the `ports` precedent: a per-row
-    // capability the ENGINE reads, never the mark) and which of its size channels
-    // follow from a row's contents (`fit: true` — see core/fit.js). `contains` is
-    // taken off the channel map here so no scale is built for it; `fit` stays, a
-    // flag beside the channel's field. `dodge` is the third: which rows keep clear
-    // of their siblings (and by what `gap`), read the same way.
+    // `contains` / `dodge` / `fit` under a hierarchy (engine/features.js).
     const hierarchyNodes = nestingOf(schemaSpec) ? nodesTableName : null;
-    for (const f of features) {
-        if (!f || f.views === 'scale' || f.portHost || !f.channels) continue;
-        const contains = f.channels.contains;
-        const dodge = f.channels.dodge;
-        const fitted = Object.keys(f.channels).filter((ch) => f.channels[ch] && f.channels[ch].fit === true);
-        if (!contains && !dodge && !fitted.length) continue;
-        if (contains) delete f.channels.contains;
-        if (dodge) delete f.channels.dodge;
-        if (!hierarchyNodes || f.table !== hierarchyNodes) {
-            warn(
-                `${markLabel(f)}:contains:table`,
-                `mark ${markLabel(f)} states ${contains ? '`contains`' : dodge ? '`dodge`' : '`fit`'}, but it does not ` +
-                'draw the nodes of a hierarchy, so nothing can be nested in its rows. Declare ' +
-                'schema: { structure: "hierarchy", tables: { nodes, nesting } } and put it on ' +
-                'the mark drawing the nodes.'
-            );
-            for (const ch of fitted) delete f.channels[ch].fit;
-            continue;
-        }
-        if (typeof f.nodeBox !== 'function') {
-            warn(
-                `${markLabel(f)}:contains:box`,
-                `mark ${markLabel(f)} states ${contains ? '`contains`' : dodge ? '`dodge`' : '`fit`'}, but it does not ` +
-                'declare the box it draws, so it has no inside. Use a mark that draws a node ' +
-                'shape: point, rect, ellipse, shape, or a composite.'
-            );
-            continue;
-        }
-        if (contains) f.contains = contains === true ? { value: true } : contains;
-        if (dodge) f.dodge = dodge === true ? { value: true } : dodge;
-        for (const ch of fitted) {
-            if (f.channels[ch].field != null) continue;
-            warn(
-                `${markLabel(f)}:fit:${ch}`,
-                `mark ${markLabel(f)} marks channel "${ch}" \`fit: true\` but names no field. ` +
-                'A fitted size is written to a column — that is what keeps the drawing, the ' +
-                `links and getData() in agreement. Name one: ${ch}: { field: '…', fit: true }.`
-            );
-            delete f.channels[ch].fit;
-        }
-    }
+    desugarContainers(features, hierarchyNodes);
 
-    // The node table's two RULES, stated by the marks that draw the nodes and handed
-    // to every reader: the BOX (where a node's edges are — `Mark.nodeBox`) and the
-    // PORTS (which edges a link may use). `link` docks to the first, the network
-    // edits test drops against both, and the ports sit on the first — so a link end,
-    // a port and a drop target agree by construction. The host of the ports wins the
-    // box too: its box is the one the ports are drawn on.
-    const portFeatures = features.filter((f) => f && f.portHost && f.table === nodesTableName);
-    if (portFeatures.length > 1) {
-        warn(
-            'ports:hosts',
-            `${portFeatures.length} marks draw ports over the "${nodesTableName}" table; only the ` +
-            `first (${markLabel(portFeatures[0].portHost)}) decides where links may meet a node. ` +
-            'Put `ports` on one mark.'
-        );
-    }
-    const portsFeature = portFeatures[0] || null;
-    // A shape over the node table is the node; a label's box (`labelBox`, a text
-    // mark) only when nothing else declares one — so a name beside a dot never wins.
-    const boxed = nodesTableName
-        ? features.filter((f) => f && f.views !== 'scale' && f.table === nodesTableName
-            && typeof f.nodeBox === 'function')
-        : [];
-    const boxHost = portsFeature ? portsFeature.portHost
-        : boxed.find((f) => !f.labelBox) || boxed[0] || null;
-    // Every shape over the node table, the chosen host first. A row the host draws
-    // nothing for (a missing value) may be drawn by another mark — a rect for the
-    // groups beside a point for the items — and its box is then that mark's.
-    const boxHosts = boxHost
-        ? [boxHost, ...boxed.filter((f) => f !== boxHost && !f.labelBox)]
-        : [];
-    const finiteBox = (/** @type {any} */ b) => !!b && [b.cx, b.cy, b.hw, b.hh].every(Number.isFinite);
-    /** @type {import('../types').NodeBoxRule | null} */
-    let boxRuleMemo = null;
-    /** @type {any[]} */
-    let boxRuleKey = [];
-    /**
-     * The box rule against the CURRENT scales and plot size, memoized per render so
-     * a reader can cache by its identity.
-     * @returns {import('../types').NodeBoxRule | null}
-     */
-    const nodeBoxRule = () => {
-        if (!boxHost) return null;
-        const key = [scales, innerWidth, innerHeight];
-        if (!boxRuleMemo || key.some((k, i) => k !== boxRuleKey[i])) {
-            const s = scales;
-            const w = innerWidth;
-            const h = innerHeight;
-            boxRuleMemo = (row, i, rows) => {
-                const first = boxHost.nodeBox(row, i, rows, s, w, h);
-                if (finiteBox(first)) return first;
-                for (let k = 1; k < boxHosts.length; k++) {
-                    const box = boxHosts[k].nodeBox(row, i, rows, s, w, h);
-                    if (finiteBox(box)) return box;
-                }
-                return first;
-            };
-            boxRuleKey = key;
-        }
-        return boxRuleMemo;
-    };
-    /** @type {((row: any, i: number, rows: any[]) => Record<string, string> | null) | null} */
-    const nodePortsRule = portsFeature
-        ? (row, i, rows) => portRolesOf(
-            rawChannel(portsFeature.channels, 'ports', row, false, i, rows), isDirected(schemaSpec)
-        )
-        : null;
-
-    // Which rows may HOLD others: any node mark's `contains`, read raw per row.
-    /** @type {((row: any, i: number, rows: any[]) => boolean) | null} */
-    const containsRule = hierarchyNodes && boxHosts.some((f) => f.contains)
-        ? (row, i, rows) => boxHosts.some((f) => f.contains
-            && !!rawChannel({ contains: f.contains }, 'contains', row, false, i, rows))
-        : null;
-    // Which rows keep clear of their siblings, and by how much: any node mark's
-    // `dodge`, read raw per row like `contains`. A row no mark dodges is left where
-    // it is and nothing makes room for it.
-    /** @type {((row: any, i: number, rows: any[]) => number | null) | null} */
-    const dodgeRule = hierarchyNodes && boxHosts.some((f) => f.dodge)
-        ? (row, i, rows) => {
-            for (const f of boxHosts) {
-                if (!f.dodge || !rawChannel({ dodge: f.dodge }, 'dodge', row, false, i, rows)) continue;
-                return typeof f.dodge.gap === 'number' ? Math.max(0, f.dodge.gap) : DEFAULT_GAP;
-            }
-            return null;
-        }
-        : null;
-    // A stroke in progress pushes nothing apart: a node carried across the chart
-    // would scatter every row it passed over. The release spaces the rows once,
-    // around whatever the stroke moved — so the stroke remembers where they began.
-    let stroking = false;
-    /** @type {any[] | null} */
-    let strokeNodes = null;
-    // Data from outside a gesture (the seed, setData) is spaced on its next settle.
-    let spaceNext = true;
-    /**
-     * Settle the hierarchy's node rows after something changed them: place, carry,
-     * space, fit (core/fit.js). A no-op for every other structure.
-     * @param {any[] | null} [before] the node rows as last committed (for carry)
-     * @param {Set<number> | null} [frozen] rows whose box must hold still
-     * @param {{ since?: any[] | null, anchors?: number[] | null, preview?: boolean } | null} [dodge]
-     *   push overlapping rows apart, around the rows that changed `since`
-     * @returns {void}
-     */
-    const settleNodes = (before = null, frozen = heldStill(), dodge = null) => {
-        if (!hierarchyNodes || !boxHosts.length) return;
-        chart.tables[hierarchyNodes] = settledNodes(chart.tables, before, frozen, dodge);
-    };
-    /**
-     * The settled node rows for a dataset — the committed one, or a proposal's
-     * overlay (a preview asks what a drop WOULD make without writing it).
-     * @param {Record<string, any[]>} from
-     * @param {any[] | null} before @param {Set<number> | null} frozen
-     * @param {{ since?: any[] | null, anchors?: number[] | null, preview?: boolean } | null} [dodge]
-     * @returns {any[]}
-     */
-    const settledNodes = (from, before, frozen, dodge = null) => settleHierarchy({
-        spec: schemaSpec, tables: from, hosts: boxHosts, scales,
-        width: innerWidth, height: innerHeight,
-        before, frozen, locked: isLockedIn(/** @type {string} */ (hierarchyNodes)),
-        dodges: dodge && (!stroking || dodge.preview) ? dodgeRule : null,
-        since: dodge ? dodge.since : null,
-        anchors: dodge ? dodge.anchors : null,
-    });
-    /**
-     * The node rows a nest drag has IN FLIGHT (`session.nestFrom`, the nest
-     * driver's one key), or null. Read for three things that all follow from "this
-     * row is being carried": its ancestors hold still, it paints above the rest,
-     * and it reads as grabbed along with everything inside it.
-     * @returns {number[] | null}
-     */
-    const inFlight = () => {
-        if (!hierarchyNodes) return null;
-        /** @type {number[] | null} */
-        let out = null;
-        for (const s of Object.values(ui.session || {})) {
-            if (s && s.nestFrom != null) (out || (out = [])).push(s.nestFrom);
-        }
-        return out;
-    };
-    /**
-     * The containers that must not re-fit this tick: every ancestor of a row in
-     * flight. A fitted container follows its contents, so without this it would
-     * follow the child being dragged out of it and could never be left.
-     * @returns {Set<number> | null}
-     */
-    const heldStill = () => {
-        const flying = inFlight();
-        if (!flying) return null;
-        const tree = treeOf(schemaSpec, chart.tables);
-        return new Set(flying.flatMap((i) => tree.ancestorsOf(i)));
-    };
-    // The channel map of the mark that DRAWS a table, for an edit that writes a table
-    // its own mark doesn't draw (connect, on a node's ports, writes a link row). The
-    // link's channels name the columns, so a column is named in one place only.
-    /** @type {Record<string, Record<string, any> | null>} */
-    const viewerChannels = {};
-    /** @param {string} name @returns {Record<string, any> | null} */
-    const channelsDrawing = (name) => {
-        if (name in viewerChannels) return viewerChannels[name];
-        const viewers = features.filter((f) => f && f.views !== 'scale' && !f.portHost
-            && f.table === name && f.channels);
-        const fieldOf = (/** @type {any} */ f, /** @type {string} */ ch) =>
-            (f.channels[ch] && f.channels[ch].field) || null;
-        for (const ch of ['source', 'target', 'sourceSide', 'targetSide']) {
-            const named = new Set(viewers.map((f) => fieldOf(f, ch)).filter(Boolean));
-            if (named.size > 1) {
-                warn(
-                    `viewers:${name}:${ch}`,
-                    `marks drawing table "${name}" name different columns for \`${ch}\` ` +
-                    `(${[...named].map((n) => `"${n}"`).join(', ')}). An edit writing that table ` +
-                    'uses the first. Name the column on one mark, or the same column on each.'
-                );
-            }
-        }
-        viewerChannels[name] = viewers.length ? viewers[0].channels : null;
-        return viewerChannels[name];
-    };
+    // The node table's RULES (box, ports, contains, dodge) and the hierarchy's
+    // settling, read once from the marks that draw the nodes (engine/nodes.js).
+    const {
+        boxHosts, nodeBoxRule, nodePortsRule, containsRule,
+        settleNodes, settledNodes, inFlight, heldStill,
+    } = createNodes(chart, { features, schemaSpec, ui, nodesTableName, hierarchyNodes, isLockedIn });
+    // The channel map of the mark that DRAWS a table (engine/features.js).
+    const channelsDrawing = viewerChannelsOf(features);
 
     // How many rows each table was SEEDED with, for `lock: 'seed'` (see
     // engine/tables.js: isLockedIn). Counted here, once the seed is final.
@@ -526,19 +259,8 @@ export function Elicit(spec) {
     // Auto-guides: an edit declared `guide: true` self-draws its guide (constraint
     // bounds + nearest snap ring) without the caller repeating the feature id in a
     // top-level guides list (see edit/guide.js).
-    // A mark's `tip` shorthand is a tip GUIDE bound to that mark — desugared once,
-    // here, the way `ports` becomes a port feature. The guide path is what makes
-    // a tooltip harmless: it reads state and makes nothing pointer-active.
-    const tipGuides = features
-        .filter((f) => f && f.views !== 'scale' && f.tip != null && f.tip !== false)
-        .map((f) => tipGuide({
-            mark: f.id,
-            // `true` shows every column; a list or function says what; an object
-            // is the guide's own options (text, format, anchor, …).
-            ...(f.tip === true ? {}
-                : (Array.isArray(f.tip) || typeof f.tip === 'function') ? { text: f.tip }
-                    : f.tip),
-        }));
+    // A mark's `tip` shorthand desugars into a tip GUIDE (engine/features.js).
+    const tipGuides = tipGuidesOf(features);
     const allGuides = [...autoEditGuides(features), ...guides, ...tipGuides];
     // Does any guide read the pointer? Then the renderers report pointer movement
     // and the engine re-renders on it; otherwise a chart never pays for that.
@@ -546,7 +268,7 @@ export function Elicit(spec) {
 
     // Was the plane raised on the last render? Only then does a hover arrive as
     // a plane gesture over a mark (see handleEvent's hover routing).
-    let planeRaised = false;
+    chart.planeRaised = false;
     // Clip the marks to the plot rect? `spec.clip` says so; left unset, a chart
     // clips when any edit moves a domain as a WINDOW over the data (`viewport`:
     // zoom, pan), because then rows legitimately sit past the axes. Decided once
@@ -555,7 +277,7 @@ export function Elicit(spec) {
     // is decided — the renderers and the hit filter below both read it).
     const clipAuto = features.some((f) => collectEdits(f).some((e) => e.viewport));
     { const problem = clipProblem(spec.clip); if (problem) warn('spec:clip', problem); }
-    const clipNow = () => clipRect(spec.clip, clipAuto, innerWidth, innerHeight);
+    const clipNow = () => clipRect(spec.clip, clipAuto, chart.innerWidth, chart.innerHeight);
     // Under the clip a mark outside the clip rect is not drawn, so it must not be
     // grabbed or tipped either: past the rect only `unclipped` nodes (a chart
     // element's handles, legend swatches, a mark that says `clip: false`) are
@@ -563,45 +285,9 @@ export function Elicit(spec) {
     /** @param {any[]} nodes @param {number} x @param {number} y */
     const visibleAt = (nodes, x, y) => clipVisible(nodes, x, y, clipNow());
 
-    // Transient interaction (UI) state, separate from the belief `dataset`. The
-    // interaction drivers keep a per-feature session here (proximity selection,
-    // sweep/draw locks) — those locks belong to one mark's gesture, so they stay
-    // keyed by feature id. `preview` holds THE UNCOMMITTED proposal a driver parked
-    // (the probe driver's hover/drag), keyed by feature id: each entry is the
-    // proposed dataset that feature would commit. The committed rows are still what
-    // every mark draws; a proposal is rendered as an inert GHOST of only the rows it
-    // would change, layered on top (see update()'s ghost pass). It never reaches the
-    // belief store, `onChange`, or `getData`. Cleared on commit, hoverout, and stage
-    // change. Per-feature (not one global slot) so two probe marks can't clobber
-    // each other's ghost.
-    // `selection` is transient PIPELINE state: which dataset rows are currently
-    // selected, an interaction concept the engine owns — never a `selected` data
-    // column. A Set (single-exclusive today, so at most one member; a Set so
-    // multi-select is a later widening, not an API break). Written only through the
-    // selection commit path (edit.select / el.select), reset on setData/stage
-    // change, and stamped onto the scale map each render (scales.selection) so a
-    // legend/mark can target "the selected row" without a widened build signature.
-    // `hover` is the OTHER transient pointer state: which feature+row the pointer is
-    // currently over, written by the renderer's hover/hoverout events on any editable
-    // node. It feeds the same `hovered` effect a proximity driver's session does, so
-    // "this is the mark you are about to touch" looks the same however it was
-    // resolved. Cleared on hoverout, stage change and reseed, like `session`.
-    // `grab` is its mid-gesture counterpart: which feature+row a drag is currently on,
-    // bracketed by the same dragstart/dragend the undo transaction uses. It exists so
-    // the `grabbed` effect is decided in the state pass with the other two, rather
-    // than being painted by the renderer straight off d3.drag — that split is why
-    // `grabbed` used to honour `filter` and silently ignore the rest of its vocabulary
-    // (and never drew an outline at all).
-    /** @type {{ session: Record<string, any>, preview: Record<string, { table: string, rows: any[], pointer?: { x: number, y: number }, dropInto?: number | null }> | null, selection: Set<string>, hover: { featureId: string, index: number, node?: any } | null, grab: { featureId: string, index: number } | null, pointer: { x: number, y: number } | null, hit: { featureId: string, index: number, node: any } | null, hits: { featureId: string, index: number, node: any }[] }} */
-    // `pointer` is where the pointer is over the plot (scene coordinates), and
-    // `hit` the row under it whether or not it is editable — recorded only when
-    // a guide reads them (`tracksPointer`), and never dispatched: a tip or a
-    // crosshair is STATE a guide draws, so no mark becomes pointer-active to
-    // show one and dispatch does not change.
-    const ui = { session: {}, preview: null, selection: new Set(), hover: null, grab: null, pointer: null, hit: null, hits: [] };
     // Does the last built scene carry any `onHover` node (a port)? Then a hover
     // change must re-render even when the `hovered` effect paints nothing.
-    let sceneHasOnHover = false;
+    chart.sceneHasOnHover = false;
     /**
      * Which HANDLE of a row a node is, by the tags marks use to tell their handles
      * apart — stable across rebuilds, which object identity is not.
@@ -677,7 +363,7 @@ export function Elicit(spec) {
                 (/** @type {any} */ n) => n && n.index === index && n.frame
             ) || null;
         }
-        return framed ? { ...scales, ...framed.frame } : null;
+        return framed ? { ...chart.scales, ...framed.frame } : null;
     };
 
     // 2. Calculate scales (Observable Plot model): one GLOBAL scale per channel,
@@ -686,12 +372,12 @@ export function Elicit(spec) {
     //    inferred domain (a field the schema left open) tracks data as create/drag
     //    mutate it. `scales` is a channel map { x, y, fill, size, … }; unused
     //    channels are absent.
-    const dims = { width: innerWidth, height: innerHeight };
-    let scales = resolveScales(features, chart.tables, liveSpec, dims);
+    const dims = { width: chart.innerWidth, height: chart.innerHeight };
+    chart.scales = resolveScales(features, chart.tables, liveSpec, dims);
     // Settle a seeded hierarchy now, against the declared size, so `getData()` is
     // already exact before the first (deferred) render.
     settleNodes(null, null, {});
-    spaceNext = false;
+    chart.spaceNext = false;
 
     // Set up container. 'fixed' pins pixel dims; the responsive modes fill the
     // parent's width (the SVG scales via viewBox in 'scale', or is redrawn at the
@@ -713,10 +399,10 @@ export function Elicit(spec) {
     // only) re-measure the container's width from the parent. Returns whether the
     // width actually changed, so a resize can skip a redundant re-render.
     const recomputeInner = () => {
-        innerWidth = chart.curW - effectiveMargins.left - effectiveMargins.right;
-        innerHeight = chart.curH - effectiveMargins.top - effectiveMargins.bottom;
-        dims.width = innerWidth;
-        dims.height = innerHeight;
+        chart.innerWidth = chart.curW - chart.effectiveMargins.left - chart.effectiveMargins.right;
+        chart.innerHeight = chart.curH - chart.effectiveMargins.top - chart.effectiveMargins.bottom;
+        dims.width = chart.innerWidth;
+        dims.height = chart.innerHeight;
     };
     const measure = () => {
         if (mode !== 'reflow') return false;
@@ -748,7 +434,7 @@ export function Elicit(spec) {
         // Titles wrap to the chart width from the plot's left edge.
         const titleWidth = Math.max(0, chart.curW - authorMargins.left - 4);
         const titleBands = reserveTitles(spec, theme, titleWidth);
-        effectiveMargins = { ...authorMargins };
+        chart.effectiveMargins = { ...authorMargins };
         recomputeInner();
         let legendBands = { top: 0, right: 0, bottom: 0, left: 0 };
         // An axis title reserves what it needs BEYOND the author's margin on its
@@ -769,7 +455,7 @@ export function Elicit(spec) {
                 if (short > axisBands[side]) axisBands[side] = short;
             }
         }
-        effectiveMargins = {
+        chart.effectiveMargins = {
             top: authorMargins.top + axisBands.top + legendBands.top + titleBands.top,
             right: authorMargins.right + axisBands.right + legendBands.right,
             bottom: authorMargins.bottom + axisBands.bottom + legendBands.bottom + titleBands.bottom,
@@ -779,18 +465,18 @@ export function Elicit(spec) {
 
         // Re-resolve global scales so inferred domains follow the live data, and
         // an edited schema domain (edit.axis.*) reshapes every axis/grid/mark.
-        scales = resolveScales(features, chart.tables, liveSpec, dims);
+        chart.scales = resolveScales(features, chart.tables, liveSpec, dims);
         // Chart-level geographic projection (Plot model): shared apply/invert/path
         // for every geo mark and edit.geo.*. Attached on the scale map so build()
         // and edit ctx see the same object without a second argument.
         const projection = createProjection(liveSpec.projection, dims);
         // Attached on the scale map as a reserved non-Scale key (cast) so build()
         // and edit ctx share one object without widening ScaleMap's channel types.
-        if (projection) /** @type {any} */ (scales).projection = projection;
+        if (projection) /** @type {any} */ (chart.scales).projection = projection;
         // The resolved theme rides on the scale map as another reserved non-Scale
         // key, so every mark's build() and the guide/edit ctx read default colours,
         // fonts and affordance tokens from one object (see core/theme.js: themeOf).
-        /** @type {any} */ (scales).theme = theme;
+        /** @type {any} */ (chart.scales).theme = theme;
         // The selection rides on the scale map as reserved non-Scale keys, so a
         // legend/mark reads "the selected row" from the same object it already gets,
         // without a widened build() signature. Two views of the one Set:
@@ -800,21 +486,21 @@ export function Elicit(spec) {
         //   selectionAll every selected row, per table, for anything that reflects a
         //                multi-row selection rather than narrowing it (a legend
         //                marking which categories the selection currently holds).
-        /** @type {any} */ (scales).selection = selectionPrimary();
-        /** @type {any} */ (scales).selectionAll = selectionList;
+        /** @type {any} */ (chart.scales).selection = selectionPrimary();
+        /** @type {any} */ (chart.scales).selectionAll = selectionList;
         // The dataset schema rides along as one more reserved non-Scale key. A
         // composite's frame scales are built inside build() (one per datum), and the
         // DOMAIN of a frame channel is the field's — which only the schema knows.
-        /** @type {any} */ (scales).schema = schema;
-        warnProjectionCartesianMix(features, scales);
+        /** @type {any} */ (chart.scales).schema = schema;
+        warnProjectionCartesianMix(features, chart.scales);
         // Data from outside a gesture (setData) and a resized plot both change what
         // a container's contents measure, so every render settles the hierarchy
         // against the scales it is about to draw with. It returns the same rows when
         // nothing moved, so the common render costs one pass over the tree. Rows are
         // pushed apart only for data that just arrived from outside: a re-render
         // (a hover, a resize) must never move an answer.
-        settleNodes(null, heldStill(), spaceNext && !stroking ? {} : null);
-        if (!stroking) spaceNext = false;
+        settleNodes(null, heldStill(), chart.spaceNext && !chart.stroking ? {} : null);
+        if (!chart.stroking) chart.spaceNext = false;
 
         // Plane-on-top mode: when an ACTIVE edit resolves its target from an
         // arbitrary pointer position (nearest/sweep/draw/brush), the plane must sit
@@ -828,7 +514,7 @@ export function Elicit(spec) {
         // Plane-on-top drivers (brushRect, nearest, …) may stash a cursor hint in
         // their per-feature session so the interaction plane can show edge/body
         // affordances without a second interaction system.
-        planeRaised = planeOnTop;
+        chart.planeRaised = planeOnTop;
         let planeCursor = 'pointer';
         // Over a mark a press would grab (see handleEvent's hover routing), the
         // plane shows that mark's cursor rather than the plane edit's.
@@ -870,7 +556,7 @@ export function Elicit(spec) {
             // knows the lock and the stage, so it decides WHICH rows keep them. Dropped
             // before featureNodes is written, so picking never sees them either.
             const hasLiveEdit = activeEdits(feature).length > 0;
-            const nodes = feature.build(currentData, scales, innerWidth, innerHeight, {
+            const nodes = feature.build(currentData, chart.scales, chart.innerWidth, chart.innerHeight, {
                 tables: chart.tables, schema: schemaSpec, table: feature.table,
                 nodeBox: nodeBoxRule(), nodePorts: nodePortsRule,
             }).filter((/** @type {any} */ node) => !(node && node.rowHandle && (!hasLiveEdit
@@ -878,12 +564,12 @@ export function Elicit(spec) {
             featureNodes[feature.id] = nodes;
 
             const declaredEdits = collectEdits(feature);
-            warnScaleRequirements(feature, scales);
+            warnScaleRequirements(feature, chart.scales);
             warnScopeMismatch(feature, declaredEdits);
             warnMisplacedEdits(feature, markLabel);
-            warnCreateOnNonMark(feature, declaredEdits, scales);
+            warnCreateOnNonMark(feature, declaredEdits, chart.scales);
             warnCreateEmptyExtent(feature, declaredEdits, liveSpec.schema);
-            warnDeadEditChannels(feature, declaredEdits, scales);
+            warnDeadEditChannels(feature, declaredEdits, chart.scales);
             warnMissingEditChannels(feature, declaredEdits);
             warnHiddenHandles(feature, declaredEdits);
             warnConnectConflict(feature, declaredEdits);
@@ -923,7 +609,7 @@ export function Elicit(spec) {
             // from the edit's own channel (the one place a field is named) and stamp
             // the current value where the renderer can find it.
             const inlineField = inlineEdit
-                ? (resolveChannels(inlineEdit.channels, feature.channels || {}, scales, feature)[0] || {}).field
+                ? (resolveChannels(inlineEdit.channels, feature.channels || {}, chart.scales, feature)[0] || {}).field
                 : null;
 
             // Tag every node with its feature so gesture events can find the
@@ -975,11 +661,11 @@ export function Elicit(spec) {
         });
 
         // The plot area's own surface (theme.panel), first so it is the floor.
-        panelNodes(theme, innerWidth, innerHeight).forEach((/** @type {any} */ node) => scene.add(node));
+        panelNodes(theme, chart.innerWidth, chart.innerHeight).forEach((/** @type {any} */ node) => scene.add(node));
         paintOrder(built).forEach((/** @type {any} */ node) => scene.add(node));
         // The chart's title block and caption, as background chrome.
         if (spec.title || spec.subtitle || spec.caption) {
-            titleNodes(spec, theme, { innerWidth, outerHeight: chart.curH, effectiveMargins, authorMargins, maxWidth: Math.max(0, chart.curW - effectiveMargins.left - 4) })
+            titleNodes(spec, theme, { innerWidth: chart.innerWidth, outerHeight: chart.curH, effectiveMargins: chart.effectiveMargins, authorMargins, maxWidth: Math.max(0, chart.curW - chart.effectiveMargins.left - 4) })
                 .forEach((/** @type {any} */ node) => scene.add(node));
         }
 
@@ -1034,7 +720,7 @@ export function Elicit(spec) {
                 }
                 if (!anyChanged) continue;
 
-                const ghostNodes = feature.build(proposed, scales, innerWidth, innerHeight, {
+                const ghostNodes = feature.build(proposed, chart.scales, chart.innerWidth, chart.innerHeight, {
                     // A ghosted LINK has to resolve its endpoints against the proposed
                     // rows too — otherwise a preview that moves a node draws the ghost
                     // link to where the node used to be.
@@ -1118,7 +804,7 @@ export function Elicit(spec) {
         }
 
         const guideCtx = {
-            scales,
+            scales: chart.scales,
             // The primary table's rows — what a chart-level guide means by "the data".
             // A guide drawn about a MARK reads that mark's own table (and that table's
             // invariants) through tableOf / constraintsIn.
@@ -1131,8 +817,8 @@ export function Elicit(spec) {
             ui,
             effects,
             theme,
-            width: innerWidth,
-            height: innerHeight,
+            width: chart.innerWidth,
+            height: chart.innerHeight,
             // The current stage, so an edit's auto-guide can suppress itself when
             // its edit is inactive (one guide path, gated by the same rule as edits).
             stage: getStage()
@@ -1144,7 +830,7 @@ export function Elicit(spec) {
         // chart-level guide means by "the data".
         allGuides.forEach(guide => {
             const nodes = guide.build(
-                guideCtx.data, scales, innerWidth, innerHeight, guideCtx,
+                guideCtx.data, chart.scales, chart.innerWidth, chart.innerHeight, guideCtx,
             ) || [];
             nodes.forEach((/** @type {any} */ node) => {
                 node.guide = true;
@@ -1196,7 +882,7 @@ export function Elicit(spec) {
         };
         light(ui.hover);
         light(ui.grab);
-        sceneHasOnHover = false;
+        chart.sceneHasOnHover = false;
         // While a drag that ends ON something is in flight (connect, rewire), its
         // driver lists the ports a release could land on (`session.targets`). Then
         // exactly those ports show, across features: a rewire on the link mark
@@ -1315,7 +1001,7 @@ export function Elicit(spec) {
             const lit = litByTable[feature.table];
             for (const node of marks) {
                 if (!node || node.ghost || !node.onHover || node.index == null) continue;
-                sceneHasOnHover = true;
+                chart.sceneHasOnHover = true;
                 const i = node.index;
                 const rowOn = (lit && lit.has(i)) || hovered.has(i) || selected.has(i) || grabbed.has(i)
                     || viaProximity === i;
@@ -1359,8 +1045,8 @@ export function Elicit(spec) {
             scene,
             width: chart.curW,
             height: chart.curH,
-            margins: effectiveMargins,
-            scales,
+            margins: chart.effectiveMargins,
+            scales: chart.scales,
             spec,
             planeOnTop,
             planeCursor,
@@ -1417,7 +1103,7 @@ export function Elicit(spec) {
         // resolution honouring which scale drew the thing you grabbed, not a new
         // dispatch branch. A plane-pick gesture carries no node, so fall back to the
         // framed node for this datum.
-        const editScales = frameScalesFor(feature, event.node, index) || scales;
+        const editScales = frameScalesFor(feature, event.node, index) || chart.scales;
         let resolved = resolveChannels(edit.channels, markChannels, editScales, feature);
         let derivedOnly = false;
         // A container's FITTED size is derived from its contents, so no gesture may
@@ -1458,17 +1144,17 @@ export function Elicit(spec) {
             // Chart projection context (null on cartesian charts). Geo edits invert
             // through the same object geo marks use for apply/path.
             projection: /** @type {import('../types').ProjectionContext | null} */ (
-                /** @type {any} */ (scales).projection || null
+                /** @type {any} */ (chart.scales).projection || null
             ),
             // Plot pixel dimensions, so a gesture whose geometry is the whole plane
             // (rotate about the centre) can measure against it without a mark node —
             // the angular sibling of resize reading the mark centre.
-            width: innerWidth,
-            height: innerHeight,
+            width: chart.innerWidth,
+            height: chart.innerHeight,
             // The chart margins (effective: author + legend bands), so a grow-mode
             // axis edit recovers the outer size from an inner axis length (inner +
             // margins). Harmless to other edits.
-            margins: effectiveMargins,
+            margins: chart.effectiveMargins,
             // The engine-owned schema of the table this edit WRITES, so a mint
             // (create) populates every declared field with its default (or null) —
             // not just the positional ones — and an axis domain edit reads a field's
@@ -1587,7 +1273,7 @@ export function Elicit(spec) {
                 ...constraintsIn(forTable), ...(own ? edit.constrain : []), ...(lockRows ? [lockRows] : []),
             ];
             const cctx = {
-                activeIndex: own ? activeIndexOf(rows) : null, scales, markChannels,
+                activeIndex: own ? activeIndexOf(rows) : null, scales: chart.scales, markChannels,
                 // The column the dispatching edit writes — what a constraint that
                 // names no `field` of its own is about (see applyConstraint).
                 field: own && resolved[0] ? resolved[0].field : undefined,
@@ -1732,7 +1418,7 @@ export function Elicit(spec) {
         // A hierarchy's geometry follows from its contents: a moved container takes
         // its subtree along, and every fitted container re-fits. Same standing as
         // enforceRefs — the schema's rule, repaired across rows after the commit.
-        settleNodes(nodesBefore, heldStill(), { since: strokeNodes || nodesBefore });
+        settleNodes(nodesBefore, heldStill(), { since: chart.strokeNodes || nodesBefore });
         ui.preview = null;
         notifyChange();
         return true;
@@ -1881,9 +1567,9 @@ export function Elicit(spec) {
         if (typeof edit.targets !== 'function') return null;
         const table = targetTableOf(feature, edit);
         const probeCtx = /** @type {any} */ ({
-            scales, schemaSpec, tables: chart.tables, table, data: chart.tables[table] || [],
+            scales: chart.scales, schemaSpec, tables: chart.tables, table, data: chart.tables[table] || [],
             nodeBox: nodeBoxRule(), nodePorts: nodePortsRule, contains: containsRule,
-            width: innerWidth, height: innerHeight,
+            width: chart.innerWidth, height: chart.innerHeight,
             node: node || null, edit, pointer: { x: 0, y: 0 },
             // The row the drag started on, and the feature's own channel map: a
             // rewire needs both to know which node holds its OTHER end.
@@ -2080,7 +1766,7 @@ export function Elicit(spec) {
                 // Read-only: lets a driver (e.g. brush) encode a channel's current
                 // pixel position for hit-zone classification, without reinventing
                 // scale lookup — the same global scales every edit already inverts through.
-                scales,
+                scales: chart.scales,
                 index: index != null ? index : null,
                 session,
                 preview,
@@ -2225,7 +1911,7 @@ export function Elicit(spec) {
                 const h = effects.hovered;
                 if (h && h.enabled !== false && (h.outline || elementEffectOf(h))) shouldRender = true;
                 // A port shows on hover whatever the `hovered` effect says.
-                if (sceneHasOnHover) shouldRender = true;
+                if (chart.sceneHasOnHover) shouldRender = true;
             }
             if (shouldRender) update();
             return;
@@ -2252,7 +1938,7 @@ export function Elicit(spec) {
             // Inside a composite's frame the datum's position is a LOCAL one, so read it
             // (and step it) through the node's own frame scales — the same overlay
             // computeEdit applies when the resulting drag arrives.
-            const ks = frameScalesFor(feature, node, node.index) || scales;
+            const ks = frameScalesFor(feature, node, node.index) || chart.scales;
             const atX = datum ? encodeChannel(ks, channels, 'x', datum, from.cx) : from.cx;
             const atY = datum ? encodeChannel(ks, channels, 'y', datum, from.cy) : from.cy;
             event = {
@@ -2306,7 +1992,7 @@ export function Elicit(spec) {
         // what the pointer is about to touch, so it lights as `hovered` and the
         // plane edits see the pointer LEAVE (a pan drops its grab cursor, a sweep
         // its preview). Off it, the plane edits get the hover back.
-        if (!event.node && event.type === 'hover' && event.x != null && planeRaised) {
+        if (!event.node && event.type === 'hover' && event.x != null && chart.planeRaised) {
             const hit = hitAny(event.x, event.y);
             const owner = hit ? features.find((f) => f.id === hit.featureId) : null;
             const accepts = owner && activeEdits(owner).some((e) => e.pick === 'direct'
@@ -2344,8 +2030,8 @@ export function Elicit(spec) {
         // A hierarchy's rows are pushed apart at the END of a stroke, around what it
         // moved (see `stroking`). A nudge's synthetic drag is a whole gesture.
         if (hierarchyNodes && !event.nudge) {
-            if (event.type === 'dragstart') { stroking = true; strokeNodes = chart.tables[hierarchyNodes]; }
-            else if (event.type === 'drag') stroking = true;
+            if (event.type === 'dragstart') { chart.stroking = true; chart.strokeNodes = chart.tables[hierarchyNodes]; }
+            else if (event.type === 'drag') chart.stroking = true;
         }
 
         // Grab state rides the SAME bracket as the transaction — one stroke, one
@@ -2397,9 +2083,9 @@ export function Elicit(spec) {
         // release lets them go, whether or not the node changed container, and that
         // last fit is part of the same gesture: one undo entry, one `change`.
         if (event.type === 'dragend' && hierarchyNodes && boxHosts.length) {
-            stroking = false;
-            const settled = settledNodes(chart.tables, null, heldStill(), { since: strokeNodes });
-            strokeNodes = null;
+            chart.stroking = false;
+            const settled = settledNodes(chart.tables, null, heldStill(), { since: chart.strokeNodes });
+            chart.strokeNodes = null;
             if (settled !== chart.tables[hierarchyNodes]) {
                 recordHistory();
                 chart.tables[hierarchyNodes] = settled;
@@ -2456,9 +2142,9 @@ export function Elicit(spec) {
         if (nestingOf(schemaSpec)) {
             enforceRefs(schemaSpec, chart.tables);
             enforceTree(schemaSpec, chart.tables);
-            spaceNext = true;
-            stroking = false;
-            strokeNodes = null;
+            chart.spaceNext = true;
+            chart.stroking = false;
+            chart.strokeNodes = null;
         }
         recountSeed();
         ui.preview = null;
@@ -2579,7 +2265,7 @@ export function Elicit(spec) {
             const channels = feature.channels || {};
             // Forward-encode through the SAME scales the edit will invert — which,
             // inside a composite's frame, are the node's own (see frameScalesFor).
-            const editScales = frameScalesFor(feature, node, rowOf(feature)) || scales;
+            const editScales = frameScalesFor(feature, node, rowOf(feature)) || chart.scales;
             // Base: where the datum currently sits, so a single-axis set doesn't move
             // the other axis.
             let x = datum ? encodeChannel(editScales, channels, 'x', datum, center ? center.cx : 0) : (center ? center.cx : 0);
@@ -2691,7 +2377,7 @@ export function Elicit(spec) {
                 const found = findNamedEdit(name);
                 if (!found) return null;
                 const { feature, edit } = found;
-                const editScales = frameScalesFor(feature, null, rowOf(feature)) || scales;
+                const editScales = frameScalesFor(feature, null, rowOf(feature)) || chart.scales;
                 const ch = resolveChannels(edit.channels, feature.channels || {}, editScales, feature)[0];
                 const scale = /** @type {any} */ (ch && ch.scale);
                 const fieldSpec = (schema && ch && ch.field && schema[ch.field]) || null;
