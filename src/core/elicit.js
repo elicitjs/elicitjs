@@ -31,6 +31,7 @@ import { createChartState } from './engine/state.js';
 import { createHistory } from './engine/history.js';
 import { createTables } from './engine/tables.js';
 import { createSelection } from './engine/selection.js';
+import { createStages } from './engine/stages.js';
 import { applyConstraint } from '../constraints/define.js';
 import {
     markLabel, constraintLabel, describe,
@@ -543,23 +544,6 @@ export function Elicit(spec) {
     // and the engine re-renders on it; otherwise a chart never pays for that.
     const tracksPointer = allGuides.some((g) => g && g.tracksPointer);
 
-    // Multi-stage elicitation: edits carrying a numeric `stage` are active only in
-    // that stage (null = always). This is a uniform descriptor filter applied to
-    // EVERY edit — the same shape as `gesture` matching — not a per-mode engine
-    // branch, so the one-interaction-model invariant holds. `activeEdits` is the
-    // single gate the dispatch/editable/plane-on-top paths run their edits through.
-    let currentStage = spec.stage != null ? spec.stage : 0;
-    /** @type {(string | null)[]} */
-    const stageLabels = Array.isArray(spec.stageLabels) ? spec.stageLabels : [];
-    /** @param {number} n @returns {string | null} */
-    const stageLabelOf = (n) => (stageLabels[n] != null ? stageLabels[n] : null);
-    /**
-     * @param {any} feature
-     * @returns {import('../types').Edit[]}
-     */
-    const activeEdits = (feature) =>
-        collectEdits(feature).filter(e => e.stage == null || e.stage === currentStage);
-
     // Was the plane raised on the last render? Only then does a hover arrive as
     // a plane gesture over a mark (see handleEvent's hover routing).
     let planeRaised = false;
@@ -578,21 +562,6 @@ export function Elicit(spec) {
     // hit-testable.
     /** @param {any[]} nodes @param {number} x @param {number} y */
     const visibleAt = (nodes, x, y) => clipVisible(nodes, x, y, clipNow());
-
-    // Move the stage cursor WITHOUT re-rendering: drop every transient (an in-flight
-    // driver lock, a hover preview) so a stage switch can't resume a half-finished
-    // gesture, then notify. Callers render — `setStage` on the container does it
-    // directly; a driver's `stage.next()` rides the dispatch's own re-render.
-    /** @param {number} n */
-    const applyStage = (n) => {
-        currentStage = n;
-        ui.session = {};
-        ui.preview = null;
-        ui.hover = null;
-        ui.grab = null;
-        ui.selection.clear(); // selection is per-stage transient, like the session
-        for (const cb of listeners.stage) cb(currentStage, stageLabelOf(currentStage));
-    };
 
     // Transient interaction (UI) state, separate from the belief `dataset`. The
     // interaction drivers keep a per-feature session here (proximity selection,
@@ -648,6 +617,11 @@ export function Elicit(spec) {
     // `.on('change' | 'stage' | 'select', cb)`.
     /** @type {{ change: Set<Function>, stage: Set<Function>, select: Set<Function> }} */
     const listeners = { change: new Set(), stage: new Set(), select: new Set() };
+
+    // Multi-stage elicitation (engine/stages.js): `activeEdits` is the single gate
+    // the dispatch/editable/plane-on-top paths run their edits through.
+    const stages = createStages({ spec, ui, listeners, update: () => update() });
+    const { getStage, activeEdits, applyStage } = stages;
 
     // Selection (engine/selection.js): which rows the reader has picked, stored
     // QUALIFIED BY TABLE, and the commit path both edit.select and el.select* use.
@@ -1161,7 +1135,7 @@ export function Elicit(spec) {
             height: innerHeight,
             // The current stage, so an edit's auto-guide can suppress itself when
             // its edit is inactive (one guide path, gated by the same rule as edits).
-            stage: currentStage
+            stage: getStage()
         };
         // One build signature for all three kinds of feature. A mark and an element
         // are `build(rows, scales, width, height, ctx)`; a guide is the same five,
@@ -2056,10 +2030,10 @@ export function Elicit(spec) {
             }
         };
         const stage = {
-            get: () => currentStage,
+            get: () => getStage(),
             /** @param {number} n */
             set: (n) => applyStage(n),
-            next: () => applyStage(currentStage + 1)
+            next: () => applyStage(getStage() + 1)
         };
 
         // Every edit reaches exactly ONE driver — the one `driverFor` names — so an
@@ -2758,15 +2732,11 @@ export function Elicit(spec) {
         return () => listeners[type].delete(cb);
     };
 
-    // Multi-stage controls. Advancing the stage re-renders (the active edit set,
-    // plane-on-top, and cursors all follow currentStage) and drops every transient.
-    el.getStage = () => currentStage;
-    el.getStageLabel = () => stageLabelOf(currentStage);
-    el.setStage = (/** @type {number} */ stage) => {
-        applyStage(stage);
-        update();
-    };
-    el.nextStage = () => el.setStage(currentStage + 1);
+    // Multi-stage controls (see engine/stages.js).
+    el.getStage = stages.api.getStage;
+    el.getStageLabel = stages.api.getStageLabel;
+    el.setStage = stages.api.setStage;
+    el.nextStage = stages.api.nextStage;
 
     // 'reflow' mode: watch the container and re-render when the parent resizes.
     // rAF-coalesced (a resize can fire many times per frame) and guarded so a
