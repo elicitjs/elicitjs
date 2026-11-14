@@ -27,6 +27,8 @@ import { axisOf, pointerForChannel } from './encoding.js';
 import { nestingOf, treeOf, treeProblems, enforceTree } from './hierarchy.js';
 import { settleHierarchy, fitChannelsOf, DEFAULT_GAP } from './fit.js';
 import { warn } from './dev.js';
+import { createChartState } from './engine/state.js';
+import { createHistory } from './engine/history.js';
 import { applyConstraint } from '../constraints/define.js';
 import {
     markLabel, constraintLabel, describe,
@@ -145,18 +147,21 @@ export function Elicit(spec) {
     // (height stays the given value); 'fixed'/'scale' keep the design dims. Marks
     // and scales read the inner (margin-subtracted) dims, so recomputing them on a
     // resize is all it takes for the whole scene to reflow.
+    // The bindings a commit or a resize REASSIGNS live on one shared object, so the
+    // engine modules wired below read the live value (see engine/state.js).
+    const chart = createChartState();
     const designW = typeof width === 'number' ? width : 600;
     const designH = typeof height === 'number' ? height : 400;
-    let curW = designW;
-    let curH = designH;
+    chart.curW = designW;
+    chart.curH = designH;
     // Author margins are the outer padding / axis room. Legends RESERVE extra space
     // on their side (see core/legends.js), so the engine works with EFFECTIVE
     // margins = author margins + each side's legend band. Recomputed every render;
     // equals the author margins when there are no legends.
     const authorMargins = margins;
     let effectiveMargins = { ...authorMargins };
-    let innerWidth = curW - effectiveMargins.left - effectiveMargins.right;
-    let innerHeight = curH - effectiveMargins.top - effectiveMargins.bottom;
+    let innerWidth = chart.curW - effectiveMargins.left - effectiveMargins.right;
+    let innerHeight = chart.curH - effectiveMargins.top - effectiveMargins.bottom;
 
     features.forEach((feature, index) => {
         // `autoId` marks the id as ENGINE-assigned, so a diagnostic can tell an id the
@@ -193,14 +198,13 @@ export function Elicit(spec) {
     //    rather than a JSON round-trip so seed `Date` values survive for a
     //    time-scale edit; `normalizeData` splits them per table (a bare array is the
     //    primary table, which is every single-table chart).
-    /** @type {Record<string, any[]>} */
-    let tables = normalizeData(structuredClone(spec.data ?? null), schemaSpec);
+    chart.tables = normalizeData(structuredClone(spec.data ?? null), schemaSpec);
 
     // Every mark draws exactly ONE table, so the engine hands `tableOf(feature)`
     // wherever it used to hand the single dataset — which is why no mark's build(),
     // no edit's apply() and no constraint body had to change for structures.
     /** @param {any} feature @returns {any[]} */
-    const tableOf = (feature) => tables[feature.table] || [];
+    const tableOf = (feature) => chart.tables[feature.table] || [];
     // WHICH TABLE an edit writes. THE one place this is decided — computeEdit reads
     // it to build the proposal and runEdit reads it to commit, so the two can never
     // disagree and splice a link proposal over the node rows. An edit names its
@@ -211,7 +215,7 @@ export function Elicit(spec) {
         (edit && edit.table && schemaSpec.byRole[edit.table]) || feature.table;
     // The PRIMARY table: what a bare-array `data` seeds, what a mark with no `table`
     // draws, and what the index-addressed selection API means.
-    const primaryRows = () => tables[schemaSpec.primary];
+    const primaryRows = () => chart.tables[schemaSpec.primary];
 
     // CONTEXT rows (spec.context, see core/lock.js): reference rows of a table —
     // observed history behind a forecast — drawn and locked like any locked row,
@@ -224,22 +228,21 @@ export function Elicit(spec) {
     // region. The lock keeps the identity stable (a locked row survives every
     // commit as the same object), undo carries it as indices, and setData keeps the
     // context rows. A table is a key here exactly when `spec.context` speaks for it.
-    /** @type {Record<string, WeakSet<object>>} */
-    let contextRows = {};
+    chart.contextRows = {};
     const seedContext = () => {
-        contextRows = {};
+        chart.contextRows = {};
         let seen = 0;
         let matched = 0;
-        for (const name of Object.keys(tables)) {
+        for (const name of Object.keys(chart.tables)) {
             const pred = resolveContext(spec.context, name);
             if (!pred) continue;
             /** @type {WeakSet<object>} */
             const set = new WeakSet();
-            tables[name].forEach((d, i) => {
+            chart.tables[name].forEach((d, i) => {
                 seen++;
                 if (d && typeof d === 'object' && pred(d, i)) { set.add(d); matched++; }
             });
-            contextRows[name] = set;
+            chart.contextRows[name] = set;
         }
         if (seen && !matched) {
             warn(
@@ -252,20 +255,20 @@ export function Elicit(spec) {
     seedContext();
     /** @param {string} name @param {any} d @returns {boolean} */
     const isContextRow = (name, d) =>
-        !!(contextRows[name] && d && typeof d === 'object' && contextRows[name].has(d));
+        !!(chart.contextRows[name] && d && typeof d === 'object' && chart.contextRows[name].has(d));
     // What the chart REPORTS of a table: its rows minus the context rows. The
     // index-addressed public API (selection, control) speaks THESE indices, so
     // `getData()[i]` and `el.select(i)` always name the same row.
     /** @param {string} name @returns {any[]} */
     const reportedRows = (name) => {
-        const rows = tables[name] || [];
-        return contextRows[name] ? rows.filter((d) => !isContextRow(name, d)) : rows;
+        const rows = chart.tables[name] || [];
+        return chart.contextRows[name] ? rows.filter((d) => !isContextRow(name, d)) : rows;
     };
     // A reported index -> the row's index in the table, or -1.
     /** @param {string} name @param {number} i @returns {number} */
     const rowIndexOf = (name, i) => {
-        if (!contextRows[name]) return i;
-        const rows = tables[name] || [];
+        if (!chart.contextRows[name]) return i;
+        const rows = chart.tables[name] || [];
         let k = -1;
         for (let j = 0; j < rows.length; j++) {
             if (isContextRow(name, rows[j])) continue;
@@ -276,8 +279,8 @@ export function Elicit(spec) {
     // A table index -> its reported index, or null for a context row.
     /** @param {string} name @param {number} j @returns {number | null} */
     const reportedIndexOf = (name, j) => {
-        if (!contextRows[name]) return j;
-        const rows = tables[name] || [];
+        if (!chart.contextRows[name]) return j;
+        const rows = chart.tables[name] || [];
         if (isContextRow(name, rows[j])) return null;
         let k = 0;
         for (let m = 0; m < j && m < rows.length; m++) if (!isContextRow(name, rows[m])) k++;
@@ -290,7 +293,7 @@ export function Elicit(spec) {
         if (isBareForm(schemaSpec)) return reportedRows(schemaSpec.primary);
         /** @type {Record<string, any[]>} */
         const out = {};
-        for (const name of Object.keys(tables)) out[name] = reportedRows(name);
+        for (const name of Object.keys(chart.tables)) out[name] = reportedRows(name);
         return out;
     };
 
@@ -507,7 +510,7 @@ export function Elicit(spec) {
      */
     const settleNodes = (before = null, frozen = heldStill(), dodge = null) => {
         if (!hierarchyNodes || !boxHosts.length) return;
-        tables[hierarchyNodes] = settledNodes(tables, before, frozen, dodge);
+        chart.tables[hierarchyNodes] = settledNodes(chart.tables, before, frozen, dodge);
     };
     /**
      * The settled node rows for a dataset — the committed one, or a proposal's
@@ -550,7 +553,7 @@ export function Elicit(spec) {
     const heldStill = () => {
         const flying = inFlight();
         if (!flying) return null;
-        const tree = treeOf(schemaSpec, tables);
+        const tree = treeOf(schemaSpec, chart.tables);
         return new Set(flying.flatMap((i) => tree.ancestorsOf(i)));
     };
     // The channel map of the mark that DRAWS a table, for an edit that writes a table
@@ -592,7 +595,7 @@ export function Elicit(spec) {
     // live because setData re-seeds.
     /** @type {Record<string, number>} */
     let seedCounts = {};
-    for (const name of Object.keys(tables)) seedCounts[name] = tables[name].length;
+    for (const name of Object.keys(chart.tables)) seedCounts[name] = chart.tables[name].length;
     /** @type {Record<string, ((d: any, i: number) => boolean) | null>} */
     const lockPredicates = {};
     /** @type {Record<string, import('../types').Constraint | null>} */
@@ -604,7 +607,7 @@ export function Elicit(spec) {
             // the pointer-transparent `locked` stamp) are exactly what "drawn, never
             // elicited" means. Reads `contextRows` live — setData and undo rebuild it.
             const lock = resolveLock(spec.lock, () => seedCounts[name] || 0, name);
-            lockPredicates[name] = !(name in contextRows) ? lock
+            lockPredicates[name] = !(name in chart.contextRows) ? lock
                 : lock ? (d, i) => isContextRow(name, d) || lock(d, i)
                 : (d) => isContextRow(name, d);
         }
@@ -623,11 +626,11 @@ export function Elicit(spec) {
     // the checks and why each is a defect). Seed rows are the only place a mismatch
     // can originate: an edit mints from schemaDefaults and writes through a channel's
     // own field, so it cannot introduce an undeclared column.
-    validateTables(schemaSpec, tables);
+    validateTables(schemaSpec, chart.tables);
     // A hierarchy's nesting rows must describe a TREE. validateTables has just said
     // which seeded rows do not; drop them, so nothing downstream meets a node with
     // two parents. (A no-op for every other structure.)
-    enforceTree(schemaSpec, tables);
+    enforceTree(schemaSpec, chart.tables);
     // The resolver sees the RESOLVED theme (not the raw spec.theme partial), so its
     // colour-scale range fallback can read theme.palette/ramp/diverging.
     const liveSpec = { ...spec, schema, schemaSpec, theme };
@@ -832,7 +835,7 @@ export function Elicit(spec) {
     // or a caller reading getSelectionAll(). Same staleness rule.
     /** @param {string} [table] @returns {number[]} */
     const selectionList = (table = schemaSpec.primary) => {
-        const n = (tables[table] || []).length;
+        const n = (chart.tables[table] || []).length;
         return [...selectionIn(table)].filter((i) => i >= 0 && i < n).sort((a, b) => a - b);
     };
 
@@ -844,91 +847,17 @@ export function Elicit(spec) {
     const listeners = { change: new Set(), stage: new Set(), select: new Set() };
 
     // ---- Undo history --------------------------------------------------------
-    // An elicitation is someone's belief being drafted, so "take that back" is a
-    // primitive, not a nicety. A snapshot store rather than inverse operations:
-    // an edit's apply() is already a pure data -> data function, so the state
-    // before it IS the undo, and no edit has to describe how to reverse itself.
-    //
-    // The unit is a GESTURE, not a commit. A drag commits on every pointermove, so
-    // per-commit history would make undo replay the drag backwards one pixel at a
-    // time. Instead a transaction opens at dragstart and closes at dragend (both
-    // renderers emit them for mark and plane drags alike), and the first commit
-    // inside it records the pre-gesture state — once. A click or a typed commit is
-    // its own transaction.
-    //
-    // Snapshots carry the schema and the chart size too, because edit.axis.* writes
-    // the schema's domain and can grow the chart: undoing a category-add has to put
-    // the domain, the rows AND the size back.
-    const MAX_HISTORY = 100;
-    /** @type {any[]} */
-    let past = [];
-    /** @type {any[]} */
-    let future = [];
-    /** @type {{ recorded: boolean } | null} */
-    let txn = null;
-
-    // The schema of EVERY table rides in a snapshot (a cross-table rename writes
-    // two tables' domains; a snapshot of the primary's alone could not undo it).
-    // So does context membership, as row indices: the clone has new row objects,
-    // and the context set is keyed by identity.
-    const snapshot = () => {
-        /** @type {Record<string, any>} */
-        const schemas = {};
-        for (const name of Object.keys(schemaSpec.tables)) schemas[name] = structuredClone(schemaSpec.tables[name].fields);
-        /** @type {Record<string, number[]>} */
-        const context = {};
-        for (const name of Object.keys(contextRows)) {
-            context[name] = [];
-            (tables[name] || []).forEach((d, i) => { if (isContextRow(name, d)) context[name].push(i); });
-        }
-        return { tables: structuredClone(tables), schemas, context, width: curW, height: curH };
-    };
-
-    /** @param {any} snap */
-    const restoreSnapshot = (snap) => {
-        tables = structuredClone(snap.tables);
-        for (const [name, idx] of Object.entries(snap.context)) {
-            /** @type {WeakSet<object>} */
-            const set = new WeakSet();
-            for (const i of /** @type {number[]} */ (idx)) if (tables[name] && tables[name][i]) set.add(tables[name][i]);
-            contextRows[name] = set;
-        }
-        // Replace each schema's CONTENTS: `schema` (the primary's field map) is
-        // captured by closures (and read by resolveScales each render), so
-        // rebinding the name would strand them.
-        for (const [name, fields] of Object.entries(snap.schemas)) {
-            const live = schemaSpec.tables[name] && schemaSpec.tables[name].fields;
-            if (!live) continue;
-            for (const k of Object.keys(live)) delete live[k];
-            Object.assign(live, structuredClone(fields));
-        }
-        if (snap.width !== curW || snap.height !== curH) {
-            applyResize({ width: snap.width, height: snap.height });
-        }
-        ui.preview = null;
-    };
-
-    // Open a transaction if none is open. No snapshot here: a gesture that never
-    // commits (a hover that only PREVIEWS, firing beginTxn on every pointermove) must
-    // not clone the dataset. The snapshot is taken lazily by recordHistory, on the
-    // first commit — which is safe because every commit path calls recordHistory
-    // BEFORE it mutates `dataset`/`schema`, so "now" is still the pre-gesture state.
-    const beginTxn = () => { if (!txn) txn = { recorded: false }; };
-    const endTxn = () => { txn = null; };
-    /** @type {any} */
-    let wheelTimer = null;
-
-    // Called by every commit path, BEFORE it mutates state. The first commit in a
-    // transaction snapshots the (still pre-gesture) state and drops the redo stack —
-    // a new edit after an undo forks the history, so the old future is gone.
-    const recordHistory = () => {
-        if (!txn) beginTxn();
-        if (!txn || txn.recorded) return;
-        past.push(snapshot());
-        if (past.length > MAX_HISTORY) past.shift();
-        future = [];
-        txn.recorded = true;
-    };
+    // Snapshot store, one entry per GESTURE (see engine/history.js). Built here so
+    // every commit path below can record into it; the late-bound deps are defined
+    // further down this function.
+    const history = createHistory(chart, {
+        schemaSpec, ui,
+        isContextRow: (name, d) => isContextRow(name, d),
+        applyResize: (size) => applyResize(size),
+        notifyChange: () => notifyChange(),
+        update: () => update(),
+    });
+    const { snapshot, restoreSnapshot, beginTxn, endTxn, recordHistory } = history;
 
     // Notify a committed change. One place, so undo/redo tell the caller exactly
     // what an edit does.
@@ -1041,7 +970,7 @@ export function Elicit(spec) {
     //    mutate it. `scales` is a channel map { x, y, fill, size, … }; unused
     //    channels are absent.
     const dims = { width: innerWidth, height: innerHeight };
-    let scales = resolveScales(features, tables, liveSpec, dims);
+    let scales = resolveScales(features, chart.tables, liveSpec, dims);
     // Settle a seeded hierarchy now, against the declared size, so `getData()` is
     // already exact before the first (deferred) render.
     settleNodes(null, null, {});
@@ -1057,26 +986,26 @@ export function Elicit(spec) {
         container.style.height = 'auto';
     } else if (mode === 'reflow') {
         container.style.width = '100%';
-        container.style.height = `${curH}px`;
+        container.style.height = `${chart.curH}px`;
     } else {
-        container.style.width = `${curW}px`;
-        container.style.height = `${curH}px`;
+        container.style.width = `${chart.curW}px`;
+        container.style.height = `${chart.curH}px`;
     }
 
     // Recompute the margin-subtracted dims from the current outer dims, and (reflow
     // only) re-measure the container's width from the parent. Returns whether the
     // width actually changed, so a resize can skip a redundant re-render.
     const recomputeInner = () => {
-        innerWidth = curW - effectiveMargins.left - effectiveMargins.right;
-        innerHeight = curH - effectiveMargins.top - effectiveMargins.bottom;
+        innerWidth = chart.curW - effectiveMargins.left - effectiveMargins.right;
+        innerHeight = chart.curH - effectiveMargins.top - effectiveMargins.bottom;
         dims.width = innerWidth;
         dims.height = innerHeight;
     };
     const measure = () => {
         if (mode !== 'reflow') return false;
         const w = container.clientWidth || designW;
-        if (w > 0 && w !== curW) {
-            curW = w;
+        if (w > 0 && w !== chart.curW) {
+            chart.curW = w;
             recomputeInner();
             return true;
         }
@@ -1100,7 +1029,7 @@ export function Elicit(spec) {
         // very edge — so a title never costs the plot its declared size and never
         // collides with an axis or a legend.
         // Titles wrap to the chart width from the plot's left edge.
-        const titleWidth = Math.max(0, curW - authorMargins.left - 4);
+        const titleWidth = Math.max(0, chart.curW - authorMargins.left - 4);
         const titleBands = reserveTitles(spec, theme, titleWidth);
         effectiveMargins = { ...authorMargins };
         recomputeInner();
@@ -1111,7 +1040,7 @@ export function Elicit(spec) {
         /** @type {Record<string, number>} */
         const axisBands = { top: 0, right: 0, bottom: 0, left: 0 };
         if (hasLegends || hasAxisTitles()) {
-            const provisional = resolveScales(features, tables, liveSpec, dims);
+            const provisional = resolveScales(features, chart.tables, liveSpec, dims);
             /** @type {any} */ (provisional).theme = theme; // measure reads legend font tokens
             if (hasLegends) legendBands = reserveLegends(features, provisional, authorMargins, 8, dims);
             for (const f of features) {
@@ -1133,7 +1062,7 @@ export function Elicit(spec) {
 
         // Re-resolve global scales so inferred domains follow the live data, and
         // an edited schema domain (edit.axis.*) reshapes every axis/grid/mark.
-        scales = resolveScales(features, tables, liveSpec, dims);
+        scales = resolveScales(features, chart.tables, liveSpec, dims);
         // Chart-level geographic projection (Plot model): shared apply/invert/path
         // for every geo mark and edit.geo.*. Attached on the scale map so build()
         // and edit ctx see the same object without a second argument.
@@ -1225,7 +1154,7 @@ export function Elicit(spec) {
             // before featureNodes is written, so picking never sees them either.
             const hasLiveEdit = activeEdits(feature).length > 0;
             const nodes = feature.build(currentData, scales, innerWidth, innerHeight, {
-                tables, schema: schemaSpec, table: feature.table,
+                tables: chart.tables, schema: schemaSpec, table: feature.table,
                 nodeBox: nodeBoxRule(), nodePorts: nodePortsRule,
             }).filter((/** @type {any} */ node) => !(node && node.rowHandle && (!hasLiveEdit
                 || (isLocked && isNodeLocked(node, feature, currentData, isLocked)))));
@@ -1292,7 +1221,7 @@ export function Elicit(spec) {
             // A node over a LOCKED row is inert for the same reason, one level down:
             // its row is read-only, so it is not grabbable, shows no editable cursor,
             // and pick.js skips it when resolving a proximity target.
-            const tree = feature.table === hierarchyNodes ? treeOf(schemaSpec, tables) : null;
+            const tree = feature.table === hierarchyNodes ? treeOf(schemaSpec, chart.tables) : null;
             const carried = tree ? inFlight() : null;
             const lifted = tree && carried
                 ? new Set(carried.flatMap((i) => [i, ...tree.descendantsOf(i)]))
@@ -1333,7 +1262,7 @@ export function Elicit(spec) {
         paintOrder(built).forEach((/** @type {any} */ node) => scene.add(node));
         // The chart's title block and caption, as background chrome.
         if (spec.title || spec.subtitle || spec.caption) {
-            titleNodes(spec, theme, { innerWidth, outerHeight: curH, effectiveMargins, authorMargins, maxWidth: Math.max(0, curW - effectiveMargins.left - 4) })
+            titleNodes(spec, theme, { innerWidth, outerHeight: chart.curH, effectiveMargins, authorMargins, maxWidth: Math.max(0, chart.curW - effectiveMargins.left - 4) })
                 .forEach((/** @type {any} */ node) => scene.add(node));
         }
 
@@ -1392,7 +1321,7 @@ export function Elicit(spec) {
                     // A ghosted LINK has to resolve its endpoints against the proposed
                     // rows too — otherwise a preview that moves a node draws the ghost
                     // link to where the node used to be.
-                    tables: { ...tables, [proposal.table]: proposed },
+                    tables: { ...chart.tables, [proposal.table]: proposed },
                     schema: schemaSpec,
                     table: feature.table,
                     // A ghost build may draw a FREE end at the pointer.
@@ -1571,7 +1500,7 @@ export function Elicit(spec) {
         }
         const flyingRoots = inFlight();
         const flying = flyingRoots
-            ? new Set(flyingRoots.flatMap((i) => [i, ...treeOf(schemaSpec, tables).descendantsOf(i)]))
+            ? new Set(flyingRoots.flatMap((i) => [i, ...treeOf(schemaSpec, chart.tables).descendantsOf(i)]))
             : null;
 
         for (const feature of features) {
@@ -1711,8 +1640,8 @@ export function Elicit(spec) {
         renderer.render({
             container,
             scene,
-            width: curW,
-            height: curH,
+            width: chart.curW,
+            height: chart.curH,
             margins: effectiveMargins,
             scales,
             spec,
@@ -1762,7 +1691,7 @@ export function Elicit(spec) {
         // separately rather than conflated.
         const sourceRows = tableOf(feature);
         const targetTable = targetTableOf(feature, edit);
-        const currentData = tables[targetTable] || [];
+        const currentData = chart.tables[targetTable] || [];
         const markChannels = feature.channels || {};
         // A node built inside a composite's local FRAME carries the very scales it was
         // encoded through (plot/composite.js stamps `node.frame`). Overlay them so the
@@ -1779,7 +1708,7 @@ export function Elicit(spec) {
         // edit left with none does nothing. A leaf's size — and a container's
         // position, which carries its contents along — stay editable.
         if (hierarchyNodes && feature.table === hierarchyNodes && index != null && resolved.length
-            && treeOf(schemaSpec, tables).hasChildren(index)) {
+            && treeOf(schemaSpec, chart.tables).hasChildren(index)) {
             const derived = fitChannelsOf(markChannels).filter((ch) => axisOf(ch) !== 'x' && axisOf(ch) !== 'y');
             const free = resolved.filter((ch) => !derived.includes(ch.name));
             derivedOnly = !free.length;
@@ -1796,7 +1725,7 @@ export function Elicit(spec) {
             // The whole dataset, for an edit that has to look ACROSS tables (rewire
             // resolves a node id from the node rows while writing a link row). Named
             // by table, and read-only by convention like every other ctx member.
-            tables,
+            tables: chart.tables,
             table: targetTable,
             pointer: { x: event.x, y: event.y },
             node: event.node || null,
@@ -1948,7 +1877,7 @@ export function Elicit(spec) {
                 // The rest of the dataset and which table these rows are, for an
                 // invariant that spans tables. Pure data, like everything else a
                 // constraint sees — still no pixels.
-                tables, table: forTable,
+                tables: chart.tables, table: forTable,
                 // The table's field schema, so a rule can honour a column's MEASURE
                 // (snap keeps a temporal value a Date), and which of its rows are
                 // read-only, so a rule that pushes neighbours (monotonic) pivots
@@ -1957,7 +1886,7 @@ export function Elicit(spec) {
                 locked: isLockedIn(forTable),
             };
             let out = rows;
-            const before = own ? currentData : (tables[forTable] || []);
+            const before = own ? currentData : (chart.tables[forTable] || []);
             for (const constraint of invariants) {
                 const r = applyConstraint(constraint, out, before, cctx);
                 if (r === false) return null;
@@ -2049,7 +1978,7 @@ export function Elicit(spec) {
         // descendant, is refused. Refused HERE, not repaired after the commit, so a
         // trial commit refuses it too and such a drop is never offered as a target.
         if (targetTable === schemaSpec.byRole.nesting
-            && treeProblems(schemaSpec, { ...tables, [targetTable]: rows }).length) return null;
+            && treeProblems(schemaSpec, { ...chart.tables, [targetTable]: rows }).length) return null;
         return { kind: 'rows', rows };
     };
 
@@ -2077,12 +2006,12 @@ export function Elicit(spec) {
         // A proposal replaces the table the EDIT targets, which is not always the
         // table its mark draws (see computeEdit). Getting this wrong would overwrite
         // the wrong table wholesale, so the target is resolved the one way, there.
-        const nodesBefore = hierarchyNodes ? tables[hierarchyNodes] : null;
-        tables[targetTableOf(feature, edit)] = proposed.rows;
+        const nodesBefore = hierarchyNodes ? chart.tables[hierarchyNodes] : null;
+        chart.tables[targetTableOf(feature, edit)] = proposed.rows;
         // Deleting a row can strand REFERENCES to it in another table, which no
         // single-table constraint can see or repair. The schema already declares the
         // rule (`type: 'ref'`), so the engine enforces it — see enforceRefs.
-        enforceRefs(schemaSpec, tables);
+        enforceRefs(schemaSpec, chart.tables);
         // A hierarchy's geometry follows from its contents: a moved container takes
         // its subtree along, and every fitted container re-fits. Same standing as
         // enforceRefs — the schema's rule, repaired across rows after the commit.
@@ -2136,10 +2065,10 @@ export function Elicit(spec) {
                 const prev = fields[field];
                 fields[field] = { ...(prev || { type: inferMeasureOfDomain(domain) }), domain };
             }
-            if (Array.isArray(w.data)) { tables[name] = w.data; touchedRows = true; }
+            if (Array.isArray(w.data)) { chart.tables[name] = w.data; touchedRows = true; }
         }
         // A category removal deletes rows, which can strand references to them.
-        if (touchedRows) enforceRefs(schemaSpec, tables);
+        if (touchedRows) enforceRefs(schemaSpec, chart.tables);
         if (result.resize) applyResize(result.resize);
         ui.preview = null;
         notifyChange();
@@ -2151,13 +2080,13 @@ export function Elicit(spec) {
     // the inner rect so the next render draws at the new size.
     /** @param {{ width?: number, height?: number }} size */
     const applyResize = (size) => {
-        if (typeof size.width === 'number' && size.width > 0) curW = size.width;
-        if (typeof size.height === 'number' && size.height > 0) curH = size.height;
+        if (typeof size.width === 'number' && size.width > 0) chart.curW = size.width;
+        if (typeof size.height === 'number' && size.height > 0) chart.curH = size.height;
         if (mode === 'fixed') {
-            container.style.width = `${curW}px`;
-            container.style.height = `${curH}px`;
+            container.style.width = `${chart.curW}px`;
+            container.style.height = `${chart.curH}px`;
         } else if (mode === 'reflow') {
-            container.style.height = `${curH}px`;
+            container.style.height = `${chart.curH}px`;
         }
         recomputeInner();
     };
@@ -2203,7 +2132,7 @@ export function Elicit(spec) {
         // container that would receive the node rides along as `dropInto`, for the
         // `target` effect.
         if (hierarchyNodes && table === schemaSpec.byRole.nesting && boxHosts.length) {
-            const overlay = { ...tables, [table]: newData };
+            const overlay = { ...chart.tables, [table]: newData };
             const tree = treeOf(schemaSpec, overlay);
             ui.preview[feature.id] = {
                 table: hierarchyNodes,
@@ -2235,7 +2164,7 @@ export function Elicit(spec) {
         if (typeof edit.targets !== 'function') return null;
         const table = targetTableOf(feature, edit);
         const probeCtx = /** @type {any} */ ({
-            scales, schemaSpec, tables, table, data: tables[table] || [],
+            scales, schemaSpec, tables: chart.tables, table, data: chart.tables[table] || [],
             nodeBox: nodeBoxRule(), nodePorts: nodePortsRule, contains: containsRule,
             width: innerWidth, height: innerHeight,
             node: node || null, edit, pointer: { x: 0, y: 0 },
@@ -2264,7 +2193,7 @@ export function Elicit(spec) {
     let availSig = [];
     /** @param {any} feature @param {any} node @returns {boolean} */
     const portAvailable = (feature, node) => {
-        const sig = Object.keys(tables).map((k) => tables[k]);
+        const sig = Object.keys(chart.tables).map((k) => chart.tables[k]);
         if (sig.length !== availSig.length || sig.some((t, i) => t !== availSig[i])) {
             availCache.clear();
             availSig = sig;
@@ -2691,19 +2620,14 @@ export function Elicit(spec) {
             }
         }
 
-        // A wheel burst is one gesture for undo: each tick keeps the transaction
-        // open and re-arms a short timer that closes it once the wheel goes quiet.
-        if (event.type === 'wheel') {
-            if (!txn || wheelTimer == null) { endTxn(); beginTxn(); }
-            if (wheelTimer != null) clearTimeout(wheelTimer);
-            wheelTimer = setTimeout(() => { wheelTimer = null; endTxn(); }, 350);
-        } else if (event.type === 'dragstart') { endTxn(); beginTxn(); }
-        else if (!txn) beginTxn();
+        // Which undo transaction this event belongs to (a wheel burst and a drag are
+        // each one gesture — see engine/history.js).
+        history.gestureTxn(event.type);
 
         // A hierarchy's rows are pushed apart at the END of a stroke, around what it
         // moved (see `stroking`). A nudge's synthetic drag is a whole gesture.
         if (hierarchyNodes && !event.nudge) {
-            if (event.type === 'dragstart') { stroking = true; strokeNodes = tables[hierarchyNodes]; }
+            if (event.type === 'dragstart') { stroking = true; strokeNodes = chart.tables[hierarchyNodes]; }
             else if (event.type === 'drag') stroking = true;
         }
 
@@ -2757,11 +2681,11 @@ export function Elicit(spec) {
         // last fit is part of the same gesture: one undo entry, one `change`.
         if (event.type === 'dragend' && hierarchyNodes && boxHosts.length) {
             stroking = false;
-            const settled = settledNodes(tables, null, heldStill(), { since: strokeNodes });
+            const settled = settledNodes(chart.tables, null, heldStill(), { since: strokeNodes });
             strokeNodes = null;
-            if (settled !== tables[hierarchyNodes]) {
+            if (settled !== chart.tables[hierarchyNodes]) {
                 recordHistory();
-                tables[hierarchyNodes] = settled;
+                chart.tables[hierarchyNodes] = settled;
                 notifyChange();
                 shouldRender = true;
             }
@@ -2801,26 +2725,26 @@ export function Elicit(spec) {
         // setData takes what getData gives: the ELICITED rows. The context rows are
         // reference, not an answer, so they are kept — the same objects, so their
         // membership survives — ahead of the new rows.
-        for (const name of Object.keys(contextRows)) {
-            const keep = (tables[name] || []).filter((d) => isContextRow(name, d));
+        for (const name of Object.keys(chart.contextRows)) {
+            const keep = (chart.tables[name] || []).filter((d) => isContextRow(name, d));
             if (keep.length) next[name] = [...keep, ...(next[name] || [])];
         }
-        tables = next;
+        chart.tables = next;
         // A reseed is new seed data, so it gets the same contract check as spec.data.
-        validateTables(schemaSpec, tables, 'setData()');
+        validateTables(schemaSpec, chart.tables, 'setData()');
         // Under a hierarchy an outside caller (a program, a model) re-parents by
         // writing nesting rows, so its data gets the repairs a gesture's commit
         // gets: a membership naming a missing node goes, and so does one that
         // breaks the tree. Scoped to hierarchies so no existing chart changes.
         if (nestingOf(schemaSpec)) {
-            enforceRefs(schemaSpec, tables);
-            enforceTree(schemaSpec, tables);
+            enforceRefs(schemaSpec, chart.tables);
+            enforceTree(schemaSpec, chart.tables);
             spaceNext = true;
             stroking = false;
             strokeNodes = null;
         }
         seedCounts = {};
-        for (const name of Object.keys(tables)) seedCounts[name] = tables[name].length;
+        for (const name of Object.keys(chart.tables)) seedCounts[name] = chart.tables[name].length;
         ui.preview = null;
         ui.hover = null;   // the pointer's row index is new too
         ui.grab = null;    // and any in-flight grab points at a row that just moved
@@ -2828,9 +2752,7 @@ export function Elicit(spec) {
         // A reseed is a new starting point, not an edit: there is nothing sensible
         // to undo BACK to (and undoing past it would resurrect rows the caller
         // replaced, under a lock that no longer covers them).
-        past = [];
-        future = [];
-        endTxn();
+        history.reset();
         update();
     };
 
@@ -3158,30 +3080,11 @@ export function Elicit(spec) {
         return handle;
     };
 
-    // Undo / redo one GESTURE (see the history store above). Both return whether
-    // they moved, so a caller can drive a button's disabled state; both fire the
-    // ordinary `change` notification, because as far as anything downstream is
-    // concerned the data just changed.
-    el.canUndo = () => past.length > 0;
-    el.canRedo = () => future.length > 0;
-    el.undo = () => {
-        if (!past.length) return false;
-        future.push(snapshot());
-        restoreSnapshot(/** @type {any} */(past.pop()));
-        endTxn();
-        notifyChange();
-        update();
-        return true;
-    };
-    el.redo = () => {
-        if (!future.length) return false;
-        past.push(snapshot());
-        restoreSnapshot(/** @type {any} */(future.pop()));
-        endTxn();
-        notifyChange();
-        update();
-        return true;
-    };
+    // Undo / redo one GESTURE (see engine/history.js).
+    el.canUndo = history.canUndo;
+    el.canRedo = history.canRedo;
+    el.undo = history.undo;
+    el.redo = history.redo;
     // Subscribe to committed changes; returns an unsubscribe function.
     el.on = (/** @type {'change' | 'stage' | 'select'} */ type, /** @type {Function} */ cb) => {
         listeners[type].add(cb);
