@@ -2245,7 +2245,7 @@ async function main() {
         const ordBefore = await page.$eval(ordEl, (e) => e.getData());
         // The caps are the two grabbable ticks; the axis ticks are lines too, and
         // sit lower — they're pointer-events:none, so grabbing one is a silent no-op.
-        const caps = await page.locator('#ordering svg line[stroke="#64748b"]').all();
+        const caps = await page.locator('#ordering svg line[stroke="#6F8294" i]').all();
         await page.locator('#ordering .chart svg').scrollIntoViewIfNeeded();
         await page.waitForTimeout(200);
         let lowCap = null, maxY = -1;
@@ -2290,7 +2290,7 @@ async function main() {
 
         // spacing: shove a threshold into its neighbours; they keep min apart.
         const spEl = '#spacing .chart > div';
-        const spTicks = await page.locator('#spacing svg line[stroke="#2563eb"]').all();
+        const spTicks = await page.locator('#spacing svg line[stroke="#50AEB7" i]').all();
         await spTicks[0].scrollIntoViewIfNeeded();
         await page.waitForTimeout(200);
         const sBox = await spTicks[0].boundingBox();
