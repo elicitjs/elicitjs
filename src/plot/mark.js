@@ -1016,8 +1016,8 @@ export function warnUnknownOptions(mark, options, allow) {
         warn(
             `noallow:${mark}`,
             `${name}() calls normalizeMarkOptions without an \`allow\` list, which turns off ` +
-            `its unknown-option diagnostics. Declare the mark's own option vocabulary — see ` +
-            `the "Adding a new mark" contract in CLAUDE.md.`
+            `its unknown-option diagnostics. Declare the mark's own option vocabulary in ` +
+            `MARK_OPTIONS (src/vocabulary.js) and pass it as \`allow\`.`
         );
     }
     const known = allow

@@ -73,8 +73,9 @@ demand, and a prefetch that races a compile can 404 or time out. **A single red 
 on a route that passed earlier in the same run is dev-server noise; re-run before
 investigating.**
 
-`CLAUDE.md` holds the design invariants this codebase is expected to preserve. Read
-it, `ARCHITECTURE.md` and `MARK_CONTRACTS.md` before changing anything structural.
+`CLAUDE.md` and the path-scoped rules in `.claude/rules/` hold the design invariants
+this codebase is expected to preserve. Read them, `ARCHITECTURE.md` and
+`MARK_CONTRACTS.md` before changing anything structural.
 
 ## Publishing the library
 
