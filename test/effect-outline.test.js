@@ -52,3 +52,46 @@ describe('outline geometry', () => {
         expect(o.r).toBe(9);
     });
 });
+
+describe('text outline', () => {
+    const label = { type: 'text', x: 100, y: 50, text: 'hello', fontSize: 12, textAnchor: 'middle', lineAnchor: 'middle', fill: '#111' };
+
+    it('draws nothing by default: the cursor is the feedback', () => {
+        const fx = resolveEffects();
+        expect(outlineNodes(label, fx.hovered)).toEqual([]);
+        expect(outlineNodes(label, fx.selected)).toEqual([]);
+    });
+
+    it('a theme outline does not count as asked for', () => {
+        const fx = resolveEffects({}, { hovered: { outline: { color: 'red', width: 2 } } });
+        expect(outlineNodes(label, fx.hovered)).toEqual([]);
+    });
+
+    it('draws a box around the text when the spec sets an outline', () => {
+        const fx = resolveEffects({ hovered: { outline: { color: 'red' } } });
+        const [o] = outlineNodes(label, fx.hovered);
+        expect(o.type).toBe('rect');
+        expect(o.stroke).toBe('red');
+        // Centred on the anchor, wider than tall for a word.
+        expect(o.x + o.width / 2).toBeCloseTo(100);
+        expect(o.y + o.height / 2).toBeCloseTo(50);
+        expect(o.width).toBeGreaterThan(o.height);
+    });
+
+    it('places the box by textAnchor and lineAnchor', () => {
+        const fx = resolveEffects({ hovered: { outline: { pad: 0 } } });
+        const [o] = outlineNodes({ ...label, textAnchor: 'start', lineAnchor: 'top' }, fx.hovered);
+        expect(o.x).toBeLessThan(100);
+        expect(o.x).toBeGreaterThan(95);
+        expect(o.y).toBeLessThan(50);
+        expect(o.y).toBeGreaterThan(45);
+    });
+
+    it('turns a rotated label\'s box about the text anchor', () => {
+        const fx = resolveEffects({ hovered: { outline: {} } });
+        const [o] = outlineNodes({ ...label, angle: 90 }, fx.hovered);
+        expect(o.type).toBe('path');
+        expect(o.angle).toBeUndefined();
+        expect(o.d.startsWith('M')).toBe(true);
+    });
+});

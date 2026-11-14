@@ -1,5 +1,6 @@
 // @ts-check
 import { color as d3color } from 'd3';
+import { measureText } from './measure.js';
 // effects.js — interaction effects: transient feedback for an interaction's state
 // (hovered, selected, target, grabbed), separate from style channels and guides.
 // See .claude/rules/guides-effects-rendering.md.
@@ -62,9 +63,12 @@ function resolveState(user, base) {
     if (user === false) return { enabled: false };
     if (typeof user === 'string') return { ...d, enabled: true, filter: user };
     const u = user || {};
+    // `requested` marks an outline the spec asked for. Text is outlined only then.
     const outline = u.outline === false
         ? null
-        : (d.outline || u.outline) ? { ...d.outline, ...(u.outline || {}) } : null;
+        : (d.outline || u.outline)
+            ? { ...d.outline, ...(u.outline || {}), ...(u.outline ? { requested: true } : {}) }
+            : null;
     return { ...d, ...u, outline, enabled: true };
 }
 
@@ -270,12 +274,52 @@ export function outlineNodes(mark, state) {
             : [];
     }
     if (mark.type === 'text') {
-        // No measured text metrics here, so outline a ring at the label's anchor —
-        // enough to say "this one", without pretending to know the glyph box.
-        const r = (mark.fontSize || 12) * 0.9 + pad;
-        return [{ type: 'circle', cx: mark.x, cy: mark.y, r, ...paint }];
+        // A label shows its state through the cursor. Only an outline the spec
+        // asked for is drawn, as a box around the text.
+        if (!state.outline.requested) return [];
+        return [textOutline(mark, pad + TEXT_OUTLINE_GAP, paint)];
     }
     return [];
+}
+
+// Space between a label's glyphs and its outline box, px, before `pad`.
+const TEXT_OUTLINE_GAP = 2;
+
+/**
+ * A box around a text node, placed the way the renderer anchors the text. A
+ * rotated label gets a path with the corners turned about the text's anchor,
+ * since a rect would turn about its own centre.
+ * @param {any} mark a text node
+ * @param {number} pad
+ * @param {any} paint
+ * @returns {any}
+ */
+function textOutline(mark, pad, paint) {
+    const fontSize = +mark.fontSize || 12;
+    const font = { fontSize, fontWeight: mark.fontWeight, fontFamily: mark.fontFamily };
+    const lines = Array.isArray(mark.lines) && mark.lines.length ? mark.lines : [mark.text];
+    const step = mark.lineHeight != null ? mark.lineHeight : Math.round(fontSize * 1.35);
+    const w = Math.max(0, ...lines.map((/** @type {string} */ l) => measureText(l, font)));
+    const h = lines.length * step;
+    const anchor = mark.textAnchor || 'middle';
+    const left = anchor === 'start' ? mark.x : anchor === 'end' ? mark.x - w : mark.x - w / 2;
+    const top = mark.lineAnchor === 'top' ? mark.y : mark.lineAnchor === 'bottom' ? mark.y - h : mark.y - h / 2;
+    const box = { x: left - pad, y: top - pad, width: w + pad * 2, height: h + pad * 2 };
+
+    const { angle, ...rest } = paint;
+    if (!angle) return { type: 'rect', ...box, ...paint };
+    // Math degrees, counter-clockwise on screen (y down).
+    const a = (-angle * Math.PI) / 180;
+    const cos = Math.cos(a);
+    const sin = Math.sin(a);
+    const turn = (/** @type {number} */ px, /** @type {number} */ py) => {
+        const dx = px - mark.x;
+        const dy = py - mark.y;
+        return `${mark.x + dx * cos - dy * sin},${mark.y + dx * sin + dy * cos}`;
+    };
+    const { x, y, width, height } = box;
+    const d = `M${turn(x, y)}L${turn(x + width, y)}L${turn(x + width, y + height)}L${turn(x, y + height)}Z`;
+    return { type: 'path', d, ...rest };
 }
 
 /**

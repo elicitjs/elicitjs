@@ -2462,6 +2462,7 @@ export interface EffectStyle {
     width?: number;
     /** Gap between the mark's edge and the outline, px. 0 (default) traces the edge. */
     pad?: number;
+    // A text label is outlined only when the spec sets `outline`, as a box around it.
     dash?: string | null;
     opacity?: number;
   };
