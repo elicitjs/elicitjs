@@ -91,7 +91,7 @@ second keyword for one concept, which is free to remove now and permanent later.
 
 ElicitJS is layered for extensibility:
 
-1. **Core engine (`elicit.Elicit`)** — the orchestrator (`src/core/elicit.js`). Deep-copies the spec's **one dataset** into a reactive store, resolves one **global scale per channel** (Observable-Plot model), rebuilds the scene each render, and routes gesture events to the matching edits. The unidirectional flow: `gesture → invert through scale → data-space proposal → data invariants → commit → re-render`.
+1. **Core engine (`elicit.Elicit`)** — the orchestrator (`src/core/elicit.js`, which wires the engine modules in `src/core/engine/`). Deep-copies the spec's **one dataset** into a reactive store, resolves one **global scale per channel** (Observable-Plot model), rebuilds the scene each render, and routes gesture events to the matching edits. The unidirectional flow: `gesture → invert through scale → data-space proposal → data invariants → commit → re-render`.
 
    **One schema.** The schema is the contract of the elicited dataset: every field's measurement type and domain. It is what lets a chart resolve its scales and mint rows from *zero* starter data. A scale is one **encoding**: a `(channel, field)` pair. Two marks stating the same encoding share one scale, so a shared colour means a shared value; two marks putting *different* fields on `fill` are two encodings, so they get two scales, two colour families and two legends. **Positional** channels are the exception and union by axis — an error bar's `mean`, `lo` and `hi` share one y axis that spans all three, which is the intent.
 
@@ -191,7 +191,18 @@ ElicitJS is layered for extensibility:
 elicitjs/
 ├── src/
 │   ├── core/
-│   │   ├── elicit.js       # Engine: state store, scale resolution, event routing, render loop
+│   │   ├── elicit.js       # Engine entry: builds the shared state and wires engine/*
+│   │   ├── engine/
+│   │   │   ├── state.js     # The shared mutable `chart` state (what a commit or resize reassigns)
+│   │   │   ├── features.js  # Where features are flattened: assembly, tables, ports/contains/tip desugaring
+│   │   │   ├── tables.js    # The belief store's accessors: tables, context rows, reported rows, lock, constraints
+│   │   │   ├── nodes.js     # The node table's box/ports/contains/dodge rules; hierarchy settling
+│   │   │   ├── stages.js    # Stage cursor and activeEdits, the one edit gate
+│   │   │   ├── selection.js # Table-qualified selection and the el.select* API
+│   │   │   ├── history.js   # Undo: per-gesture snapshots and transactions
+│   │   │   ├── compute.js   # An edit from gesture to commit: context, invariants, commit, preview, trial commits
+│   │   │   ├── dispatch.js  # Event routing: direct / plane / driver dispatch
+│   │   │   └── render.js    # Container, sizing, and update(): layout, scales, build, ghost, guides, state pass
 │   │   ├── lock.js         # Read-only rows (spec.lock): the invariant + the pointer policy
 │   │   ├── axes.js         # Resolve the global `axes` convenience into axis/grid marks
 │   │   ├── resolve.js      # Global per-channel scale resolution
