@@ -155,11 +155,9 @@ export function createRender(chart, deps) {
 
     const scene = new SceneGraph();
 
-    // 3. Coordinator - rebuild the scene graph from current state and render.
-    const update = () => {
-        measure(); // reflow: pick up the container's current width before drawing
-        scene.clear();
-
+    // LAYOUT: reserve the legend, axis-title and chart-title bands, and size the plot
+    // rect.
+    const layoutPass = () => {
         // Legend reservation: a legend on a side shrinks the plot to make room. A
         // legend's band depends only on its scale's DOMAIN (label count / extent),
         // not on the pixel dims — so one provisional resolve gives the domains, we
@@ -200,7 +198,11 @@ export function createRender(chart, deps) {
             left: authorMargins.left + axisBands.left + legendBands.left,
         };
         recomputeInner();
+    };
 
+    // SCALES: re-resolve the global scales from the live data, stamp the reserved keys on
+    // the scale map, and settle a hierarchy.
+    const resolvePass = () => {
         // Re-resolve global scales so inferred domains follow the live data, and
         // an edited schema domain (edit.axis.*) reshapes every axis/grid/mark.
         chart.scales = resolveScales(features, chart.tables, liveSpec, dims);
@@ -239,7 +241,11 @@ export function createRender(chart, deps) {
         // (a hover, a resize) must never move an answer.
         settleNodes(null, heldStill(), chart.spaceNext && !chart.stroking ? {} : null);
         if (!chart.stroking) chart.spaceNext = false;
+    };
 
+    // PLANE: whether the interaction plane sits on top, listens to the wheel, and which
+    // cursor it shows.
+    const planeState = () => {
         // Plane-on-top mode: when an ACTIVE edit resolves its target from an
         // arbitrary pointer position (nearest/sweep/draw/brush), the plane must sit
         // above the marks and own the gesture. Computed per render because the
@@ -264,7 +270,12 @@ export function createRender(chart, deps) {
                 if (cur) { planeCursor = cur; break; }
             }
         }
+        return { planeOnTop, hasWheel, planeCursor };
+    };
 
+    // BUILD: build every feature from its committed rows, tag its nodes for dispatch, and
+    // add them to the scene in paint order with the panel and titles.
+    const buildPass = () => {
         warnDuplicatePlaneEdits(features, activeEdits, targetTableOf);
         warnUnreachableLegendRow(features, activeEdits, tableOf);
 
@@ -406,7 +417,11 @@ export function createRender(chart, deps) {
             titleNodes(spec, theme, { innerWidth: chart.innerWidth, outerHeight: chart.curH, effectiveMargins: chart.effectiveMargins, authorMargins, maxWidth: Math.max(0, chart.curW - chart.effectiveMargins.left - 4) })
                 .forEach((/** @type {any} */ node) => scene.add(node));
         }
+    };
 
+    // GHOST: draw the uncommitted proposal, if any, as inert ghosts of the rows it would
+    // change.
+    const ghostPass = () => {
         // Ghost-preview pass. For each feature carrying an uncommitted proposal, build
         // it from the PROPOSED rows and add only the nodes that DIFFER from committed —
         // a changed/added row (by identity, since computeEdit's splice preserves the
@@ -484,9 +499,11 @@ export function createRender(chart, deps) {
             }
             paintOrder(ghostBuilt).forEach((/** @type {any} */ node) => scene.add(node));
         }
+    };
 
-        // Build guides last so they can read the freshly-updated data. Guides are
-        // purely visual (non-interactive) annotations.
+    // POINTER: resolve the row under the pointer (ui.hit / ui.hits) for the guides that
+    // read it.
+    const pointerPass = () => {
         // The row under the pointer, for the guides that read it — resolved from
         // the scene just built, so a tip over a locked or context row works too.
         if (tracksPointer && ui.pointer) {
@@ -540,7 +557,12 @@ export function createRender(chart, deps) {
             ui.hits = [];
             ui.hit = null;
         }
+    };
 
+    // GUIDES: build every guide against the chart state.
+    const guidePass = () => {
+        // Build guides last so they can read the freshly-updated data. Guides are
+        // purely visual (non-interactive) annotations.
         const guideCtx = {
             scales: chart.scales,
             // The primary table's rows — what a chart-level guide means by "the data".
@@ -575,7 +597,11 @@ export function createRender(chart, deps) {
                 scene.add(node);
             });
         });
+    };
 
+    // STATE: decide every interaction effect (hovered / selected / target / grabbed) and
+    // port visibility.
+    const statePass = () => {
         // ── The interaction-STATE pass ───────────────────────────────────────
         // ONE place decides what every interaction state looks like, for every
         // feature, however the state arose — and for BOTH of the effects layer's
@@ -777,6 +803,20 @@ export function createRender(chart, deps) {
                 overlays.forEach((/** @type {any} */ node) => { node.guide = true; scene.add(node); });
             }
         }
+    };
+
+    // 3. Coordinator - rebuild the scene graph from current state and render.
+    const update = () => {
+        measure(); // reflow: pick up the container's current width before drawing
+        scene.clear();
+        layoutPass();
+        resolvePass();
+        const { planeOnTop, hasWheel, planeCursor } = planeState();
+        buildPass();
+        ghostPass();
+        pointerPass();
+        guidePass();
+        statePass();
 
         renderer.render({
             container,
