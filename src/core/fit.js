@@ -26,6 +26,74 @@ export const DEFAULT_GAP = 8;
 /** How many rounds of pushing apart one group gets before it is left as it stands. */
 const DODGE_PASSES = 40;
 
+/** Above this many dodging siblings, an overlap the pushing leaves is not re-packed. */
+const PACK_LIMIT = 80;
+
+/**
+ * @typedef {{ cx: number, cy: number, hw: number, hh: number, x0: number, y0: number, gap: number | null, rank: number, round: boolean, guest?: boolean, holds?: boolean }} Spaced
+ * @typedef {{ x: boolean, y: boolean, x0: number, x1: number, y0: number, y1: number } | null} Bounds
+ */
+
+/** Would two dodging rows at these centres sit closer than their gap?
+ *  @param {Spaced} a @param {Spaced} b @param {number} ax @param {number} ay @param {number} bx @param {number} by */
+function collides(a, b, ax, ay, bx, by) {
+    const gap = Math.max(a.gap || 0, b.gap || 0);
+    // Two circles are clear by the distance between their centres.
+    if (a.round && b.round) return Math.hypot(ax - bx, ay - by) < a.hw + b.hw + gap - EPSILON;
+    return Math.abs(ax - bx) < a.hw + b.hw + gap - EPSILON && Math.abs(ay - by) < a.hh + b.hh + gap - EPSILON;
+}
+
+/** Is a centre inside the walls along one axis? A row wider than the room sits in its middle.
+ *  @param {number} c @param {number} half @param {number} lo @param {number} hi */
+function insideWalls(c, half, lo, hi) {
+    if (lo + half > hi - half) return Math.abs(c - (lo + hi) / 2) < EPSILON;
+    return c - half >= lo - EPSILON && c + half <= hi + EPSILON;
+}
+
+/**
+ * Place rows one at a time, each at the cheapest spot clear of the rows placed so
+ * far and of the locked rows. The spots tried are the row's own position, the walls,
+ * and flush against each placed row. Returns null when a row has nowhere to go.
+ * @param {Spaced[]} movers every dodging sibling (locked ones are obstacles)
+ * @param {Bounds} bounds
+ * @param {Spaced[]} order the rows to place
+ * @param {(m: Spaced, x: number, y: number) => number} cost
+ * @param {(a: Spaced, b: Spaced) => boolean} [passes] pairs that may overlap
+ * @returns {Map<Spaced, { x: number, y: number }> | null}
+ */
+function pack(movers, bounds, order, cost, passes) {
+    /** @type {{ m: Spaced, x: number, y: number }[]} */
+    const placed = movers.filter((m) => m.rank === 2).map((m) => ({ m, x: m.cx, y: m.cy }));
+    /** @type {Map<Spaced, { x: number, y: number }>} */
+    const out = new Map();
+    for (const m of order) {
+        const xs = new Set([m.x0]), ys = new Set([m.y0]);
+        if (bounds && bounds.x) [bounds.x0 + m.hw, bounds.x1 - m.hw, (bounds.x0 + bounds.x1) / 2].forEach((v) => xs.add(v));
+        if (bounds && bounds.y) [bounds.y0 + m.hh, bounds.y1 - m.hh, (bounds.y0 + bounds.y1) / 2].forEach((v) => ys.add(v));
+        for (const p of placed) {
+            const gap = Math.max(m.gap || 0, p.m.gap || 0);
+            xs.add(p.x - p.m.hw - m.hw - gap); xs.add(p.x + p.m.hw + m.hw + gap);
+            ys.add(p.y - p.m.hh - m.hh - gap); ys.add(p.y + p.m.hh + m.hh + gap);
+        }
+        /** @type {{ x: number, y: number, c: number } | null} */
+        let best = null;
+        for (const x of xs) {
+            if (bounds && bounds.x && !insideWalls(x, m.hw, bounds.x0, bounds.x1)) continue;
+            for (const y of ys) {
+                if (bounds && bounds.y && !insideWalls(y, m.hh, bounds.y0, bounds.y1)) continue;
+                const c = cost(m, x, y);
+                if (best && c >= best.c) continue;
+                if (placed.some((p) => !(passes && passes(m, p.m)) && collides(m, p.m, x, y, p.x, p.y))) continue;
+                best = { x, y, c };
+            }
+        }
+        if (!best) return null;
+        placed.push({ m, x: best.x, y: best.y });
+        out.set(m, { x: best.x, y: best.y });
+    }
+    return out;
+}
+
 /**
  * A container's padding as four sides: `contains: { padding }` is a number or
  * `{ top, right, bottom, left }` (a missing side takes the default).
@@ -112,6 +180,28 @@ function channelIO(scales, channels, name) {
     return { field: spec.field, encode: (v) => scale.encode(v), invert: (px) => scale.invertValue(px) };
 }
 
+/** Every channel that places or sizes a node's box. */
+const LAYOUT_CHANNELS = [...POSITION_CHANNELS.x, ...POSITION_CHANNELS.y, ...Object.keys(EXTENT_AXIS)];
+
+/**
+ * The columns that place and size node boxes, each with its way to pixels and
+ * back. `extent` marks a size column. One entry per column, first host first.
+ * @param {import('../types').ScaleMap} scales
+ * @param {any[]} hosts the marks drawing the nodes table
+ * @returns {{ field: string, encode: (v: any) => number, invert: (px: number) => any, extent: boolean }[]}
+ */
+export function layoutIO(scales, hosts) {
+    /** @type {Map<string, any>} */
+    const out = new Map();
+    for (const host of hosts) {
+        for (const name of LAYOUT_CHANNELS) {
+            const io = channelIO(scales, host.channels, name);
+            if (io && !out.has(io.field)) out.set(io.field, { ...io, extent: name in EXTENT_AXIS });
+        }
+    }
+    return [...out.values()];
+}
+
 /**
  * @typedef {object} SettleOptions
  * @property {import('../types').SchemaSpec} spec
@@ -132,6 +222,17 @@ function channelIO(scales, channels, name) {
  *   gesture that is now settling; a row whose box differs holds its place and its
  *   siblings make room for it
  * @property {number[] | null} [anchors]  further rows that hold their place
+ * @property {Set<number> | null} [keepSize]  containers that keep their size while
+ *   their contents are still spaced inside them (a preview mid-drag)
+ * @property {Set<number> | null} [yields]  the rows the gesture itself moved. One
+ *   never pushes a container aside: the container holds and the row gives way
+ * @property {boolean} [passing]  the `yields` rows are still being dragged, so they
+ *   pass over a container instead of giving way to it
+ * @property {((row: any, i: number, rows: any[]) => boolean) | null} [holds]  which
+ *   rows may hold others
+ * @property {((row: any, i: number, rows: any[]) => any) | null} [extents]  the
+ *   space a row takes as a whole (a composite: every part, label included). Used
+ *   to space rows and to fit containers round them. Omit to use the drawn box
  */
 
 /**
@@ -141,7 +242,7 @@ function channelIO(scales, channels, name) {
  * @param {SettleOptions} options
  * @returns {import('../types').Datum[]}
  */
-export function settleHierarchy({ spec, tables, hosts, scales, width, height, before = null, frozen = null, locked = null, dodges = null, since = null, anchors = null }) {
+export function settleHierarchy({ spec, tables, hosts, scales, width, height, before = null, frozen = null, locked = null, dodges = null, since = null, anchors = null, extents = null, keepSize = null, yields = null, passing = false, holds = null }) {
     const nesting = nestingOf(spec);
     const rows = nesting ? tables[nesting.nodes] : null;
     if (!nesting || !rows || !rows.length || !hosts || !hosts.length) return rows || [];
@@ -165,6 +266,16 @@ export function settleHierarchy({ spec, tables, hosts, scales, width, height, be
             if (finite(box)) return { host, box };
         }
         return null;
+    };
+    /** The space row `i` takes as a whole: its glyph's extent, else its drawn box.
+     *  @param {number} i */
+    const extentOf = (i) => {
+        if (extents && work[i]) {
+            const box = extents(work[i], i, work);
+            if (finite(box)) return box;
+        }
+        const at = drawn(i);
+        return at ? at.box : null;
     };
     /** Shift row `i` by a pixel delta, through whichever position channels it has.
      *  @param {number} i @param {number} dx @param {number} dy */
@@ -259,19 +370,26 @@ export function settleHierarchy({ spec, tables, hosts, scales, width, height, be
      */
     const space = (kids, bounds) => {
         if (!bounds && !dodges) return;
-        /** @type {{ k: number, cx: number, cy: number, hw: number, hh: number, x0: number, y0: number, gap: number | null, rank: number }[]} */
+        /** @type {(Spaced & { k: number })[]} */
         const live = [];
         for (const k of kids) {
-            const at = drawn(k);
-            if (!at) continue;
+            const box = extentOf(k);
+            if (!box) continue;
             const fixed = !!(locked && locked(rows[k], k));
             live.push({
-                k, cx: at.box.cx, cy: at.box.cy, hw: at.box.hw, hh: at.box.hh, x0: at.box.cx, y0: at.box.cy,
+                k, cx: box.cx, cy: box.cy, hw: box.hw, hh: box.hh, x0: box.cx, y0: box.cy,
                 gap: dodges ? dodges(work[k], k, work) : null,
                 rank: fixed ? 2 : held.has(k) ? 1 : 0,
+                round: !!box.round && Math.abs(box.hw - box.hh) < EPSILON,
+                guest: !!(yields && yields.has(k)),
+                holds: tree.hasChildren(k) || !!(holds && holds(work[k], k, work)),
             });
         }
         if (!live.length) return;
+        // The row the gesture moved, when the other row of a pair is a container.
+        const guestOf = (/** @type {Spaced} */ a, /** @type {Spaced} */ b) =>
+            (a.guest && b.holds && !b.guest ? a : b.guest && a.holds && !a.guest ? b : null);
+        const passes = (/** @type {Spaced} */ a, /** @type {Spaced} */ b) => passing && !!guestOf(a, b);
         const within = (/** @type {number} */ c, /** @type {number} */ half, /** @type {number} */ lo, /** @type {number} */ hi) =>
             (lo + half > hi - half ? (lo + hi) / 2 : Math.min(Math.max(c, lo + half), hi - half));
         const keep = () => {
@@ -290,42 +408,63 @@ export function settleHierarchy({ spec, tables, hosts, scales, width, height, be
                 for (let q = p + 1; q < movers.length; q++) {
                     const a = movers[p], b = movers[q];
                     if (a.rank === 2 && b.rank === 2) continue;
-                    const gap = Math.max(/** @type {number} */ (a.gap), /** @type {number} */ (b.gap));
-                    const ox = a.hw + b.hw + gap - Math.abs(b.cx - a.cx);
-                    const oy = a.hh + b.hh + gap - Math.abs(b.cy - a.cy);
-                    if (ox <= EPSILON || oy <= EPSILON) continue;
+                    if (passes(a, b) || !collides(a, b, a.cx, a.cy, b.cx, b.cy)) continue;
                     pushed = true;
-                    const share = a.rank > b.rank ? 0 : a.rank < b.rank ? 1 : 0.5; // a's part of the move
-                    // Four ways to clear the pair: b goes right, left, down or up
-                    // of a. The shortest wins — unless it would push a row through
-                    // the container's wall, where the next shortest is tried.
+                    const gap = Math.max(/** @type {number} */ (a.gap), /** @type {number} */ (b.gap));
+                    const guest = guestOf(a, b);
+                    // a's part of the move. A container never gives way to the row
+                    // the gesture moved.
+                    const share = guest && guest.rank < 2 ? (guest === a ? 1 : 0)
+                        : a.rank > b.rank ? 0 : a.rank < b.rank ? 1 : 0.5;
+                    // Ways to clear the pair, as a direction b moves (a moves the
+                    // opposite way) and a distance: right, left, down or up of a, and
+                    // for two circles straight apart. The shortest wins, unless it
+                    // would push a row through the container's wall.
                     const sx = a.hw + b.hw + gap, sy = a.hh + b.hh + gap;
+                    /** @type {{ ux: number, uy: number, d: number }[]} */
                     const ways = [
-                        { x: true, dir: 1, d: sx - (b.cx - a.cx) }, { x: true, dir: -1, d: sx + (b.cx - a.cx) },
-                        { x: false, dir: 1, d: sy - (b.cy - a.cy) }, { x: false, dir: -1, d: sy + (b.cy - a.cy) },
-                    ].sort((m, n) => m.d - n.d);
+                        { ux: 1, uy: 0, d: sx - (b.cx - a.cx) }, { ux: -1, uy: 0, d: sx + (b.cx - a.cx) },
+                        { ux: 0, uy: 1, d: sy - (b.cy - a.cy) }, { ux: 0, uy: -1, d: sy + (b.cy - a.cy) },
+                    ];
+                    if (a.round && b.round) {
+                        const dist = Math.hypot(b.cx - a.cx, b.cy - a.cy);
+                        const ux = dist > EPSILON ? (b.cx - a.cx) / dist : 1, uy = dist > EPSILON ? (b.cy - a.cy) / dist : 0;
+                        ways.push({ ux, uy, d: sx - dist });
+                    }
+                    ways.sort((m, n) => m.d - n.d);
                     const fitsIn = (/** @type {typeof ways[0]} */ w) => {
-                        if (!bounds || !(w.x ? bounds.x : bounds.y)) return true;
-                        const lo = w.x ? bounds.x0 : bounds.y0, hi = w.x ? bounds.x1 : bounds.y1;
-                        const ok = (/** @type {typeof a} */ m, /** @type {number} */ by) => {
-                            if (Math.abs(by) < EPSILON) return true;
-                            const c = (w.x ? m.cx : m.cy) + by, half = w.x ? m.hw : m.hh;
-                            return c - half >= lo - EPSILON && c + half <= hi + EPSILON;
+                        if (!bounds) return true;
+                        const ok = (/** @type {Spaced} */ m, /** @type {number} */ by) => {
+                            const x = m.cx + w.ux * by, y = m.cy + w.uy * by;
+                            return (!bounds.x || Math.abs(w.ux * by) < EPSILON || insideWalls(x, m.hw, bounds.x0, bounds.x1))
+                                && (!bounds.y || Math.abs(w.uy * by) < EPSILON || insideWalls(y, m.hh, bounds.y0, bounds.y1));
                         };
-                        return ok(a, -w.dir * w.d * share) && ok(b, w.dir * w.d * (1 - share));
+                        return ok(a, -w.d * share) && ok(b, w.d * (1 - share));
                     };
                     const way = ways.find(fitsIn) || ways[0];
-                    if (way.x) {
-                        a.cx -= way.dir * way.d * share;
-                        b.cx += way.dir * way.d * (1 - share);
-                    } else {
-                        a.cy -= way.dir * way.d * share;
-                        b.cy += way.dir * way.d * (1 - share);
-                    }
+                    a.cx -= way.ux * way.d * share;
+                    a.cy -= way.uy * way.d * share;
+                    b.cx += way.ux * way.d * (1 - share);
+                    b.cy += way.uy * way.d * (1 - share);
                 }
             }
             keep();
             if (!pushed) break;
+        }
+        // Pushing pairs apart can stall in a crowded container. Then place the rows
+        // one by one: first each at the free spot nearest where it was, then, if that
+        // fails, packed in reading order from the top-left. With no room for either,
+        // the pushed result stands.
+        if (movers.length <= PACK_LIMIT && movers.some((a, p) => movers.some((b, q) => q > p && a.rank + b.rank < 4 && !passes(a, b) && collides(a, b, a.cx, a.cy, b.cx, b.cy)))) {
+            const free = movers.filter((m) => m.rank !== 2);
+            const reading = (/** @type {typeof live[0]} */ a, /** @type {typeof live[0]} */ b) => (a.y0 - b.y0) || (a.x0 - b.x0);
+            // Containers are placed before the row the gesture moved, so it is the one that gives way.
+            const anyGuest = free.some((m) => m.guest);
+            const weight = (/** @type {Spaced} */ m) => (m.guest ? 0.25 : m.rank + (anyGuest && m.holds ? 0.5 : 0));
+            const placed = pack(movers, bounds, [...free].sort((a, b) => (weight(b) - weight(a)) || reading(a, b)),
+                (m, x, y) => Math.hypot(x - m.x0, y - m.y0), passes)
+                || pack(movers, bounds, [...free].sort(reading), (m, x, y) => y * 1e6 + x, passes);
+            if (placed) for (const [m, at] of placed) { m.cx = at.x; m.cy = at.y; }
         }
         for (const m of live) {
             const dx = m.cx - m.x0;
@@ -350,22 +489,23 @@ export function settleHierarchy({ spec, tables, hosts, scales, width, height, be
         };
         // A container that sizes itself needs no wall: it grows. One that does not
         // keeps its contents inside its padding, along each axis it does not fit.
-        const walled = at && host.contains && !(fits.x && fits.y);
+        const still = !!(keepSize && keepSize.has(i));
+        const walled = at && host.contains && (still || !(fits.x && fits.y));
         space(tree.childrenOf(i), walled ? {
-            x: !fits.x, y: !fits.y,
+            x: still || !fits.x, y: still || !fits.y,
             x0: at.box.cx - at.box.hw + pad.left, x1: at.box.cx + at.box.hw - pad.right,
             y0: at.box.cy - at.box.hh + pad.top, y1: at.box.cy + at.box.hh - pad.bottom,
         } : null);
-        if (!names.length) continue;
+        if (!names.length || still) continue;
 
         let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
         for (const c of tree.childrenOf(i)) {
-            const kid = drawn(c);
+            const kid = extentOf(c);
             if (!kid) continue;
-            x0 = Math.min(x0, kid.box.cx - kid.box.hw);
-            x1 = Math.max(x1, kid.box.cx + kid.box.hw);
-            y0 = Math.min(y0, kid.box.cy - kid.box.hh);
-            y1 = Math.max(y1, kid.box.cy + kid.box.hh);
+            x0 = Math.min(x0, kid.cx - kid.hw);
+            x1 = Math.max(x1, kid.cx + kid.hw);
+            y0 = Math.min(y0, kid.cy - kid.hh);
+            y1 = Math.max(y1, kid.cy + kid.hh);
         }
         if (!Number.isFinite(x0) || !Number.isFinite(y0)) continue; // no child draws
         const inner = { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, hw: (x1 - x0) / 2, hh: (y1 - y0) / 2 };

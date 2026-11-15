@@ -103,10 +103,45 @@ export function createNodes(chart, deps) {
             return null;
         }
         : null;
+    // A composite takes space as a whole: the union of every part's box over the
+    // row (its shape and its label), not just the shape that hosts `dodge`.
+    /** @type {Map<string, any[]>} */
+    const glyphParts = new Map();
+    for (const f of features) {
+        if (!f || !f.glyph || f.views === 'scale' || f.table !== hierarchyNodes || typeof f.nodeBox !== 'function') continue;
+        if (!glyphParts.has(f.glyph)) glyphParts.set(f.glyph, []);
+        /** @type {any[]} */ (glyphParts.get(f.glyph)).push(f);
+    }
+    /** @type {((row: any, i: number, rows: any[]) => any) | null} */
+    const extentRule = glyphParts.size
+        ? (row, i, rows) => {
+            const s = chart.scales, w = chart.innerWidth, h = chart.innerHeight;
+            let host = null, own = null;
+            for (const f of boxHosts) {
+                const b = f.nodeBox(row, i, rows, s, w, h);
+                if (finiteBox(b)) { host = f; own = b; break; }
+            }
+            const parts = host && host.glyph ? glyphParts.get(host.glyph) : null;
+            if (!parts || !own) return own;
+            let x0 = own.cx - own.hw, x1 = own.cx + own.hw, y0 = own.cy - own.hh, y1 = own.cy + own.hh;
+            for (const f of parts) {
+                if (f === host) continue;
+                const b = f.nodeBox(row, i, rows, s, w, h);
+                if (!finiteBox(b)) continue;
+                x0 = Math.min(x0, b.cx - b.hw); x1 = Math.max(x1, b.cx + b.hw);
+                y0 = Math.min(y0, b.cy - b.hh); y1 = Math.max(y1, b.cy + b.hh);
+            }
+            const box = { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, hw: (x1 - x0) / 2, hh: (y1 - y0) / 2 };
+            // Still a circle only when every part sits inside the shape.
+            const same = Math.abs(box.hw - own.hw) < 0.01 && Math.abs(box.hh - own.hh) < 0.01;
+            return { ...box, round: !!own.round && same };
+        }
+        : null;
     // Nothing is pushed apart mid-stroke; the release spaces rows once, around
     // what the stroke moved from where it began.
     chart.stroking = false;
     chart.strokeNodes = null;
+    chart.strokeRow = null;
     // Data from outside a gesture (the seed, setData) is spaced on its next settle.
     chart.spaceNext = true;
     /**
@@ -114,8 +149,9 @@ export function createNodes(chart, deps) {
      * space, fit (core/fit.js). A no-op for every other structure.
      * @param {any[] | null} [before] the node rows as last committed (for carry)
      * @param {Set<number> | null} [frozen] rows whose box must hold still
-     * @param {{ since?: any[] | null, anchors?: number[] | null, preview?: boolean } | null} [dodge]
-     *   push overlapping rows apart, around the rows that changed `since`
+     * @param {{ since?: any[] | null, anchors?: number[] | null, preview?: boolean, keepSize?: Set<number> | null, yields?: Set<number> | null } | null} [dodge]
+     *   push overlapping rows apart, around the rows that changed `since`. `yields`
+     *   are the rows the gesture moved: they never push a container aside
      * @returns {void}
      */
     const settleNodes = (before = null, frozen = heldStill(), dodge = null) => {
@@ -126,7 +162,7 @@ export function createNodes(chart, deps) {
      * The settled node rows for a dataset (committed, or a proposal's overlay).
      * @param {Record<string, any[]>} from
      * @param {any[] | null} before @param {Set<number> | null} frozen
-     * @param {{ since?: any[] | null, anchors?: number[] | null, preview?: boolean } | null} [dodge]
+     * @param {{ since?: any[] | null, anchors?: number[] | null, preview?: boolean, keepSize?: Set<number> | null, yields?: Set<number> | null } | null} [dodge]
      * @returns {any[]}
      */
     const settledNodes = (from, before, frozen, dodge = null) => settleHierarchy({
@@ -136,6 +172,12 @@ export function createNodes(chart, deps) {
         dodges: dodge && (!chart.stroking || dodge.preview) ? dodgeRule : null,
         since: dodge ? dodge.since : null,
         anchors: dodge ? dodge.anchors : null,
+        keepSize: dodge ? dodge.keepSize : null,
+        yields: dodge ? dodge.yields : null,
+        // A preview is drawn mid-drag: the row in flight passes over containers.
+        passing: !!(dodge && dodge.preview),
+        holds: containsRule,
+        extents: extentRule,
     });
     /**
      * The node rows a nest drag is carrying (`session.nestFrom`), or null.

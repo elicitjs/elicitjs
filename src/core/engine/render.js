@@ -12,7 +12,9 @@ import { stateEffectNodes, outlineNodes, effectStyleFor } from '../effects.js';
 import { panelNodes } from '../panel.js';
 import { reserveLegends } from '../legends.js';
 import { reserveTitles, titleNodes } from '../titles.js';
-import { treeOf } from '../hierarchy.js';
+import { treeOf, nestingOf } from '../hierarchy.js';
+import { layoutIO } from '../fit.js';
+import { createMotion, easeRows } from '../motion.js';
 import { fieldsOf } from '../schema.js';
 import { cursorFor, planeCursorFor } from '../../edit/cursor.js';
 import {
@@ -72,6 +74,7 @@ function applyGhostStyle(node, ghost) {
  * @property {() => import('../../types').NodeBoxRule | null} nodeBoxRule
  * @property {((row: any, i: number, rows: any[]) => Record<string, string> | null) | null} nodePortsRule
  * @property {(before?: any[] | null, frozen?: Set<number> | null, dodge?: any) => void} settleNodes
+ * @property {(from: Record<string, any[]>, before: any[] | null, frozen: Set<number> | null, dodge?: any) => any[]} settledNodes
  * @property {() => Set<number> | null} heldStill
  * @property {() => number[] | null} inFlight
  * @property {(feature: any) => import('../../types').Edit[]} activeEdits
@@ -84,6 +87,7 @@ function applyGhostStyle(node, ghost) {
  * @property {() => any} clipNow
  * @property {(nodes: any[], x: number, y: number) => any[]} visibleAt
  * @property {(event: any) => any} handleEvent
+ * @property {number} motionDuration  ms a hierarchy's layout takes to ease; 0 for none
  */
 
 /**
@@ -95,7 +99,7 @@ function applyGhostStyle(node, ghost) {
  */
 export function createRender(chart, deps) {
     const {
-        features, featureById, ui, spec, theme, effects, renderer, mode, overflow, focusOutline, designW, authorMargins, dims, liveSpec, schema, schemaSpec, allGuides, datasetConstraints, tracksPointer, hasLegends, hasAxisTitles, featureNodes, hierarchyNodes, boxHosts, tableOf, targetTableOf, primaryRows, isLockedIn, constraintsIn, nodeBoxRule, nodePortsRule, settleNodes, heldStill, inFlight, activeEdits, getStage, selectionIn, selectionList, selectionPrimary, portAvailable, handleKey, clipNow, visibleAt,
+        features, featureById, ui, spec, theme, effects, renderer, mode, overflow, focusOutline, designW, authorMargins, dims, liveSpec, schema, schemaSpec, allGuides, datasetConstraints, tracksPointer, hasLegends, hasAxisTitles, featureNodes, hierarchyNodes, boxHosts, tableOf, targetTableOf, primaryRows, isLockedIn, constraintsIn, nodeBoxRule, nodePortsRule, settleNodes, settledNodes, heldStill, inFlight, activeEdits, getStage, selectionIn, selectionList, selectionPrimary, portAvailable, handleKey, clipNow, visibleAt, motionDuration,
     } = deps;
     const handleEvent = (/** @type {any} */ event) => deps.handleEvent(event);
 
@@ -234,6 +238,98 @@ export function createRender(chart, deps) {
         return { planeOnTop, hasWheel, planeCursor };
     };
 
+    // Motion (core/motion.js): what is drawn eases to where it belongs. Each client
+    // opens a track; `update()` starts the frame and keeps rendering until all arrive.
+    const motion = motionDuration > 0 ? createMotion(motionDuration) : null;
+    // The hierarchy's layout is one client: its node rows ease to where they settle.
+    const layoutTrack = motion && hierarchyNodes && boxHosts.length ? motion.track('layout') : null;
+    const nodeKey = (nestingOf(schemaSpec) || { key: null }).key;
+    /** A container that is changing size takes this much longer, so its contents are seen to move first. */
+    const CONTAINER_LAG = 1.4;
+    let layoutSig = '';
+    /** Changes when a scale or the plot size does: pixels before and after are not comparable. */
+    const layoutSignature = () => layoutIO(chart.scales, boxHosts)
+        .map((io) => `${io.field}:${io.invert(0)}:${io.invert(100)}`).join('|')
+        + `|${chart.innerWidth}|${chart.innerHeight}`;
+    /**
+     * The node rows to draw this frame, on their way to `rows`.
+     * @param {any[]} rows @param {Set<number>} flying rows the pointer carries
+     * @param {(i: number) => boolean} isContainer
+     */
+    const easedLayout = (rows, flying, isContainer) => {
+        const columns = layoutIO(chart.scales, boxHosts);
+        const sig = `${layoutSignature()}|${rows.length}`;
+        const snap = sig !== layoutSig || chart.snapNext;
+        layoutSig = sig;
+        chart.snapNext = false;
+        const sizes = columns.filter((c) => c.extent).map((c) => c.field);
+        return easeRows(/** @type {any} */ (layoutTrack), rows, columns, {
+            keyOf: (row, i) => (nodeKey && row[nodeKey] != null ? row[nodeKey] : `#${i}`),
+            snap,
+            fixed: (i) => flying.has(i),
+            slow: (i, was, goal) => (isContainer(i) && sizes.some((f) => Math.abs(was[f] - goal[f]) > 0.25) ? CONTAINER_LAG : 1),
+        });
+    };
+    /** The pending animation frame, or 0. */
+    let frame = 0;
+    const raf = (/** @type {() => void} */ cb) => (typeof requestAnimationFrame === 'function'
+        ? requestAnimationFrame(cb) : /** @type {any} */ (setTimeout(cb, 16)));
+    const stopMotion = () => {
+        if (!frame) return;
+        if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame); else clearTimeout(frame);
+        frame = 0;
+    };
+    /** The stroke's settled rows, kept between frames while nothing they read changed. */
+    /** @type {{ key: any[], rows: any[] } | null} */
+    let strokeMemo = null;
+    const strokeRows = () => {
+        const held = heldStill();
+        const settle = () => settledNodes(chart.tables, null, null, {
+            since: chart.strokeNodes, preview: true, keepSize: held,
+            yields: chart.strokeRow != null ? new Set([chart.strokeRow]) : null,
+        });
+        if (!layoutTrack) return settle();
+        const nesting = schemaSpec.byRole.nesting;
+        const key = [chart.tables[/** @type {string} */ (hierarchyNodes)], nesting ? chart.tables[nesting] : null,
+            chart.strokeNodes, chart.strokeRow, held ? [...held].join() : '', layoutSignature()];
+        if (!strokeMemo || key.some((k, i) => k !== /** @type {any} */ (strokeMemo).key[i])) strokeMemo = { key, rows: settle() };
+        return strokeMemo.rows;
+    };
+
+    // The tables as drawn. While a node of a hierarchy is dragged, its node rows are
+    // drawn as a release would leave them: a nest proposal's layout (`live`) when the
+    // node would change container, else the committed rows settled around the stroke.
+    // So the drag shows containers growing or shrinking and nodes making room. The
+    // rows in flight stay committed, so the node under the pointer keeps following it.
+    const liveTables = () => {
+        if (!hierarchyNodes) return chart.tables;
+        const committed = chart.tables[hierarchyNodes] || [];
+        const live = Object.values(ui.preview || {}).find((p) => p && p.live);
+        /** @type {any[] | null} */
+        let rows = live && live.rows.length === committed.length ? live.rows : null;
+        if (!rows && chart.stroking && chart.strokeNodes && boxHosts.length) {
+            // The container a node is dragged inside keeps its size, so its edge is
+            // where the drag leaves it. The dragged row passes over containers.
+            rows = strokeRows();
+        }
+        if (!layoutTrack && (!rows || rows === committed)) return chart.tables;
+        const tree = treeOf(schemaSpec, chart.tables);
+        const roots = [...(inFlight() || [])];
+        const grabbed = ui.grab ? featureById.get(ui.grab.featureId) : null;
+        if (grabbed && grabbed.table === hierarchyNodes && ui.grab.index != null) roots.push(ui.grab.index);
+        const flying = new Set(roots.flatMap((i) => [i, ...tree.descendantsOf(i)]));
+        // Any other row the stroke itself is writing follows the pointer too.
+        const before = chart.stroking ? chart.strokeNodes : null;
+        if (before && before.length === committed.length) {
+            committed.forEach((row, i) => { if (row !== before[i]) flying.add(i); });
+        }
+        let drawn = rows && rows !== committed
+            ? rows.map((row, i) => (flying.has(i) ? committed[i] : row))
+            : committed;
+        if (layoutTrack) drawn = easedLayout(drawn, flying, (i) => tree.hasChildren(i));
+        return drawn === committed ? chart.tables : { ...chart.tables, [hierarchyNodes]: drawn };
+    };
+
     // BUILD: build every feature from its committed rows, tag its nodes for dispatch, and
     // add them to the scene in paint order with the panel and titles.
     const buildPass = () => {
@@ -243,16 +339,18 @@ export function createRender(chart, deps) {
         // Built nodes per feature, ordered by `paintOrder` once all are known.
         /** @type {{ glyph?: string, nodes: any[] }[]} */
         const built = [];
+        const drawn = liveTables();
 
         features.forEach(feature => {
-            // A feature always draws its committed rows; a proposal is drawn by ghostPass.
-            const currentData = tableOf(feature);
+            // A feature draws its committed rows, or a live proposal's. Any other
+            // proposal is drawn by ghostPass.
+            const currentData = drawn[feature.table] || [];
             const isLocked = isLockedIn(feature.table);
             // Row handles are dropped on locked rows and when no edit is active.
             // Dropped before featureNodes is written, so picking never sees them.
             const hasLiveEdit = activeEdits(feature).length > 0;
             const nodes = feature.build(currentData, chart.scales, chart.innerWidth, chart.innerHeight, {
-                tables: chart.tables, schema: schemaSpec, table: feature.table,
+                tables: drawn, schema: schemaSpec, table: feature.table,
                 nodeBox: nodeBoxRule(), nodePorts: nodePortsRule,
             }).filter((/** @type {any} */ node) => !(node && node.rowHandle && (!hasLiveEdit
                 || (isLocked && isNodeLocked(node, feature, currentData, isLocked)))));
@@ -301,9 +399,9 @@ export function createRender(chart, deps) {
                 : null;
             nodes.forEach((/** @type {any} */ node) => {
                 node.featureId = feature.id;
-                // A container paints beneath what it holds (see paintOrder).
+                // Each node row paints as one unit, a container beneath what it holds (see paintOrder).
                 if (tree && typeof node.index === 'number') {
-                    node.depth = tree.depthOf(node.index);
+                    node.stack = tree.paintRank(node.index);
                     // What is being carried paints above everything it passes over.
                     if (lifted && lifted.has(node.index)) node.raise = true;
                 }
@@ -361,7 +459,7 @@ export function createRender(chart, deps) {
                 // Chart elements draw scales, not rows: no ghost.
                 if (feature.views === 'scale') continue;
                 const proposal = ui.preview[feature.id] || sole;
-                if (!proposal || proposal.table !== feature.table) continue;
+                if (!proposal || proposal.live || proposal.table !== feature.table) continue;
                 const proposed = proposal.rows;
                 const committed = tableOf(feature);
 
@@ -645,6 +743,7 @@ export function createRender(chart, deps) {
     // 3. Coordinator - rebuild the scene graph from current state and render.
     const update = () => {
         measure(); // reflow: pick up the container's current width before drawing
+        if (motion) motion.begin();
         scene.clear();
         layoutPass();
         resolvePass();
@@ -675,7 +774,9 @@ export function createRender(chart, deps) {
             theme,
             onEvent: handleEvent
         });
+        // Keep drawing until the layout has arrived.
+        if (motion && motion.moving() && !frame) frame = raf(() => { frame = 0; update(); });
     };
 
-    return { container, measure, applyResize, update };
+    return { container, measure, applyResize, update, stopMotion };
 }

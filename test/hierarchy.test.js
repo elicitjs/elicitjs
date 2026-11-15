@@ -146,6 +146,8 @@ describe('the engine holds the tree', () => {
 });
 
 // ── Geometry: fitted containers, carried subtrees, the size lock ──────────────
+// Every chart here sets `motion: false`: the tests read the drawing right after an event.
+// Eased drawing is covered in motion.test.js.
 const boxSchema = {
     structure: 'hierarchy',
     tables: {
@@ -172,7 +174,7 @@ const boxes = (edits = []) => plot.rect({
 });
 const boxChart = (data, edits) => {
     const el = Elicit({
-        width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false,
+        width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false, motion: false,
         schema: boxSchema, data, marks: [boxes(edits)],
     });
     document.body.appendChild(el);
@@ -280,6 +282,23 @@ describe('paint order', () => {
     });
 });
 
+describe('paint order of a node and its label', () => {
+    it('paints each row whole, so a label never shows through the node above it', async () => {
+        const el = Elicit({
+            width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false, motion: false,
+            schema: { ...boxSchema, tables: { ...boxSchema.tables, nodes: { ...boxSchema.tables.nodes, label: { type: 'categorical', open: true } } } },
+            data: { nodes: [{ ...box('a', 100, 100), label: 'A' }, { ...box('b', 110, 105), label: 'B' }], nesting: [] },
+            marks: [boxes(), plot.text({ channels: { x: { field: 'x' }, y: { field: 'y' }, text: { field: 'label' } } })],
+        });
+        document.body.appendChild(el);
+        await new Promise((r) => setTimeout(r, 0));
+        const drawn = [...el.querySelectorAll('rect, text')]
+            .filter((n) => n.tagName === 'text' || Math.round(+n.getAttribute('width')) === 40)
+            .map((n) => (n.tagName === 'text' ? n.textContent : 'box'));
+        expect(drawn).toEqual(['box', 'A', 'box', 'B']);
+    });
+});
+
 describe('nested and linked', () => {
     it('draws links between nodes of a hierarchy, docked to a fitted container', async () => {
         const warnings = [];
@@ -287,7 +306,7 @@ describe('nested and linked', () => {
         console.warn = (...args) => warnings.push(args.join(' '));
         setWarnings(true);
         const el = Elicit({
-            width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false,
+            width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false, motion: false,
             schema: {
                 structure: 'hierarchy',
                 tables: { ...boxSchema.tables, links: { source: { type: 'ref' }, target: { type: 'ref' } } },
@@ -363,7 +382,7 @@ describe('edit.hierarchy.nest', () => {
         expect(el.getData().nesting).toEqual(before);
     });
 
-    it('holds the old container still while its child is in flight, then lets it go', () => {
+    it('holds the old container data still while its child is in flight, and draws where it will settle', () => {
         const el = boxChart(
             { nodes: [box('g', 0, 0), box('a', 100, 200), box('a2', 160, 200)], nesting: [nest('a', 'g'), nest('a2', 'g')] },
             [edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()]
@@ -377,10 +396,15 @@ describe('edit.hierarchy.nest', () => {
         expect(mid.a.x).toBeCloseTo(before.a.x - 60, 5);
         expect(mid.g.w).toBeCloseTo(before.g.w, 5);
         expect(mid.g.x).toBeCloseTo(before.g.x, 5);
+        // but is drawn as the release will leave it: shrunk round what stays
+        const widths = [...el.querySelectorAll('rect')].map((r) => +r.getAttribute('width')).filter((w) => w < 400);
+        const drawnWidth = Math.max(...widths);
+        expect(drawnWidth).toBeLessThan(before.g.w - 1);
         el.emit({ type: 'dragend', node, x: from.x - 60, y: from.y });
         const after = byId(el);
         expect(el.getData().nesting).toEqual([nest('a2', 'g')]);
         expect(after.g.w).toBeLessThan(before.g.w);
+        expect(drawnWidth).toBeCloseTo(after.g.w, 5);
     });
 
     it('re-fits on release even when the node stays in its container', () => {
@@ -410,7 +434,7 @@ describe('edit.hierarchy.nest', () => {
 
     it('only offers rows the `contains` channel allows', () => {
         const el = Elicit({
-            width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false,
+            width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false, motion: false,
             schema: boxSchema,
             data: { nodes: [box('note', 100, 200), box('group', 300, 200), box('b', 200, 60)], nesting: [] },
             marks: [plot.rect({
@@ -432,22 +456,28 @@ describe('edit.hierarchy.nest', () => {
 });
 
 describe('drop feedback', () => {
-    it('lights the container a release would land in and ghosts it at its new size', async () => {
+    it('lights the container a release would land in and draws it at its new size', async () => {
         const el = boxChart(
             { nodes: [box('g', 0, 0), box('a', 100, 200), box('b', 200, 60)], nesting: [nest('a', 'g')] },
             [edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()]
         );
         await new Promise((r) => setTimeout(r, 0));
         const count = () => el.querySelectorAll('rect').length;
+        const widest = () => Math.max(...[...el.querySelectorAll('rect:not([data-ghost])')].map((r) => +r.getAttribute('width') || 0).filter((w) => w < 400)); // not the plot's own rects
         const atRest = count();
         const g = byId(el).g;
         const node = { index: 2, featureId: 'boxes' };
         el.emit({ type: 'dragstart', node, x: 200, y: 240 });
         el.emit({ type: 'drag', node, x: g.x - g.w / 2 + 4, y: 300 - g.y });
-        // A ghost of the grown container and a `target` outline on the committed one.
-        expect(count()).toBeGreaterThanOrEqual(atRest + 2);
+        // The container itself is drawn at the size it would take, with a `target`
+        // outline. No ghost copy.
+        expect(el.querySelectorAll('[data-ghost]').length).toBe(0);
+        expect(count()).toBe(atRest + 1);
+        expect(widest()).toBeGreaterThan(g.w + 1);
+        expect(byId(el).g.w).toBe(g.w); // the data waits for the release
         el.emit({ type: 'drag', node, x: 380, y: 280 });
-        expect(count()).toBeLessThan(atRest + 2);
+        expect(count()).toBe(atRest);
+        expect(widest()).toBeCloseTo(g.w, 5);
         el.emit({ type: 'dragend', node, x: 380, y: 280 });
         expect(el.getData().nesting).toEqual([nest('a', 'g')]);
     });
@@ -456,7 +486,7 @@ describe('drop feedback', () => {
 describe('a nesting table declared like any other table', () => {
     it('takes any name through `role`, carries its own columns, and is written by nest', () => {
         const el = Elicit({
-            width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false,
+            width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false, motion: false,
             schema: {
                 structure: 'hierarchy',
                 tables: {
@@ -520,7 +550,7 @@ describe('container padding', () => {
     });
     const chart = (data, m) => {
         const el = Elicit({
-            width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false,
+            width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false, motion: false,
             schema: boxSchema, data, marks: [m],
         });
         document.body.appendChild(el);
@@ -563,7 +593,7 @@ describe('dodge', () => {
     });
     const chart = (data, m) => {
         const el = Elicit({
-            width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false,
+            width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false, motion: false,
             schema: boxSchema, data, marks: [m],
         });
         document.body.appendChild(el);
@@ -633,6 +663,123 @@ describe('dodge', () => {
         expect(allClear([d.g1, d.g2], 8)).toBe(true);
         // g2 gave way and took its contents along
         expect(d.b.x - d.g2.x).toBeCloseTo(before.b.x - before.g2.x, 5);
+    });
+
+    it('never moves a container aside for a child dragged out of it', () => {
+        // b sits above a in g; a leaves over the top and ends just above what is left of g.
+        const el = chart({
+            nodes: [box('g', 0, 0), box('a', 200, 150), box('b', 200, 200)],
+            nesting: [nest('a', 'g'), nest('b', 'g')],
+        }, mark([edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()]));
+        const before = byId(el);
+        const node = { index: 1, featureId: 'boxes' };
+        const drawnYs = () => [...el.querySelectorAll('rect')].filter((r) => +r.getAttribute('width') === 40).map((r) => +r.getAttribute('y'));
+        el.emit({ type: 'dragstart', node, x: 200, y: 150 });
+        el.emit({ type: 'drag', node, x: 200, y: 75 });
+        expect(drawnYs().some((y) => Math.abs(y - (300 - before.b.y - 10)) < 0.01)).toBe(true); // b is drawn where it was
+        el.emit({ type: 'dragend', node, x: 200, y: 75 });
+        const d = byId(el);
+        expect(el.getData().nesting).toEqual([nest('b', 'g')]);
+        expect(d.b.x).toBe(before.b.x); // the container's contents did not move
+        expect(d.b.y).toBe(before.b.y);
+        expect(d.g.y).toBeCloseTo(before.b.y, 5);
+        expect(d.a.y).toBeGreaterThan(225); // the dropped node gave way instead
+        expect(clear(d.a, d.g, 8)).toBe(true);
+    });
+
+    it('slides a node dropped on a container\'s edge clear, and leaves the container', () => {
+        const el = chart({
+            nodes: [box('g', 0, 0), box('a', 200, 150), box('c', 60, 150)],
+            nesting: [nest('a', 'g')],
+        }, mark([edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()]));
+        const before = byId(el);
+        const node = { index: 2, featureId: 'boxes' };
+        // grabbed by its right end, so the pointer stays outside g while c overlaps it
+        const to = { x: before.g.x - before.g.w / 2 - 2, y: 150 };
+        el.emit({ type: 'dragstart', node, x: 60 + 18, y: 150 });
+        el.emit({ type: 'drag', node, ...to });
+        el.emit({ type: 'dragend', node, ...to });
+        const d = byId(el);
+        expect(el.getData().nesting).toEqual([nest('a', 'g')]);
+        expect(d.g.x).toBe(before.g.x);
+        expect(d.a.x).toBe(before.a.x);
+        expect(clear(d.c, d.g, 8)).toBe(true);
+    });
+
+    it('leaves no overlap in a crowded fixed container, one card at a time', () => {
+        // Five 96x26 cards in a 150x210 bucket: one column, with 12px to spare.
+        const card = (id) => ({ id, x: 60, y: 20, w: 96, h: 26 });
+        const el = chart({
+            nodes: [{ id: 'g', x: 200, y: 150, w: 150, h: 210 }, ...['c1', 'c2', 'c3', 'c4', 'c5'].map(card)],
+            nesting: [],
+        }, mark([edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()], true, false));
+        // Drops that left two cards overlapping when siblings were only pushed in pairs.
+        const drops = [[240, 230], [215, 210], [240, 175], [212, 140], [230, 100]];
+        drops.forEach(([x, y], k) => {
+            const index = k + 1;
+            const at = byId(el)[`c${index}`];
+            const node = { index, featureId: 'boxes' };
+            el.emit({ type: 'dragstart', node, x: at.x, y: 300 - at.y });
+            el.emit({ type: 'drag', node, x, y });
+            el.emit({ type: 'dragend', node, x, y });
+        });
+        const d = byId(el);
+        expect(el.getData().nesting).toHaveLength(5);
+        expect(allClear([d.c1, d.c2, d.c3, d.c4, d.c5], 8)).toBe(true);
+        for (const c of [d.c1, d.c2, d.c3, d.c4, d.c5]) {
+            expect(Math.abs(c.x - d.g.x) + c.w / 2).toBeLessThanOrEqual(d.g.w / 2 - 10 + 0.02);
+            expect(Math.abs(c.y - d.g.y) + c.h / 2).toBeLessThanOrEqual(d.g.h / 2 - 10 + 0.02);
+        }
+    });
+
+    it('shows siblings making room while a node moves inside its container', () => {
+        const el = chart({
+            nodes: [box('g', 200, 150, 200, 200), box('a', 150, 200, 60, 30), box('b', 250, 100, 60, 30)],
+            nesting: [nest('a', 'g'), nest('b', 'g')],
+        }, mark([edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()], true, false));
+        const drawnB = () => [...el.querySelectorAll('rect')].map((r) => ({ x: +r.getAttribute('x') + 30, y: +r.getAttribute('y') + 15, w: +r.getAttribute('width') }))
+            .filter((r) => r.w === 60)
+            // a is drawn under the pointer at (250, 200); b is the other one
+            .sort((p, q) => Math.hypot(q.x - 250, q.y - 200) - Math.hypot(p.x - 250, p.y - 200))[0];
+        const node = { index: 1, featureId: 'boxes' };
+        el.emit({ type: 'dragstart', node, x: 150, y: 100 });
+        el.emit({ type: 'drag', node, x: 250, y: 200 }); // a now sits on b
+        const shown = drawnB();
+        expect(byId(el).b.y).toBe(100); // the data waits for the release
+        expect(Math.abs(300 - shown.y - 100)).toBeGreaterThan(1); // but b is drawn out of the way
+        el.emit({ type: 'dragend', node, x: 250, y: 200 });
+        expect(300 - byId(el).b.y).toBeCloseTo(shown.y, 5); // where it was shown
+        expect(clear(byId(el).a, byId(el).b, 8)).toBe(true);
+    });
+
+    it('keeps circles their gap apart edge to edge, not as squares', () => {
+        const el = Elicit({
+            width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false, motion: false,
+            schema: { ...boxSchema, tables: { ...boxSchema.tables, nodes: { ...boxSchema.tables.nodes, r: { type: 'quantitative', domain: [0, 100] } } } },
+            data: { nodes: [{ id: 'a', x: 200, y: 150, r: 20 }, { id: 'b', x: 212, y: 160, r: 20 }, { id: 'c', x: 195, y: 140, r: 20 }], nesting: [] },
+            marks: [plot.point({ channels: { x: { field: 'x' }, y: { field: 'y' }, size: { field: 'r', scale: null }, dodge: true } })],
+        });
+        document.body.appendChild(el);
+        const n = el.getData().nodes;
+        const gaps = [[0, 1], [0, 2], [1, 2]].map(([i, j]) => Math.hypot(n[i].x - n[j].x, n[i].y - n[j].y) - n[i].r - n[j].r);
+        expect(Math.min(...gaps)).toBeGreaterThan(8 - 0.05);
+        expect(Math.min(...gaps)).toBeLessThan(8.5);
+    });
+
+    it('dodges a composite as a whole, every part included', () => {
+        const el = Elicit({
+            width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false, motion: false,
+            schema: boxSchema,
+            data: { nodes: [{ id: 'a', x: 180, y: 150 }, { id: 'b', x: 230, y: 150 }], nesting: [] },
+            marks: [plot.composite({
+                channels: { x: { field: 'x' }, y: { field: 'y' }, dodge: true },
+                // a small dot with a wide bar under it: the dots are clear, the bars are not
+                parts: [plot.point({ channels: { size: { value: 6 } } }), plot.rect({ channels: { width: { value: 80 }, height: { value: 10 } } })],
+            })],
+        });
+        document.body.appendChild(el);
+        const [a, b] = el.getData().nodes;
+        expect(Math.abs(a.x - b.x) >= 88 - 0.05 || Math.abs(a.y - b.y) >= 18 - 0.05).toBe(true);
     });
 
     it('spaces children an outside caller adds with no position', () => {

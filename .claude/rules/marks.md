@@ -68,7 +68,7 @@ Decide by the data model, not the look. A new mark when the data model changes; 
 - A local channel is a real invertible scale (`createFrameScale`), stamped as `node.frame` so the universal edits invert through it. `'frame'` is a channel-side marker only; `resolveScales` skips it before `bucketOf`. Never compute glyph-local pixels from a radius and reverse them in an edit.
 - The box draws one invisible `hit: true` circle per row beneath the parts, so an edit on the composite's `x`/`y`/`size` can grab the whole glyph. It sets `pointerEvents` only when grabbable.
 - A glyph paints as one object: `composite` stamps a `glyph` key and `paintOrder` (`core/scene.js`) orders by row, then part. Paint only — dispatch, picking, ghosting stay per feature. The box stays at the bottom of the group.
-- `ports` on a composite go to one feature (the box in box mode, else the first part declaring `nodeBox`).
+- `ports` on a composite go to one feature (the box in box mode, else the first part declaring `nodeBox`). `contains` and `dodge` are hosted there too, but a hierarchy spaces and fits the glyph as a whole: the union of every part's box over the row (`extentRule` in `engine/nodes.js`).
 - Presets (`node`, `sticker`, `face`) only compose ordinary marks; they offer nothing plain marks can't and read no schema. There is no `edit.face.*`.
 
 ## Typable surfaces

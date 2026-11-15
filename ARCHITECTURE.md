@@ -212,6 +212,7 @@ elicitjs/
 │   │   ├── tiles.js        # Slippy-map tile cover for geoTile (Web Mercator check + {z}/{x}/{y} placement)
 │   │   ├── samples.js      # Domain sampling for line authoring
 │   │   ├── effects.js      # Interaction-feedback layer (grab / select)
+│   │   ├── motion.js       # Eased drawing: tracks of keyed pixel values, stepped once per frame (spec.motion)
 │   │   ├── theme.js        # Style layer: DEFAULT_THEME, resolveTheme, setTheme, per-mark defaults
 │   │   ├── themes.js       # Built-in themes (default, survey)
 │   │   └── scene.js        # Abstract scene graph
@@ -268,6 +269,8 @@ Three visual statements, three homes (do not collapse them):
 | **Guide** | what the RULE is | `edit.guide` — `bounds` / `catchment` / `track` |
 | **Effect** | what is HAPPENING | `spec.effects` — `hovered` / `selected` / `grabbed` |
 
+**Motion** (`spec.motion`, `core/motion.js`) is a fourth, separate thing: how a drawn value gets to where it belongs. The engine eases rows before `build()`, so both renderers, links, hit-testing and effects see the same eased geometry. A client opens a track and steps keyed pixel values toward goals; `update()` re-renders each frame until every track arrives. The data is never eased. The hierarchy's layout is the first client.
+
 **Handle contract** (`handles` on every mark that draws a grip): `true` drawn+grabbable, `false` neither, `'hit'` invisible but grabbable. Axis/legend end-grips go through `resolveHandles` too.
 
 **A glyph whose shape IS the control** (a face's eyes / brows / mouth) needs no `handles` option at all: each feature is its own mark, so the mark you can see is the thing you grab. `node.dm` remains the contract for a handle whose travel range isn't a scale, and a `composite` box stamps it for a positional local channel — so `guide: { track: true }` draws a range that is genuinely the mapping the edit inverts through.
@@ -318,5 +321,5 @@ Chart surfaces are client components (`'use client'`); the lab page that embeds 
 ## Roadmap
 
 - Faceted / coordinated multi-chart layouts (compose multiple `Elicit` instances at the app level for now).
-- Animation / alternate renderers (Canvas, WebGL).
+- Motion for more than the hierarchy's layout (`core/motion.js` tracks) / alternate renderers (WebGL).
 - Needle uncertainty fuzz.

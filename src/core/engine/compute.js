@@ -320,7 +320,10 @@ export function createCompute(chart, deps) {
         // Drop rows whose `ref` no longer resolves.
         enforceRefs(schemaSpec, chart.tables);
         // Move subtrees with their container and re-fit fitted containers.
-        settleNodes(nodesBefore, heldStill(), { since: chart.strokeNodes || nodesBefore });
+        settleNodes(nodesBefore, heldStill(), {
+            since: chart.strokeNodes || nodesBefore,
+            yields: index != null && feature.table === hierarchyNodes ? new Set([index]) : null,
+        });
         ui.preview = null;
         notifyChange();
         return true;
@@ -395,15 +398,21 @@ export function createCompute(chart, deps) {
             : undefined;
         const table = targetTableOf(feature, edit);
         // A nesting proposal has no shape of its own, so park the settled node rows
-        // it implies instead. `dropInto` is the receiving container, for the `target` effect.
+        // it implies instead. It is `live`: drawn in place of the committed rows, not
+        // as a ghost, so a container is seen growing to take the node. `dropInto` is
+        // the receiving container, for the `target` effect.
         if (hierarchyNodes && table === schemaSpec.byRole.nesting && boxHosts.length) {
             const overlay = { ...chart.tables, [table]: newData };
             const tree = treeOf(schemaSpec, overlay);
             ui.preview[feature.id] = {
                 table: hierarchyNodes,
-                rows: settledNodes(overlay, null, null, { anchors: index != null ? [index] : null, preview: true }),
+                rows: settledNodes(overlay, null, null, {
+                    anchors: index != null ? [index] : null, preview: true,
+                    yields: index != null ? new Set([index]) : null,
+                }),
                 pointer,
                 dropInto: index != null ? tree.parentOf(index) : null,
+                live: true,
             };
             return true;
         }

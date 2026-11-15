@@ -2423,6 +2423,12 @@ export interface GuideSpec {
  * cannot dim a mark by drawing over it.
  *
  */
+// Eased drawing (`spec.motion`).
+export interface MotionSpec {
+  // Time a change takes to settle, in ms. Default 220. 0 draws every change at once.
+  duration?: number;
+}
+
 export interface EffectsSpec {
   /** Pointer is over / proximity has selected this mark. */
   hovered?: false | string | EffectStyle;
@@ -2564,6 +2570,12 @@ export interface ElicitSpec {
   // content in the margin band show — needed for radial/gauge axis labels that
   // sit just outside the plot area.
   overflow?: 'hidden' | 'visible';
+  // Eased drawing: what the chart draws glides to where it belongs instead of
+  // jumping. Today a hierarchy's layout eases (nodes making room, containers
+  // resizing, a dropped node settling). Only the drawing is eased; the data changes
+  // once, when the gesture commits. `false` draws every change at once. Always off
+  // when the reader's system asks for reduced motion.
+  motion?: false | MotionSpec;
   // Browser focus ring on editable marks (the blue box after a click / Tab).
   // Off by default — keyboard nudge still works (`tabindex` stays); only the
   // native outline is suppressed. Set `true` to show the browser's focus ring

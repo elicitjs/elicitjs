@@ -37,7 +37,7 @@ const glyphKey = (node) => [
 /**
  * Paint order for one chart's built features. Array order is z-order. A glyph's
  * features (`Mark.glyph`) are grouped and ordered by row, then part, so each glyph
- * paints whole. Hierarchy nodes order by depth; a `raise`d node goes last.
+ * paints whole. Hierarchy nodes order row by row in tree order; a `raise`d node goes last.
  *
  * @param {{ glyph?: string, nodes: any[] }[]} built features in scene order,
  *   each with the nodes its `build()` returned
@@ -70,14 +70,15 @@ export function paintOrder(built) {
         });
         out.push(...group);
     }
-    // Hierarchy nodes (stamped `depth`) reorder among their own slots so containers
-    // paint beneath their contents; every other node keeps its place.
-    if (out.some((n) => n && typeof n.depth === 'number')) {
+    // Hierarchy nodes (stamped `stack`) reorder among their own slots: row by row in
+    // tree order, so a node's shape and label paint together and a container paints
+    // beneath its contents. Every other node keeps its place.
+    if (out.some((n) => n && typeof n.stack === 'number')) {
         /** @type {number[]} */
         const slots = [];
-        out.forEach((n, i) => { if (n && typeof n.depth === 'number') slots.push(i); });
-        const byDepth = slots.map((i) => out[i]).sort((a, b) => a.depth - b.depth);
-        slots.forEach((slot, k) => { out[slot] = byDepth[k]; });
+        out.forEach((n, i) => { if (n && typeof n.stack === 'number') slots.push(i); });
+        const byRow = slots.map((i) => out[i]).sort((a, b) => a.stack - b.stack);
+        slots.forEach((slot, k) => { out[slot] = byRow[k]; });
     }
     // A raised node (a link's end handle) paints above every mark. It is a visible
     // handle, not a hit overlay.

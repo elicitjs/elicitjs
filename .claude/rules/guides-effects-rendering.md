@@ -36,7 +36,16 @@ paths:
 ## Paint order and hit overlays
 
 - `paintOrder` (`core/scene.js`) orders a glyph's nodes by row then part, and paints `raise`d nodes above everything.
+- Hierarchy nodes are stamped `stack` (`Tree.paintRank`: a node, its contents, then its next sibling). Every mark over the node table sorts by it, so a node's box and label paint together and a label never shows through the node above it.
 - A hit/grab overlay is a fallback: keep it beneath (`hitSel.lower()`), never `raise()` it.
+
+## Motion
+
+- Motion is eased drawing (`core/motion.js`), decided in the engine before `build()`. Renderers never transition; both draw whatever rows they are handed.
+- A client opens a track (`motion.track(name)`) and steps keyed pixel values toward their goals; `easeRows` does this for a table's rows through its columns' scales. `update()` calls `motion.begin()` once and re-renders each frame until `motion.moving()` is false. Add a client, not a second clock.
+- Only the drawing is eased. Never ease a committed value, and never ease what the pointer carries (`fixed`).
+- Snap when goals are not comparable with the last ones: a scale or size change, data from outside (`chart.snapNext`).
+- The first client is the hierarchy's layout (`liveTables` in `engine/render.js`). `spec.motion` is `false | { duration }`; reduced motion turns it off.
 
 ## Clipping
 

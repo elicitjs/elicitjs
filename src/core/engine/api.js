@@ -30,6 +30,7 @@ import { warn } from '../dev.js';
  * @property {(edit: import('../../types').Edit) => boolean} rowTargeted
  * @property {() => void} endTxn
  * @property {() => boolean} measure
+ * @property {() => void} stopMotion  cancel a pending animation frame
  * @property {(event: any) => void} handleEvent
  * @property {() => void} update
  */
@@ -44,7 +45,7 @@ import { warn } from '../dev.js';
  */
 export function attachApi(el, chart, deps) {
     const {
-        features, ui, listeners, featureNodes, schemaSpec, seedSchemaSpec, mode, container, history, selection, stages, tableOf, shapeData, isContextRow, rowIndexOf, recountSeed, frameScalesFor, commitDomainEdit, rowTargeted, endTxn, measure,
+        features, ui, listeners, featureNodes, schemaSpec, seedSchemaSpec, mode, container, history, selection, stages, tableOf, shapeData, isContextRow, rowIndexOf, recountSeed, frameScalesFor, commitDomainEdit, rowTargeted, endTxn, measure, stopMotion,
     } = deps;
     const handleEvent = (/** @type {any} */ event) => deps.handleEvent(event);
     const update = () => deps.update();
@@ -72,8 +73,10 @@ export function attachApi(el, chart, deps) {
             enforceRefs(schemaSpec, chart.tables);
             enforceTree(schemaSpec, chart.tables);
             chart.spaceNext = true;
+            chart.snapNext = true;
             chart.stroking = false;
             chart.strokeNodes = null;
+            chart.strokeRow = null;
         }
         recountSeed();
         ui.preview = null;
@@ -321,5 +324,6 @@ export function attachApi(el, chart, deps) {
     // Disconnects the reflow observer.
     el.destroy = () => {
         if (ro) { ro.disconnect(); ro = null; }
+        stopMotion();
     };
 }

@@ -496,7 +496,7 @@ export const SPEC_KEYS = [
     // Scales (per channel). No `domain` here — a domain describes the data.
     'scales', 'projection',
     // Presentation
-    'theme', 'effects',
+    'theme', 'effects', 'motion',
     // Chart chrome that reserves layout space like a legend (core/titles.js)
     'title', 'subtitle', 'caption',
     // Multi-stage elicitation

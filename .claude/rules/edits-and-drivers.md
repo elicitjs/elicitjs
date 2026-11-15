@@ -50,6 +50,8 @@ paths:
 - A plane gesture fans to every feature's plane edits, so a whole-dataset edit belongs on one mark per table. `warnDuplicatePlaneEdits` groups by the table each edit writes.
 - Plane arbitration (`livePlaneEdits`): the engine asks each plane edit's `when` on dragstart/click/hover and latches for the stroke. If none accepts, `hitTest` the pointer and re-route as a direct gesture (`fallbackHit`, also latched). A press on a mark whose direct edit accepts it grabs that mark first. Drivers never consult `when` themselves.
 - A proposal is about a table: `ui.preview[featureId]` holds `{ table, rows }`, and with exactly one in flight the ghost pass rebuilds every feature over that table (`sole`). Don't narrow it to the owning feature — `connect` fires on a node mark but the link mark draws the rubber band.
+- A hierarchy drag previews in place (`liveTables` in `engine/render.js`), never as a ghost: a nest proposal is `live` and its settled node rows are drawn instead of the committed ones; with no proposal, the committed rows are drawn settled around the stroke, the container being dragged in keeping its size (`keepSize`). The rows in flight stay committed. The data still changes only on release.
+- The row a gesture moved never pushes a container aside (`yields` in `settleHierarchy`): mid-drag it passes over containers, on release it gives way to them. Leaves still make room for it.
 
 ## Pointer modes
 

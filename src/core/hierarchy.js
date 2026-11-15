@@ -40,6 +40,8 @@ export function nestingOf(spec) {
  * @property {(i: number) => number[]} ancestorsOf  nearest first
  * @property {(i: number) => number[]} descendantsOf  every level, parents before children
  * @property {number[]} bottomUp  every node index, children before their parent
+ * @property {(i: number) => number} paintRank  position in paint order: a node, then
+ *   everything inside it, then its next sibling (roots and children in row order)
  */
 
 /** @type {Tree} */
@@ -52,6 +54,7 @@ const FLAT = {
     ancestorsOf: () => [],
     descendantsOf: () => [],
     bottomUp: [],
+    paintRank: () => 0,
 };
 
 /** nesting rows array -> (node rows array -> Tree). Row arrays are replaced, never
@@ -123,6 +126,14 @@ export function treeOf(spec, tables) {
     };
     const depth = nodeRows.map((_, i) => ancestorsOf(i).length);
     const bottomUp = nodeRows.map((_, i) => i).sort((a, b) => depth[b] - depth[a]);
+    /** @type {number[]} */
+    const rank = nodeRows.map(() => 0);
+    let next = 0;
+    const visit = (/** @type {number} */ i) => {
+        rank[i] = next++;
+        for (const c of [...children[i]].sort((a, b) => a - b)) visit(c);
+    };
+    nodeRows.forEach((_, i) => { if (parent[i] === null) visit(i); });
 
     /** @type {Tree} */
     const tree = {
@@ -134,6 +145,7 @@ export function treeOf(spec, tables) {
         ancestorsOf,
         descendantsOf,
         bottomUp,
+        paintRank: (i) => rank[i] || 0,
     };
     byNodes.set(nodeRows, tree);
     return tree;

@@ -4768,6 +4768,145 @@ async function main() {
         check('axis: labelAlign + negative tickPadding put labels inside the plot, above their bars',
             !!thmInside && thmInside.anchor === 'start' && thmInside.inside && thmInside.above, JSON.stringify(thmInside));
 
+        // ---- Sorting cards into a fixed bucket (/marks/hierarchy #fixed) ---------
+        // Five cards fill one bucket's column with little to spare. Every drop must
+        // leave no two cards overlapping, the drop must preview in place (no ghost),
+        // and each card's box and label must paint together.
+        console.log('\nHierarchy: sorting cards into a bucket (/marks/hierarchy #fixed)');
+        // Reduced motion draws each change at once, so these checks can read the
+        // drawing right after an event. Eased drawing is checked after them.
+        await page.emulateMedia({ reducedMotion: 'reduce' });
+        await open('/marks/hierarchy', '#fixed .chart svg rect.mark');
+        const hSvg = '#fixed .chart svg';
+        const cardLabelBox = async (label) => {
+            const t = page.locator(`${hSvg} text`, { hasText: label }).first();
+            await t.scrollIntoViewIfNeeded();
+            return t.boundingBox();
+        };
+        const bucketOf = () => page.$$eval(`${hSvg} rect.mark`, (rs) => {
+            const boxes = rs.map((r) => r.getBoundingClientRect()).filter((b) => b.height > 150);
+            const label = [...document.querySelectorAll('#fixed .chart svg text')].find((t) => t.textContent === 'Should have');
+            const lb = label.getBoundingClientRect();
+            const b = boxes.find((r) => lb.x >= r.left && lb.right <= r.right);
+            return b && { left: b.left, top: b.top, width: b.width, height: b.height };
+        });
+        const hDrops = [['Offline mode', 0.7, 0.92], ['Dark theme', 0.3, 0.8], ['Export PDF', 0.7, 0.62], ['Comments', 0.25, 0.45], ['Search', 0.55, 0.25]];
+        let hGhosts = -1;
+        let hOverlapAt = null;
+        for (const [label, fx, fy] of hDrops) {
+            const from = await cardLabelBox(label);
+            const bucketRect = await bucketOf(); // measured after the scroll
+            const fromX = from.x + from.width / 2, fromY = from.y + from.height / 2;
+            const toX = bucketRect.left + bucketRect.width * fx, toY = bucketRect.top + bucketRect.height * fy;
+            await page.mouse.move(fromX, fromY);
+            await page.mouse.down();
+            for (let i = 1; i <= 15; i++) {
+                await page.mouse.move(fromX + (toX - fromX) * i / 15, fromY + (toY - fromY) * i / 15);
+                await page.waitForTimeout(6);
+            }
+            hGhosts = Math.max(hGhosts, await page.$$eval(`${hSvg} [data-ghost]`, (g) => g.length));
+            await page.mouse.up();
+            await page.waitForTimeout(100);
+            const cards = (await page.$eval('#fixed .chart > div', (el) => el.getData().nodes)).filter((d) => d.kind === 'card');
+            const cardRects = await page.$$eval(`${hSvg} rect.mark`, (rs) => rs.map((r) => r.getBoundingClientRect())
+                .filter((b) => b.height < 100).map((b) => ({ x: b.x, y: b.y, w: b.width, h: b.height })));
+            const hit = cardRects.some((a, i) => cardRects.slice(i + 1).some((b) =>
+                a.x < b.x + b.w - 0.5 && b.x < a.x + a.w - 0.5 && a.y < b.y + b.h - 0.5 && b.y < a.y + a.h - 0.5));
+            if (hit && !hOverlapAt) hOverlapAt = `${label} (${cards.length} cards)`;
+        }
+        const hNesting = await page.$eval('#fixed .chart > div', (el) => el.getData().nesting);
+        check('hierarchy: five cards sorted into one bucket',
+            hNesting.filter((r) => r.parent === 'should').length === 5, JSON.stringify(hNesting));
+        check('hierarchy: no two cards overlap after any drop', !hOverlapAt, `overlap after ${hOverlapAt}`);
+        check('hierarchy: a drop previews in place, with no ghost', hGhosts === 0, `ghost nodes ${hGhosts}`);
+        const hOrder = await page.$$eval(`${hSvg} rect.mark, ${hSvg} text`, (ns) => ns.map((n) => n.tagName.toLowerCase()).join(','));
+        check('hierarchy: each node paints its box then its label', /^(rect,text,)*rect,text$/.test(hOrder), hOrder);
+
+        // Moving inside a bucket previews too: the card under the dragged one is
+        // drawn out of the way before the release, and the data waits.
+        // Each card's drawn position, by its label (a full column swaps slots, so positions alone can't tell).
+        const cardRectsNow = () => page.$$eval(`${hSvg} text`, (ts) => Object.fromEntries(ts.map((t) => {
+            const b = t.getBoundingClientRect();
+            return [t.textContent, { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) }];
+        })));
+        const hDataBefore = JSON.stringify((await page.$eval('#fixed .chart > div', (el) => el.getData())).nodes);
+        const hRectsBefore = await cardRectsNow();
+        const hFrom = await cardLabelBox('Search');
+        const hOnto = await cardLabelBox('Export PDF');
+        await page.mouse.move(hFrom.x + hFrom.width / 2, hFrom.y + hFrom.height / 2);
+        await page.mouse.down();
+        for (let i = 1; i <= 10; i++) {
+            await page.mouse.move(hFrom.x + hFrom.width / 2 + (hOnto.x - hFrom.x) * i / 10, hFrom.y + hFrom.height / 2 + (hOnto.y - hFrom.y) * i / 10);
+            await page.waitForTimeout(6);
+        }
+        const hRectsMid = await cardRectsNow();
+        const hDataMid = (await page.$eval('#fixed .chart > div', (el) => el.getData())).nodes;
+        await page.mouse.up();
+        await page.waitForTimeout(100);
+        // Other cards moved on screen, and no data but the dragged card's did.
+        const hOthersMoved = ['Offline mode', 'Dark theme', 'Export PDF', 'Comments']
+            .filter((k) => hRectsMid[k].x !== hRectsBefore[k].x || hRectsMid[k].y !== hRectsBefore[k].y).length;
+        const hOnlySearchMoved = JSON.parse(hDataBefore).every((d) => d.id === 'c5' || JSON.stringify(hDataMid.find((m) => m.id === d.id)) === JSON.stringify(d));
+        check('hierarchy: moving inside a bucket shows the other cards making room before the release',
+            hOthersMoved >= 1 && hOnlySearchMoved, `moved on screen ${hOthersMoved}, data untouched ${hOnlySearchMoved}: ${JSON.stringify(hRectsBefore)} -> ${JSON.stringify(hRectsMid)}`);
+
+        // Dragging out of a fitted group previews the group shrinking.
+        await open('/marks/hierarchy', '#schema .chart svg rect.mark');
+        const gSvg = '#schema .chart svg';
+        const groupWidth = () => page.$$eval(`${gSvg} rect.mark`, (rs) => {
+            const label = [...document.querySelectorAll('#schema .chart svg text')].find((t) => t.textContent === 'Research');
+            const lb = label.getBoundingClientRect();
+            const box = rs.map((r) => r.getBoundingClientRect()).filter((b) => b.left <= lb.left + lb.width / 2 && b.right >= lb.left + lb.width / 2 && b.top > lb.bottom - 4)
+                .sort((p, q) => q.width - p.width)[0];
+            return box ? box.width : null;
+        });
+        const gData = () => page.$eval('#schema .chart > div', (el) => el.getData().nodes.find((d) => d.id === 'g1').w);
+        const gW0 = await groupWidth(), gD0 = await gData();
+        const survey = page.locator(`${gSvg} text`, { hasText: 'Survey' }).first();
+        await survey.scrollIntoViewIfNeeded();
+        const surveyBox = await survey.boundingBox();
+        const surveyX = surveyBox.x + surveyBox.width / 2, surveyY = surveyBox.y + surveyBox.height / 2;
+        await page.mouse.move(surveyX, surveyY);
+        await page.mouse.down();
+        for (let i = 1; i <= 12; i++) { await page.mouse.move(surveyX + 200 * i / 12, surveyY - 70 * i / 12); await page.waitForTimeout(6); }
+        const gWMid = await groupWidth(), gDMid = await gData();
+        await page.mouse.up();
+        await page.waitForTimeout(100);
+        const gDEnd = await gData();
+        check('hierarchy: dragging out of a group shows it shrinking before the release',
+            gWMid < gW0 - 2 && gDMid === gD0 && gDEnd < gD0, `drawn ${gW0} -> ${gWMid}; data ${gD0} -> ${gDMid} -> ${gDEnd}`);
+
+        // With motion on, the group eases to its new size: it is seen at widths in
+        // between, never in one jump, and ends where the data says.
+        console.log('\nHierarchy: eased layout (/marks/hierarchy #schema)');
+        await page.emulateMedia({ reducedMotion: 'no-preference' });
+        await open('/marks/hierarchy', '#schema .chart svg rect.mark');
+        const easeW0 = await groupWidth();
+        const easeSurvey = page.locator(`${gSvg} text`, { hasText: 'Survey' }).first();
+        await easeSurvey.scrollIntoViewIfNeeded();
+        const easeBox = await easeSurvey.boundingBox();
+        const easeX = easeBox.x + easeBox.width / 2, easeY = easeBox.y + easeBox.height / 2;
+        await page.mouse.move(easeX, easeY);
+        await page.mouse.down();
+        const easeWidths = [];
+        for (let i = 1; i <= 12; i++) { await page.mouse.move(easeX + 200 * i / 12, easeY - 70 * i / 12); easeWidths.push(await groupWidth()); }
+        for (let i = 0; i < 40; i++) { await page.waitForTimeout(16); easeWidths.push(await groupWidth()); }
+        const easeWEnd = easeWidths[easeWidths.length - 1];
+        const easeBetween = easeWidths.filter((w) => w < easeW0 - 1 && w > easeWEnd + 1).length;
+        const easeSteps = easeWidths.map((w, i) => Math.abs(w - (i ? easeWidths[i - 1] : easeW0)));
+        const easeCardPx = async () => { const b = await easeSurvey.boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+        const easeCard = await easeCardPx();
+        await page.mouse.up();
+        await page.waitForTimeout(500);
+        const easeWRest = await groupWidth();
+        check('hierarchy motion: a group eases to its new size while a node is dragged out',
+            easeWEnd < easeW0 - 2 && easeBetween >= 2 && Math.max(...easeSteps) < (easeW0 - easeWEnd) * 0.6,
+            `drawn ${easeW0} -> ${easeWEnd}, in-between samples ${easeBetween}, largest step ${Math.max(...easeSteps).toFixed(1)}`);
+        check('hierarchy motion: the dragged node stays on the pointer',
+            Math.abs(easeCard.x - (easeX + 200)) < 2 && Math.abs(easeCard.y - (easeY - 70)) < 2, `card ${JSON.stringify(easeCard)} vs pointer ${easeX + 200},${easeY - 70}`);
+        check('hierarchy motion: the layout comes to rest after the release',
+            Math.abs(easeWRest - (await groupWidth())) < 0.01, `width ${easeWRest}`);
+
         check('no page/console errors', errors.length === 0, errors.slice(0, 3).join(' | '));
     } finally {
         await browser.close();

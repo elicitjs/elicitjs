@@ -19,6 +19,7 @@ import { createNodes } from './engine/nodes.js';
 import { createCompute } from './engine/compute.js';
 import { createDispatch } from './engine/dispatch.js';
 import { createRender } from './engine/render.js';
+import { resolveMotion } from './motion.js';
 import { attachApi } from './engine/api.js';
 import {
     assembleFeatures, bindFeatureTables, desugarPorts, desugarContainers, tipGuidesOf, viewerChannelsOf,
@@ -266,8 +267,9 @@ export function Elicit(spec) {
 
     // Rendering (engine/render.js): the container and its size, and `update()`,
     // which rebuilds the scene from current state and hands it to the renderer.
-    const { container, measure, applyResize, update } = createRender(chart, {
-        features, featureById, ui, spec, theme, effects, renderer, mode, overflow, focusOutline, designW, authorMargins, dims, liveSpec, schema, schemaSpec, allGuides, datasetConstraints, tracksPointer, hasLegends, hasAxisTitles, featureNodes, hierarchyNodes, boxHosts, tableOf, targetTableOf, primaryRows, isLockedIn, constraintsIn, nodeBoxRule, nodePortsRule, settleNodes, heldStill, inFlight, activeEdits, getStage, selectionIn, selectionList, selectionPrimary, portAvailable, handleKey, clipNow, visibleAt,
+    const { container, measure, applyResize, update, stopMotion } = createRender(chart, {
+        features, featureById, ui, spec, theme, effects, renderer, mode, overflow, focusOutline, designW, authorMargins, dims, liveSpec, schema, schemaSpec, allGuides, datasetConstraints, tracksPointer, hasLegends, hasAxisTitles, featureNodes, hierarchyNodes, boxHosts, tableOf, targetTableOf, primaryRows, isLockedIn, constraintsIn, nodeBoxRule, nodePortsRule, settleNodes, settledNodes, heldStill, inFlight, activeEdits, getStage, selectionIn, selectionList, selectionPrimary, portAvailable, handleKey, clipNow, visibleAt,
+        motionDuration: resolveMotion(spec.motion),
         handleEvent: (/** @type {any} */ event) => handleEvent(event),
     });
 
@@ -285,7 +287,7 @@ export function Elicit(spec) {
     // The public el.* API (engine/api.js). Observation only: edits stay the one
     // path that mutates data.
     attachApi(el, chart, {
-        features, ui, listeners, featureNodes, schemaSpec, seedSchemaSpec, mode, container, history, selection, stages, tableOf, shapeData, isContextRow, rowIndexOf, recountSeed, frameScalesFor, commitDomainEdit, rowTargeted, endTxn, measure,
+        features, ui, listeners, featureNodes, schemaSpec, seedSchemaSpec, mode, container, history, selection, stages, tableOf, shapeData, isContextRow, rowIndexOf, recountSeed, frameScalesFor, commitDomainEdit, rowTargeted, endTxn, measure, stopMotion,
         handleEvent: (/** @type {any} */ event) => handleEvent(event),
         update: () => update(),
     });

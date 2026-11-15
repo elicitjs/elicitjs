@@ -364,7 +364,12 @@ export function createDispatch(chart, deps) {
         // A hierarchy's rows are pushed apart at the END of a stroke, around what it
         // moved (see `stroking`). A nudge's synthetic drag is a whole gesture.
         if (hierarchyNodes && !event.nudge) {
-            if (event.type === 'dragstart') { chart.stroking = true; chart.strokeNodes = chart.tables[hierarchyNodes]; }
+            if (event.type === 'dragstart') {
+                chart.stroking = true;
+                chart.strokeNodes = chart.tables[hierarchyNodes];
+                const grabbed = event.node ? featureById.get(event.node.featureId) : null;
+                chart.strokeRow = grabbed && grabbed.table === hierarchyNodes && event.node.index != null ? event.node.index : null;
+            }
             else if (event.type === 'drag') chart.stroking = true;
         }
 
@@ -408,8 +413,13 @@ export function createDispatch(chart, deps) {
         // same undo entry.
         if (event.type === 'dragend' && hierarchyNodes && boxHosts.length) {
             chart.stroking = false;
-            const settled = settledNodes(chart.tables, null, heldStill(), { since: chart.strokeNodes });
+            // The dropped row never pushes a container aside; it gives way instead.
+            const settled = settledNodes(chart.tables, null, heldStill(), {
+                since: chart.strokeNodes,
+                yields: chart.strokeRow != null ? new Set([chart.strokeRow]) : null,
+            });
             chart.strokeNodes = null;
+            chart.strokeRow = null;
             if (settled !== chart.tables[hierarchyNodes]) {
                 recordHistory();
                 chart.tables[hierarchyNodes] = settled;
