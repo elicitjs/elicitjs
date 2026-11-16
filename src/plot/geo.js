@@ -78,6 +78,8 @@ export function geoBasemap(options = {}) {
     return {
         ...markCommon(opts),
         type: 'geoBasemap',
+        // Map chrome: it draws its own GeoJSON, not the dataset's rows.
+        views: 'state',
         channels,
         supportsGeo: true,
         /**
@@ -104,7 +106,7 @@ export function geoBasemap(options = {}) {
 
             /** @type {import('../types').FeatureNode[]} */
             const nodes = [];
-            list.forEach((/** @type {any} */ item, /** @type {number} */ i) => {
+            list.forEach((/** @type {any} */ item) => {
                 const geom = item && item.type === 'Feature' ? item.geometry : item;
                 if (!geom) return;
                 const d = projection.path(geom);
@@ -120,7 +122,8 @@ export function geoBasemap(options = {}) {
                     strokeOpacity: style.strokeOpacity,
                     background: true,
                     pointerEvents: 'none',
-                    index: i,
+                    // No `index`: a shape here is not a dataset row, so no
+                    // hover, selection or effect may reach it.
                 });
             });
             return nodes;
@@ -163,6 +166,8 @@ export function geoTile(options = {}) {
     return {
         ...markCommon(opts),
         type: 'geoTile',
+        // Map chrome: it draws tiles, not the dataset's rows.
+        views: 'state',
         channels,
         supportsGeo: true,
         /**

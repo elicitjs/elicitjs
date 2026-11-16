@@ -35,6 +35,7 @@ const view = () => ({
 const DATASET_METHODS = [
     'getData', 'getSchema', 'setData', 'setDomain', 'undo', 'redo', 'canUndo', 'canRedo',
     'getSelection', 'getSelectionAll', 'select', 'toggleSelection', 'selectAll', 'selectWhere', 'clearSelection',
+    'hover', 'getHover',
 ];
 
 describe('Elicit.dataset(spec).chart(spec)', () => {

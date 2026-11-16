@@ -54,6 +54,9 @@ Everything the engine builds is a feature, and each declares what it `views`:
 | `'scale'` | element — `elements.*` | `elements` | a tick / swatch     | the schema's domain |
 | `'state'` | guide — `guides.*`     | `guides`   | a derived statement | nothing             |
 
+`plot.geoBasemap` and `plot.geoTile` are map chrome: marks that declare `views: 'state'`
+because they draw their own shapes, not rows. A node's `index` is always a row index.
+
 All three share one `build(rows, scales, width, height, ctx)` signature. Read `views`,
 not an `isAxis || isLegend` disjunction, when you mean "is this a chart element".
 
@@ -94,3 +97,4 @@ not an `isAxis || isLegend` disjunction, when you mean "is this a chart element"
 
 - refrain from writing too complicated comments. Keep it direct and simple.
 - If something changes, make sure to update relevant parts.
+- For major changes and new features, ask to create a new branch before starting work.

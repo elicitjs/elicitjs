@@ -30,6 +30,9 @@ paths:
 - The engine's state pass in `update()` decides effects; renderers only apply them. Restyle → `node.effectStyle` (merged by `effectStyleFor`, `grabbed` > `selected` > `hovered`). `outline` → an overlay node tagged `effect: true`. Everything else restyles the node.
 - An effect is a CSS style property or an overlay node, never a paint attribute (that once wiped a mark's own stroke).
 - Hover has two sources (a proximity driver's session, the renderer's per-node `pointerover`); both feed the one `hovered` effect.
+- States and treatments are separate layers. The states are `hovered`, `selected`, `target`, `grabbed`. A state's own style is its highlight; `others` is its mute (rows in no state while it has a row; restyle only, no outline); `neighbours` extends the highlight through `neighboursOf` (`core/neighbours.js`). Highlighting is never a new state and never an edit.
+- `effects.hovered.link` (`true | 'receive' | false`) makes the chart's hover the dataset's (`engine/hover.js`). Unset, it is on once a second chart draws the dataset; that count is read in `hoverLink` (`core/elicit.js`) and nowhere else. A row-wide hover (`hoverWide`: linked, or `others`/`neighbours` set on `hovered`) stamps every row node `hoverable` and lights the row in every mark over its table.
+- A `hoverable` node that is not `editable` takes no press: dispatch routes it as a plane gesture.
 - A text node gets no default outline (the cursor is its feedback). An outline the spec sets draws a measured box around it (`outline.requested`, set by `resolveState`).
 - Anything drawn about a node copies its `angle`, and overlays stay concentric with their source so `markCenter` gives one pivot. Pick geometry `unrotate`s (`edit/pick.js`) before axis-aligned tests.
 

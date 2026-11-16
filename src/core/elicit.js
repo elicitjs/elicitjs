@@ -6,6 +6,7 @@ import { clipVisible } from '../edit/pick.js';
 import { autoEditGuides } from '../edit/guide.js';
 import { D3Renderer } from '../renderers/d3-renderer/index.js';
 import { resolveEffects } from './effects.js';
+import { hasNeighbours } from './neighbours.js';
 import { resolveTheme } from './theme.js';
 import { nestingOf } from './hierarchy.js';
 import { warn } from './dev.js';
@@ -90,6 +91,26 @@ function createChart(dataset, spec) {
     // effects defaults that the chart's own `effects` overrides.
     const theme = resolveTheme(spec.theme);
     const effects = resolveEffects(effectsSpec, theme.effects);
+    for (const state of Object.keys(effects)) {
+        if (effects[state].neighbours && !hasNeighbours(dataset.schemaSpec)) {
+            warn(`effects:neighbours:${state}`, `effects.${state}.neighbours: this dataset links no rows (no "ref" column), so there are no neighbours to show. It applies to network and hierarchy datasets.`);
+        }
+    }
+    // Is this chart's hover the dataset's? `true` sends and shows it, 'receive'
+    // only shows it. Unset, it links once a second chart draws the dataset.
+    /** @returns {true | false | 'receive'} */
+    const hoverLink = () => {
+        const h = effects.hovered;
+        if (!h || h.enabled === false) return false;
+        return h.link != null ? h.link : port.linked();
+    };
+    // Does a hover light its row in every mark over the table, inert ones too?
+    // Yes when linked, or when the spec mutes the other rows or asks for neighbours.
+    const hoverWide = () => {
+        const h = effects.hovered;
+        if (!h || h.enabled === false) return false;
+        return hoverLink() !== false || !!h.others || !!h.neighbours;
+    };
 
     // The flattened feature list: auto axes, elements, marks, implicit legends —
     // each with an id (engine/features.js).
@@ -227,12 +248,16 @@ function createChart(dataset, spec) {
     // and `select` are the dataset's; `stage` is the chart's.
     /** @type {{ change: Set<Function>, stage: Set<Function>, select: Set<Function> }} */
     const listeners = { change: dataset.listeners.change, stage: new Set(), select: dataset.listeners.select };
+    // The hover this chart handed to the dataset, if it is linked.
+    /** @param {{ table: string, index: number } | null} row */
+    const commitHover = (row) => port.commitHover(row);
 
     // Multi-stage elicitation (engine/stages.js): `activeEdits` is the single gate
     // the dispatch/editable/plane-on-top paths run their edits through.
     const stages = createStages({
         spec, ui, listeners, update: () => update(),
-        clearSelection: () => { commitSelectionEdit({ clear: true }); },
+        // A stage change drops the hover with the other transients.
+        clearSelection: () => { commitSelectionEdit({ clear: true }); commitHover(null); },
     });
     const { getStage, activeEdits, applyStage } = stages;
 
@@ -268,7 +293,7 @@ function createChart(dataset, spec) {
     // Rendering (engine/render.js): the container and its size, and `update()`,
     // which rebuilds the scene from current state and hands it to the renderer.
     const { container, measure, applyResize, update, stopMotion } = createRender(chart, {
-        features, featureById, ui, spec, theme, effects, renderer, mode, overflow, focusOutline, designW, authorMargins, dims, liveSpec, schema, schemaSpec, allGuides, datasetConstraints, tracksPointer, hasLegends, hasAxisTitles, featureNodes, hierarchyNodes, boxHosts, tableOf, targetTableOf, primaryRows, isLockedIn, constraintsIn, nodeBoxRule, nodePortsRule, settleOwn, settledNodes, heldStill, inFlight, activeEdits, getStage, selectionIn, selectionList, selectionPrimary, portAvailable, handleKey, clipNow, visibleAt,
+        features, featureById, ui, spec, theme, effects, renderer, mode, overflow, focusOutline, designW, authorMargins, dims, liveSpec, schema, schemaSpec, allGuides, datasetConstraints, tracksPointer, hasLegends, hasAxisTitles, featureNodes, hierarchyNodes, boxHosts, tableOf, targetTableOf, primaryRows, isLockedIn, constraintsIn, nodeBoxRule, nodePortsRule, settleOwn, settledNodes, heldStill, inFlight, activeEdits, getStage, selectionIn, selectionList, selectionPrimary, hoverRow: dataset.hoverRow, hoverLink, hoverWide, portAvailable, handleKey, clipNow, visibleAt,
         layoutMoved: () => port.layoutMoved(),
         motionDuration: resolveMotion(spec.motion),
         handleEvent: (/** @type {any} */ event) => handleEvent(event),
@@ -281,7 +306,7 @@ function createChart(dataset, spec) {
         history: txn, tableOf, activeEdits, getStage, applyStage, arbitrates, frameScalesFor,
         runEdit, previewEdit, reachableKeys, settledNodes, heldStill, notifyChange,
         ownsLayout: () => port.ownsLayout(),
-        handleKey, visibleAt,
+        handleKey, visibleAt, hoverLink, hoverWide, commitHover,
         update: () => update(),
     });
 
@@ -292,6 +317,7 @@ function createChart(dataset, spec) {
     const port = dataset.attach({
         update: () => update(),
         settles: () => !!hierarchyNodes && boxHosts.length > 0,
+        showsHover: () => hoverLink() !== false,
         snapshot: () => ({ width: chart.curW, height: chart.curH }),
         restore: (size) => {
             if (size && (size.width !== chart.curW || size.height !== chart.curH)) applyResize(size);

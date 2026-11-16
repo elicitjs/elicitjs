@@ -8,7 +8,8 @@ import { collectEdits, resolveChannels, warnMisplacedEdits } from '../../edit/ro
 import { hitTestAny, pointInPolygon } from '../../edit/pick.js';
 import { portKey } from '../../plot/port.js';
 import { needsPlaneOnTop } from '../../edit/drivers/index.js';
-import { stateEffectNodes, outlineNodes, effectStyleFor } from '../effects.js';
+import { stateEffectNodes, outlineNodes, effectStyleFor, othersOf } from '../effects.js';
+import { neighboursOf } from '../neighbours.js';
 import { panelNodes } from '../panel.js';
 import { reserveLegends } from '../legends.js';
 import { reserveTitles, titleNodes } from '../titles.js';
@@ -83,6 +84,9 @@ function applyGhostStyle(node, ghost) {
  * @property {(table: string) => Set<number>} selectionIn
  * @property {(table?: string) => number[]} selectionList
  * @property {() => number | null} selectionPrimary
+ * @property {() => { table: string, index: number } | null} hoverRow  the dataset's hovered row
+ * @property {() => true | false | 'receive'} hoverLink  is this chart's hover the dataset's?
+ * @property {() => boolean} hoverWide  does a hover light its row in every mark over the table?
  * @property {(feature: any, node: any) => boolean} portAvailable
  * @property {(node: any) => string} handleKey
  * @property {() => any} clipNow
@@ -100,9 +104,12 @@ function applyGhostStyle(node, ghost) {
  */
 export function createRender(chart, deps) {
     const {
-        features, featureById, ui, spec, theme, effects, renderer, mode, overflow, focusOutline, designW, authorMargins, dims, liveSpec, schema, schemaSpec, allGuides, datasetConstraints, tracksPointer, hasLegends, hasAxisTitles, featureNodes, hierarchyNodes, boxHosts, tableOf, targetTableOf, primaryRows, isLockedIn, constraintsIn, nodeBoxRule, nodePortsRule, settleOwn, layoutMoved, settledNodes, heldStill, inFlight, activeEdits, getStage, selectionIn, selectionList, selectionPrimary, portAvailable, handleKey, clipNow, visibleAt, motionDuration,
+        features, featureById, ui, spec, theme, effects, renderer, mode, overflow, focusOutline, designW, authorMargins, dims, liveSpec, schema, schemaSpec, allGuides, datasetConstraints, tracksPointer, hasLegends, hasAxisTitles, featureNodes, hierarchyNodes, boxHosts, tableOf, targetTableOf, primaryRows, isLockedIn, constraintsIn, nodeBoxRule, nodePortsRule, settleOwn, layoutMoved, settledNodes, heldStill, inFlight, activeEdits, getStage, selectionIn, selectionList, selectionPrimary, hoverRow, hoverLink, hoverWide, portAvailable, handleKey, clipNow, visibleAt, motionDuration,
     } = deps;
     const handleEvent = (/** @type {any} */ event) => deps.handleEvent(event);
+    // Does this feature draw the dataset's rows? Elements draw a scale, and map
+    // chrome (`views: 'state'` on a mark) draws its own shapes.
+    const drawsRows = (/** @type {any} */ f) => !f.views || f.views === 'data';
 
     // Set up container. 'fixed' pins pixel dims; 'scale' and 'reflow' fill the parent's width.
     const container = document.createElement('div');
@@ -394,6 +401,8 @@ export function createRender(chart, deps) {
             // swallow a drag meant for a node beneath them.
             const tree = feature.table === hierarchyNodes ? treeOf(schemaSpec, chart.tables) : null;
             const carried = tree ? inFlight() : null;
+            // A row-wide hover is reported by every mark that draws rows.
+            const rowHover = hoverWide() && drawsRows(feature);
             const lifted = tree && carried
                 ? new Set(carried.flatMap((i) => [i, ...tree.descendantsOf(i)]))
                 : null;
@@ -417,6 +426,7 @@ export function createRender(chart, deps) {
                     else if (!node.cursor) node.cursor = implied || 'default';
                 }
                 else if (portHosted && !locked && node.pointerEvents == null) node.hoverable = true;
+                else if (rowHover && node.index != null && node.pointerEvents == null) node.hoverable = true;
                 else if (node.pointerEvents == null) node.pointerEvents = 'none';
                 if (inlineEdit && !locked) {
                     node.editText = true;
@@ -456,8 +466,8 @@ export function createRender(chart, deps) {
             /** @type {{ glyph?: string, nodes: any[] }[]} */
             const ghostBuilt = [];
             for (const feature of features) {
-                // Chart elements draw scales, not rows: no ghost.
-                if (feature.views === 'scale') continue;
+                // Chart elements and chrome draw no rows: no ghost.
+                if (!drawsRows(feature)) continue;
                 const proposal = ui.preview[feature.id] || sole;
                 if (!proposal || proposal.live || proposal.table !== feature.table) continue;
                 const proposed = proposal.rows;
@@ -601,6 +611,56 @@ export function createRender(chart, deps) {
         light(ui.hover);
         light(ui.grab);
         chart.sceneHasOnHover = false;
+
+        /** @param {Record<string, Set<number>>} byTable @param {string} table @param {number} index */
+        const addRow = (byTable, table, index) => { (byTable[table] || (byTable[table] = new Set())).add(index); };
+        // A state's rows plus, under `neighbours`, the rows linked to them.
+        /** @param {any} state @param {Record<string, Set<number>>} byTable */
+        const withNeighbours = (state, byTable) => {
+            if (!state || state.enabled === false || !state.neighbours) return byTable;
+            for (const [table, rows] of Object.entries(byTable).map(([t, set]) => /** @type {[string, number[]]} */ ([t, [...set]]))) {
+                for (const i of rows) {
+                    for (const n of neighboursOf(schemaSpec, chart.tables, table, i)) addRow(byTable, n.table, n.index);
+                }
+            }
+            return byTable;
+        };
+
+        // Rows hovered per table: the dataset's hover when this chart shows it,
+        // and this chart's own when its hover is row-wide.
+        const showsHover = hoverLink() !== false;
+        /** @type {Record<string, Set<number>>} */
+        const hoveredByTable = {};
+        const shared = showsHover ? hoverRow() : null;
+        if (shared) addRow(hoveredByTable, shared.table, shared.index);
+        if (hoverWide()) {
+            for (const f of features) {
+                if (f.table == null || !drawsRows(f)) continue;
+                const s = ui.session && ui.session[f.id];
+                const near = s ? (s.activeIndex != null ? s.activeIndex : s.hoverIndex) : null;
+                if (near != null) addRow(hoveredByTable, f.table, near);
+                if (ui.hover && ui.hover.featureId === f.id && ui.hover.index != null) addRow(hoveredByTable, f.table, ui.hover.index);
+            }
+        }
+        withNeighbours(effects.hovered, hoveredByTable);
+
+        // Neighbours of the selected and the grabbed rows, per table.
+        /** @type {Record<string, Set<number>>} */
+        const selectedNear = {};
+        if (effects.selected && effects.selected.enabled !== false && effects.selected.neighbours) {
+            for (const table of Object.keys(schemaSpec.tables)) {
+                for (const i of selectionIn(table)) addRow(selectedNear, table, i);
+            }
+            withNeighbours(effects.selected, selectedNear);
+        }
+        /** @type {Record<string, Set<number>>} */
+        const grabbedNear = {};
+        const grabbedFeature = ui.grab ? featureById.get(ui.grab.featureId) : null;
+        if (effects.grabbed && effects.grabbed.enabled !== false && effects.grabbed.neighbours
+            && grabbedFeature && grabbedFeature.table != null && ui.grab.index != null) {
+            addRow(grabbedNear, grabbedFeature.table, ui.grab.index);
+            withNeighbours(effects.grabbed, grabbedNear);
+        }
         // During a connect/rewire drag, the ports a release could land on
         // (`session.targets`), across features.
         /** @type {Set<string> | null} */
@@ -624,9 +684,11 @@ export function createRender(chart, deps) {
             : null;
 
         for (const feature of features) {
-            if (feature.views === 'scale') continue;
+            if (!drawsRows(feature)) continue;
             const selected = selectedByTable[feature.table]
-                || (selectedByTable[feature.table] = selectionIn(feature.table));
+                || (selectedByTable[feature.table] = new Set([
+                    ...selectionIn(feature.table), ...(selectedNear[feature.table] || []),
+                ]));
             const marks = featureNodes[feature.id] || [];
 
             /** @type {Set<number>} */
@@ -639,6 +701,7 @@ export function createRender(chart, deps) {
             if (ui.hover && ui.hover.featureId === feature.id && ui.hover.index != null) {
                 hovered.add(ui.hover.index);
             }
+            for (const i of hoveredByTable[feature.table] || []) hovered.add(i);
             for (const i of selected) hovered.delete(i);
 
             /** @type {Set<number>} */
@@ -650,6 +713,7 @@ export function createRender(chart, deps) {
             if (flying && feature.table === hierarchyNodes) {
                 for (const i of flying) grabbed.add(i);
             }
+            for (const i of grabbedNear[feature.table] || []) grabbed.add(i);
             // The container a parked nesting proposal would drop into, lit on box hosts only.
             /** @type {Set<number>} */
             const target = boxHosts.includes(feature) ? dropInto : new Set();
@@ -688,8 +752,21 @@ export function createRender(chart, deps) {
                     statesByIndex.set(i, list);
                 }
             }
+            // The mute: while a state has a row here, rows in no state take its `others`.
+            const rowCount = tableOf(feature).length;
+            /** @type {Record<string, any>[]} */
+            const mutes = [];
+            for (const [indices, state] of byState) {
+                if (![...indices].some((i) => i >= 0 && i < rowCount)) continue;
+                const others = othersOf(state, state === effects.hovered && showsHover);
+                if (others) mutes.push(others);
+            }
             for (const node of marks) {
                 if (!node || node.ghost || node.index == null) continue;
+                if (mutes.length && !statesByIndex.has(node.index)) {
+                    node.effectStyle = Object.assign({}, ...mutes);
+                    continue;
+                }
                 let states = statesByIndex.get(node.index) || [];
                 // A sibling of the hovered handle is not hovered.
                 if (isOtherHandle(node)) states = states.filter((s) => s !== effects.hovered);

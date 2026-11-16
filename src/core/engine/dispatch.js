@@ -36,6 +36,9 @@ import { elementEffectOf } from '../effects.js';
  *   ownsLayout: () => boolean,
  *   heldStill: () => Set<number> | null,
  *   notifyChange: () => void,
+ *   hoverLink: () => true | false | 'receive',
+ *   hoverWide: () => boolean,
+ *   commitHover: (row: { table: string, index: number } | null) => boolean,
  *   handleKey: (node: any) => string,
  *   visibleAt: (nodes: any[], x: number, y: number) => any[],
  *   update: () => void,
@@ -46,7 +49,7 @@ export function createDispatch(chart, deps) {
         features, featureById, ui, effects, tracksPointer, featureNodes, hierarchyNodes, boxHosts,
         tableOf, activeEdits, getStage, applyStage, arbitrates, frameScalesFor,
         runEdit, previewEdit, reachableKeys, settledNodes, heldStill, ownsLayout, notifyChange,
-        handleKey, visibleAt,
+        handleKey, visibleAt, hoverLink, hoverWide, commitHover,
     } = deps;
     const { history } = deps;
     const { endTxn, recordHistory } = history;
@@ -60,6 +63,27 @@ export function createDispatch(chart, deps) {
         const d = /** @type {any} */ (driverFor(edit));
         return !!(d && d.targetsRow);
     };
+
+    // Does this feature draw the dataset's rows (not a scale, not map chrome)?
+    const drawsRows = (/** @type {any} */ f) => !f.views || f.views === 'data';
+    // The row this chart's pointer is over: a hovered mark's, else a proximity
+    // driver's. Null over nothing, or over a chart element.
+    const hoveredRow = () => {
+        if (ui.hover && ui.hover.index != null) {
+            const f = featureById.get(ui.hover.featureId);
+            return f && f.table != null && drawsRows(f) ? { table: f.table, index: ui.hover.index } : null;
+        }
+        for (const f of features) {
+            if (f.table == null || !drawsRows(f)) continue;
+            const s = ui.session && ui.session[f.id];
+            const near = s ? (s.activeIndex != null ? s.activeIndex : s.hoverIndex) : null;
+            if (near != null) return { table: f.table, index: near };
+        }
+        return null;
+    };
+    // Hand this chart's hover to the dataset when it is linked. Returns whether it
+    // moved. A drag keeps the hover it started with.
+    const publishHover = () => (hoverLink() === true && !ui.grab ? commitHover(hoveredRow()) : false);
 
     // Run every direct edit on the touched mark whose `gesture` matches.
     /**
@@ -220,10 +244,10 @@ export function createDispatch(chart, deps) {
     let planeGrab = null;
     // Is the current stroke a direct grab the plane gesture was re-routed to?
     let directStroke = false;
-    /** @param {number} x @param {number} y @returns {any | null} */
-    const hitAny = (x, y) => {
+    /** @param {number} x @param {number} y @param {boolean} [hover] also a hover-only node @returns {any | null} */
+    const hitAny = (x, y, hover = false) => {
         for (let i = features.length - 1; i >= 0; i--) {
-            const hit = hitTest(visibleAt(featureNodes[features[i].id] || [], x, y), x, y);
+            const hit = hitTest(visibleAt(featureNodes[features[i].id] || [], x, y), x, y, hover);
             if (hit) return hit;
         }
         return null;
@@ -280,9 +304,10 @@ export function createDispatch(chart, deps) {
             if (!stale && !same(ui.hover, next)) {
                 ui.hover = next;
                 const h = effects.hovered;
-                if (h && h.enabled !== false && (h.outline || elementEffectOf(h))) shouldRender = true;
+                if (h && h.enabled !== false && (h.outline || elementEffectOf(h) || hoverWide())) shouldRender = true;
                 // A port shows on hover whatever the `hovered` effect says.
                 if (chart.sceneHasOnHover) shouldRender = true;
+                if (publishHover()) shouldRender = true;
             }
             if (shouldRender) update();
             return;
@@ -311,6 +336,13 @@ export function createDispatch(chart, deps) {
                 nudge: true,
                 rawEvent: event.rawEvent,
             };
+        }
+
+        // A node that only answers hover takes no press: route it as a plane gesture,
+        // so a mark beneath it, or a plane edit, still gets it.
+        if (event.node && event.node.hoverable && !event.node.editable && event.x != null
+            && ['dragstart', 'drag', 'dragend', 'click', 'dblclick'].includes(event.type)) {
+            event = { ...event, node: undefined };
         }
 
         // Re-route plane gestures to a mark before the grab state and transaction,
@@ -349,7 +381,7 @@ export function createDispatch(chart, deps) {
             if (!any) {
                 if (event.type === 'hover' || event.type === 'hoverout') {
                     // No plane edit listens: hover the mark under the pointer instead.
-                    const hit = event.type === 'hover' ? hitAny(event.x, event.y) : null;
+                    const hit = event.type === 'hover' ? hitAny(event.x, event.y, true) : null;
                     if (hit) { if (!ui.hover || ui.hover.node !== hit) handleEvent({ type: 'pointerover', node: hit }); }
                     else if (ui.hover) handleEvent({ type: 'pointerout', node: ui.hover.node });
                 } else {
@@ -433,6 +465,9 @@ export function createDispatch(chart, deps) {
         // Close the transaction unless a stroke or wheel burst is still going. A nudge closes its own.
         if (event.type === 'dragend' || event.nudge
             || (event.type !== 'dragstart' && event.type !== 'drag' && event.type !== 'wheel')) endTxn();
+
+        // A proximity driver may have moved the hovered row.
+        if (publishHover()) shouldRender = true;
 
         if (shouldRender) {
             update();

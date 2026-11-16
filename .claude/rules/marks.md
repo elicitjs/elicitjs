@@ -26,6 +26,7 @@ Decide by the data model, not the look. A new mark when the data model changes; 
 - Series marks set `seriesKey`, `order`, `supportsSeries: true`.
 - Orientation: answer through `resolveValueAxis` (`plot/mark.js`) with the `extent`/`single` arguments; take `orientation: 'horizontal' | 'vertical'` ('vertical' = value runs along y); export `fooX`/`fooY` as `foo({ ...o, orientation })` where there is a natural direction. Variants are spec keywords.
 - Don't set `pointerEvents` to make a mark inert; the engine does it.
+- A node's `index` is a dataset row index and nothing else: effects, hover and selection all key on it. Chrome that draws its own data (`geoBasemap`'s shapes, `geoTile`'s tiles) stamps no `index` and declares `views: 'state'`, so the state and ghost passes skip it.
 
 ## Marks are inert
 

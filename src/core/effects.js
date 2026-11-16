@@ -1,6 +1,7 @@
 // @ts-check
 import { color as d3color } from 'd3';
 import { measureText } from './measure.js';
+import { warn } from './dev.js';
 // effects.js — interaction effects: transient feedback for an interaction's state
 // (hovered, selected, target, grabbed), separate from style channels and guides.
 // See .claude/rules/guides-effects-rendering.md.
@@ -13,7 +14,14 @@ import { measureText } from './measure.js';
 //
 // Every state takes the same vocabulary; `false` disables it:
 //   { filter, opacity, fill, stroke, strokeWidth, cursor,
-//     outline: { color, darken, width, pad, dash, opacity } }
+//     outline: { color, darken, width, pad, dash, opacity },
+//     others: { filter, opacity, fill, stroke, strokeWidth },
+//     neighbours }
+//
+// A state's own style is its highlight: how rows in the state look. `others` is
+// the mute: how rows in no state look while this state has a row. `neighbours`
+// extends the highlight to the row's linked rows (network / hierarchy data).
+// `hovered` also takes `link`: whether this chart's hover is the dataset's.
 
 
 /** The element-effect properties, applied as CSS style props by the renderer. */
@@ -42,6 +50,9 @@ export const DEFAULT_EFFECTS = {
     grabbed: { filter: 'brightness(0.82)' },
 };
 
+/** The mute a linked hover paints on the other rows, unless the spec sets `others`. */
+export const LINKED_OTHERS = { opacity: 0.3 };
+
 /**
  * The catchment ring a proximity driver draws at the pointer. It is a guide
  * (customized through `edit.guide.catchment`); this is its shared default look.
@@ -69,7 +80,11 @@ function resolveState(user, base) {
         : (d.outline || u.outline)
             ? { ...d.outline, ...(u.outline || {}), ...(u.outline ? { requested: true } : {}) }
             : null;
-    return { ...d, ...u, outline, enabled: true };
+    // `false` turns the mute off; unset leaves it to the default (see othersOf).
+    const others = u.others === false
+        ? false
+        : (d.others || u.others) ? { ...(d.others || {}), ...(u.others || {}) } : undefined;
+    return { ...d, ...u, outline, others, enabled: true };
 }
 
 /**
@@ -87,8 +102,39 @@ export function resolveEffects(user = {}, base = DEFAULT_EFFECTS) {
     for (const state of EFFECT_STATES) {
         // A state the theme omits falls back to the built-in look.
         out[state] = resolveState(spec[state], d[state] || DEFAULT_EFFECTS[state]);
+        const s = out[state];
+        if (state !== 'hovered' && s.link != null) {
+            warn(`effects:link:${state}`, `effects.${state}.link: only "hovered" takes "link"; ignored. The selection is always shared by the charts of a dataset.`);
+        }
+        if (s.others && s.others.outline) {
+            warn(`effects:others:outline:${state}`, `effects.${state}.others.outline: "others" restyles the other rows (opacity, filter, fill, stroke, strokeWidth) and draws no outline; ignored.`);
+        }
+    }
+    const link = out.hovered.link;
+    if (link != null && link !== true && link !== false && link !== 'receive') {
+        warn('effects:link:value', `effects.hovered.link: expected true, false or "receive", got ${JSON.stringify(link)}; using the default.`);
+        out.hovered.link = undefined;
     }
     return out;
+}
+
+/**
+ * The mute a state paints on rows in no state, or null. A linked hover fades the
+ * other rows by default.
+ * @param {any} state a resolved state config
+ * @param {boolean} [linked] is this the `hovered` state of a chart that shows the dataset's hover?
+ * @returns {Record<string, any> | null}
+ */
+export function othersOf(state, linked = false) {
+    if (!state || state.enabled === false || state.others === false) return null;
+    const others = state.others || (linked ? LINKED_OTHERS : null);
+    if (!others) return null;
+    /** @type {Record<string, any>} */
+    const props = {};
+    for (const key of ELEMENT_EFFECT_PROPS) {
+        if (key !== 'cursor' && others[key] != null) props[key] = others[key];
+    }
+    return Object.keys(props).length ? props : null;
 }
 
 /**

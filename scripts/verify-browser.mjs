@@ -4993,10 +4993,11 @@ async function main() {
                 cx1.every((x, i) => x !== cx0[i]) && cy1.every((y, i) => y === cy0[i]), `${cx0} -> ${cx1}`);
             const yearDot = page.locator(`${dsChart('share-a-column', 3)} svg circle.mark`).nth(3);
             await yearDot.scrollIntoViewIfNeeded();
-            const inflLine0 = await attrs(`${dsChart('share-a-column', 2)} svg circle`, 'cy');
+            // `.mark` leaves out the linked-hover outline, which follows the hovered year.
+            const inflLine0 = await attrs(`${dsChart('share-a-column', 2)} svg circle.mark`, 'cy');
             await dragFrom(...centre(await yearDot.boundingBox()), -40, -30);
             const ec2 = await dsData('share-a-column');
-            const inflLine1 = await attrs(`${dsChart('share-a-column', 2)} svg circle`, 'cy');
+            const inflLine1 = await attrs(`${dsChart('share-a-column', 2)} svg circle.mark`, 'cy');
             check('dataset: a scatter drag writes both columns of one year',
                 ec2[3].unemployment < ec1[3].unemployment - 0.3 && ec2[3].inflation > ec1[3].inflation + 0.3
                     && ec2.every((d, i) => i === 3 || JSON.stringify(d) === JSON.stringify(ec1[i])),
@@ -5043,8 +5044,9 @@ async function main() {
             await page.locator(dsChart('view', 2)).scrollIntoViewIfNeeded();
             check('dataset: the map and the bars share one dataset', await sameDataset('view', 2));
             const areaFills = () => attrs(`${dsChart('view', 1)} svg path.mark-line`, 'fill');
-            const mapInert = await page.$$eval(`${dsChart('view', 1)} svg path.mark-line`, (ps) => ps.length > 0 && ps.every((p) => p.style.pointerEvents === 'none'));
-            check('dataset: the view map takes no pointer events', mapInert);
+            // The map answers hover (its hover is linked) but nothing on it is editable.
+            const mapInert = await page.$$eval(`${dsChart('view', 1)} svg path.mark-line`, (ps) => ps.length > 0 && ps.every((p) => !p.__data__.editable));
+            check('dataset: the view map has no editable node', mapInert);
             const vw0 = await dsData('view');
             const f0 = await areaFills();
             const vb = await barOf('view', 2, 0); // Arbutus Ridge, negative
@@ -5121,6 +5123,43 @@ async function main() {
             check('dataset: Undo then removes the place from both charts',
                 JSON.stringify(hy3) === JSON.stringify(hy0) && nb3 === 2 && (await pinR()).length === 2, `${hy3.length} rows, ${nb3} bars`);
             check('dataset: Undo disables at the start of the shared history', await hUndo.isDisabled());
+
+            // #hover: draggable bars and a view-only scatter. Neither sets `effects`.
+            await page.locator(dsChart('hover', 2)).scrollIntoViewIfNeeded();
+            const hovered = () => page.$eval(dsChart('hover', 1), (e) => e.__chart.getHover());
+            const fadedBars = () => page.$$eval(`${dsChart('hover', 1)} svg rect.mark`, (rs) =>
+                rs.filter((r) => r.style.opacity !== '' && Number(r.style.opacity) < 1).map((r) => r.__data__.index).sort());
+            const fadedDots = () => page.$$eval(`${dsChart('hover', 2)} svg circle.mark`, (cs) =>
+                cs.filter((c) => c.style.opacity !== '' && Number(c.style.opacity) < 1).map((c) => c.__data__.index).sort());
+            const outlinesIn = (n) => page.$$eval(`${dsChart('hover', n)} svg .effects-layer *`, (els) => els.length);
+            const hv0 = JSON.stringify(await dsData('hover'));
+            const dot = await page.$$eval(`${dsChart('hover', 2)} svg circle.mark`, (cs) => {
+                const b = cs.find((c) => c.__data__ && c.__data__.index === 3).getBoundingClientRect();
+                return { x: b.x, y: b.y, width: b.width, height: b.height };
+            });
+            await page.mouse.move(...centre(dot));
+            await page.waitForTimeout(150);
+            check('hover link: a view-only dot sets the dataset hover', (await hovered()) === 3, String(await hovered()));
+            check('hover link: the same row is outlined in the bar chart', (await outlinesIn(1)) >= 1 && (await outlinesIn(2)) >= 1);
+            check('hover link: the other bars fade', JSON.stringify(await fadedBars()) === '[0,1,2,4,5]', JSON.stringify(await fadedBars()));
+            check('hover link: the other dots fade', JSON.stringify(await fadedDots()) === '[0,1,2,4,5]', JSON.stringify(await fadedDots()));
+            await page.mouse.move(...centre(await barOf('hover', 1, 1)));
+            await page.waitForTimeout(150);
+            check('hover link: a bar hover reaches the scatter', (await hovered()) === 1 && JSON.stringify(await fadedDots()) === '[0,2,3,4,5]',
+                `${await hovered()} ${JSON.stringify(await fadedDots())}`);
+            {
+                const sb = await page.locator(`${dsChart('hover', 2)} svg`).boundingBox();
+                await page.mouse.move(sb.x + 3, sb.y + 3);
+                await page.waitForTimeout(150);
+            }
+            check('hover link: leaving the row clears it in both charts',
+                (await hovered()) === null && (await fadedBars()).length === 0 && (await fadedDots()).length === 0);
+            check('hover link: hovering wrote no data', JSON.stringify(await dsData('hover')) === hv0);
+            // A press still drags a bar while the hover is linked.
+            const hb = await barOf('hover', 1, 0);
+            await dragFrom(hb.x + hb.width / 2, hb.y + 2, 0, 40);
+            check('hover link: a linked bar still drags', (await dsData('hover'))[0].rent < JSON.parse(hv0)[0].rent - 100,
+                String((await dsData('hover'))[0].rent));
         }
 
         check('no page/console errors', errors.length === 0, errors.slice(0, 3).join(' | '));

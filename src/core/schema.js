@@ -383,7 +383,7 @@ export function denormalizeSchema(spec) {
  * @param {import('../types').FieldSchema} field the `ref` field's schema
  * @returns {{ table: string, field: string } | null} null when it cannot be resolved
  */
-function refTargetOf(spec, field) {
+export function refTargetOf(spec, field) {
     const to = field && typeof field.to === 'string' ? field.to : null;
     const defaultTable = spec.byRole.nodes || spec.primary;
 

@@ -1370,7 +1370,7 @@ export class D3Renderer {
       .style(
         "pointer-events",
         (/** @type {any} */ d) =>
-          d.pointerEvents || (d.editable ? "auto" : "none"),
+          d.pointerEvents || (d.editable || d.hoverable ? "auto" : "none"),
       )
       .attr("d", (/** @type {any} */ d) => {
         if (d.d) return d.d;

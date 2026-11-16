@@ -5,10 +5,11 @@ import { warn } from './dev.js';
 import { createTables } from './engine/tables.js';
 import { createHistory } from './engine/history.js';
 import { createSelection } from './engine/selection.js';
+import { createHover } from './engine/hover.js';
 
 /**
  * The data side of the engine: schema, rows, context, lock, constraints, undo
- * history, selection and the `change` / `select` listeners. Charts read and
+ * history, selection, hover and the `change` / `select` / `hover` listeners. Charts read and
  * write it; it knows them only through the hooks they attach. `api` is the
  * public `Dataset`.
  */
@@ -33,6 +34,7 @@ import { createSelection } from './engine/selection.js';
  * @property {() => boolean} settles  can this chart settle a hierarchy (it draws node boxes)?
  * @property {() => any} snapshot  the chart's own state an undo step keeps (its size)
  * @property {(snap: any) => void} restore  put that state back on undo / redo
+ * @property {() => boolean} showsHover  does this chart paint the dataset's hover?
  * @property {(what: 'preview' | 'rows' | 'reseed') => void} drop  drop state that no
  *   longer matches the data. 'preview': the uncommitted preview (a domain change).
  *   'rows': also what indexes rows (hover, grab, driver sessions, a stroke), after
@@ -48,6 +50,9 @@ import { createSelection } from './engine/selection.js';
  * @property {() => void} notifyChange  after a commit: redraw the other charts, fire `change`
  * @property {(sel: any, table?: string) => boolean} commitSelectionEdit  a selection edit;
  *   redraws the other charts when it moved
+ * @property {(row: { table: string, index: number } | null) => boolean} commitHover  the row
+ *   this chart's pointer is over, or null when it left; redraws the other charts when it moved
+ * @property {() => boolean} linked  do two or more charts draw this dataset?
  * @property {() => void} recordHistory  before a commit (engine/history.js)
  * @property {(type: string) => void} gestureTxn
  * @property {() => void} endTxn
@@ -118,9 +123,10 @@ export function createDataset(spec, makeChart) {
         }
     };
 
-    // `change` per committed edit; `select` on a selection change (no data moved).
-    /** @type {{ change: Set<Function>, select: Set<Function> }} */
-    const listeners = { change: new Set(), select: new Set() };
+    // `change` per committed edit; `select` and `hover` on a selection or hover
+    // change (no data moved).
+    /** @type {{ change: Set<Function>, select: Set<Function>, hover: Set<Function> }} */
+    const listeners = { change: new Set(), select: new Set(), hover: new Set() };
 
     // Notify a committed change; undo/redo notify through it too.
     const notifyChange = () => {
@@ -136,24 +142,47 @@ export function createDataset(spec, makeChart) {
         update: refresh,
     });
 
+    // The hovered row, shared by the charts whose hover is linked (engine/hover.js).
+    const { api: hoverApi, ...hoverFns } = createHover(state, {
+        schemaSpec, listeners, reportedRows, rowIndexOf, reportedIndexOf, update: refresh,
+    });
+    // The chart whose pointer set the hover. Only it clears the hover by leaving.
+    /** @type {ChartHook | null} */
+    let hoverOwner = null;
+    // Row indices moved under the hover: drop it. The caller redraws.
+    const clearHover = () => { hoverOwner = null; hoverFns.commitHover(null); };
+
     // One snapshot per gesture (engine/history.js).
-    const history = createHistory(state, { schemaSpec, charts, layout, isContextRow, notifyChange, update: refresh });
+    const history = createHistory(state, {
+        schemaSpec, charts, layout, isContextRow, update: refresh,
+        notifyChange: () => { clearHover(); notifyChange(); },
+    });
+
+    // Hover links once a second chart draws the dataset, so redraw the others
+    // when the count crosses that line. Deferred: a chart may not have rendered yet.
+    /** @param {ChartHook | null} but */
+    const relink = (but) => setTimeout(() => { for (const c of [...charts]) if (c !== but) c.update(); }, 0);
 
     // Attach a chart; returns its port. Rendering the other charts never commits,
     // so a fan-out cannot loop back.
     /** @param {ChartHook} hook @returns {ChartPort} */
     const attach = (hook) => {
         charts.push(hook);
+        if (charts.length === 2) relink(hook);
         return {
             detach: () => {
                 const i = charts.indexOf(hook);
                 if (i >= 0) charts.splice(i, 1);
+                if (hoverOwner === hook) clearHover();
+                if (i >= 0 && charts.length === 1) relink(null);
                 // The rows keep its layout; no chart re-settles them until a commit.
                 if (layout.owner === hook) layout.owner = null;
             },
             notifyChange: () => {
                 // A commit settles in the committing chart's pixels (compute.js).
                 if (hook.settles()) layout.owner = hook;
+                // Another chart's hover names rows this commit may have moved.
+                if (hoverOwner !== hook) clearHover();
                 refreshOthers(hook, 'rows');
                 notifyChange();
             },
@@ -162,6 +191,15 @@ export function createDataset(spec, makeChart) {
                 if (moved) for (const c of [...charts]) if (c !== hook) c.update();
                 return moved;
             },
+            commitHover: (row) => {
+                // A chart that leaves a row clears only the hover it set.
+                if (!row && hoverOwner !== hook) return false;
+                const moved = hoverFns.commitHover(row);
+                hoverOwner = row ? hook : null;
+                if (moved) for (const c of [...charts]) if (c !== hook && c.showsHover()) c.update();
+                return moved;
+            },
+            linked: () => charts.length > 1,
             recordHistory: () => history.recordHistory(hook),
             gestureTxn: (type) => history.gestureTxn(type, hook),
             endTxn: () => history.endTxn(hook),
@@ -205,6 +243,7 @@ export function createDataset(spec, makeChart) {
         layout.pending = true;
         for (const c of charts) c.drop('reseed');
         selected.clear(); // a reseed's row indices are new; drop the old selection
+        clearHover();
         // A reseed is a new starting point, so undo history is cleared.
         history.reset();
         refresh();
@@ -293,20 +332,22 @@ export function createDataset(spec, makeChart) {
         history.endTxn();
         // Data from outside: every chart redraws; the first to render settles a hierarchy.
         layout.pending = true;
+        clearHover();
         refreshOthers(null, 'reseed');
         notifyChange();
         return true;
     };
 
-    // Subscribe to `change` or `select`; returns an unsubscribe function.
+    // Subscribe to `change`, `select` or `hover`; returns an unsubscribe function.
     /** @param {string} type @param {Function} cb */
     const on = (type, cb) => {
-        if (type !== 'change' && type !== 'select') {
-            warn(`on:${type}`, `on("${type}"): no such event. A dataset fires "change" and "select"; a chart also fires "stage".`);
+        if (type !== 'change' && type !== 'select' && type !== 'hover') {
+            warn(`on:${type}`, `on("${type}"): no such event. A dataset fires "change", "select" and "hover"; a chart also fires "stage".`);
             return () => false;
         }
-        listeners[type].add(cb);
-        return () => listeners[type].delete(cb);
+        const set = listeners[/** @type {'change' | 'select' | 'hover'} */ (type)];
+        set.add(cb);
+        return () => set.delete(cb);
     };
 
     /** @type {import('../types').Dataset} */
@@ -325,6 +366,7 @@ export function createDataset(spec, makeChart) {
         canRedo: history.canRedo,
         on,
         ...selectionApi,
+        ...hoverApi,
     };
 
     const dataset = {
@@ -340,6 +382,7 @@ export function createDataset(spec, makeChart) {
         selectionPrimary: selectionFns.selectionPrimary,
         selectionList: selectionFns.selectionList,
         selectionApi,
+        hoverRow: hoverFns.hoverRow,
         listeners,
         // Commits, history and selection edits go through a chart's port.
         attach,

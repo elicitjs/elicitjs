@@ -1900,7 +1900,9 @@ export interface Mark {
    * edit/route.js ask the question directly rather than inferring guide-ness from
    * an absent channel map.
    */
-  views?: 'data' | 'scale';
+  // `'state'` on a mark is chrome that draws no dataset row (`geoBasemap`,
+  // `geoTile`): no hover, selection, effect or ghost reaches it.
+  views?: 'data' | 'scale' | 'state';
 
   /** Which guide, for the engine's more specific checks. Implies `views: 'scale'`. */
   isAxis?: boolean;
@@ -2030,7 +2032,8 @@ export interface FeatureNode {
   // renderer shows an interactive cursor on it.
   editable?: boolean;
   // Answers the pointer for HOVER only (a node mark whose edit lives on its
-  // ports): no cursor, no drag, never a hit-test target.
+  // ports, or any row's node when the chart's hover is row-wide): no cursor, no
+  // drag, never a hit-test target. A press on it is routed as a plane gesture.
   hoverable?: boolean;
   // Set by the engine when the node's row is READ-ONLY (DatasetSpec.lock): the node
   // is never `editable`, is pointer-transparent, and proximity picking skips it. A
@@ -2431,7 +2434,7 @@ export interface MotionSpec {
 
 export interface EffectsSpec {
   /** Pointer is over / proximity has selected this mark. */
-  hovered?: false | string | EffectStyle;
+  hovered?: false | string | HoveredEffectStyle;
   /** Row is in `ui.selection`. */
   selected?: false | string | EffectStyle;
   /** Where the thing being dragged would LAND if released now — a container of a
@@ -2441,9 +2444,22 @@ export interface EffectsSpec {
   grabbed?: false | string | EffectStyle;
 }
 
+// The `hovered` state also says whether this chart's hover is the dataset's.
+export interface HoveredEffectStyle extends EffectStyle {
+  /** `true`: the row hovered here is hovered in every linked chart of the dataset,
+   *  and theirs here. `'receive'`: this chart shows the others' hover and sends
+   *  none. `false`: hover stays in this chart. Default: `true` when two or more
+   *  charts draw the dataset, else `false`. A linked hover lights the row in every
+   *  mark over its table, on view-only marks too, and fades the other rows unless
+   *  `others` says otherwise. */
+  link?: boolean | 'receive';
+}
+
 /**
  * Paint vocabulary for one effect state. The first six RESTYLE the mark's own node;
- * `outline` adds a padded overlay around it. Both halves work for all three states.
+ * `outline` adds a padded overlay around it. Both halves work for every state.
+ * Together they are the state's HIGHLIGHT: how rows in the state look. `others` is
+ * the MUTE: how the remaining rows look meanwhile.
  * `filter` and `cursor` are SVG-only (a canvas has no element to hover and no
  * per-shape filter); everything else paints in both renderers.
  */
@@ -2472,6 +2488,22 @@ export interface EffectStyle {
     dash?: string | null;
     opacity?: number;
   };
+  /** The mute: a restyle for rows in NO state, while this state has at least one
+   *  row in their table. `false` turns it off. Unset: nothing, except a linked
+   *  hover, which fades the other rows (`{ opacity: 0.3 }`). */
+  others?: false | {
+    filter?: string | null;
+    opacity?: number;
+    fill?: string;
+    stroke?: string;
+    strokeWidth?: number;
+  };
+  /** NETWORK AND HIERARCHY DATASETS ONLY. The highlight also covers the rows linked
+   *  to the row in this state: a node's links, a link's two nodes, and everything
+   *  nested inside a hierarchy node. A dataset with no `ref` column has no
+   *  neighbours; setting this there warns and does nothing. Setting it on
+   *  `hovered` makes hover light the row in every mark over its table. */
+  neighbours?: boolean;
 }
 
 // What `Elicit.dataset(spec)` reads: the rows, their schema and the invariants
@@ -2695,15 +2727,26 @@ export interface Dataset {
   redo(): boolean;
   canUndo(): boolean;
   canRedo(): boolean;
-  // Subscribe to committed changes ('change': (data)) or selection changes
-  // ('select': (primaryIndex | null, indices[])). Selection is not the belief data,
+  // Subscribe to committed changes ('change': (data)), selection changes
+  // ('select': (primaryIndex | null, indices[])) or hover changes ('hover': (row |
+  // null), the dataset's hovered row as getHover reports it). Selection is not the belief data,
   // so it has its OWN event — a 'select' listener hears it, 'change'/getData never
   // do. Returns an unsubscribe function.
   //
   // 'select' second argument: bare row indices for a single-table dataset (a bare
   // index names a row unambiguously there), `{ table, index }` for a multi-table
   // one — where a number alone would name a row in no particular table.
-  on(type: 'change' | 'select', cb: (...args: any[]) => void): () => void;
+  on(type: 'change' | 'select' | 'hover', cb: (...args: any[]) => void): () => void;
+  // ── Hover: the one row under the pointer in a chart whose hover is linked
+  // (effects.hovered.link), shown by every linked chart. Interface state like the
+  // selection: no 'change', no undo step.
+  //
+  // The hovered row: its index in a single-table dataset, `{ table, index }` in a
+  // multi-table one, or null.
+  getHover(): number | { table: string; index: number } | null;
+  // Hover a row of the primary table from outside a chart (a table row beside the
+  // charts, say). null / out-of-range clears. Returns whether the hover moved.
+  hover(index: number | null): boolean;
   // ── Selection: transient pipeline state, NOT the belief data. Its own tiny API
   // beside getData/setData because a `selected` data column is exactly what this
   // replaces (see edit.select). All routes go through one applySelection, so an
@@ -2744,9 +2787,9 @@ export interface Chart extends Omit<Dataset, 'chart' | 'on'> {
   dom(): HTMLDivElement;
   // The dataset this chart reads and writes.
   dataset: Dataset;
-  // 'change' and 'select' are the dataset's (see Dataset.on); 'stage' is this
-  // chart's: (stageIndex, stageLabel?) on a stage change.
-  on(type: 'change' | 'stage' | 'select', cb: (...args: any[]) => void): () => void;
+  // 'change', 'select' and 'hover' are the dataset's (see Dataset.on); 'stage' is
+  // this chart's: (stageIndex, stageLabel?) on a stage change.
+  on(type: 'change' | 'stage' | 'select' | 'hover', cb: (...args: any[]) => void): () => void;
   // Multi-stage controls (see ChartSpec.stage). getStage reads the current index.
   getStage(): number;
   // Optional label for the current stage (from ChartSpec.stageLabels), or null.

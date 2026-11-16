@@ -244,9 +244,11 @@ export function createChartApi(chart, deps) {
         selectAll: dataset.selectAll,
         selectWhere: dataset.selectWhere,
         clearSelection: dataset.clearSelection,
+        hover: dataset.hover,
+        getHover: dataset.getHover,
         dataset,
         dom: () => container,
-        // `stage` is this chart's; `change` and `select` are the dataset's.
+        // `stage` is this chart's; `change`, `select` and `hover` are the dataset's.
         on(type, cb) {
             if (type !== 'stage') return dataset.on(type, cb);
             listeners.stage.add(cb);

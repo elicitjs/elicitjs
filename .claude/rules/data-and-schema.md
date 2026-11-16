@@ -36,6 +36,7 @@ paths:
 - Name ≠ role. Defaults resolve by role so an argument map can call its tables `claims`/`supports` and write no `table:`. Never hard-code `'nodes'`/`'links'`/`'data'` as a lookup key — go through `byRole`.
 - Marks, edits and constraints each still see one array: the engine hands `tableOf(feature)`. Never pass a table map into a mark or edit. The one exception is `build`'s optional 5th argument, for `link` alone.
 - A selection key is qualified by table (node 3 ≠ link 3); the index-based public API means the primary table.
+- The dataset also holds the linked hover: one `{ table, index }` row with an owning chart (`engine/hover.js`). Only the owner clears it by leaving; another chart's commit, `set`, `setData` and undo clear it. It fires `hover`, never `change`.
 - A hierarchy's node rows are settled in one chart's pixels. Only the layout owner (`layout.owner` in `core/dataset.js`: the chart that committed, or the first to render after outside data) re-settles them at render time; other charts draw the stored boxes.
 - `ds.set(field, value, { index, table })` writes an existing cell through `checkRows` (constraints, then the lock): one history step, every chart redrawn. No edit runs, so no edit-scoped `constrain`.
 

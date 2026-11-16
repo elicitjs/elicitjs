@@ -265,7 +265,8 @@ export function hitTest(marks, px, py, hover = false) {
     for (let i = list.length - 1; i >= 0; i--) {
         const mark = list[i];
         if (!mark || !(mark.editable || (hover && mark.hoverable))) continue;
-        if (mark.locked || mark.guide || mark.background) continue;
+        // A locked row still answers hover when its chart's hover is row-wide.
+        if ((mark.locked && !(hover && mark.hoverable)) || mark.guide || mark.background) continue;
         if (mark.pointerEvents === 'none') continue;
         if (containsPoint(mark, px, py)) return mark;
     }
