@@ -2,33 +2,25 @@
 import { collectEdits, resolveChannels } from '../../edit/route.js';
 import { markCenter } from '../../edit/shared.js';
 import { encodeChannel } from '../../plot/mark.js';
-import { validateTables, denormalizeSchema, normalizeData, enforceRefs, fieldsOf } from '../schema.js';
+import { fieldsOf } from '../schema.js';
 import { axisOf, pointerForChannel } from '../encoding.js';
-import { nestingOf, enforceTree } from '../hierarchy.js';
 import { warn } from '../dev.js';
 
 /**
  * @typedef {object} ApiDeps
+ * @property {import('../../types').Dataset} dataset  the public dataset this chart draws
+ * @property {() => void} detach  detach the chart from its dataset
  * @property {any[]} features
- * @property {any} ui
- * @property {{ change: Set<Function>, stage: Set<Function>, select: Set<Function> }} listeners
+ * @property {{ stage: Set<Function> }} listeners
  * @property {Record<string, any[]>} featureNodes
  * @property {import('../../types').SchemaSpec} schemaSpec
- * @property {import('../../types').SchemaSpec} seedSchemaSpec
  * @property {'fixed' | 'scale' | 'reflow'} mode
- * @property {HTMLElement} container
- * @property {ReturnType<typeof import('./history.js').createHistory>} history
- * @property {ReturnType<typeof import('./selection.js').createSelection>} selection
+ * @property {HTMLDivElement} container
  * @property {ReturnType<typeof import('./stages.js').createStages>} stages
  * @property {(feature: any) => any[]} tableOf
- * @property {() => any} shapeData
- * @property {(name: string, d: any) => boolean} isContextRow
  * @property {(name: string, i: number) => number} rowIndexOf
- * @property {() => void} recountSeed
  * @property {(feature: any, node: any, index?: number | null) => import('../../types').ScaleMap | null} frameScalesFor
- * @property {(result: import('../../types').DomainEditResult, table?: string) => boolean} commitDomainEdit
  * @property {(edit: import('../../types').Edit) => boolean} rowTargeted
- * @property {() => void} endTxn
  * @property {() => boolean} measure
  * @property {() => void} stopMotion  cancel a pending animation frame
  * @property {(event: any) => void} handleEvent
@@ -36,99 +28,26 @@ import { warn } from '../dev.js';
  */
 
 /**
- * Attaches the public `el.*` API: data, schema, domains, selection, external
- * control, undo, stages, listeners and teardown.
+ * Builds the public `Chart`: its node, external control, stages, listeners and
+ * teardown, plus its dataset's methods, delegated.
  *
- * @param {import('../../types').ElicitElement} el
  * @param {import('./state.js').ChartState} chart
  * @param {ApiDeps} deps
+ * @returns {import('../../types').Chart}
  */
-export function attachApi(el, chart, deps) {
+export function createChartApi(chart, deps) {
     const {
-        features, ui, listeners, featureNodes, schemaSpec, seedSchemaSpec, mode, container, history, selection, stages, tableOf, shapeData, isContextRow, rowIndexOf, recountSeed, frameScalesFor, commitDomainEdit, rowTargeted, endTxn, measure, stopMotion,
+        dataset, detach, features, listeners, featureNodes, schemaSpec, mode, container, stages, tableOf, rowIndexOf, frameScalesFor, rowTargeted, measure, stopMotion,
     } = deps;
     const handleEvent = (/** @type {any} */ event) => deps.handleEvent(event);
     const update = () => deps.update();
-
-    // A deep copy; structuredClone keeps Date values.
-    el.getData = () => structuredClone(shapeData());
-    // A deep copy of the live schema, in the spelling the author gave.
-    el.getSchema = () => structuredClone(denormalizeSchema(schemaSpec));
-    // Replaces the dataset and re-seeds. Skips constraints (they gate gestures);
-    // under `lock: 'seed'` the new rows become the read-only seed.
-    el.setData = (/** @type {any[] | Record<string, any[]>} */ data) => {
-        // A bare array is the primary table; an object names its tables.
-        const next = normalizeData(structuredClone(data ?? null), schemaSpec);
-        // Keep the context rows (same objects, so membership survives) ahead of
-        // the new rows.
-        for (const name of Object.keys(chart.contextRows)) {
-            const keep = (chart.tables[name] || []).filter((d) => isContextRow(name, d));
-            if (keep.length) next[name] = [...keep, ...(next[name] || [])];
-        }
-        chart.tables = next;
-        // A reseed is new seed data, so it gets the same contract check as spec.data.
-        validateTables(schemaSpec, chart.tables, 'setData()');
-        // A hierarchy gets the same ref and tree repairs a commit gets.
-        if (nestingOf(schemaSpec)) {
-            enforceRefs(schemaSpec, chart.tables);
-            enforceTree(schemaSpec, chart.tables);
-            chart.spaceNext = true;
-            chart.snapNext = true;
-            chart.stroking = false;
-            chart.strokeNodes = null;
-            chart.strokeRow = null;
-        }
-        recountSeed();
-        ui.preview = null;
-        ui.hover = null;   // the pointer's row index is new too
-        ui.grab = null;    // and any in-flight grab points at a row that just moved
-        ui.selection.clear(); // a reseed's row indices are new; drop the old selection
-        // A reseed is a new starting point, so undo history is cleared.
-        history.reset();
-        update();
-    };
-
-    // Sets a field's domain through the same commit as a domain edit (undoable).
-    // `null` restores the declared domain.
-    el.setDomain = (/** @type {string} */ field, /** @type {any[] | null} */ domain, options = {}) => {
-        const table = options && options.table != null ? options.table : schemaSpec.primary;
-        const t = schemaSpec.tables[table];
-        if (!t || !t.fields[field]) {
-            warn(
-                `setDomain:field:${table}.${field}`,
-                `el.setDomain("${field}"): table "${table}" declares no field "${field}". ` +
-                `Declared fields: ${t ? Object.keys(t.fields).map((f) => `"${f}"`).join(', ') : 'none'}.`
-            );
-            return false;
-        }
-        const seed = seedSchemaSpec.tables[table] && seedSchemaSpec.tables[table].fields[field];
-        const next = domain == null ? (seed && seed.domain) : domain;
-        if (!Array.isArray(next)) {
-            warn(`setDomain:domain:${field}`, `el.setDomain("${field}"): no domain to set (none declared to restore).`);
-            return false;
-        }
-        endTxn();
-        commitDomainEdit({ domains: { [field]: structuredClone(next) } }, table);
-        endTxn();
-        update();
-        return true;
-    };
-
-    // Selection API (see engine/selection.js).
-    el.getSelection = selection.api.getSelection;
-    el.getSelectionAll = selection.api.getSelectionAll;
-    el.select = selection.api.select;
-    el.toggleSelection = selection.api.toggleSelection;
-    el.selectAll = selection.api.selectAll;
-    el.selectWhere = selection.api.selectWhere;
-    el.clearSelection = selection.api.clearSelection;
 
     // External control synthesizes renderer-shaped events and feeds them to the
     // one `handleEvent`, so constraints, undo and listeners all run as usual.
 
     // Injects a renderer-shaped event: { type, node?, x?, y?, value?, nudge?, rawEvent? },
     // with `x`/`y` in inner (margin-subtracted) pixels.
-    el.emit = (/** @type {any} */ event) => handleEvent(event);
+    const emit = (/** @type {any} */ event) => handleEvent(event);
 
     // Finds the (feature, edit) with this `name`. Scanned each call to track stages.
     const findNamedEdit = (/** @type {string} */ name) => {
@@ -145,8 +64,8 @@ export function attachApi(el, chart, deps) {
                 if (!hit) hit = { feature, edit };
             }
         }
-        if (distinct.size === 0) warn(`control:none:${name}`, `el.control("${name}"): no edit is named "${name}".`);
-        if (distinct.size > 1) warn(`control:many:${name}`, `el.control("${name}"): ${distinct.size} different edits share the name "${name}"; driving the first.`);
+        if (distinct.size === 0) warn(`control:none:${name}`, `chart.control("${name}"): no edit is named "${name}".`);
+        if (distinct.size > 1) warn(`control:many:${name}`, `chart.control("${name}"): ${distinct.size} different edits share the name "${name}"; driving the first.`);
         return hit;
     };
 
@@ -156,7 +75,7 @@ export function attachApi(el, chart, deps) {
 
     // A handle bound to a named edit and datum. It routes by the edit's `gesture`;
     // the engine dispatch never knows a controller exists.
-    el.control = (/** @type {string} */ name, /** @type {number} */ index = 0) => {
+    const control = (/** @type {string} */ name, /** @type {number} */ index = 0) => {
         // `index` is row i of getData(); translate it to the mark's table.
         const rowOf = (/** @type {any} */ feature) => rowIndexOf(feature ? feature.table : schemaSpec.primary, index);
         // Encodes a value to the pointer that would set it, through the scales the
@@ -207,7 +126,7 @@ export function attachApi(el, chart, deps) {
         const drivable = (found, method) => {
             if (!found) return false;
             if (rowTargeted(found.edit)) return true;
-            warn(`control:plane:${name}`, `el.control("${name}").${method}(): this edit has pick: "${found.edit.pick}", which finds its target from the pointer, so a row index cannot drive it. Send the gesture with el.emit({ type, x, y }) in inner pixels instead.`);
+            warn(`control:plane:${name}`, `chart.control("${name}").${method}(): this edit has pick: "${found.edit.pick}", which finds its target from the pointer, so a row index cannot drive it. Send the gesture with chart.emit({ type, x, y }) in inner pixels instead.`);
             return false;
         };
 
@@ -221,11 +140,11 @@ export function attachApi(el, chart, deps) {
                 const node = nodeAt(feature, rowOf(feature));
                 // editName keeps a sibling edit on the same gesture from also firing.
                 if (edit.gesture === 'commit') {
-                    el.emit({ type: 'commit', node, value, editName: name, x: node ? node.cx : 0, y: node ? node.cy : 0 });
+                    emit({ type: 'commit', node, value, editName: name, x: node ? node.cx : 0, y: node ? node.cy : 0 });
                     return;
                 }
                 const { node: n, x, y } = dragPointer(feature, edit, value);
-                el.emit(live
+                emit(live
                     ? { type: 'drag', node: n, x, y, editName: name }
                     : { type: 'drag', node: n, x, y, nudge: true, editName: name });
             },
@@ -234,13 +153,15 @@ export function attachApi(el, chart, deps) {
                 const found = findNamedEdit(name);
                 if (!drivable(found, 'begin')) return;
                 live = true;
-                el.emit({ type: 'dragstart', node: nodeAt(found.feature, rowOf(found.feature)), editName: name });
+                // Press at the datum's own pixel, so a relative edit anchors there.
+                const { node, x, y } = dragPointer(found.feature, found.edit, undefined);
+                emit({ type: 'dragstart', node, x, y, editName: name });
             },
             end() {
                 const found = findNamedEdit(name);
                 live = false;
                 if (!found) return;
-                el.emit({ type: 'dragend', node: nodeAt(found.feature, rowOf(found.feature)), editName: name });
+                emit({ type: 'dragend', node: nodeAt(found.feature, rowOf(found.feature)), editName: name });
             },
             // Fires a value-less edit (cycle, remove, toggle) with its own gesture on
             // the datum's node, or with `gesture` if given.
@@ -248,12 +169,12 @@ export function attachApi(el, chart, deps) {
                 const found = findNamedEdit(name);
                 if (!drivable(found, 'fire')) return;
                 const g = gesture || found.edit.gesture || 'click';
-                el.emit({ type: g, node: nodeAt(found.feature, rowOf(found.feature)), editName: name });
+                emit({ type: g, node: nodeAt(found.feature, rowOf(found.feature)), editName: name });
             },
             // Raw passthrough, auto-scoped to this feature's node for the datum.
             emit(/** @type {any} */ event) {
                 const found = findNamedEdit(name);
-                el.emit({ node: found ? nodeAt(found.feature, rowOf(found.feature)) : undefined, ...event });
+                emit({ node: found ? nodeAt(found.feature, rowOf(found.feature)) : undefined, ...event });
             },
             // The values this channel accepts, read off its scale, for external UI.
             accepts() {
@@ -288,23 +209,6 @@ export function attachApi(el, chart, deps) {
         return handle;
     };
 
-    // Undo / redo one GESTURE (see engine/history.js).
-    el.canUndo = history.canUndo;
-    el.canRedo = history.canRedo;
-    el.undo = history.undo;
-    el.redo = history.redo;
-    // Subscribe to committed changes; returns an unsubscribe function.
-    el.on = (/** @type {'change' | 'stage' | 'select'} */ type, /** @type {Function} */ cb) => {
-        listeners[type].add(cb);
-        return () => listeners[type].delete(cb);
-    };
-
-    // Multi-stage controls (see engine/stages.js).
-    el.getStage = stages.api.getStage;
-    el.getStageLabel = stages.api.getStageLabel;
-    el.setStage = stages.api.setStage;
-    el.nextStage = stages.api.nextStage;
-
     // 'reflow' mode: re-render on container resize, once per frame, and only when
     // the size changed (so a render can't loop).
     /** @type {ResizeObserver | null} */
@@ -321,9 +225,45 @@ export function attachApi(el, chart, deps) {
         });
         ro.observe(container);
     }
-    // Disconnects the reflow observer.
-    el.destroy = () => {
-        if (ro) { ro.disconnect(); ro = null; }
-        stopMotion();
+
+    return {
+        // The dataset's methods, delegated (the same functions).
+        getData: dataset.getData,
+        getSchema: dataset.getSchema,
+        setData: dataset.setData,
+        setDomain: dataset.setDomain,
+        set: dataset.set,
+        undo: dataset.undo,
+        redo: dataset.redo,
+        canUndo: dataset.canUndo,
+        canRedo: dataset.canRedo,
+        getSelection: dataset.getSelection,
+        getSelectionAll: dataset.getSelectionAll,
+        select: dataset.select,
+        toggleSelection: dataset.toggleSelection,
+        selectAll: dataset.selectAll,
+        selectWhere: dataset.selectWhere,
+        clearSelection: dataset.clearSelection,
+        dataset,
+        dom: () => container,
+        // `stage` is this chart's; `change` and `select` are the dataset's.
+        on(type, cb) {
+            if (type !== 'stage') return dataset.on(type, cb);
+            listeners.stage.add(cb);
+            return () => listeners.stage.delete(cb);
+        },
+        // Multi-stage controls (see engine/stages.js).
+        getStage: stages.api.getStage,
+        getStageLabel: stages.api.getStageLabel,
+        setStage: stages.api.setStage,
+        nextStage: stages.api.nextStage,
+        emit,
+        control,
+        // Detaches from the dataset and disconnects the reflow observer.
+        destroy() {
+            detach();
+            if (ro) { ro.disconnect(); ro = null; }
+            stopMotion();
+        },
     };
 }

@@ -546,8 +546,8 @@ function writeValue(ctx) {
 
 /**
  * set — write the value carried on the `commit` gesture (`ctx.value`) into the
- * channel's field. External controls drive it with `el.control(name).set(value)`;
- * `el.control(name).accepts()` reads the scale's domain for valid choices.
+ * channel's field. External controls drive it with `chart.control(name).set(value)`;
+ * `chart.control(name).accepts()` reads the scale's domain for valid choices.
  *
  * Placed on any channel (`fill: { field:'group', edit: set() }`) or at mark level
  * (`edits: [set({ channels:['fill'] })]`).

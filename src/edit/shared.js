@@ -74,7 +74,7 @@ export function makeEdit(spec) {
         ...rest,
         ...(unverified.length ? { [UNVERIFIED]: unverified } : {}),
         type: spec.type,
-        // Handle for `el.control(name)`; null means not externally addressable.
+        // Handle for `chart.control(name)`; null means not externally addressable.
         name: spec.name || null,
         gesture: spec.gesture || 'drag',
         // The singular `channel` wins, so it overrides a factory's `channels` default.

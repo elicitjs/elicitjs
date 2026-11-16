@@ -16,28 +16,28 @@ function chart(extra = {}) {
         marks: [plot.barY({ channels: { x: { field: 'k' }, y: { field: 'v' } } })],
         ...extra,
     });
-    document.body.appendChild(el);
+    document.body.appendChild(el.dom());
     return el;
 }
-const sceneTransform = (el) => el.querySelector('g.scene-container').getAttribute('transform');
+const sceneTransform = (el) => el.dom().querySelector('g.scene-container').getAttribute('transform');
 
 describe('titles', () => {
     it('reserve space at the top and bottom, leaving the svg size alone', async () => {
         const plain = chart();
         const titled = chart({ title: 'Sales', subtitle: 'by region', caption: 'Source: survey' });
         await tick();
-        expect(titled.querySelector('svg').getAttribute('height')).toBe(plain.querySelector('svg').getAttribute('height'));
+        expect(titled.dom().querySelector('svg').getAttribute('height')).toBe(plain.dom().querySelector('svg').getAttribute('height'));
         expect(sceneTransform(plain)).toBe('translate(10,10)');
         const m = sceneTransform(titled).match(/translate\(([\d.]+),([\d.]+)\)/);
         expect(+m[2]).toBeGreaterThan(10);
-        const texts = [...titled.querySelectorAll('text')].map((t) => t.textContent);
+        const texts = [...titled.dom().querySelectorAll('text')].map((t) => t.textContent);
         expect(texts).toContain('Sales');
         expect(texts).toContain('by region');
         expect(texts).toContain('Source: survey');
-        const title = [...titled.querySelectorAll('text')].find((t) => t.textContent === 'Sales');
+        const title = [...titled.dom().querySelectorAll('text')].find((t) => t.textContent === 'Sales');
         expect(title.getAttribute('font-weight')).toBe('600');
         // The caption sits at the chart's bottom edge, below the author's margin (where an axis draws).
-        const caption = [...titled.querySelectorAll('text')].find((t) => t.textContent === 'Source: survey');
+        const caption = [...titled.dom().querySelectorAll('text')].find((t) => t.textContent === 'Source: survey');
         const top = +m[2];
         const plotBottom = 200 - top - 10; // outer height − effective top − author bottom margin... (scene y of the margin's end)
         expect(+caption.getAttribute('y')).toBeGreaterThan(plotBottom);
@@ -60,10 +60,10 @@ describe('gradient', () => {
     it('paints a bar through a <linearGradient> in <defs>', async () => {
         const el = chart({ marks: [plot.barY({ gradient: { stops: [[0, '#fff'], [1, '#00f']] }, channels: { x: { field: 'k' }, y: { field: 'v' } } })] });
         await tick();
-        const rects = [...el.querySelectorAll('rect.mark')];
+        const rects = [...el.dom().querySelectorAll('rect.mark')];
         expect(rects[0].getAttribute('fill')).toMatch(/^url\(#/);
-        expect(el.querySelectorAll('defs linearGradient').length).toBe(1);
-        expect(el.querySelectorAll('defs linearGradient stop').length).toBe(2);
+        expect(el.dom().querySelectorAll('defs linearGradient').length).toBe(1);
+        expect(el.dom().querySelectorAll('defs linearGradient stop').length).toBe(2);
     });
     it('an area band takes one too', async () => {
         const el = chart({
@@ -72,7 +72,7 @@ describe('gradient', () => {
             marks: [plot.areaY({ gradient: { stops: [[0, '#fff'], [1, '#f00']], direction: 'horizontal' }, channels: { x: { field: 'x' }, y: { field: 'y' } } })],
         });
         await tick();
-        expect(el.querySelector('path.mark-line').getAttribute('fill')).toMatch(/^url\(#/);
+        expect(el.dom().querySelector('path.mark-line').getAttribute('fill')).toMatch(/^url\(#/);
     });
 });
 
@@ -81,9 +81,9 @@ describe('a long caption', () => {
         const short = chart({ caption: 'Short.' });
         const long = chart({ caption: 'A much longer caption that will not fit on one line of a three hundred pixel wide chart, so it wraps.' });
         await tick();
-        const node = [...long.querySelectorAll('text')].find((t) => /much longer/.test(t.textContent));
+        const node = [...long.dom().querySelectorAll('text')].find((t) => /much longer/.test(t.textContent));
         expect(node.querySelectorAll('tspan').length).toBeGreaterThan(1);
-        const top = (el) => +el.querySelector('rect.plane').getAttribute('height');
+        const top = (el) => +el.dom().querySelector('rect.plane').getAttribute('height');
         expect(top(long)).toBeLessThan(top(short));
     });
 });

@@ -26,8 +26,10 @@ const chart = Elicit({
   ],
 });
 
-document.body.appendChild(chart);
+document.body.append(chart.dom());
 ```
+
+Several charts can read and write one dataset: `const ds = Elicit.dataset({ schema, data })`, then `ds.chart({ marks })` for each view.
 
 | | |
 |---|---|

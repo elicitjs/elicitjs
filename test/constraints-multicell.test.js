@@ -33,7 +33,7 @@ describe('snap', () => {
             constraints: [constraints.snap({ field: 't', step: day, origin: new Date(2020, 0, 1).getTime() })],
             marks: [plot.point({ channels: { x: { field: 't', edit: edit.move({ name: 'v' }) }, y: { field: 'k' } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         el.control('v', 0).set(new Date(2020, 0, 15, 13));
         const t = el.getData()[0].t;
@@ -49,7 +49,7 @@ describe('snap', () => {
             constraints: [constraints.ordering({ field: ['lo', 'hi'] }), constraints.snap({ field: ['lo', 'hi'], step: 5 })],
             marks: [plot.point({ channels: { x: { field: 'k' }, y: { field: 'lo', edit: edit.move({ name: 'lo' }) } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         el.control('lo', 0).set(33);
         const row = el.getData()[0];
@@ -67,7 +67,7 @@ describe('clamp', () => {
             constraints: [constraints.monotonic({ field: 'y', along: 'x' }), constraints.clamp({ field: 'y', max: 50 })],
             marks: [plot.lineY({ channels: { x: { field: 'x' }, y: { field: 'y', edit: edit.move({ name: 'v' }) } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         el.control('v', 0).set(80);
         const ys = el.getData().map((d) => d.y);
@@ -86,7 +86,7 @@ describe('maintainSum with a negative total', () => {
             constraints: [constraints.maintainSum({ field: 'v', total: -100, strategy: 'redistribute' })],
             marks: [plot.barY({ channels: { x: { field: 'k' }, y: { field: 'v', edit: edit.move({ name: 'v' }) } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         el.control('v', 0).set(-30);
         const vs = el.getData().map((d) => d.v);
@@ -104,7 +104,7 @@ describe('unique with unfilled rows', () => {
             constraints: [constraints.unique({ field: 'sport' })],
             marks: [plot.point({ channels: { x: { field: 'slot' }, y: { value: 50 }, fill: { field: 'sport', edit: edit.set({ name: 'pick' }) } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         el.control('pick', 0).set('run');
         expect(el.getData()[0].sport).toBe('run');
@@ -123,7 +123,7 @@ describe('monotonic beside a lock', () => {
             constraints: [constraints.monotonic({ field: 'y', along: 'x' })],
             marks: [plot.lineY({ channels: { x: { field: 'x' }, y: { field: 'y', edit: edit.move({ name: 'v' }) } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         el.control('v', 1).set(40);
         expect(el.getData().map((d) => d.y)).toEqual([50, 50, 50]);
@@ -140,7 +140,7 @@ describe('rank', () => {
             data: ['a', 'b', 'c', 'd', 'e'].map((name, i) => ({ name, rank: i + 1, len: 1 })),
             marks: [plot.barX({ channels: { y: { field: 'rank', edit: edit.rank({ name: 'r' }) }, x: { field: 'len' } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         el.control('r', 0).set(4);
         expect(el.getData().map((d) => d.rank)).toEqual([4, 1, 2, 3, 5]);
@@ -157,7 +157,7 @@ describe('brushSpan', () => {
             data: [{ k: 'a', lo: 40, hi: 60 }],
             ...extra,
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         return el;
     }
     it('keeps low below high through a body drag on a VERTICAL span, with ordering declared', async () => {
@@ -198,7 +198,7 @@ describe('spacing beside a clamp', () => {
             constraints: [constraints.spacing({ field: 'at', min: 8 }), constraints.clamp({ min: 0, max: 100, field: 'at' })],
             marks: [plot.tickX({ channels: { x: { field: 'at', edit: edit.move({ name: 't' }) } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         el.control('t', 0).set(99);
         const ats = el.getData().map((d) => d.at).sort((a, b) => a - b);
@@ -217,7 +217,7 @@ describe('clamp with no bounds over a column another mark draws', () => {
             constraints: [constraints.follow({ field: ['lo', 'hi'], lead: 'mean' }), constraints.clamp({ field: ['lo', 'mean', 'hi'] })],
             marks: [plot.point({ channels: { x: { field: 'k' }, y: { field: 'mean', edit: edit.move({ name: 'm' }) } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         el.control('m', 0).set(9);
         const r = el.getData()[0];

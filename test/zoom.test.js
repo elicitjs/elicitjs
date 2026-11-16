@@ -21,7 +21,7 @@ function chart(extra = {}) {
         marks: [plot.point({ channels: { x: { field: 'x' }, y: { field: 'y' } } })],
         ...extra,
     });
-    document.body.appendChild(el);
+    document.body.appendChild(el.dom());
     return { el, changes };
 }
 
@@ -79,9 +79,9 @@ describe('clip and a zoom-only axis', () => {
     it('clip: true confines the mark layer, and a zoom-only axis draws no handles', async () => {
         const { el } = chart({ clip: true });
         await tick();
-        expect(el.querySelector('g.mark-layer').getAttribute('clip-path')).toMatch(/^url\(#/);
+        expect(el.dom().querySelector('g.mark-layer').getAttribute('clip-path')).toMatch(/^url\(#/);
         // The x axis carries only a zoom: no end-handles (the axis's circles) are drawn.
-        expect([...el.querySelectorAll('circle.mark')].filter((c) => c.__data__ && c.__data__.axisHandle).length).toBe(0);
+        expect([...el.dom().querySelectorAll('circle.mark')].filter((c) => c.__data__ && c.__data__.axisHandle).length).toBe(0);
         // Shift-wheel arrives as deltaX.
         el.emit({ type: 'wheel', x: 140, y: 90, deltaX: -100, deltaY: 0, rawEvent: {} });
         const d = el.getSchema().x.domain;
@@ -99,7 +99,7 @@ describe('zoom on a log axis', () => {
             axes: { x: { edit: edit.axis.zoom() }, y: {} },
             marks: [plot.point({ channels: { x: { field: 'x' }, y: { field: 'y' } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         // Pointer at x ≈ 11.5k on [100, 1e6] over 280 px: log10 position 0.515 → 144 px.
         const px = 280 * (Math.log10(11500) - 2) / 4;
@@ -136,7 +136,7 @@ describe('edit.axis.pan', () => {
         expect(e.viewport).toBe(true);
         const { el } = panChart();
         await tick();
-        expect([...el.querySelectorAll('circle.mark')].filter((c) => c.__data__ && c.__data__.axisHandle).length).toBe(0);
+        expect([...el.dom().querySelectorAll('circle.mark')].filter((c) => c.__data__ && c.__data__.axisHandle).length).toBe(0);
     });
 
     it('stays inside the declared domain at full view', async () => {
@@ -208,22 +208,22 @@ describe('clip', () => {
     it('is on by default with a zoom or pan, and clip: false turns it off', async () => {
         const on = chart();
         await tick();
-        expect(on.el.querySelector('g.mark-layer').getAttribute('clip-path')).toMatch(/^url\(#/);
-        expect(on.el.querySelector('g.effects-data').getAttribute('clip-path')).toMatch(/^url\(#/);
+        expect(on.el.dom().querySelector('g.mark-layer').getAttribute('clip-path')).toMatch(/^url\(#/);
+        expect(on.el.dom().querySelector('g.effects-data').getAttribute('clip-path')).toMatch(/^url\(#/);
         const off = chart({ clip: false });
         await tick();
-        expect(off.el.querySelector('g.mark-layer').getAttribute('clip-path')).toBeNull();
+        expect(off.el.dom().querySelector('g.mark-layer').getAttribute('clip-path')).toBeNull();
         const plain = chart({ axes: { x: {}, y: {} } });
         await tick();
-        expect(plain.el.querySelector('g.mark-layer').getAttribute('clip-path')).toBeNull();
+        expect(plain.el.dom().querySelector('g.mark-layer').getAttribute('clip-path')).toBeNull();
     });
 
     it('keeps a chart element\'s handles out of the clip', async () => {
         const { el } = chart({ axes: { x: { edit: edit.axis.scale() }, y: { edit: edit.axis.zoom() } } });
         await tick();
-        const handles = [...el.querySelectorAll('g.chrome-layer circle.mark')].filter((c) => c.__data__ && c.__data__.axisHandle);
+        const handles = [...el.dom().querySelectorAll('g.chrome-layer circle.mark')].filter((c) => c.__data__ && c.__data__.axisHandle);
         expect(handles.length).toBe(2);
-        expect([...el.querySelectorAll('g.mark-layer circle.mark')].some((c) => c.__data__ && c.__data__.axisHandle)).toBe(false);
+        expect([...el.dom().querySelectorAll('g.mark-layer circle.mark')].some((c) => c.__data__ && c.__data__.axisHandle)).toBe(false);
     });
 
     it('a mark zoomed out of the plot rect is not grabbed past the axis', async () => {
@@ -270,7 +270,7 @@ describe('clip: pad and per-mark opt-out', () => {
     it('draws the clipPath rect with the pad', async () => {
         const { el } = chart({ clip: { pad: { left: 8, top: 4 } } });
         await tick();
-        const r = el.querySelector('clipPath rect');
+        const r = el.dom().querySelector('clipPath rect');
         expect([r.getAttribute('x'), r.getAttribute('y'), r.getAttribute('width'), r.getAttribute('height')])
             .toEqual(['-8', '-4', '288', '184']);
     });
@@ -278,7 +278,7 @@ describe('clip: pad and per-mark opt-out', () => {
     it('a pad turns the clip on for a chart with no zoom or pan', async () => {
         const { el } = chart({ axes: { x: {}, y: {} }, clip: { pad: 4 } });
         await tick();
-        expect(el.querySelector('g.mark-layer').getAttribute('clip-path')).toMatch(/^url\(#/);
+        expect(el.dom().querySelector('g.mark-layer').getAttribute('clip-path')).toMatch(/^url\(#/);
     });
 
     it('a mark with clip: false paints outside the clip and is grabbed past the axis', async () => {
@@ -290,9 +290,9 @@ describe('clip: pad and per-mark opt-out', () => {
             ],
         });
         await tick();
-        const inChrome = [...el.querySelectorAll('g.chrome-layer circle.mark')].filter((c) => c.__data__ && !c.__data__.axisHandle);
+        const inChrome = [...el.dom().querySelectorAll('g.chrome-layer circle.mark')].filter((c) => c.__data__ && !c.__data__.axisHandle);
         expect(inChrome).toHaveLength(1);
-        expect(el.querySelectorAll('g.mark-layer circle.mark')).toHaveLength(1);
+        expect(el.dom().querySelectorAll('g.mark-layer circle.mark')).toHaveLength(1);
         el.setDomain('x', [0, 20]);
         // x = 50 now sits at 700 px, past the right edge; the opted-out point is
         // drawn there, so a press there grabs it.

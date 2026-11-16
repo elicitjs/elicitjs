@@ -44,7 +44,7 @@ describe('editText / set on a quantitative field', () => {
             data: [{ k: 'a', n: 10 }],
             marks: [plot.text({ channels: { x: { field: 'k' }, y: { field: 'n' }, text: { field: 'n', edit: edit.editText({ name: 'type' }) } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         return el;
     }
     it('stores the typed number as a number', async () => {

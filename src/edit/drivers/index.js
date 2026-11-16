@@ -14,7 +14,7 @@
 // driver's state (e.g. connect's `fromIndex`).
 // `selects: true`: writes a selection (hoverIndex/activeIndex, optionally
 // px/py/threshold) into its session, so its edits get a catchment guide.
-// `targetsRow: true`: the driver only chooses a row, so `el.control(name, index)`
+// `targetsRow: true`: the driver only chooses a row, so `chart.control(name, index)`
 // can run its edits on that row directly. Others make `control()` warn.
 // where ctx = { feature, event, edits, marks, data, scales, session, preview,
 //               stage, runEdit, previewEdit, reachable }:
@@ -87,7 +87,7 @@ import { panDriver } from './pan.js';
  * @property {boolean} [selects] writes a selection into its session, so its
  *   edits get a catchment guide
  * @property {boolean} [targetsRow] only chooses the row, so
- *   `el.control(name, index)` can run its edits on a named row directly
+ *   `chart.control(name, index)` can run its edits on a named row directly
  * @property {string} [cursor] the raised plane's resting cursor while this
  *   driver's edits are active; a session `cursor` overrides it per hover
  */

@@ -130,7 +130,7 @@ async function main() {
             '/editing', '/editing/gestures', '/editing/sweep', '/editing/selection', '/editing/lock',
             '/editing/existence', '/editing/probe', '/editing/stages', '/editing/axis',
             '/editing/external-controls', '/editing/zoom',
-            '/editing/history', '/widgets', '/scales', '/schema', '/constraints',
+            '/editing/history', '/widgets', '/scales', '/schema', '/dataset', '/constraints',
             '/effects', '/guides', '/theming', '/theming/themes', '/playground',
             '/case-studies/glyphs',
         ];
@@ -506,7 +506,7 @@ async function main() {
         };
 
         // move() on x & y moves the whole box: a rightward drag raises the x field.
-        const boxData = () => page.$eval('#fixed-size .chart > div', (el) => el.getData());
+        const boxData = () => page.$eval('#fixed-size .chart > div', (el) => el.__chart.getData());
         const boxBefore = await boxData();
         const bc = await centreOf(page.locator('#fixed-size .chart svg rect.mark').first());
         await mouseDrag(bc.x, bc.y, bc.x + 60, bc.y);
@@ -517,8 +517,8 @@ async function main() {
         // select() + legendValue(): click a cell to select it, then drag the ramp
         // handle to set THAT cell's value (colour isn't invertible, so the ramp does
         // it by hand). Proves selection targeting and the by-hand invert on a heatmap.
-        const cellData = () => page.$eval('#heatmap .chart > div', (el) => el.getData());
-        const cellSel = () => page.$eval('#heatmap .chart > div', (el) => el.getSelection());
+        const cellData = () => page.$eval('#heatmap .chart > div', (el) => el.__chart.getData());
+        const cellSel = () => page.$eval('#heatmap .chart > div', (el) => el.__chart.getSelection());
         const cell5 = await centreOf(page.locator('#heatmap .chart svg rect.mark').nth(5));
         await page.mouse.click(cell5.x, cell5.y);
         await page.waitForTimeout(100);
@@ -545,7 +545,7 @@ async function main() {
         // centre to raise its value (the size scale is invertible).
         console.log('\nPoint heatmap resize (/marks/point)');
         await open('/marks/point', '#heatmap .chart svg circle.mark');
-        const dotData = () => page.$eval('#heatmap .chart > div', (el) => el.getData());
+        const dotData = () => page.$eval('#heatmap .chart > div', (el) => el.__chart.getData());
         const dotBefore = await dotData();
         const dc = await centreOf(page.locator('#heatmap .chart svg circle.mark').first());
         await mouseDrag(dc.x, dc.y, dc.x + 16, dc.y);
@@ -559,7 +559,7 @@ async function main() {
         // The face's eye interaction, generalized onto a plain circle.
         console.log('\nSlide edit (/editing/gestures)');
         await open('/editing/gestures', '#slide .chart svg circle.mark');
-        const slideData = () => page.$eval('#slide .chart > div', (el) => el.getData());
+        const slideData = () => page.$eval('#slide .chart > div', (el) => el.__chart.getData());
         const slBefore = await slideData();
         const slc = await centreOf(page.locator('#slide .chart svg circle.mark').first());
         await mouseDrag(slc.x, slc.y, slc.x - 60, slc.y);
@@ -646,7 +646,7 @@ async function main() {
         const nearChart = page.locator('#angle .chart').nth(2);
         await nearChart.locator('svg line.mark').first().scrollIntoViewIfNeeded();
         await page.waitForTimeout(150);
-        const nearData = () => nearChart.locator(':scope > div').first().evaluate((e) => e.getData());
+        const nearData = () => nearChart.locator(':scope > div').first().evaluate((e) => e.__chart.getData());
         // Row 0 is seeded at 90° — drawn horizontal. Its own bbox gives the drawn arm.
         const nearBox = await nearChart.locator('svg line.mark').first().boundingBox();
         check('nearest: the 90° tick is drawn HORIZONTAL (wide, not tall)',
@@ -694,7 +694,7 @@ async function main() {
         const mouthChart = page.locator('#emotion .chart').first();
         await mouthChart.locator('svg path.mark-line').first().scrollIntoViewIfNeeded();
         await page.waitForTimeout(150);
-        const mouthData = () => mouthChart.locator(':scope > div').first().evaluate((e) => e.getData());
+        const mouthData = () => mouthChart.locator(':scope > div').first().evaluate((e) => e.__chart.getData());
         const mouthPaths = await mouthChart.locator('svg path.mark-line').count();
         check('face mouth: the curve draws a visual path plus a hit path',
             mouthPaths === 2, `${mouthPaths} paths`);
@@ -729,7 +729,7 @@ async function main() {
         console.log('\nFace: head move + per-part isolation (/marks/face)');
         await open('/marks/face', '#head .chart svg circle.mark');
         const headChart = page.locator('#head .chart').first();
-        const headData = () => headChart.locator(':scope > div').first().evaluate((e) => e.getData());
+        const headData = () => headChart.locator(':scope > div').first().evaluate((e) => e.__chart.getData());
         // Scroll the chart into view first — mouseDrag uses viewport coords, and this
         // section sits far down the page (a bbox read while off-screen would miss).
         await headChart.locator('svg circle.mark').first().scrollIntoViewIfNeeded();
@@ -784,7 +784,7 @@ async function main() {
         const exChart = page.locator('#expressive .chart').first();
         await exChart.locator('svg line.mark').first().scrollIntoViewIfNeeded();
         await page.waitForTimeout(150);
-        const exData = () => exChart.locator(':scope > div').first().evaluate((e) => e.getData());
+        const exData = () => exChart.locator(':scope > div').first().evaluate((e) => e.__chart.getData());
         // A brow: `browH` on the y component (move), `browT` on the x (slide).
         const browAt = () => exChart.locator('svg line.mark').first().evaluate((l) => {
             const r = l.getBoundingClientRect();
@@ -822,7 +822,7 @@ async function main() {
         console.log('\nThree new glyphs (/case-studies/glyphs)');
         await open('/case-studies/glyphs', '#hourglass .chart svg rect');
         const gGlyphChart = (id) => page.locator(`#${id} .chart`).first();
-        const gGlyphData = async (id) => (await gGlyphChart(id).locator(':scope > div').first().evaluate((e) => e.getData()))[0];
+        const gGlyphData = async (id) => (await gGlyphChart(id).locator(':scope > div').first().evaluate((e) => e.__chart.getData()))[0];
         const gToView = async (id) => {
             await gGlyphChart(id).locator('svg').first().scrollIntoViewIfNeeded();
             await page.waitForTimeout(150);
@@ -906,7 +906,7 @@ async function main() {
         // Positioned glyphs: one per row, placed by the composite's x / y. A gesture
         // on one glyph must write that row alone.
         const gPos = (n) => page.locator('#positions .chart').nth(n);
-        const gPosData = (n) => gPos(n).locator(':scope > div').first().evaluate((e) => e.getData());
+        const gPosData = (n) => gPos(n).locator(':scope > div').first().evaluate((e) => e.__chart.getData());
         await gPos(0).locator('svg').first().scrollIntoViewIfNeeded();
         await page.waitForTimeout(150);
         const gHeads = await gPos(0).locator('svg circle.mark').evaluateAll((cs) => cs
@@ -983,7 +983,7 @@ async function main() {
         const rzChart = page.locator('#head .chart').nth(1);
         await rzChart.locator('svg circle.mark').first().scrollIntoViewIfNeeded();
         await page.waitForTimeout(150);
-        const rzData = () => rzChart.locator(':scope > div').first().evaluate((e) => e.getData());
+        const rzData = () => rzChart.locator(':scope > div').first().evaluate((e) => e.__chart.getData());
         const eyeWidth = () => rzChart.locator('svg ellipse.mark').first()
             .evaluate((e) => +e.getAttribute('rx'));
         const rzHead = await rzChart.locator('svg circle.mark').first().evaluate((c) => {
@@ -1009,7 +1009,7 @@ async function main() {
         console.log('\nLocked rows (/editing/lock)');
         await open('/editing/lock', '#seed .chart svg');
 
-        const rowsOf = (id) => page.$eval(`#${id} .chart > div`, (el) => el.getData());
+        const rowsOf = (id) => page.$eval(`#${id} .chart > div`, (el) => el.__chart.getData());
         // Aim in DATA space: scroll the plot in, then map a value pair to page px.
         const frameOf = async (id, { m, w, h, xd, yd }) => {
             await page.locator(`#${id} .chart svg`).scrollIntoViewIfNeeded();
@@ -1215,7 +1215,7 @@ async function main() {
         const pipChart = page.locator('#scaling .chart').first();
         await pipChart.locator('svg circle.mark:not([data-hit])').first().scrollIntoViewIfNeeded();
         await page.waitForTimeout(150);
-        const pipData = () => pipChart.locator(':scope > div').first().evaluate((e) => e.getData());
+        const pipData = () => pipChart.locator(':scope > div').first().evaluate((e) => e.__chart.getData());
         // The renderer joins by SHAPE, so all three outer discs precede all three
         // inner ones — index tells you nothing about which pip a circle belongs to.
         // Take the FIRST pip's pair by concentricity instead, and re-read it after
@@ -1269,7 +1269,7 @@ async function main() {
         await open('/guides', '#remaining .chart svg rect.mark');
         const remText = () => page.$$eval('#remaining .chart svg text',
             (ts) => ts.map((t) => t.textContent || '').find((t) => /left$/.test(t)) || '');
-        const remData = () => page.$eval('#remaining .chart > div', (el) => el.getData());
+        const remData = () => page.$eval('#remaining .chart > div', (el) => el.__chart.getData());
 
         const remBefore = await remText();
         check('remaining: the guide draws, so the target came off the maintainSum constraint',
@@ -1327,7 +1327,7 @@ async function main() {
         console.log('\nHandle track guide (/marks/face)');
         await open('/marks/face', '#track .chart svg');
         const trackChart = page.locator('#track .chart').first();
-        const trackRows = () => trackChart.locator(':scope > div').first().evaluate((e) => e.getData());
+        const trackRows = () => trackChart.locator(':scope > div').first().evaluate((e) => e.__chart.getData());
         // Guide nodes are pointer-transparent lines carrying the guide dash. Both
         // brows carry the same declared travel, so both draw one.
         const trackLines = await trackChart.locator('svg line[stroke-dasharray="3 3"]').count();
@@ -1372,7 +1372,7 @@ async function main() {
             x: faceBox.left + fm.left + (i + 0.5) / days * fiw,
             y: faceBox.top + fm.top + (1 - mood) * fih,
         });
-        const faceRows = () => page.$eval('#creating .chart > div', (el) => el.getData());
+        const faceRows = () => page.$eval('#creating .chart > div', (el) => el.__chart.getData());
         const fBefore = await faceRows();
         check('face.create: three days filled to start', fBefore.length === 3, `${fBefore.length} rows`);
 
@@ -1403,7 +1403,7 @@ async function main() {
         const fnAt = await frameOf('derived', {
             m: { top: 16, right: 16, bottom: 32, left: 40 }, w: 420, h: 260, xd: [0, 100], yd: [0, 100]
         });
-        const fnRows = () => page.$eval('#derived .chart > div', (el) => el.getData());
+        const fnRows = () => page.$eval('#derived .chart > div', (el) => el.__chart.getData());
         const fnFill = () => page.$eval('#derived .chart svg circle',
             (c) => (c.getAttribute('fill') || c.style.fill || '').toLowerCase());
         check('fn: row 0 starts below the threshold and derives the blue fill', (await fnFill()) === '#50aeb7');
@@ -1483,7 +1483,7 @@ async function main() {
         check('arc grid: each donut carries its own boundary handles', gridHandles >= 6, `${gridHandles} handles`);
 
         const gridEl = '#grid .chart > div';
-        const gridRows = () => page.$eval(gridEl, (e) => e.getData());
+        const gridRows = () => page.$eval(gridEl, (e) => e.__chart.getData());
         const sharesFor = (rows, st) => rows.filter((r) => r.state === st).map((r) => Number(r.share));
         const gBefore = await gridRows();
 
@@ -1529,7 +1529,7 @@ async function main() {
         await open('/marks/bar', '#slice svg rect.mark');
 
         const sliceEl = '#slice .chart > div';
-        const barStack = () => page.$eval(sliceEl, (e) => e.getData());
+        const barStack = () => page.$eval(sliceEl, (e) => e.__chart.getData());
         const bandOf = (rows, y) => rows.filter((r) => r.year === y);
         const bandSum = (rows, y) => bandOf(rows, y).reduce((a, r) => a + Number(r.pct), 0);
         const sliceSvg = page.locator('#slice svg').first();
@@ -1614,7 +1614,7 @@ async function main() {
             `${bandSum(preMerge, '2023')} -> ${bandSum(postMerge, '2023')}`);
 
         // Undo has to round-trip a cut, which writes the schema AND the rows.
-        await page.$eval(sliceEl, (e) => e.undo());
+        await page.$eval(sliceEl, (e) => e.__chart.undo());
         await page.waitForTimeout(150);
         const stk_undone = await barStack();
         check('stack: undo round-trips a merge',
@@ -1624,7 +1624,7 @@ async function main() {
         console.log('\nStack slicing: open domain (/marks/bar #slice)');
         // The open-domain chart is the section's SECOND chart (the closed one above it
         // is what the block before this drove).
-        const openRows = () => page.$$eval('#slice .chart > div', (els) => els[1].getData());
+        const openRows = () => page.$$eval('#slice .chart > div', (els) => els[1].__chart.getData());
         const openSvg = page.locator('#slice svg').nth(1);
         await openSvg.scrollIntoViewIfNeeded();
         await page.waitForTimeout(150);
@@ -1654,7 +1654,7 @@ async function main() {
         console.log('\nStack slicing: pie (/marks/arc #slice)');
         await open('/marks/arc', '#slice svg path');
         const pieEl = '#slice .chart > div';
-        const pieRows = () => page.$eval(pieEl, (e) => e.getData());
+        const pieRows = () => page.$eval(pieEl, (e) => e.__chart.getData());
         const pieTotal = (rows) => rows.reduce((a, r) => a + Number(r.share), 0);
         const pieSvg = page.locator('#slice svg').first();
         await pieSvg.scrollIntoViewIfNeeded();
@@ -1710,7 +1710,7 @@ async function main() {
             && Math.abs(groupedBars[1].x + groupedBars[1].w - groupedBars[2].x) < 0.5
             && groupedBars[3].x - (groupedBars[2].x + groupedBars[2].w) > 1,
             JSON.stringify(groupedBars.slice(0, 4)));
-        const groupedRows = () => page.$eval(groupedEl, (e) => e.getData());
+        const groupedRows = () => page.$eval(groupedEl, (e) => e.__chart.getData());
         const beforeGrouped = await groupedRows();
         await page.locator(groupedEl).first().scrollIntoViewIfNeeded();
         const gBoxes = await page.$eval(groupedEl, (e) => [...e.querySelectorAll('svg rect.mark')].map((r) => {
@@ -1748,9 +1748,9 @@ async function main() {
 
         // The section holds several examples; drive the first chart.
         const barEl = '#editing .chart > div';
-        const barRows = () => page.$eval(barEl, (e) => e.getData());
+        const barRows = () => page.$eval(barEl, (e) => e.__chart.getData());
         const barY = async (i) => (await barRows())[i].y;
-        const history = () => page.$eval(barEl, (e) => ({ undo: e.canUndo(), redo: e.canRedo() }));
+        const history = () => page.$eval(barEl, (e) => ({ undo: e.__chart.canUndo(), redo: e.__chart.canRedo() }));
 
         const bar0 = page.locator('#editing svg rect.mark').first();
         await bar0.scrollIntoViewIfNeeded();
@@ -1775,14 +1775,14 @@ async function main() {
             Math.abs((await barY(0)) - (y1 - 10)) < 0.01, `${y1} -> ${await barY(0)}`);
 
         // Each press is its own undo entry; the others are untouched.
-        await page.$eval(barEl, (e) => e.undo());
+        await page.$eval(barEl, (e) => e.__chart.undo());
         check('undo: steps back one keypress', Math.abs((await barY(0)) - y1) < 0.01);
-        for (let i = 0; i < 3; i++) await page.$eval(barEl, (e) => e.undo());
+        for (let i = 0; i < 3; i++) await page.$eval(barEl, (e) => e.__chart.undo());
         check('undo: unwinds to the seeded value', Math.abs((await barY(0)) - y0) < 0.01,
             `${await barY(0)} vs ${y0}`);
         check('undo: bottoms out', (await history()).undo === false);
         check('redo: available after undo', (await history()).redo === true);
-        await page.$eval(barEl, (e) => e.redo());
+        await page.$eval(barEl, (e) => e.__chart.redo());
         check('redo: replays the keypress', Math.abs((await barY(0)) - (y0 + 1)) < 0.01);
 
         // A DRAG is one entry, however many commits it made.
@@ -1796,7 +1796,7 @@ async function main() {
         const afterDrag = await barRows();
         check('drag: moved the value', afterDrag[0].y !== beforeDrag[0].y,
             `${beforeDrag[0].y} -> ${afterDrag[0].y}`);
-        await page.$eval(barEl, (e) => e.undo());
+        await page.$eval(barEl, (e) => e.__chart.undo());
         const undone = await barRows();
         check('undo: a whole drag is ONE entry (not one per pointermove)',
             Math.abs(undone[0].y - beforeDrag[0].y) < 0.01,
@@ -1837,7 +1837,7 @@ async function main() {
         // EDGE grab only if the custom inset reached the driver; with the dropped
         // option it classified as body and translated BOTH fields.
         console.log('\nbrushSpan edgeInset (/marks/bar)');
-        const spanRows = () => page.$$eval('#span .chart > div', (els) => els[1].getData());
+        const spanRows = () => page.$$eval('#span .chart > div', (els) => els[1].__chart.getData());
         const ganttBar = page.locator('#span .chart').nth(1).locator('svg rect.mark').first();
         await ganttBar.scrollIntoViewIfNeeded();
         const gBox = await ganttBar.boundingBox();
@@ -1870,26 +1870,26 @@ async function main() {
 
         const histBar = page.locator('#undo svg rect.mark').first();
         const hBox = await histBar.boundingBox();
-        const hBefore = await page.$eval('#undo .chart > div', (e) => e.getData());
+        const hBefore = await page.$eval('#undo .chart > div', (e) => e.__chart.getData());
         await page.mouse.move(hBox.x + hBox.width / 2, hBox.y + 5);
         await page.mouse.down();
         for (const dy of [20, 40, 60, 80]) await page.mouse.move(hBox.x + hBox.width / 2, hBox.y + 5 + dy);
         await page.mouse.up();
         await page.waitForTimeout(200);
-        const hAfter = await page.$eval('#undo .chart > div', (e) => e.getData());
+        const hAfter = await page.$eval('#undo .chart > div', (e) => e.__chart.getData());
         check('undo button: enabled once there is a gesture to undo', await undoBtn.isEnabled());
         check('undo button: the drag changed the data', hAfter[0].n !== hBefore[0].n,
             `${hBefore[0].n} -> ${hAfter[0].n}`);
 
         await undoBtn.click();
         await page.waitForTimeout(200);
-        const hUndone = await page.$eval('#undo .chart > div', (e) => e.getData());
+        const hUndone = await page.$eval('#undo .chart > div', (e) => e.__chart.getData());
         check('undo button: one click restores the whole gesture',
             Math.abs(hUndone[0].n - hBefore[0].n) < 0.01, `${hUndone[0].n} vs ${hBefore[0].n}`);
         check('undo button: Redo lights up', await redoBtn.isEnabled());
         await redoBtn.click();
         await page.waitForTimeout(200);
-        const hRedone = await page.$eval('#undo .chart > div', (e) => e.getData());
+        const hRedone = await page.$eval('#undo .chart > div', (e) => e.__chart.getData());
         check('redo button: replays the gesture',
             Math.abs(hRedone[0].n - hAfter[0].n) < 0.01, `${hRedone[0].n} vs ${hAfter[0].n}`);
 
@@ -1903,7 +1903,7 @@ async function main() {
         await kbDot.focus();
         const kbFocused = await page.evaluate(() => document.activeElement?.tagName);
         check('keyboard: a point mark takes focus', kbFocused === 'circle', `activeElement=${kbFocused}`);
-        const kbRows = () => page.$eval('#keyboard .chart > div', (e) => e.getData());
+        const kbRows = () => page.$eval('#keyboard .chart > div', (e) => e.__chart.getData());
         const kb0 = (await kbRows())[0].value;
         await page.keyboard.press('ArrowUp');
         await page.waitForTimeout(150);
@@ -1925,7 +1925,7 @@ async function main() {
         await open('/marks/area', '#band svg path.mark-line');
 
         const bandEl = '#band .chart > div';
-        const bandRows = () => page.$eval(bandEl, (e) => e.getData());
+        const bandRows = () => page.$eval(bandEl, (e) => e.__chart.getData());
         const bandHandles = await page.locator('#band svg circle').count();
         check('band: both edges get handles', bandHandles === 8, `${bandHandles} handles for 4 rows x lo/hi`);
 
@@ -1973,7 +1973,7 @@ async function main() {
         console.log('\nArea hit handles (/marks/area #hit)');
         await open('/marks/area', '#hit .chart svg');
         const hitEl = '#hit .chart > div';
-        const hitRows = () => page.$eval(hitEl, (e) => e.getData());
+        const hitRows = () => page.$eval(hitEl, (e) => e.__chart.getData());
         const hitBefore = await hitRows();
         const hitOpacities = await page.$$eval('#hit svg circle', (cs) =>
             cs.map((c) => ({
@@ -2004,7 +2004,7 @@ async function main() {
         check('elements: example evaluates', elErrs.length === 0, elErrs.join(' | '));
         const elBars = await page.locator('#elements-ns svg rect:not(.plane)').count();
         check('elements: bar marks render beside element chrome', elBars >= 3, `${elBars} bars`);
-        const elNsRows = () => page.$eval('#elements-ns .chart > div', (e) => e.getData());
+        const elNsRows = () => page.$eval('#elements-ns .chart > div', (e) => e.__chart.getData());
         const elBefore = await elNsRows();
         const elBar = page.locator('#elements-ns svg rect:not(.plane)').nth(1);
         await elBar.scrollIntoViewIfNeeded();
@@ -2033,7 +2033,7 @@ async function main() {
         console.log('\nA mark with no edit is inert (/marks/trend)');
         await open('/marks/trend', '#inert .chart svg line');
         const inertChart = page.locator('#inert .chart').first();
-        const inertRows = () => inertChart.locator(':scope > div').first().evaluate((e) => e.getData());
+        const inertRows = () => inertChart.locator(':scope > div').first().evaluate((e) => e.__chart.getData());
         const inertBefore = await inertRows();
         // A ROW HANDLE draws only where a live edit can reach its row (the engine
         // drops `node.rowHandle` otherwise), so a trend with no edit draws its line
@@ -2061,7 +2061,7 @@ async function main() {
         // The staged chart: at stage 0 only the intercept handle is live, so this
         // is also the stage gate under a real pointer.
         const stagedChart = page.locator('#twostep .chart').first();
-        const stagedRows = () => stagedChart.locator(':scope > div').first().evaluate((e) => e.getData());
+        const stagedRows = () => stagedChart.locator(':scope > div').first().evaluate((e) => e.__chart.getData());
         const trendBefore = await stagedRows();
 
         // The intercept handle: translate. Slope is HELD.
@@ -2087,7 +2087,7 @@ async function main() {
         // unstaged chart, where both handles are live at once.
         const anchorValue = (d) => d.intercept + d.slope * 0;
         const freeChart = page.locator('#twostep .chart').nth(1);
-        const freeRows = () => freeChart.locator(':scope > div').first().evaluate((e) => e.getData());
+        const freeRows = () => freeChart.locator(':scope > div').first().evaluate((e) => e.__chart.getData());
         const freeBefore = await freeRows();
         const sHandle = freeChart.locator('svg circle').nth(1);
         await sHandle.scrollIntoViewIfNeeded();
@@ -2113,7 +2113,7 @@ async function main() {
         console.log('\nTrend: the end grips swing the line right round (/marks/trend)');
         await open('/marks/trend', '#grip .chart svg circle');
         const gripChart = page.locator('#grip .chart').first();
-        const gripRows = () => gripChart.locator(':scope > div').first().evaluate((e) => e.getData());
+        const gripRows = () => gripChart.locator(':scope > div').first().evaluate((e) => e.__chart.getData());
         const gripHandles = await gripChart.locator('svg circle').count();
         check('trend: the default grip draws the intercept handle plus TWO end grips',
             gripHandles === 3, `${gripHandles} circles`);
@@ -2169,7 +2169,7 @@ async function main() {
         // The band's own handles write the SPREADS, and each claims its own.
         await open('/marks/trend', '#band .chart svg circle');
         const editBand = page.locator('#band .chart').nth(1);
-        const editBandRows = () => editBand.locator(':scope > div').first().evaluate((e) => e.getData());
+        const editBandRows = () => editBand.locator(':scope > div').first().evaluate((e) => e.__chart.getData());
         const spreadBefore = await editBandRows();
         const spreadHandle = editBand.locator('svg circle').first();
         await spreadHandle.scrollIntoViewIfNeeded();
@@ -2195,8 +2195,8 @@ async function main() {
         console.log('\nLine + Cone as a preset (/widgets)');
         await open('/widgets', '#linecone .chart svg');
         const coneChart = page.locator('#linecone .chart').first().locator(':scope > div').first();
-        const coneRows = () => coneChart.evaluate((e) => e.getData());
-        const coneStage = () => coneChart.evaluate((e) => e.getStage());
+        const coneRows = () => coneChart.evaluate((e) => e.__chart.getData());
+        const coneStage = () => coneChart.evaluate((e) => e.__chart.getStage());
         await coneChart.scrollIntoViewIfNeeded();
         check('lineCone: starts at stage 0', (await coneStage()) === 0);
 
@@ -2244,7 +2244,7 @@ async function main() {
 
         // ordering: drag the low cap of an interval up past the mean and the high cap.
         const ordEl = '#ordering .chart > div';
-        const ordBefore = await page.$eval(ordEl, (e) => e.getData());
+        const ordBefore = await page.$eval(ordEl, (e) => e.__chart.getData());
         // The caps are the two grabbable ticks; the axis ticks are lines too, and
         // sit lower — they're pointer-events:none, so grabbing one is a silent no-op.
         const caps = await page.locator('#ordering svg line[stroke="#6F8294" i]').all();
@@ -2260,7 +2260,7 @@ async function main() {
         await page.mouse.move(lowCap.x + lowCap.width / 2, lowCap.y - 120, { steps: 8 });
         await page.mouse.up();
         await page.waitForTimeout(150);
-        const ordAfter = await page.$eval(ordEl, (e) => e.getData());
+        const ordAfter = await page.$eval(ordEl, (e) => e.__chart.getData());
         check('ordering: the grabbed cap moved', ordAfter[0].lo !== ordBefore[0].lo,
             `lo ${ordBefore[0].lo} -> ${ordAfter[0].lo}`);
         check('ordering: lo <= mean <= hi still holds',
@@ -2271,7 +2271,7 @@ async function main() {
 
         // monotonic: drag a mid point of a CDF up; later points rise to meet it.
         const monoEl = '#monotonic .chart > div';
-        const monoBefore = await page.$eval(monoEl, (e) => e.getData());
+        const monoBefore = await page.$eval(monoEl, (e) => e.__chart.getData());
         const monoDots = await page.locator('#monotonic svg circle').all();
         await monoDots[0].scrollIntoViewIfNeeded();
         await page.waitForTimeout(200);
@@ -2281,7 +2281,7 @@ async function main() {
         await page.mouse.move(mBox.x + mBox.width / 2, mBox.y - 90, { steps: 8 });
         await page.mouse.up();
         await page.waitForTimeout(150);
-        const monoAfter = await page.$eval(monoEl, (e) => e.getData());
+        const monoAfter = await page.$eval(monoEl, (e) => e.__chart.getData());
         check('monotonic: the dragged point rose', monoAfter[2].p > monoBefore[2].p,
             `${monoBefore[2].p} -> ${monoAfter[2].p}`);
         check('monotonic: it carried the neighbours it would have crossed',
@@ -2301,7 +2301,7 @@ async function main() {
         await page.mouse.move(sBox.x + sBox.width / 2 + 160, sBox.y + sBox.height / 2, { steps: 8 });
         await page.mouse.up();
         await page.waitForTimeout(150);
-        const spAfter = await page.$eval(spEl, (e) => e.getData());
+        const spAfter = await page.$eval(spEl, (e) => e.__chart.getData());
         const sorted = spAfter.map((d) => d.at).sort((a, b) => a - b);
         const gaps = sorted.slice(1).map((v, i) => v - sorted[i]);
         check('spacing: no two thresholds are closer than min',
@@ -2317,7 +2317,7 @@ async function main() {
         const zcDot = page.locator('#zero-crossing svg circle').first();
         await zcDot.scrollIntoViewIfNeeded();
         await page.waitForTimeout(200);
-        const zcBefore = await page.$eval(zcEl, (e) => e.getData());
+        const zcBefore = await page.$eval(zcEl, (e) => e.__chart.getData());
         const zcFill0 = await zcDot.getAttribute('fill');
         const zBox = await zcDot.boundingBox();
         await page.mouse.move(zBox.x + zBox.width / 2, zBox.y + zBox.height / 2);
@@ -2325,7 +2325,7 @@ async function main() {
         await page.mouse.move(zBox.x + zBox.width / 2 - 150, zBox.y + zBox.height / 2, { steps: 8 });
         await page.mouse.up();
         await page.waitForTimeout(150);
-        const zcAfter = await page.$eval(zcEl, (e) => e.getData());
+        const zcAfter = await page.$eval(zcEl, (e) => e.__chart.getData());
         const zcFill1 = await zcDot.getAttribute('fill');
         check('symlog: an invertible scale drags', zcAfter[0].delta !== zcBefore[0].delta,
             `${zcBefore[0].delta} -> ${zcAfter[0].delta}`);
@@ -2341,19 +2341,19 @@ async function main() {
         await open('/editing/external-controls', '#scatter .chart svg circle');
 
         const scEl = '#scatter .chart > div';
-        const scData = () => page.$eval(scEl, (e) => e.getData());
+        const scData = () => page.$eval(scEl, (e) => e.__chart.getData());
 
         // accepts() surfaces what the channel allows, from its scale.
-        const cats = await page.$eval(scEl, (e) => e.control('category', 0).accepts().values);
+        const cats = await page.$eval(scEl, (e) => e.__chart.control('category', 0).accepts().values);
         check('external: accepts() lists the categorical domain',
             JSON.stringify(cats) === JSON.stringify(['A', 'B', 'C']), JSON.stringify(cats));
 
         // A value write (the picker's commit path).
-        await page.$eval(scEl, (e) => e.control('category', 0).set('C'));
+        await page.$eval(scEl, (e) => e.__chart.control('category', 0).set('C'));
         check('external: set() writes a category value', (await scData())[0].group === 'C');
 
         // Forward-encode a 2-D data value to a drag; the clamp on y must still gate it.
-        await page.$eval(scEl, (e) => e.control('move', 0).set({ x: 3, y: 999 }));
+        await page.$eval(scEl, (e) => e.__chart.control('move', 0).set({ x: 3, y: 999 }));
         let sd = await scData();
         check('external: set({x,y}) forward-encodes through the scale',
             Math.abs(sd[0].x - 3) < 0.8, `x=${sd[0].x}`);
@@ -2361,22 +2361,22 @@ async function main() {
             sd[0].y === 80, `y=${sd[0].y} (clamp max 80)`);
 
         // Undo reverts the external edit and flips redo — it is an ordinary commit.
-        const canBefore = await page.$eval(scEl, (e) => ({ u: e.canUndo(), r: e.canRedo() }));
-        await page.$eval(scEl, (e) => e.undo());
+        const canBefore = await page.$eval(scEl, (e) => ({ u: e.__chart.canUndo(), r: e.__chart.canRedo() }));
+        await page.$eval(scEl, (e) => e.__chart.undo());
         sd = await scData();
         check('external: undo reverts the external edit', sd[0].y !== 80, `y=${sd[0].y}`);
-        const canAfter = await page.$eval(scEl, (e) => ({ u: e.canUndo(), r: e.canRedo() }));
+        const canAfter = await page.$eval(scEl, (e) => ({ u: e.__chart.canUndo(), r: e.__chart.canRedo() }));
         check('external: undo flips canRedo', canBefore.r === false && canAfter.r === true);
 
         // A live drag (begin … set … set … end) collapses into ONE undo entry.
         const pre = (await scData())[0];
         await page.$eval(scEl, (e) => {
-            const h = e.control('move', 0);
+            const h = e.__chart.control('move', 0);
             h.begin(); h.set({ x: 10, y: 10 }); h.set({ x: 22, y: 15 }); h.end();
         });
         const mid = (await scData())[0];
         check('external: a live drag moves the point', Math.abs(mid.x - 22) < 0.8, `x=${mid.x}`);
-        await page.$eval(scEl, (e) => e.undo());
+        await page.$eval(scEl, (e) => e.__chart.undo());
         const post = (await scData())[0];
         check('external: one undo restores the whole live drag',
             Math.abs(post.x - pre.x) < 0.8 && Math.abs(post.y - pre.y) < 0.8,
@@ -2385,20 +2385,20 @@ async function main() {
         // Pick vs cycle on ONE field: set() jumps to a value, fire() steps a click edit.
         await open('/editing/external-controls', '#pick .chart svg circle');
         const pkEl = '#pick .chart > div';
-        const pkKind = () => page.$eval(pkEl, (e) => e.getData()[0].kind);
-        await page.$eval(pkEl, (e) => e.control('pick', 0).set('high'));
+        const pkKind = () => page.$eval(pkEl, (e) => e.__chart.getData()[0].kind);
+        await page.$eval(pkEl, (e) => e.__chart.control('pick', 0).set('high'));
         check('external: set() jumps straight to a category', (await pkKind()) === 'high', await pkKind());
-        await page.$eval(pkEl, (e) => e.control('step', 0).fire());
+        await page.$eval(pkEl, (e) => e.__chart.control('step', 0).fire());
         check('external: fire() steps a click edit (cycle wraps high -> low)',
             (await pkKind()) === 'low', await pkKind());
-        await page.$eval(pkEl, (e) => e.control('step', 0).fire());
+        await page.$eval(pkEl, (e) => e.__chart.control('step', 0).fire());
         check('external: fire() advances again (low -> med)', (await pkKind()) === 'med', await pkKind());
 
         // Rotate by a DATA angle: forward-encode degrees -> pointer -> the rotate edit.
         await open('/editing/external-controls', '#rotate .chart svg');
         const rotEl = '#rotate .chart > div';
-        await page.$eval(rotEl, (e) => e.control('spin', 0).set(90));
-        const theta = (await page.$eval(rotEl, (e) => e.getData()))[0].theta;
+        await page.$eval(rotEl, (e) => e.__chart.control('spin', 0).set(90));
+        const theta = (await page.$eval(rotEl, (e) => e.__chart.getData()))[0].theta;
         check('external: rotate driven by an angle value lands on it',
             Math.abs(theta - 90) < 1.5, `theta=${theta}`);
 
@@ -2406,7 +2406,7 @@ async function main() {
         // target search is skipped and year i is written, through the real <input>.
         await open('/editing/external-controls', '#plane .chart svg path');
         const plEl = '#plane .chart > div';
-        const plData = () => page.$eval(plEl, (e) => e.getData());
+        const plData = () => page.$eval(plEl, (e) => e.__chart.getData());
         const plBefore = await plData();
         await page.fill('#plane input[type=number] >> nth=3', '82');
         await page.press('#plane input[type=number] >> nth=3', 'Enter');
@@ -2415,19 +2415,19 @@ async function main() {
         check('external: an input drives a sweep edit on its own row',
             Math.abs(pl[3].v - 82) < 0.5 && pl.every((d, i) => i === 3 || d.v === plBefore[i].v),
             JSON.stringify(pl.map((d) => Math.round(d.v))));
-        await page.$eval(plEl, (e) => e.undo());
+        await page.$eval(plEl, (e) => e.__chart.undo());
         pl = await plData();
         check('external: one undo reverts the controlled sweep write', pl[3].v === plBefore[3].v, `v=${pl[3].v}`);
 
         // Face params: accepts() reports the schema range; set() writes the field.
         await open('/editing/external-controls', '#face .chart svg');
         const faceEl = '#face .chart > div';
-        const faceDomain = await page.$eval(faceEl, (e) => e.control('smile').accepts().domain);
+        const faceDomain = await page.$eval(faceEl, (e) => e.__chart.control('smile').accepts().domain);
         check('external: accepts() reports a continuous range',
             JSON.stringify(faceDomain) === JSON.stringify([0, 1]), JSON.stringify(faceDomain));
-        const faceBefore = await page.$eval(faceEl, (e) => e.getData());
-        await page.$eval(faceEl, (e) => e.control('eyes').set(0.9));
-        const faceAfter = await page.$eval(faceEl, (e) => e.getData());
+        const faceBefore = await page.$eval(faceEl, (e) => e.__chart.getData());
+        await page.$eval(faceEl, (e) => e.__chart.control('eyes').set(0.9));
+        const faceAfter = await page.$eval(faceEl, (e) => e.__chart.getData());
         check('external: a slider set() writes its facial field',
             Math.abs(faceAfter[0].eyes - 0.9) < 1e-9, `eyes=${faceAfter[0].eyes}`);
         // The regression: three set()s on one feature must stay INDEPENDENT — driving
@@ -2447,7 +2447,7 @@ async function main() {
         // The preview section has two examples; target the FIRST (probe-a-single-value).
         const pvChart = page.locator('#preview .chart').first();
         const pvEl = '#preview .chart > div';   // $eval => first match, same chart
-        const pvV = () => page.$eval(pvEl, (e) => e.getData()[0].v);
+        const pvV = () => page.$eval(pvEl, (e) => e.__chart.getData()[0].v);
         const pvGhosts = () => pvChart.locator('svg [data-ghost]').count();
         await pvChart.locator('svg').scrollIntoViewIfNeeded();
         await page.waitForTimeout(150);
@@ -2489,7 +2489,7 @@ async function main() {
         check('probe: no ghost remains after a drag commit', ghostsDragged === 0, `ghosts=${ghostsDragged}`);
 
         // The whole drag collapses to ONE undo entry (a lazy per-gesture transaction).
-        await page.$eval(pvEl, (e) => e.undo());
+        await page.$eval(pvEl, (e) => e.__chart.undo());
         await page.waitForTimeout(100);
         const vUndone = await pvV();
         check('probe: one undo restores the pre-drag value', Math.abs(vUndone - vClicked) < 1.5,
@@ -2504,7 +2504,7 @@ async function main() {
         // The matrix section shows the widget; .first() is defensive if that changes.
         const mxChart = page.locator('#matrix .chart').first();
         const mxEl = '#matrix .chart > div';
-        const mxLen = () => page.$eval(mxEl, (e) => e.getData().length);
+        const mxLen = () => page.$eval(mxEl, (e) => e.__chart.getData().length);
         await mxChart.locator('svg').scrollIntoViewIfNeeded();
         await page.waitForTimeout(150);
         const mxBox = await mxChart.locator('svg').boundingBox();
@@ -2745,8 +2745,8 @@ async function main() {
         await open('/marks/legend', '#declare-on-the-mark .chart svg');
         await page.locator('#declare-on-the-mark .chart svg').scrollIntoViewIfNeeded();
         await page.waitForTimeout(200);
-        const dmData = () => page.$eval('#declare-on-the-mark .chart > div', (el) => el.getData());
-        const dmSel = () => page.$eval('#declare-on-the-mark .chart > div', (el) => el.getSelection());
+        const dmData = () => page.$eval('#declare-on-the-mark .chart > div', (el) => el.__chart.getData());
+        const dmSel = () => page.$eval('#declare-on-the-mark .chart > div', (el) => el.__chart.getSelection());
 
         // The legend is minted even though the spec composes none. With nothing
         // selected yet its swatches are inert chrome (`bg-rect`), so count them
@@ -2790,8 +2790,8 @@ async function main() {
         await page.locator('#multi-select .chart svg').scrollIntoViewIfNeeded();
         await page.waitForTimeout(200);
         const msEl = '#multi-select .chart > div';
-        const msData = () => page.$eval(msEl, (el) => el.getData());
-        const msSelAll = () => page.$eval(msEl, (el) => el.getSelectionAll());
+        const msData = () => page.$eval(msEl, (el) => el.__chart.getData());
+        const msSelAll = () => page.$eval(msEl, (el) => el.__chart.getSelectionAll());
         const ringCount = () => page.locator(
             '#multi-select .chart svg rect[stroke-width="2"][fill="none"]'
         ).count();
@@ -2859,7 +2859,7 @@ async function main() {
         await catSvg.scrollIntoViewIfNeeded();
         await page.waitForTimeout(200);
         const catGroups = async () =>
-            (await catRoot.evaluate((el) => el.getData())).map((d) => d.group);
+            (await catRoot.evaluate((el) => el.__chart.getData())).map((d) => d.group);
         const catTexts = () => catSvg.evaluate((svg) =>
             [...svg.querySelectorAll('text')].map((t) => t.textContent));
 
@@ -2911,7 +2911,7 @@ async function main() {
         const xtSvg = page.locator('#categories .chart svg').nth(1);
         await xtRoot.scrollIntoViewIfNeeded();
         await page.waitForTimeout(250);
-        const xtBefore = await xtRoot.evaluate((el) => el.getData());
+        const xtBefore = await xtRoot.evaluate((el) => el.__chart.getData());
         check('legend: the cross-table chart seeds both tables with `team`',
             xtBefore.people.map((d) => d.team).join(',') === '#EE7B5E,#50AEB7,#EE7B5E'
             && xtBefore.ties.map((d) => d.team).join(',') === '#EE7B5E,#50AEB7',
@@ -2924,7 +2924,7 @@ async function main() {
         await page.keyboard.type('crimson');
         await page.keyboard.press('Enter');
         await page.waitForTimeout(250);
-        const xtAfter = await xtRoot.evaluate((el) => el.getData());
+        const xtAfter = await xtRoot.evaluate((el) => el.__chart.getData());
         check('legend: a cross-table rename writes the NODE table\'s rows',
             xtAfter.people.map((d) => d.team).join(',') === 'crimson,#50AEB7,crimson',
             JSON.stringify(xtAfter.people.map((d) => d.team)));
@@ -2973,8 +2973,8 @@ async function main() {
         // state machine, and that the legend targets the selection (not row 0).
         console.log('\nSelection: pick-and-edit (/marks/legend #dynamic-target)');
         const selEl = '#dynamic-target .chart > div';
-        const selData = () => page.$eval(selEl, (el) => el.getData());
-        const selIndex = () => page.$eval(selEl, (el) => el.getSelection());
+        const selData = () => page.$eval(selEl, (el) => el.__chart.getData());
+        const selIndex = () => page.$eval(selEl, (el) => el.__chart.getSelection());
         await page.locator('#dynamic-target .chart svg').scrollIntoViewIfNeeded();
         await page.waitForTimeout(150);
 
@@ -3036,17 +3036,17 @@ async function main() {
         const xsel = '#selection .chart > div';
         await page.locator('#selection .chart svg').scrollIntoViewIfNeeded();
         await page.waitForTimeout(150);
-        const xIndex = () => page.$eval(xsel, (el) => el.getSelection());
-        const xData = () => page.$eval(xsel, (el) => el.getData());
+        const xIndex = () => page.$eval(xsel, (el) => el.__chart.getSelection());
+        const xData = () => page.$eval(xsel, (el) => el.__chart.getData());
 
-        const s1 = await page.$eval(xsel, (el) => el.select(2));
+        const s1 = await page.$eval(xsel, (el) => el.__chart.select(2));
         check('el.select: selects a specific item by index', s1 === true && (await xIndex()) === 2, `sel=${await xIndex()}`);
 
-        await page.$eval(xsel, (el) => el.selectWhere('group', 'South'));
+        await page.$eval(xsel, (el) => el.__chart.selectWhere('group', 'South'));
         check('el.selectWhere: selects the first row of a category (index 1)',
             (await xIndex()) === 1, `sel=${await xIndex()}`);
 
-        await page.$eval(xsel, (el) => el.clearSelection());
+        await page.$eval(xsel, (el) => el.__chart.clearSelection());
         check('el.clearSelection: deselects', (await xIndex()) === null, `sel=${await xIndex()}`);
 
         check('selection: never writes the dataset (no `selected` column)',
@@ -3081,7 +3081,7 @@ async function main() {
         await page.locator('#draw .chart svg').scrollIntoViewIfNeeded();
         await page.waitForTimeout(200);
         const netEl = '#draw .chart > div';
-        const netData = () => page.$eval(netEl, (el) => el.getData());
+        const netData = () => page.$eval(netEl, (el) => el.__chart.getData());
         // The connection buffer: a link stops `inset` (3px) off the dot's own edge —
         // radius 11 + 3 from its centre — not `inset` px from the centre, and not
         // the dot's radius PLUS a centre-era inset.
@@ -3214,7 +3214,7 @@ async function main() {
         await page.locator('#gestures .chart svg').scrollIntoViewIfNeeded();
         await page.waitForTimeout(200);
         const wireEl = '#gestures .chart > div';
-        const wireData = () => page.$eval(wireEl, (el) => el.getData());
+        const wireData = () => page.$eval(wireEl, (el) => el.__chart.getData());
         const handleAt = (i) => page.$$eval('#gestures .chart svg circle', (cs, k) => {
             const c = cs.filter((n) => (n.getAttribute('fill') || '').toLowerCase() !== '#1f2937')[k];
             if (!c) return null;
@@ -3256,7 +3256,7 @@ async function main() {
         await page.locator('#table .chart svg').scrollIntoViewIfNeeded();
         await page.waitForTimeout(200);
         const tblEl = '#table .chart > div';
-        const tblData = () => page.$eval(tblEl, (el) => el.getData());
+        const tblData = () => page.$eval(tblEl, (el) => el.__chart.getData());
         const tbl0 = await tblData();
         const barCount = await page.$$eval('#table .chart svg rect.mark', (rs) => rs.length);
         check('table: barY({ table }) drew one bar per LINK row',
@@ -3282,7 +3282,7 @@ async function main() {
         await page.locator('#ref .chart svg').scrollIntoViewIfNeeded();
         await page.waitForTimeout(200);
         const keyEl = '#ref .chart > div';
-        const keyRows = () => page.$eval(keyEl, (el) => el.getData());
+        const keyRows = () => page.$eval(keyEl, (el) => el.__chart.getData());
         const keyBefore = await keyRows();
         const keyBox = await page.$eval('#ref .chart svg', (svg) => {
             const r = svg.getBoundingClientRect();
@@ -3311,7 +3311,7 @@ async function main() {
         await page.locator('#editing .chart svg').scrollIntoViewIfNeeded();
         await page.waitForTimeout(200);
         const stEl = '#editing .chart > div';
-        const stData = () => page.$eval(stEl, (el) => el.getData());
+        const stData = () => page.$eval(stEl, (el) => el.__chart.getData());
         const stickerBoxes = () => page.$$eval('#editing .chart svg rect.mark',
             (rs) => rs.map((r) => ({
                 w: +r.getAttribute('width'), h: +r.getAttribute('height'),
@@ -3469,7 +3469,7 @@ async function main() {
         await page.keyboard.up('Shift');
         await page.waitForTimeout(250);
         const stRz1 = await stRzBox();
-        const stRzData = await page.$eval(stRzEl, (el) => el.getData());
+        const stRzData = await page.$eval(stRzEl, (el) => el.__chart.getData());
         // The box grows about its centre, so the WIDTH moves twice as fast as the
         // pointer — which is exactly why the example halves `extent`. Assert the
         // edge, since that is the thing the reader has hold of.
@@ -3489,7 +3489,7 @@ async function main() {
         await page.locator('#lanes .chart svg').scrollIntoViewIfNeeded();
         await page.waitForTimeout(250);
         const lnEl = '#lanes .chart > div';
-        const ln0 = await page.$eval(lnEl, (el) => el.getData());
+        const ln0 = await page.$eval(lnEl, (el) => el.__chart.getData());
         const lnBox = await page.$eval('#lanes .chart svg rect.mark', (r) => {
             const b = r.getBoundingClientRect();
             return { cx: b.x + b.width / 2, cy: b.y + b.height / 2 };
@@ -3499,7 +3499,7 @@ async function main() {
         await page.mouse.move(lnBox.cx + 150, lnBox.cy, { steps: 12 });
         await page.mouse.up();
         await page.waitForTimeout(250);
-        const ln1 = await page.$eval(lnEl, (el) => el.getData());
+        const ln1 = await page.$eval(lnEl, (el) => el.__chart.getData());
         check('sticker: dragging a card across writes the new category',
             ln1[0].lane !== ln0[0].lane && ln1[0].lane === 'Next',
             `${ln0[0].lane} -> ${ln1[0].lane}`);
@@ -3513,7 +3513,7 @@ async function main() {
         await page.locator('#diagram .chart svg').scrollIntoViewIfNeeded();
         await page.waitForTimeout(200);
         const dgEl = '#diagram .chart > div';
-        const dgData = () => page.$eval(dgEl, (el) => el.getData());
+        const dgData = () => page.$eval(dgEl, (el) => el.__chart.getData());
         // A link emits a transparent HIT path plus its visible body; the arrowheads
         // are closed sub-paths with no stroke.
         const dgPaths = () => page.$$eval('#diagram .chart svg path',
@@ -3801,7 +3801,7 @@ async function main() {
         // ---- Network: the sections that were prose-only ---------------------
         console.log('\nNetwork examples (/marks/network)');
         await open('/marks/network', '#schema .chart svg');
-        const nwData = (id) => page.$eval(`#${id} .chart > div`, (el) => el.getData());
+        const nwData = (id) => page.$eval(`#${id} .chart > div`, (el) => el.__chart.getData());
         // Midpoint of every link body that is drawn and grabbable.
         const nwBodies = (id) => page.evaluate((sec) => {
             const ps = [...document.querySelectorAll(`#${sec} .chart svg path`)].filter((p) => {
@@ -3915,7 +3915,7 @@ async function main() {
         // each moment, where they sit, and the rows a drag writes.
         await page.locator('#ports .chart svg').first().scrollIntoViewIfNeeded();
         await page.waitForTimeout(250);
-        const portsData = (k = 0) => page.evaluate((i) => document.querySelectorAll('#ports .chart > div')[i].getData(), k);
+        const portsData = (k = 0) => page.evaluate((i) => document.querySelectorAll('#ports .chart > div')[i].__chart.getData(), k);
         // Every port (`data-channel="port"`), and which note edge it sits on. A link's
         // end handle sits on the same spot, so geometry alone cannot tell them apart.
         const portDots = (k = 0, sec = '#ports') => page.evaluate(([i, sel]) => {
@@ -4142,7 +4142,7 @@ async function main() {
         // to itself; a loop is drawn docked on its node, not from its centre.
         await page.locator('#multi .chart svg').scrollIntoViewIfNeeded();
         await page.waitForTimeout(250);
-        const smData = () => page.$eval('#multi .chart > div', (el) => el.getData());
+        const smData = () => page.$eval('#multi .chart > div', (el) => el.__chart.getData());
         // The state stickers (label plates are rects too, but short).
         const smBoxes = () => page.$$eval('#multi .chart svg rect.mark', (rs) => rs
             .map((r) => r.getBoundingClientRect())
@@ -4223,7 +4223,7 @@ async function main() {
         await open('/marks/network', '#node-marks .chart svg');
         await page.locator('#node-marks .chart svg').scrollIntoViewIfNeeded();
         await page.waitForTimeout(250);
-        const emData = () => page.$eval('#node-marks .chart > div', (el) => el.getData());
+        const emData = () => page.$eval('#node-marks .chart > div', (el) => el.__chart.getData());
         const emGlyphs = await page.$$eval('#node-marks .chart svg text.mark', (ts) => ts.map((t) => {
             const b = t.getBoundingClientRect();
             return { cx: b.x + b.width / 2, cy: b.y + b.height / 2 };
@@ -4261,7 +4261,7 @@ async function main() {
         await open('/marks/network', '#faces .chart svg');
         await page.locator('#faces .chart svg').scrollIntoViewIfNeeded();
         await page.waitForTimeout(250);
-        const fnData = () => page.$eval('#faces .chart > div', (el) => el.getData());
+        const fnData = () => page.$eval('#faces .chart > div', (el) => el.__chart.getData());
         const fnHeads = await page.$$eval('#faces .chart svg circle[data-hit]', (cs) => cs.map((c) => {
             const b = c.getBoundingClientRect();
             return { cx: b.x + b.width / 2, cy: b.y + b.height / 2, r: b.width / 2 };
@@ -4335,7 +4335,7 @@ async function main() {
             }));
         });
         const sidesData = () => page.evaluate(() => {
-            return document.querySelector('#sides .chart > div').getData();
+            return document.querySelector('#sides .chart > div').__chart.getData();
         });
         const sides0 = await sideEnds();
         const sidesRows0 = await sidesData();
@@ -4522,7 +4522,7 @@ async function main() {
         console.log('\nBand sweep, edge by edge (/editing/sweep)');
         await open('/editing/sweep', '#band svg path.mark-line');
         const bsEl = '#band .chart > div';
-        const bsBefore = await page.$eval(bsEl, (e) => e.getData());
+        const bsBefore = await page.$eval(bsEl, (e) => e.__chart.getData());
         const topHandles = page.locator('#band svg circle[data-channel="y2"]');
         const t0 = await boxCentre(topHandles.nth(1));
         const t3 = await boxCentre(topHandles.nth(4));
@@ -4535,7 +4535,7 @@ async function main() {
         check('band sweep: hover over the top edge outlines a top handle',
             outlineY != null && Math.abs(outlineY - t0.y) < 3, `outline y ${outlineY}, top handle y ${t0.y}`);
         await dragPage(t0.x, t0.y, t3.x, t0.y - 30, 16);
-        const bsAfter = await page.$eval(bsEl, (e) => e.getData());
+        const bsAfter = await page.$eval(bsEl, (e) => e.__chart.getData());
         const hiMoved = bsAfter.filter((d, i) => Math.abs(d.hi - bsBefore[i].hi) > 0.5).length;
         check('band sweep: dragging along the top edge repaints several highs', hiMoved >= 2, `${hiMoved} highs moved`);
         check('band sweep: every low is untouched', bsAfter.every((d, i) => d.lo === bsBefore[i].lo),
@@ -4545,7 +4545,7 @@ async function main() {
         console.log('\nContext rows (/editing/existence)');
         await open('/editing/existence', '#context svg path.mark-line');
         const ctxEl = '#context .chart > div';
-        const ctxData = await page.$eval(ctxEl, (e) => e.getData());
+        const ctxData = await page.$eval(ctxEl, (e) => e.__chart.getData());
         check('context: getData() is the bare array of answers', Array.isArray(ctxData) && ctxData.length === 4
             && ctxData.every((d) => d.year > 2020), JSON.stringify(ctxData).slice(0, 80));
         check('context: one line draws record and forecast', (await page.locator('#context svg path.mark-line').count()) === 1);
@@ -4561,12 +4561,12 @@ async function main() {
             return { x: m.a * p.x + m.c * p.y + m.e, y: m.b * p.x + m.d * p.y + m.f };
         });
         await dragPage(rec.x, rec.y, rec.x, rec.y - 40);
-        const ctxAfterRec = await page.$eval(ctxEl, (e) => e.getData());
+        const ctxAfterRec = await page.$eval(ctxEl, (e) => e.__chart.getData());
         check('context: a record point does not move', JSON.stringify(ctxAfterRec) === JSON.stringify(ctxData));
         // Drag a forecast point: getData() reports it.
         const fc = await boxCentre(ctxDots.nth(1));
         await dragPage(fc.x, fc.y, fc.x, fc.y - 40);
-        const ctxAfterFc = await page.$eval(ctxEl, (e) => e.getData());
+        const ctxAfterFc = await page.$eval(ctxEl, (e) => e.__chart.getData());
         check('context: a forecast drag is reported', ctxAfterFc.length === 4 && ctxAfterFc[1].rate > ctxData[1].rate + 0.5,
             `${ctxData[1].rate} -> ${ctxAfterFc[1] && ctxAfterFc[1].rate}`);
 
@@ -4574,10 +4574,10 @@ async function main() {
         console.log('\nfollow (/constraints)');
         await open('/constraints', '#follow svg circle.mark');
         const flEl = '#follow .chart > div';
-        const flBefore = (await page.$eval(flEl, (e) => e.getData()))[0];
+        const flBefore = (await page.$eval(flEl, (e) => e.__chart.getData()))[0];
         const meanDot = await boxCentre(page.locator('#follow svg circle.mark:not([data-hit])').first());
         await dragPage(meanDot.x, meanDot.y, meanDot.x, meanDot.y - 30);
-        const flAfter = (await page.$eval(flEl, (e) => e.getData()))[0];
+        const flAfter = (await page.$eval(flEl, (e) => e.__chart.getData()))[0];
         const dMean = flAfter.mean - flBefore.mean;
         check('follow: the mean rose', dMean > 0.3, `${flBefore.mean} -> ${flAfter.mean}`);
         check('follow: lo and hi moved by the same delta',
@@ -4595,34 +4595,34 @@ async function main() {
         check('tip: its box paints above the marks',
             (await page.locator('#tips svg .guide-front-layer rect.guide-rect').count()) === 1);
         const tipEl = '#tips .chart > div';
-        const rainBefore = (await page.$eval(tipEl, (e) => e.getData()))[1].rain;
+        const rainBefore = (await page.$eval(tipEl, (e) => e.__chart.getData()))[1].rain;
         await dragPage(tipBar.x, tipBar.b.y + 2, tipBar.x, tipBar.b.y + 40);
-        const rainAfter = (await page.$eval(tipEl, (e) => e.getData()))[1].rain;
+        const rainAfter = (await page.$eval(tipEl, (e) => e.__chart.getData()))[1].rain;
         check('tip: a drag under the tip still edits', rainAfter < rainBefore, `${rainBefore} -> ${rainAfter}`);
 
         // A rose's rim: radius is a polar position a move inverts.
         console.log('\nRose plot rim (/marks/arc)');
         await open('/marks/arc', '#radius svg path.mark-line');
         const roseEl = '#radius .chart > div';
-        const roseBefore = (await page.$eval(roseEl, (e) => e.getData()))[5].speed;
+        const roseBefore = (await page.$eval(roseEl, (e) => e.__chart.getData()))[5].speed;
         const roseSvg = await boxCentre(page.locator('#radius svg').first());
         const slice = await boxCentre(page.locator('#radius svg path.mark-line').nth(5));
         const vx = slice.x - roseSvg.x, vy = slice.y - roseSvg.y, vl = Math.hypot(vx, vy) || 1;
         await dragPage(slice.x, slice.y, slice.x + (vx / vl) * 40, slice.y + (vy / vl) * 40);
-        const roseAfter = (await page.$eval(roseEl, (e) => e.getData()))[5].speed;
+        const roseAfter = (await page.$eval(roseEl, (e) => e.__chart.getData()))[5].speed;
         check('rose: dragging a slice outward raises its value', roseAfter > roseBefore, `${roseBefore} -> ${roseAfter}`);
 
         // The wheel zooms the DOMAIN about the pointer, without scrolling the page.
         console.log('\nWheel zoom (/editing/zoom)');
         await open('/editing/zoom', '#wheel svg circle.mark');
         const zEl = '#wheel .chart > div';
-        const zBefore = await page.$eval(zEl, (e) => e.getSchema());
+        const zBefore = await page.$eval(zEl, (e) => e.__chart.getSchema());
         const zc = await boxCentre(page.locator('#wheel svg rect.plane').first());
         await page.mouse.move(zc.x, zc.y);
         const scrollBefore = await page.evaluate(() => window.scrollY);
         await page.mouse.wheel(0, -240);
         await page.waitForTimeout(250);
-        const zAfter = await page.$eval(zEl, (e) => e.getSchema());
+        const zAfter = await page.$eval(zEl, (e) => e.__chart.getSchema());
         const span = (s) => { const d = s.x.domain; return Number(d[1]) - Number(d[0]); };
         check('zoom: a wheel-up narrows the domain', span(zAfter) < span(zBefore), `${span(zBefore)} -> ${span(zAfter)}`);
         check('zoom: the page did not scroll', (await page.evaluate(() => window.scrollY)) === scrollBefore);
@@ -4632,7 +4632,7 @@ async function main() {
         console.log('\nPan (/editing/zoom)');
         await open('/editing/zoom', '#pan svg circle.mark');
         const pEl = '#pan .chart > div';
-        const pDom = async () => (await page.$eval(pEl, (e) => e.getSchema())).week.domain.map(Number);
+        const pDom = async () => (await page.$eval(pEl, (e) => e.__chart.getSchema())).week.domain.map(Number);
         check('pan: the marks clip to the plot by default',
             /^url\(#/.test((await page.locator('#pan svg g.mark-layer').getAttribute('clip-path')) || ''));
         await page.locator('#pan button', { hasText: 'Zoom in' }).click();
@@ -4642,12 +4642,12 @@ async function main() {
         const plane = await boxCentre(page.locator('#pan svg rect.plane').first());
         // Near the top of the plot, above every point (rain stays under 80 of 100).
         const topY = plane.b.y + plane.b.height * 0.06;
-        const pDataBefore = await page.$eval(pEl, (e) => JSON.stringify(e.getData()));
+        const pDataBefore = await page.$eval(pEl, (e) => JSON.stringify(e.__chart.getData()));
         await dragPage(plane.x, topY, plane.x - 80, topY);
         const pp = await pDom();
         check('pan: dragging the plot left moves the window right', pp[0] > pz[0] + 1, `${pz[0]} -> ${pp[0]}`);
         check('pan: the span is kept', Math.abs((pp[1] - pp[0]) - (pz[1] - pz[0])) < 1e-6);
-        check('pan: the data is untouched', (await page.$eval(pEl, (e) => JSON.stringify(e.getData()))) === pDataBefore);
+        check('pan: the data is untouched', (await page.$eval(pEl, (e) => JSON.stringify(e.__chart.getData()))) === pDataBefore);
         // A point inside the plot is still grabbed by its own move().
         const inside = await page.$$eval('#pan svg g.mark-layer circle.mark', (cs, box) => {
             const c = cs.map((el) => el.getBoundingClientRect())
@@ -4655,9 +4655,9 @@ async function main() {
             return c ? { x: c.x + c.width / 2, y: c.y + c.height / 2 } : null;
         }, plane.b);
         if (inside) {
-            const rainBefore = (await page.$eval(pEl, (e) => e.getData())).map((d) => d.rain).join();
+            const rainBefore = (await page.$eval(pEl, (e) => e.__chart.getData())).map((d) => d.rain).join();
             await dragPage(inside.x, inside.y, inside.x, inside.y + 30);
-            const rainAfter = (await page.$eval(pEl, (e) => e.getData())).map((d) => d.rain).join();
+            const rainAfter = (await page.$eval(pEl, (e) => e.__chart.getData())).map((d) => d.rain).join();
             const pAfter = await pDom();
             check('pan: a press on a point edits it rather than panning', rainAfter !== rainBefore && pAfter[0] === pp[0]);
         } else check('pan: a point is visible inside the zoomed plot', false);
@@ -4684,9 +4684,9 @@ async function main() {
             return r ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null;
         });
         if (last && l0) {
-            const highBefore = (await page.$eval(cEl, (e) => e.getData())).at(-1).high;
+            const highBefore = (await page.$eval(cEl, (e) => e.__chart.getData())).at(-1).high;
             await dragPage(last.x, last.y, last.x, last.y + (last.y < cPlane.y + cPlane.height / 2 ? 40 : -40));
-            const highAfter = (await page.$eval(cEl, (e) => e.getData())).at(-1).high;
+            const highAfter = (await page.$eval(cEl, (e) => e.__chart.getData())).at(-1).high;
             const l1 = await label();
             check('clip: the edge point is grabbed and its margin label follows',
                 highAfter !== highBefore && !!l1 && Math.abs(l1.y - l0.y) > 10, `${highBefore} -> ${highAfter}`);
@@ -4696,10 +4696,10 @@ async function main() {
         console.log('\nShape mark (/marks/shape)');
         await open('/marks/shape', '#named svg path.mark-line');
         const shEl = '#named .chart > div';
-        const shBefore = await page.$eval(shEl, (e) => JSON.stringify(e.getData()));
+        const shBefore = await page.$eval(shEl, (e) => JSON.stringify(e.__chart.getData()));
         const sh = await boxCentre(page.locator('#named svg path.mark-line').first());
         await dragPage(sh.x, sh.y, sh.x + 30, sh.y - 20);
-        const shAfter = await page.$eval(shEl, (e) => JSON.stringify(e.getData()));
+        const shAfter = await page.$eval(shEl, (e) => JSON.stringify(e.__chart.getData()));
         check('shape: dragging a shape by its body moves its row', shAfter !== shBefore);
 
         // Titles reserve space: the chart keeps its declared size.
@@ -4738,10 +4738,10 @@ async function main() {
         // A theme is paint only: the same drag still writes the row.
         await page.locator('#extends .chart svg').scrollIntoViewIfNeeded();
         const thmExEl = '#extends .chart > div';
-        const thmExBefore = await page.$eval(thmExEl, (e) => e.getData()[0].v);
+        const thmExBefore = await page.$eval(thmExEl, (e) => e.__chart.getData()[0].v);
         const thmExBar = await boxCentre(page.locator('#extends svg rect.mark').first());
         await dragPage(thmExBar.x, thmExBar.y, thmExBar.x, thmExBar.y - 30);
-        const thmExAfter = await page.$eval(thmExEl, (e) => e.getData()[0].v);
+        const thmExAfter = await page.$eval(thmExEl, (e) => e.__chart.getData()[0].v);
         // `move()` is absolute: the value becomes the pointer's height, so only "it changed" is asserted.
         check('themes: a drag on a themed (extends) chart writes its row', Math.abs(thmExAfter - thmExBefore) > 1, `${thmExBefore} -> ${thmExAfter}`);
 
@@ -4807,14 +4807,14 @@ async function main() {
             hGhosts = Math.max(hGhosts, await page.$$eval(`${hSvg} [data-ghost]`, (g) => g.length));
             await page.mouse.up();
             await page.waitForTimeout(100);
-            const cards = (await page.$eval('#fixed .chart > div', (el) => el.getData().nodes)).filter((d) => d.kind === 'card');
+            const cards = (await page.$eval('#fixed .chart > div', (el) => el.__chart.getData().nodes)).filter((d) => d.kind === 'card');
             const cardRects = await page.$$eval(`${hSvg} rect.mark`, (rs) => rs.map((r) => r.getBoundingClientRect())
                 .filter((b) => b.height < 100).map((b) => ({ x: b.x, y: b.y, w: b.width, h: b.height })));
             const hit = cardRects.some((a, i) => cardRects.slice(i + 1).some((b) =>
                 a.x < b.x + b.w - 0.5 && b.x < a.x + a.w - 0.5 && a.y < b.y + b.h - 0.5 && b.y < a.y + a.h - 0.5));
             if (hit && !hOverlapAt) hOverlapAt = `${label} (${cards.length} cards)`;
         }
-        const hNesting = await page.$eval('#fixed .chart > div', (el) => el.getData().nesting);
+        const hNesting = await page.$eval('#fixed .chart > div', (el) => el.__chart.getData().nesting);
         check('hierarchy: five cards sorted into one bucket',
             hNesting.filter((r) => r.parent === 'should').length === 5, JSON.stringify(hNesting));
         check('hierarchy: no two cards overlap after any drop', !hOverlapAt, `overlap after ${hOverlapAt}`);
@@ -4829,7 +4829,7 @@ async function main() {
             const b = t.getBoundingClientRect();
             return [t.textContent, { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) }];
         })));
-        const hDataBefore = JSON.stringify((await page.$eval('#fixed .chart > div', (el) => el.getData())).nodes);
+        const hDataBefore = JSON.stringify((await page.$eval('#fixed .chart > div', (el) => el.__chart.getData())).nodes);
         const hRectsBefore = await cardRectsNow();
         const hFrom = await cardLabelBox('Search');
         const hOnto = await cardLabelBox('Export PDF');
@@ -4840,7 +4840,7 @@ async function main() {
             await page.waitForTimeout(6);
         }
         const hRectsMid = await cardRectsNow();
-        const hDataMid = (await page.$eval('#fixed .chart > div', (el) => el.getData())).nodes;
+        const hDataMid = (await page.$eval('#fixed .chart > div', (el) => el.__chart.getData())).nodes;
         await page.mouse.up();
         await page.waitForTimeout(100);
         // Other cards moved on screen, and no data but the dragged card's did.
@@ -4860,7 +4860,7 @@ async function main() {
                 .sort((p, q) => q.width - p.width)[0];
             return box ? box.width : null;
         });
-        const gData = () => page.$eval('#schema .chart > div', (el) => el.getData().nodes.find((d) => d.id === 'g1').w);
+        const gData = () => page.$eval('#schema .chart > div', (el) => el.__chart.getData().nodes.find((d) => d.id === 'g1').w);
         const gW0 = await groupWidth(), gD0 = await gData();
         const survey = page.locator(`${gSvg} text`, { hasText: 'Survey' }).first();
         await survey.scrollIntoViewIfNeeded();
@@ -4906,6 +4906,222 @@ async function main() {
             Math.abs(easeCard.x - (easeX + 200)) < 2 && Math.abs(easeCard.y - (easeY - 70)) < 2, `card ${JSON.stringify(easeCard)} vs pointer ${easeX + 200},${easeY - 70}`);
         check('hierarchy motion: the layout comes to rest after the release',
             Math.abs(easeWRest - (await groupWidth())) < 0.01, `width ${easeWRest}`);
+
+        // ---- Several charts on one dataset -------------------------------
+        // Every example on /dataset puts two or three charts on one dataset. A
+        // real gesture in one chart must redraw the others. The charts of an
+        // example are siblings under its `.chart` div.
+        console.log('\nLinked charts (/dataset)');
+        { // own scope: the names below are common ones in this file
+            await open('/dataset', '#linked .chart svg rect.mark');
+            const dsChart = (id, n) => `#${id} .chart > div:nth-child(${n})`;
+            const dsData = (id, table) => page.$eval(dsChart(id, 1), (e, t) => {
+                const d = e.__chart.getData();
+                return t ? d[t] : d;
+            }, table);
+            const attrs = (sel, name) => page.$$eval(sel, (els, a) => els.map((e) => e.getAttribute(a)), name);
+            const sameDataset = (id, n) => page.$eval(`#${id} .chart`, (c, k) =>
+                c.children.length === k && [...c.children].every((d) => d.__chart.dataset === c.children[0].__chart.dataset), n);
+            const dragFrom = async (x, y, dx, dy, steps = 12) => {
+                await page.mouse.move(x, y);
+                await page.mouse.down();
+                for (let i = 1; i <= steps; i++) { await page.mouse.move(x + dx * i / steps, y + dy * i / steps); await page.waitForTimeout(8); }
+                await page.mouse.up();
+                await page.waitForTimeout(150);
+            };
+            const centre = (b) => [b.x + b.width / 2, b.y + b.height / 2];
+            // A horizontal bar's far end: the end away from zero.
+            const barEnd = (b, negative) => [negative ? b.x + 2 : b.x + b.width - 2, b.y + b.height / 2];
+            // The box of the bar drawing row `index` in chart n of section id.
+            const barOf = (id, n, index) => page.$$eval(`${dsChart(id, n)} svg rect.mark`, (rs, i) => {
+                const r = rs.find((e) => e.__data__ && e.__data__.index === i);
+                if (!r) return null;
+                const b = r.getBoundingClientRect();
+                return { x: b.x, y: b.y, width: b.width, height: b.height };
+            }, index);
+
+            // #linked: a stacked bar (edge handles) and a waffle (paint) over 4 counts.
+            await page.locator(dsChart('linked', 1)).scrollIntoViewIfNeeded();
+            check('dataset: both charts in #linked share one dataset', await sameDataset('linked', 2));
+            const sum = (rows) => rows.reduce((s, d) => s + d.count, 0);
+            const cellFills = () => attrs(`${dsChart('linked', 2)} svg rect.mark`, 'fill');
+            const lk0 = await dsData('linked');
+            const cells0 = await cellFills();
+            const edge = page.locator(`${dsChart('linked', 1)} svg circle.mark`).first();
+            await dragFrom(...centre(await edge.boundingBox()), 40, 0);
+            const lk1 = await dsData('linked');
+            const cells1 = await cellFills();
+            check('dataset: dragging the first edge trades Improves for Recovers',
+                lk1[0].count > lk0[0].count + 3 && lk1[1].count < lk0[1].count - 3 && lk1[2].count === lk0[2].count && lk1[3].count === lk0[3].count,
+                JSON.stringify(lk1.map((d) => Math.round(d.count))));
+            check('dataset: the edge drag keeps the total at 100', Math.abs(sum(lk1) - 100) < 1e-6, String(sum(lk1)));
+            check('dataset: the edge drag repaints the waffle', cells1.some((f, i) => f !== cells0[i]));
+
+            // Paint upward from the top filled cell of the Worse block.
+            const worse = await page.$$eval(`${dsChart('linked', 2)} svg rect.mark`, (rs) => {
+                const filled = rs.filter((r) => r.getAttribute('fill') === '#F2B94B').map((r) => r.getBoundingClientRect());
+                const top = filled.sort((a, b) => a.y - b.y)[0];
+                return { x: top.x, y: top.y, width: top.width, height: top.height };
+            });
+            const widths1 = await attrs(`${dsChart('linked', 1)} svg rect.mark`, 'width');
+            await dragFrom(...centre(worse), 0, -40);
+            const lk2 = await dsData('linked');
+            const widths2 = await attrs(`${dsChart('linked', 1)} svg rect.mark`, 'width');
+            check('dataset: painting the waffle raises Worse', lk2[3].count > lk1[3].count + 10, `${lk1[3].count} -> ${lk2[3].count}`);
+            check('dataset: the paint keeps the total at 100 (maintainSum)', Math.abs(sum(lk2) - 100) < 1e-6, JSON.stringify(lk2.map((d) => d.count)));
+            check('dataset: the paint resizes the stacked bar', widths2.some((w, i) => w !== widths1[i]), `${widths1} -> ${widths2}`);
+            await page.$eval(dsChart('linked', 2), (e) => e.__chart.undo());
+            check('dataset: undo from the waffle chart steps back its paint', JSON.stringify(await dsData('linked')) === JSON.stringify(lk1));
+
+            // #share-a-column: two swept lines over year, one connected scatter of both.
+            await page.locator(dsChart('share-a-column', 1)).scrollIntoViewIfNeeded();
+            check('dataset: the three charts in #share-a-column share one dataset', await sameDataset('share-a-column', 3));
+            const scatter = (a) => attrs(`${dsChart('share-a-column', 3)} svg circle.mark`, a);
+            const ec0 = await dsData('share-a-column');
+            const cx0 = await scatter('cx'), cy0 = await scatter('cy');
+            {
+                const sb = await page.locator(`${dsChart('share-a-column', 1)} svg`).boundingBox();
+                const m = { top: 10, right: 16, bottom: 26, left: 44 }, ih = 150 - m.top - m.bottom, iw = 440 - m.left - m.right;
+                const sy = sb.y + m.top + ih * 0.2;
+                await dragFrom(sb.x + m.left + 2, sy, iw - 4, 0, 30);
+            }
+            const ec1 = await dsData('share-a-column');
+            const cx1 = await scatter('cx'), cy1 = await scatter('cy');
+            check('dataset: a sweep writes unemployment for every year', ec1.every((d, i) => d.unemployment > 6.5 && d.inflation === ec0[i].inflation),
+                JSON.stringify(ec1.map((d) => d.unemployment.toFixed(1))));
+            check('dataset: the sweep moves every scatter dot sideways only',
+                cx1.every((x, i) => x !== cx0[i]) && cy1.every((y, i) => y === cy0[i]), `${cx0} -> ${cx1}`);
+            const yearDot = page.locator(`${dsChart('share-a-column', 3)} svg circle.mark`).nth(3);
+            await yearDot.scrollIntoViewIfNeeded();
+            const inflLine0 = await attrs(`${dsChart('share-a-column', 2)} svg circle`, 'cy');
+            await dragFrom(...centre(await yearDot.boundingBox()), -40, -30);
+            const ec2 = await dsData('share-a-column');
+            const inflLine1 = await attrs(`${dsChart('share-a-column', 2)} svg circle`, 'cy');
+            check('dataset: a scatter drag writes both columns of one year',
+                ec2[3].unemployment < ec1[3].unemployment - 0.3 && ec2[3].inflation > ec1[3].inflation + 0.3
+                    && ec2.every((d, i) => i === 3 || JSON.stringify(d) === JSON.stringify(ec1[i])),
+                `${JSON.stringify(ec1[3])} -> ${JSON.stringify(ec2[3])}`);
+            check('dataset: the scatter drag moves one point of the inflation line',
+                inflLine1.filter((y, i) => y !== inflLine0[i]).length === 1, `${inflLine0} -> ${inflLine1}`);
+
+            // #tables: a network chart over nodes + links, and bars over nodes.
+            await page.locator(dsChart('tables', 1)).scrollIntoViewIfNeeded();
+            check('dataset: the network and the bars share one dataset', await sameDataset('tables', 2));
+            const nodeR = () => attrs(`${dsChart('tables', 1)} svg circle.mark`, 'r');
+            const tb0 = await dsData('tables', 'nodes');
+            const r0 = await nodeR();
+            const b0 = await barOf('tables', 2, 3); // Speculation, importance 3
+            await dragFrom(...barEnd(b0, false), 60, 0);
+            const tb1 = await dsData('tables', 'nodes');
+            const r1 = await nodeR();
+            check('dataset: a bar drag writes one node\'s importance',
+                tb1[3].importance > tb0[3].importance + 1 && tb1.every((d, i) => i === 3 || d.importance === tb0[i].importance),
+                JSON.stringify(tb1.map((d) => d.importance)));
+            check('dataset: the bar drag grows that node\'s circle', Number(r1[3]) > Number(r0[3]) && r1.filter((r, i) => r !== r0[i]).length === 1, `${r0} -> ${r1}`);
+            const links0 = (await dsData('tables', 'links')).length;
+            const circles = page.locator(`${dsChart('tables', 1)} svg circle.mark`);
+            const [fx, fy] = centre(await circles.nth(3).boundingBox());
+            const [tx, ty] = centre(await circles.nth(4).boundingBox());
+            await page.keyboard.down('Shift');
+            await dragFrom(fx, fy, tx - fx, ty - fy, 16);
+            await page.keyboard.up('Shift');
+            const links1 = await dsData('tables', 'links');
+            check('dataset: shift-drag between two factors adds a link',
+                links1.length === links0 + 1 && links1.some((l) => l.source === 'Speculation' && l.target === 'House prices'), JSON.stringify(links1));
+            {
+                const gb = await page.locator(`${dsChart('tables', 1)} svg`).boundingBox();
+                await page.mouse.click(gb.x + 44 + 352 * 0.5, gb.y + 24 + 212 * 0.5);
+                await page.waitForTimeout(150);
+            }
+            const tb2 = await dsData('tables', 'nodes');
+            const bars2 = await page.$$eval(`${dsChart('tables', 2)} svg rect.mark`, (rs) => rs.length);
+            check('dataset: a click on empty space mints a node with the declared default',
+                tb2.length === tb1.length + 1 && tb2[tb2.length - 1].id === 'Item 1' && tb2[tb2.length - 1].importance === 5, JSON.stringify(tb2[tb2.length - 1]));
+            check('dataset: the new node gets a bar', bars2 === tb2.length, `${bars2} bars, ${tb2.length} nodes`);
+
+            // #view: bars edit, the map only shows.
+            await page.locator(dsChart('view', 2)).scrollIntoViewIfNeeded();
+            check('dataset: the map and the bars share one dataset', await sameDataset('view', 2));
+            const areaFills = () => attrs(`${dsChart('view', 1)} svg path.mark-line`, 'fill');
+            const mapInert = await page.$$eval(`${dsChart('view', 1)} svg path.mark-line`, (ps) => ps.length > 0 && ps.every((p) => p.style.pointerEvents === 'none'));
+            check('dataset: the view map takes no pointer events', mapInert);
+            const vw0 = await dsData('view');
+            const f0 = await areaFills();
+            const vb = await barOf('view', 2, 0); // Arbutus Ridge, negative
+            await dragFrom(...barEnd(vb, true), 60, 0);
+            const vw1 = await dsData('view');
+            const f1 = await areaFills();
+            check('dataset: a bar drag writes one area\'s change',
+                vw1[0].change > vw0[0].change + 1 && vw1.every((d, i) => i === 0 || d.change === vw0[i].change), `${vw0[0].change} -> ${vw1[0].change}`);
+            check('dataset: the bar drag recolours exactly one area on the map',
+                f1.filter((f, i) => f !== f0[i]).length === 1, `${f1.filter((f, i) => f !== f0[i]).length} changed`);
+
+            // The slider calls ds.set: real keyboard input on a real <input type=range>.
+            const slider = page.locator('#set input[type=range]');
+            await slider.scrollIntoViewIfNeeded();
+            const st0 = await dsData('set');
+            const pie0 = await attrs(`${dsChart('set', 1)} svg path`, 'd');
+            const sbar0 = await attrs(`${dsChart('set', 2)} svg rect.mark`, 'height');
+            await slider.focus();
+            for (let i = 0; i < 10; i++) await page.keyboard.press('ArrowRight');
+            await page.waitForTimeout(150);
+            const st1 = await dsData('set');
+            const pie1 = await attrs(`${dsChart('set', 1)} svg path`, 'd');
+            const sbar1 = await attrs(`${dsChart('set', 2)} svg rect.mark`, 'height');
+            const total = st1.reduce((s, d) => s + d.share, 0);
+            check('dataset: the slider writes row 0 through ds.set',
+                st1[0].share === st0[0].share + 10, `${st0[0].share} -> ${st1[0].share}`);
+            check('dataset: ds.set runs the dataset constraints (the shares still sum to 100)',
+                Math.abs(total - 100) < 1e-6 && st1[1].share < st0[1].share, JSON.stringify(st1.map((d) => d.share)));
+            check('dataset: ds.set redraws chart 1 (pie)', pie1.some((d, i) => d !== pie0[i]), `${pie0.length} paths`);
+            check('dataset: ds.set redraws chart 2 (bars)', sbar1.some((h, i) => h !== sbar0[i]), `${sbar0} -> ${sbar1}`);
+
+            // A drag in a chart moves the slider back.
+            {
+                const b = await page.locator(`${dsChart('set', 2)} svg rect.mark`).first().boundingBox();
+                await dragFrom(b.x + b.width / 2, b.y + Math.min(6, b.height / 2), 0, 30);
+            }
+            const st2 = await dsData('set');
+            const sv = Number(await slider.inputValue());
+            check('dataset: a bar drag updates the slider', st2[0].share < st1[0].share && Math.abs(sv - st2[0].share) <= 1,
+                `share ${st2[0].share}, slider ${sv}`);
+
+            // #history: click the map to mint a place, drag its bar, undo both.
+            await page.locator(dsChart('history', 1)).scrollIntoViewIfNeeded();
+            // The third child is the Undo/Redo row.
+            check('dataset: the flood map and the bars share one dataset', await page.$eval('#history .chart', (c) =>
+                c.children[0].__chart.dataset === c.children[1].__chart.dataset));
+            const pinR = () => attrs(`${dsChart('history', 1)} svg circle.mark`, 'r');
+            const hy0 = await dsData('history');
+            {
+                const mb = await page.locator(`${dsChart('history', 1)} svg`).boundingBox();
+                await page.mouse.click(mb.x + mb.width * 0.75, mb.y + mb.height * 0.5);
+                await page.waitForTimeout(150);
+            }
+            const hy1 = await dsData('history');
+            const nb1 = await page.$$eval(`${dsChart('history', 2)} svg rect.mark`, (rs) => rs.length);
+            const pr1 = await pinR();
+            check('dataset: a click on the map mints a place at the default depth',
+                hy1.length === hy0.length + 1 && hy1[2].id === 'Item 3' && hy1[2].depth === 0.5, JSON.stringify(hy1[2]));
+            check('dataset: the new place gets a bar and a pin', nb1 === 3 && pr1.length === 3, `${nb1} bars, ${pr1.length} pins`);
+            await page.locator(dsChart('history', 2)).scrollIntoViewIfNeeded();
+            await dragFrom(...barEnd(await barOf('history', 2, 2), false), 80, 0);
+            const hy2 = await dsData('history');
+            const pr2 = await pinR();
+            check('dataset: dragging the new bar writes its depth', hy2[2].depth > 1, String(hy2[2].depth));
+            check('dataset: the depth drag grows that pin\'s circle on the map', Number(pr2[2]) > Number(pr1[2]), `${pr1[2]} -> ${pr2[2]}`);
+            const hUndo = page.locator('#history button', { hasText: 'Undo' });
+            await hUndo.click();
+            await page.waitForTimeout(100);
+            check('dataset: Undo first steps back the depth', JSON.stringify(await dsData('history')) === JSON.stringify(hy1));
+            await hUndo.click();
+            await page.waitForTimeout(100);
+            const hy3 = await dsData('history');
+            const nb3 = await page.$$eval(`${dsChart('history', 2)} svg rect.mark`, (rs) => rs.length);
+            check('dataset: Undo then removes the place from both charts',
+                JSON.stringify(hy3) === JSON.stringify(hy0) && nb3 === 2 && (await pinR()).length === 2, `${hy3.length} rows, ${nb3} bars`);
+            check('dataset: Undo disables at the start of the shared history', await hUndo.isDisabled());
+        }
 
         check('no page/console errors', errors.length === 0, errors.slice(0, 3).join(' | '));
     } finally {

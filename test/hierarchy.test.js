@@ -118,7 +118,7 @@ describe('tree rules', () => {
 describe('the engine holds the tree', () => {
     const chart = (data, marks) => {
         const el = Elicit({ width: 300, height: 200, schema: schema(), data, marks: marks || [plot.point({ x: { field: 'x' }, y: { field: 'y' } })] });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         return el;
     };
 
@@ -177,7 +177,7 @@ const boxChart = (data, edits) => {
         width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false, motion: false,
         schema: boxSchema, data, marks: [boxes(edits)],
     });
-    document.body.appendChild(el);
+    document.body.appendChild(el.dom());
     return el;
 };
 const byId = (el) => Object.fromEntries(el.getData().nodes.map((d) => [d.id, d]));
@@ -274,7 +274,7 @@ describe('paint order', () => {
             nesting: [nest('a', 'g'), nest('b', 'g')],
         });
         await new Promise((r) => setTimeout(r, 0));
-        const widths = [...el.querySelectorAll('rect')].map((r) => +r.getAttribute('width'));
+        const widths = [...el.dom().querySelectorAll('rect')].map((r) => +r.getAttribute('width'));
         const container = widths.findIndex((w) => w > 100);
         const firstChild = widths.indexOf(40);
         expect(container).toBeGreaterThanOrEqual(0);
@@ -290,9 +290,9 @@ describe('paint order of a node and its label', () => {
             data: { nodes: [{ ...box('a', 100, 100), label: 'A' }, { ...box('b', 110, 105), label: 'B' }], nesting: [] },
             marks: [boxes(), plot.text({ channels: { x: { field: 'x' }, y: { field: 'y' }, text: { field: 'label' } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await new Promise((r) => setTimeout(r, 0));
-        const drawn = [...el.querySelectorAll('rect, text')]
+        const drawn = [...el.dom().querySelectorAll('rect, text')]
             .filter((n) => n.tagName === 'text' || Math.round(+n.getAttribute('width')) === 40)
             .map((n) => (n.tagName === 'text' ? n.textContent : 'box'));
         expect(drawn).toEqual(['box', 'A', 'box', 'B']);
@@ -318,13 +318,13 @@ describe('nested and linked', () => {
             },
             marks: [boxes(), plot.link({})],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await new Promise((r) => setTimeout(r, 0));
         setWarnings(false);
         console.warn = original;
         expect(warnings.filter((w) => w.includes('[elicit]'))).toEqual([]);
         expect(el.getData().links).toHaveLength(2);
-        expect(el.querySelectorAll('path, line, polyline').length).toBeGreaterThanOrEqual(2);
+        expect(el.dom().querySelectorAll('path, line, polyline').length).toBeGreaterThanOrEqual(2);
     });
 });
 
@@ -397,7 +397,7 @@ describe('edit.hierarchy.nest', () => {
         expect(mid.g.w).toBeCloseTo(before.g.w, 5);
         expect(mid.g.x).toBeCloseTo(before.g.x, 5);
         // but is drawn as the release will leave it: shrunk round what stays
-        const widths = [...el.querySelectorAll('rect')].map((r) => +r.getAttribute('width')).filter((w) => w < 400);
+        const widths = [...el.dom().querySelectorAll('rect')].map((r) => +r.getAttribute('width')).filter((w) => w < 400);
         const drawnWidth = Math.max(...widths);
         expect(drawnWidth).toBeLessThan(before.g.w - 1);
         el.emit({ type: 'dragend', node, x: from.x - 60, y: from.y });
@@ -447,7 +447,7 @@ describe('edit.hierarchy.nest', () => {
                 edits: [edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()],
             })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         drag(el, 2, px(el.getData().nodes[0]));
         expect(el.getData().nesting).toEqual([]);
         drag(el, 2, px(el.getData().nodes[1]));
@@ -462,8 +462,8 @@ describe('drop feedback', () => {
             [edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()]
         );
         await new Promise((r) => setTimeout(r, 0));
-        const count = () => el.querySelectorAll('rect').length;
-        const widest = () => Math.max(...[...el.querySelectorAll('rect:not([data-ghost])')].map((r) => +r.getAttribute('width') || 0).filter((w) => w < 400)); // not the plot's own rects
+        const count = () => el.dom().querySelectorAll('rect').length;
+        const widest = () => Math.max(...[...el.dom().querySelectorAll('rect:not([data-ghost])')].map((r) => +r.getAttribute('width') || 0).filter((w) => w < 400)); // not the plot's own rects
         const atRest = count();
         const g = byId(el).g;
         const node = { index: 2, featureId: 'boxes' };
@@ -471,7 +471,7 @@ describe('drop feedback', () => {
         el.emit({ type: 'drag', node, x: g.x - g.w / 2 + 4, y: 300 - g.y });
         // The container itself is drawn at the size it would take, with a `target`
         // outline. No ghost copy.
-        expect(el.querySelectorAll('[data-ghost]').length).toBe(0);
+        expect(el.dom().querySelectorAll('[data-ghost]').length).toBe(0);
         expect(count()).toBe(atRest + 1);
         expect(widest()).toBeGreaterThan(g.w + 1);
         expect(byId(el).g.w).toBe(g.w); // the data waits for the release
@@ -522,7 +522,7 @@ describe('a nesting table declared like any other table', () => {
                 edits: [edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()],
             })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         const drop = (index, from, to) => {
             const node = { index, featureId: 'b' };
             el.emit({ type: 'dragstart', node, ...from });
@@ -553,7 +553,7 @@ describe('container padding', () => {
             width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false, motion: false,
             schema: boxSchema, data, marks: [m],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         return el;
     };
 
@@ -596,7 +596,7 @@ describe('dodge', () => {
             width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false, motion: false,
             schema: boxSchema, data, marks: [m],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         return el;
     };
     const clear = (a, b, gap = 0) => Math.abs(a.x - b.x) >= (a.w + b.w) / 2 + gap - 0.02
@@ -673,7 +673,7 @@ describe('dodge', () => {
         }, mark([edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()]));
         const before = byId(el);
         const node = { index: 1, featureId: 'boxes' };
-        const drawnYs = () => [...el.querySelectorAll('rect')].filter((r) => +r.getAttribute('width') === 40).map((r) => +r.getAttribute('y'));
+        const drawnYs = () => [...el.dom().querySelectorAll('rect')].filter((r) => +r.getAttribute('width') === 40).map((r) => +r.getAttribute('y'));
         el.emit({ type: 'dragstart', node, x: 200, y: 150 });
         el.emit({ type: 'drag', node, x: 200, y: 75 });
         expect(drawnYs().some((y) => Math.abs(y - (300 - before.b.y - 10)) < 0.01)).toBe(true); // b is drawn where it was
@@ -737,7 +737,7 @@ describe('dodge', () => {
             nodes: [box('g', 200, 150, 200, 200), box('a', 150, 200, 60, 30), box('b', 250, 100, 60, 30)],
             nesting: [nest('a', 'g'), nest('b', 'g')],
         }, mark([edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()], true, false));
-        const drawnB = () => [...el.querySelectorAll('rect')].map((r) => ({ x: +r.getAttribute('x') + 30, y: +r.getAttribute('y') + 15, w: +r.getAttribute('width') }))
+        const drawnB = () => [...el.dom().querySelectorAll('rect')].map((r) => ({ x: +r.getAttribute('x') + 30, y: +r.getAttribute('y') + 15, w: +r.getAttribute('width') }))
             .filter((r) => r.w === 60)
             // a is drawn under the pointer at (250, 200); b is the other one
             .sort((p, q) => Math.hypot(q.x - 250, q.y - 200) - Math.hypot(p.x - 250, p.y - 200))[0];
@@ -759,7 +759,7 @@ describe('dodge', () => {
             data: { nodes: [{ id: 'a', x: 200, y: 150, r: 20 }, { id: 'b', x: 212, y: 160, r: 20 }, { id: 'c', x: 195, y: 140, r: 20 }], nesting: [] },
             marks: [plot.point({ channels: { x: { field: 'x' }, y: { field: 'y' }, size: { field: 'r', scale: null }, dodge: true } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         const n = el.getData().nodes;
         const gaps = [[0, 1], [0, 2], [1, 2]].map(([i, j]) => Math.hypot(n[i].x - n[j].x, n[i].y - n[j].y) - n[i].r - n[j].r);
         expect(Math.min(...gaps)).toBeGreaterThan(8 - 0.05);
@@ -777,7 +777,7 @@ describe('dodge', () => {
                 parts: [plot.point({ channels: { size: { value: 6 } } }), plot.rect({ channels: { width: { value: 80 }, height: { value: 10 } } })],
             })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         const [a, b] = el.getData().nodes;
         expect(Math.abs(a.x - b.x) >= 88 - 0.05 || Math.abs(a.y - b.y) >= 18 - 0.05).toBe(true);
     });
@@ -791,5 +791,205 @@ describe('dodge', () => {
         });
         const d = byId(el);
         expect(allClear([d.a, d.n1, d.n2, d.n3], 8)).toBe(true);
+    });
+});
+
+describe('Dataset.set on a hierarchy', () => {
+    const seed = () => ({
+        nodes: [box('g', 0, 0, 5, 5), box('a', 100, 100), box('b', 200, 140)],
+        nesting: [nest('a', 'g'), nest('b', 'g')],
+    });
+
+    it('re-fits the container around a child it moves', () => {
+        const el = boxChart(seed());
+        expect(byId(el).g.x).toBeCloseTo(150, 5);
+        expect(el.set('x', 300, { table: 'nodes', index: 1 })).toBe(true);
+        const d = byId(el);
+        expect(d.a.x).toBe(300);
+        // The children now span x 180..320, so the group moved to hold them.
+        expect(d.g.x).toBeCloseTo(250, 5);
+        expect(d.g.w).toBeCloseTo(140 + 20, 5);
+    });
+
+    it('refuses a write that breaks the tree', () => {
+        const el = boxChart(seed());
+        expect(el.set('parent', 'a', { table: 'nesting', index: 0 })).toBe(false);
+        expect(el.getData().nesting).toEqual(seed().nesting);
+        expect(el.canUndo()).toBe(false);
+    });
+});
+
+// ── Several charts over one hierarchy ────────────────────────────────────────
+// A chart settles the node rows in its own pixels. Only the chart whose pixels
+// the rows were last settled in (a commit, or the first to take outside data)
+// settles at render time; every other chart draws the stored boxes.
+describe('a hierarchy drawn by several charts', () => {
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    const seed = () => ({
+        nodes: [box('g', 0, 0, 5, 5), box('a', 100, 100), box('b', 200, 140), box('h', 0, 0), box('c', 300, 220), box('d', 60, 40)],
+        nesting: [nest('a', 'g'), nest('b', 'g'), nest('c', 'h')],
+    });
+    const editsOf = () => [edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()];
+    // The box mark's sizes are pixels (`scale: null`), so a container's fitted
+    // width differs between charts of different size.
+    const view = (width, height) => ({
+        width, height, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false, motion: false,
+        marks: [boxes(editsOf())],
+    });
+    const mount = (chart) => { document.body.appendChild(chart.dom()); return chart; };
+    // A at the domain's size (pixel == data on x), B at half of it.
+    const pair = async (data = seed()) => {
+        const ds = Elicit.dataset({ schema: boxSchema, data });
+        const A = mount(ds.chart(view(400, 300)));
+        const B = mount(ds.chart(view(200, 150)));
+        await tick();
+        return { ds, A, B };
+    };
+    const solo = (width, height, data = seed()) => mount(Elicit({ schema: boxSchema, data, ...view(width, height) }));
+    // Data -> a chart's pixels, for a chart `k` times the domain's size.
+    const pxIn = (k) => (d) => ({ x: d.x * k, y: (300 - d.y) * k });
+    const rim = (k, d) => ({ x: (d.x - d.w / 2) * k + 4, y: (300 - d.y) * k });
+    const drag = (el, k, index, to) => {
+        const from = pxIn(k)(el.getData().nodes[index]);
+        const node = { index, featureId: 'boxes' };
+        el.emit({ type: 'dragstart', node, ...from });
+        for (let s = 1; s <= 4; s++) el.emit({ type: 'drag', node, x: from.x + (to.x - from.x) * s / 4, y: from.y + (to.y - from.y) * s / 4 });
+        el.emit({ type: 'dragend', node, ...to });
+    };
+    // Renders that change no data: a hover in each chart, a selection round trip.
+    const idle = (ds, ...charts) => {
+        for (const c of charts) {
+            const rect = [...c.dom().querySelectorAll('rect')].map((r) => r.__data__).find((n) => n && n.featureId === 'boxes');
+            c.emit({ type: 'pointerover', node: rect });
+            c.emit({ type: 'pointerout', node: rect });
+        }
+        ds.select(0);
+        ds.clearSelection();
+    };
+    // The drawn box of a row in a chart `k` times the domain's size, read off its DOM.
+    const drawn = (chart, k, d) => [...chart.dom().querySelectorAll('rect')].some((r) =>
+        Math.abs(+r.getAttribute('width') - d.w) < 0.01 && Math.abs(+r.getAttribute('height') - d.h) < 0.01
+        && Math.abs(+r.getAttribute('x') + d.w / 2 - d.x * k) < 0.01
+        && Math.abs(+r.getAttribute('y') + d.h / 2 - (300 - d.y) * k) < 0.01);
+    const drawsAll = (chart, k, ds) => ds.getData().nodes.every((d) => drawn(chart, k, d));
+
+    it('settles once, in the first chart, and stays put however often either redraws', async () => {
+        const { ds, A, B } = await pair();
+        // The rows are A's settle: B's own would fit g to a different width.
+        expect(ds.getData()).toEqual(solo(400, 300).getData());
+        expect(solo(200, 150).getData().nodes[0].w).not.toBeCloseTo(ds.getData().nodes[0].w, 1);
+        const once = ds.getData();
+        for (let k = 0; k < 3; k++) idle(ds, A, B, B, A);
+        expect(ds.getData()).toEqual(once);
+        expect(drawsAll(A, 1, ds) && drawsAll(B, 0.5, ds)).toBe(true);
+    });
+
+    it('a drag in A is drawn by B, and B redrawing moves nothing', async () => {
+        const { ds, A, B } = await pair();
+        drag(A, 1, 5, rim(1, byId(A).g));
+        expect(ds.getData().nesting).toContainEqual(nest('d', 'g'));
+        const after = ds.getData();
+        expect(drawsAll(B, 0.5, ds)).toBe(true);
+        idle(ds, B, A, B);
+        expect(ds.getData()).toEqual(after);
+        expect(drawsAll(A, 1, ds) && drawsAll(B, 0.5, ds)).toBe(true);
+    });
+
+    it('a drag in B settles in B, is drawn by A, and A redrawing moves nothing', async () => {
+        const { ds, A, B } = await pair();
+        drag(B, 0.5, 5, rim(0.5, byId(B).g));
+        expect(ds.getData().nesting).toContainEqual(nest('d', 'g'));
+        const after = ds.getData();
+        expect(drawsAll(A, 1, ds)).toBe(true);
+        idle(ds, A, B, A);
+        expect(ds.getData()).toEqual(after);
+        expect(drawsAll(A, 1, ds) && drawsAll(B, 0.5, ds)).toBe(true);
+    });
+
+    it('a stroke that commits nothing leaves the other chart\'s layout alone', async () => {
+        const { ds, B } = await pair();
+        const before = ds.getData();
+        const node = { index: 1, featureId: 'boxes' };
+        const at = pxIn(0.5)(before.nodes[1]);
+        B.emit({ type: 'dragstart', node, ...at });
+        B.emit({ type: 'dragend', node, ...at });
+        expect(ds.getData()).toEqual(before);
+        expect(ds.canUndo()).toBe(false);
+    });
+
+    it('setData and set settle once, in the first chart to render', async () => {
+        const { ds, A, B } = await pair();
+        const next = { ...seed(), nesting: [nest('a', 'g'), nest('c', 'g'), nest('d', 'h')] };
+        ds.setData(next);
+        const alone = solo(400, 300);
+        alone.setData(next);
+        expect(ds.getData()).toEqual(alone.getData());
+        idle(ds, A, B);
+        expect(ds.getData()).toEqual(alone.getData());
+        expect(drawsAll(B, 0.5, ds)).toBe(true);
+
+        expect(ds.set('x', 300, { table: 'nodes', index: 1 })).toBe(true);
+        alone.set('x', 300, { table: 'nodes', index: 1 });
+        expect(ds.getData()).toEqual(alone.getData());
+        idle(ds, B, A);
+        expect(ds.getData()).toEqual(alone.getData());
+        expect(drawsAll(B, 0.5, ds)).toBe(true);
+    });
+
+    it('undo and redo restore the committed rows exactly', async () => {
+        const { ds, A, B } = await pair();
+        const before = ds.getData();
+        drag(B, 0.5, 5, rim(0.5, byId(B).g));
+        const after = ds.getData();
+        expect(after).not.toEqual(before);
+        ds.undo();
+        expect(ds.getData()).toEqual(before);
+        idle(ds, A, B);
+        expect(ds.getData()).toEqual(before);
+        ds.redo();
+        expect(ds.getData()).toEqual(after);
+        idle(ds, A, B);
+        expect(ds.getData()).toEqual(after);
+        expect(drawsAll(A, 1, ds) && drawsAll(B, 0.5, ds)).toBe(true);
+    });
+
+    it('a chart attached after the first has rendered moves no node', async () => {
+        const ds = Elicit.dataset({ schema: boxSchema, data: seed() });
+        const A = mount(ds.chart(view(400, 300)));
+        await tick();
+        const before = ds.getData();
+        const B = mount(ds.chart(view(200, 150)));
+        expect(ds.getData()).toEqual(before);
+        await tick();
+        idle(ds, B, A);
+        expect(ds.getData()).toEqual(before);
+        expect(drawsAll(B, 0.5, ds)).toBe(true);
+    });
+
+    it('a chart that draws no boxes leaves the settling to the chart that does', async () => {
+        const ds = Elicit.dataset({ schema: boxSchema, data: seed() });
+        const list = mount(ds.chart({
+            width: 300, height: 200, axes: false, motion: false,
+            marks: [plot.bar({ channels: { x: { field: 'id' }, y: { field: 'x', edit: edit.move({ name: 'move' }) } } })],
+        }));
+        const A = mount(ds.chart(view(400, 300)));
+        await tick();
+        expect(ds.getData()).toEqual(solo(400, 300).getData());
+        list.control('move', 1).set(300);
+        const d = byId(A);
+        expect(d.a.x).toBeCloseTo(300, 0);
+        // A re-fit g round the child the list moved.
+        expect(d.g.x).toBeCloseTo((d.a.x - 20 + 220) / 2, 5);
+        const after = ds.getData();
+        idle(ds, A, list);
+        expect(ds.getData()).toEqual(after);
+    });
+
+    it('one chart alone: idle redraws move nothing', async () => {
+        const el = solo(400, 300);
+        await tick();
+        const once = el.getData();
+        for (let k = 0; k < 3; k++) idle(el, el);
+        expect(el.getData()).toEqual(once);
     });
 });

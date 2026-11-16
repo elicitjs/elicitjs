@@ -176,7 +176,7 @@ function axisWindow(ctx, field) {
 
 /**
  * edit.axis.zoom — the wheel narrows or widens an axis's domain about the value
- * under the pointer. Undoable (ticks coalesce); `el.setDomain` is its external twin.
+ * under the pointer. Undoable (ticks coalesce); `setDomain` is its external twin.
  * A plane edit that never raises the plane. Place one per axis
  * (`axes: { x: { edit: edit.axis.zoom() } }`); gate with `when` for one-axis zoom.
  *

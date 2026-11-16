@@ -57,7 +57,7 @@ describe('line.anchor', () => {
             data: [{ x: 1, y: 9, sym: 'AAPL' }, { x: 2, y: 9, sym: 'AAPL' }],
             marks: [plot.lineY({ channels: { x: { field: 'x' }, y: { field: 'y' }, series: { field: 'sym' } }, edits: [edit.line.anchor()] })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         // Far from the AAPL line (which sits near the top).
         el.emit({ type: 'click', x: 250, y: 170 });
@@ -78,7 +78,7 @@ describe('line.anchor', () => {
             data: [{ x: 1, y: 9, s: 0 }, { x: 2, y: 9, s: 0 }],
             marks: [plot.path({ channels: { x: { field: 'x' }, y: { field: 'y' }, series: { field: 's' } }, edits: [edit.line.anchor()] })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         el.emit({ type: 'click', x: 250, y: 170 });
         const rows = el.getData();

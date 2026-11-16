@@ -8,11 +8,11 @@ import { Elicit, plot, edit, setWarnings } from '../src/index.js';
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const mounted = [];
-afterEach(() => { mounted.splice(0).forEach((el) => el.remove()); });
+afterEach(() => { mounted.splice(0).forEach((el) => el.dom().remove()); });
 
 function mount(spec) {
     const el = Elicit(spec);
-    document.body.appendChild(el);
+    document.body.appendChild(el.dom());
     mounted.push(el);
     return el;
 }
@@ -75,6 +75,6 @@ describe('control() on plane-pick edits', () => {
         const before = el.getData();
         const warnings = captureWarnings(() => el.control('pen', 0).set(70));
         expect(el.getData()).toEqual(before);
-        expect(warnings.some((w) => w.includes('el.control("pen").set()') && w.includes('pick: "draw"') && w.includes('el.emit'))).toBe(true);
+        expect(warnings.some((w) => w.includes('chart.control("pen").set()') && w.includes('pick: "draw"') && w.includes('chart.emit'))).toBe(true);
     });
 });

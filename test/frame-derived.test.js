@@ -51,7 +51,7 @@ function arm(schema, data, extra = {}) {
             ],
         })],
     });
-    document.body.appendChild(el);
+    document.body.appendChild(el.dom());
     return el;
 }
 
@@ -64,7 +64,7 @@ describe('{ fn, frame: true }', () => {
         );
         await tick();
         // upper 90 -> bearing 0: the segment points right, 0.5 * 100px from the centre.
-        const dot = [...el.querySelectorAll('circle.mark')].find((c) => c.getAttribute('r') === '3');
+        const dot = [...el.dom().querySelectorAll('circle.mark')].find((c) => c.getAttribute('r') === '3');
         expect(Number(dot.getAttribute('cx'))).toBeCloseTo(150, 3);
         expect(Number(dot.getAttribute('cy'))).toBeCloseTo(100, 3);
     });
@@ -81,7 +81,7 @@ describe('{ fn, frame: true }', () => {
         ctl.set('up');
         expect(el.getData()[0].upper).toBe('up');
         await tick();
-        const dot = [...el.querySelectorAll('circle.mark')].find((c) => c.getAttribute('r') === '3');
+        const dot = [...el.dom().querySelectorAll('circle.mark')].find((c) => c.getAttribute('r') === '3');
         expect(Number(dot.getAttribute('cx'))).toBeCloseTo(100, 3);
         expect(Number(dot.getAttribute('cy'))).toBeCloseTo(50, 3);
     });

@@ -206,10 +206,10 @@ describe('a ports channel', () => {
                 }),
             ],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await new Promise((r) => setTimeout(r, 0));
-        const dots = [...el.querySelectorAll('circle')].filter((c) => c.getAttribute('r') === '12');
-        const ports = [...el.querySelectorAll('circle')].filter((c) => c.getAttribute('r') === '5');
+        const dots = [...el.dom().querySelectorAll('circle')].filter((c) => c.getAttribute('r') === '12');
+        const ports = [...el.dom().querySelectorAll('circle')].filter((c) => c.getAttribute('r') === '5');
         expect(dots).toHaveLength(3);
         expect(ports).toHaveLength(6);
         // Each port sits on its dot's edge: 12px either side of the centre.
@@ -258,14 +258,14 @@ describe('ports on a glyph', () => {
                 }),
             ],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await new Promise((r) => setTimeout(r, 0));
-        const ports = [...el.querySelectorAll('circle[data-channel="port"]')]
+        const ports = [...el.dom().querySelectorAll('circle[data-channel="port"]')]
             .map((c) => Math.round(+c.getAttribute('cx'))).sort((p, q) => p - q);
         // Two faces, a port either side of each 30px head.
         expect(ports).toEqual([70, 130, 270, 330]);
         // The link meets a's right port and b's left one.
-        const body = [...el.querySelectorAll('path')].find((p) => p.getAttribute('stroke') && p.getAttribute('stroke') !== 'none'
+        const body = [...el.dom().querySelectorAll('path')].find((p) => p.getAttribute('stroke') && p.getAttribute('stroke') !== 'none'
             && p.getAttribute('stroke') !== 'transparent');
         expect(body.getAttribute('d')).toMatch(/^M130,150L270,150$/);
     });
@@ -296,11 +296,11 @@ describe('any mark that draws a shape is a node', () => {
             data: { nodes, links: [{ source: 'a', target: 'b' }] },
             marks: [plot.link({ arrow: false }), ...marks],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await new Promise((r) => setTimeout(r, 0));
-        const body = [...el.querySelectorAll('path')].find((p) => p.getAttribute('stroke')
+        const body = [...el.dom().querySelectorAll('path')].find((p) => p.getAttribute('stroke')
             && p.getAttribute('stroke') !== 'none' && p.getAttribute('stroke') !== 'transparent');
-        const ports = [...el.querySelectorAll('circle[data-channel="port"]')]
+        const ports = [...el.dom().querySelectorAll('circle[data-channel="port"]')]
             .map((c) => Math.round(+c.getAttribute('cx'))).sort((p, q) => p - q);
         return { d: body.getAttribute('d'), ports };
     };

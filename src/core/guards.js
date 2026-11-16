@@ -196,7 +196,7 @@ export function warnUnreachableLegendRow(features, editsOf, rowsOf) {
             `${markLabel(lg)} is a picker with no way to choose a row. Its target row defaults ` +
             `to the chart's SELECTION, "${lg.table}" has more than one row, and no mark over ` +
             `that table carries edit.select(). Add one, pin a row (legend({ row: 0 })), or ` +
-            `drive el.select(i) — otherwise clicking a swatch writes nothing.`
+            `drive chart.select(i) — otherwise clicking a swatch writes nothing.`
         );
     }
 }
@@ -481,18 +481,27 @@ export function warnHiddenHandles(feature, edits) {
 }
 
 /**
- * Every key `Elicit` reads. A spec key is either here or it does nothing, so this
- * doubles as the closed key set the JSON grammar is generated from.
+ * Every key `Elicit.dataset` reads: the rows, their contract and the change
+ * callback. With CHART_KEYS this is the closed key set the JSON grammar is
+ * generated from; a key in neither does nothing.
  * @type {string[]}
  */
-export const SPEC_KEYS = [
+export const DATASET_KEYS = [
+    'schema', 'data', 'constraints', 'lock', 'context',
+    // Runtime, not part of a serializable spec
+    'onChange',
+];
+
+/**
+ * Every key `dataset.chart` reads.
+ * @type {string[]}
+ */
+export const CHART_KEYS = [
     // Frame
     'width', 'height', 'margins', 'responsive', 'overflow', 'focusOutline', 'clip',
     // The three kinds of feature: marks view data, elements view a scale, guides
     // view state. Plus the implicit layers that desugar into elements.
     'marks', 'elements', 'guides', 'axes', 'legends',
-    // The elicited dataset and its contract
-    'schema', 'data', 'constraints', 'lock', 'context',
     // Scales (per channel). No `domain` here — a domain describes the data.
     'scales', 'projection',
     // Presentation
@@ -501,8 +510,8 @@ export const SPEC_KEYS = [
     'title', 'subtitle', 'caption',
     // Multi-stage elicitation
     'stage', 'stageLabels',
-    // View options — runtime, not part of a serializable spec
-    'onChange', 'renderer',
+    // Runtime, not part of a serializable spec
+    'renderer',
 ];
 
 /**
@@ -523,27 +532,37 @@ export const MISTAKEN_SPEC_KEYS = {
     x: 'there is no chart-level `x`. Scale config is `scales: { x: {...} }`; a field\'s domain is the schema\'s.',
     y: 'there is no chart-level `y`. Scale config is `scales: { y: {...} }`; a field\'s domain is the schema\'s.',
     type: 'a chart has no `type` — what it draws is its `marks`. A FIELD\'s type belongs on the schema; the DATASET\'s shape is the schema\'s `structure`.',
-    container: 'Elicit returns the chart element — append it yourself: `container.appendChild(Elicit(spec))`.',
-    el: 'Elicit returns the chart element; it does not take one.',
+    container: 'Elicit returns a chart — append its node yourself: `container.append(Elicit(spec).dom())`.',
+    el: 'Elicit returns a chart, whose node is `chart.dom()`; it does not take one.',
 };
 
 /**
- * Warn about spec keys that will be silently ignored.
+ * Warn about spec keys that will be silently ignored. `where` is the call that
+ * read the spec: `Elicit` takes both key sets, `Elicit.dataset` and `chart` one each.
  * @param {any} spec
+ * @param {'Elicit' | 'Elicit.dataset' | 'chart'} [where]
  * @returns {void}
  */
-export function warnUnknownSpecKeys(spec) {
+export function warnUnknownSpecKeys(spec, where = 'Elicit') {
     if (!spec || !warningsEnabled()) return;
-    const known = new Set(SPEC_KEYS);
+    const data = new Set(DATASET_KEYS);
+    const chart = new Set(CHART_KEYS);
+    const known = where === 'Elicit' ? [...DATASET_KEYS, ...CHART_KEYS]
+        : where === 'chart' ? CHART_KEYS : DATASET_KEYS;
+    const call = where === 'chart' ? 'dataset.chart' : where;
     for (const key of Object.keys(spec)) {
-        if (known.has(key)) continue;
-        const fix = MISTAKEN_SPEC_KEYS[key];
+        if (known.includes(key)) continue;
+        const fix = where === 'chart' && data.has(key)
+            ? `\`${key}\` belongs to the dataset, which every chart over it shares. Pass it to \`Elicit.dataset({ ${key} })\`.`
+            : where === 'Elicit.dataset' && chart.has(key)
+                ? `\`${key}\` belongs to a chart. Pass it to \`dataset.chart({ ${key} })\`.`
+                : MISTAKEN_SPEC_KEYS[key];
         warn(
-            `spec:${key}`,
+            `spec:${where}:${key}`,
             fix
-                ? `Elicit({ ${key}: … }): ${fix}`
-                : `Elicit({ ${key}: … }) is not a key the chart reads, so it is ignored. ` +
-                  `Spec keys are: ${SPEC_KEYS.slice().sort().join(', ')}.`,
+                ? `${call}({ ${key}: … }): ${fix}`
+                : `${call}({ ${key}: … }) is not a key it reads, so it is ignored. ` +
+                  `Its keys are: ${known.slice().sort().join(', ')}.`,
         );
     }
 }

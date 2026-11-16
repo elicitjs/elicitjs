@@ -20,7 +20,7 @@ function band(extra = {}) {
         } })],
         ...extra,
     });
-    document.body.appendChild(el);
+    document.body.appendChild(el.dom());
     return el;
 }
 // Inner plot 300x200: value v sits at y = 200 - 2v; column x sits at x = 100·x.
@@ -60,7 +60,7 @@ describe('band sweep', () => {
         await tick();
         // The y2 handle of row 2, dragged directly (the control API addresses a
         // row, and a band row has two handles).
-        const handle = [...el.querySelectorAll('circle.mark')].find((c) => c.__data__.index === 2 && c.__data__.channel === 'y2');
+        const handle = [...el.dom().querySelectorAll('circle.mark')].find((c) => c.__data__.index === 2 && c.__data__.channel === 'y2');
         const node = { ...handle.__data__ };
         el.emit({ type: 'dragstart', node, x: node.cx, y: node.cy });
         el.emit({ type: 'drag', node, x: node.cx, y: yOf(95) });
@@ -79,7 +79,7 @@ describe('a fast sweep', () => {
             data: Array.from({ length: 11 }, (_, x) => ({ x, y: 20 })),
             marks: [plot.lineY({ channels: { x: { field: 'x' }, y: { field: 'y', edit: edit.line.sweep() } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         // One jump from column 0 to column 10 at value 80 (y = 200 - 160 = 40).
         el.emit({ type: 'dragstart', x: 0, y: 160 });

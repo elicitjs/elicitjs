@@ -56,13 +56,13 @@ describe('plot.shape', () => {
             marks: [plot.shape({ channels: { x: { field: 'x', edit: edit.move({ name: 'm' }) }, y: { field: 'y' }, symbol: { field: 'kind' }, size: { field: 'n' } } })],
             ...extra,
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         return el;
     }
     it('draws one baked path per row with a polygon and a centre', async () => {
         const el = chart();
         await tick();
-        const paths = [...el.querySelectorAll('path.mark-line')];
+        const paths = [...el.dom().querySelectorAll('path.mark-line')];
         expect(paths.length).toBe(2);
         const n = paths[0].__data__;
         expect(n.polygon).toBe(true);
@@ -75,7 +75,7 @@ describe('plot.shape', () => {
     it('is picked inside its body and moved by the universal edits', async () => {
         const el = chart();
         await tick();
-        const node = el.querySelector('path.mark-line').__data__;
+        const node = el.dom().querySelector('path.mark-line').__data__;
         expect(hitTest([node], node.cx, node.cy)).toBe(node);
         el.control('m', 0).set(6);
         expect(el.getData()[0].x).toBeCloseTo(6, 3);
@@ -83,7 +83,7 @@ describe('plot.shape', () => {
     it('takes a path option (constant or function) and falls back loudly', async () => {
         const el = chart({ marks: [plot.shape({ path: (d) => (d.kind === 'cow' ? 'M0,0 L2,0 L1,2 Z' : 'nonsense'), channels: { x: { field: 'x' }, y: { field: 'y' } } })] });
         await tick();
-        expect(el.querySelectorAll('path.mark-line').length).toBe(2);
+        expect(el.dom().querySelectorAll('path.mark-line').length).toBe(2);
     });
     it('declares a node box, so it can carry ports in a network', () => {
         const m = plot.shape({ channels: { x: { field: 'x' }, y: { field: 'y' }, size: { value: 9 } } });

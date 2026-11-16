@@ -33,6 +33,7 @@ import { elementEffectOf } from '../effects.js';
  *   previewEdit: (feature: any, edit: import('../../types').Edit, event: any, index: number | null) => boolean,
  *   reachableKeys: (feature: any, edit: import('../../types').Edit, index: number | null, node: any, session?: any) => string[] | null,
  *   settledNodes: (from: Record<string, any[]>, before: any[] | null, frozen: Set<number> | null, dodge?: any) => any[],
+ *   ownsLayout: () => boolean,
  *   heldStill: () => Set<number> | null,
  *   notifyChange: () => void,
  *   handleKey: (node: any) => string,
@@ -44,7 +45,7 @@ export function createDispatch(chart, deps) {
     const {
         features, featureById, ui, effects, tracksPointer, featureNodes, hierarchyNodes, boxHosts,
         tableOf, activeEdits, getStage, applyStage, arbitrates, frameScalesFor,
-        runEdit, previewEdit, reachableKeys, settledNodes, heldStill, notifyChange,
+        runEdit, previewEdit, reachableKeys, settledNodes, heldStill, ownsLayout, notifyChange,
         handleKey, visibleAt,
     } = deps;
     const { history } = deps;
@@ -79,7 +80,7 @@ export function createDispatch(chart, deps) {
         if (lifecycle.length && runDrivers(feature, event, lifecycle, index)) changed = true;
 
         if (index == null) return changed;
-        // `el.control(name, index)` also runs a named plane edit whose driver only
+        // `chart.control(name, index)` also runs a named plane edit whose driver only
         // chooses a row (`targetsRow`) directly on this row.
         const addressed = event.editName
             ? activeEdits(feature).filter(e => e.pick !== 'direct' && e.name === event.editName && rowTargeted(e))
@@ -410,14 +411,15 @@ export function createDispatch(chart, deps) {
         }
 
         // On release, settle the hierarchy held still during the stroke, inside the
-        // same undo entry.
+        // same undo entry. Only when its rows are settled in this chart's pixels: a
+        // stroke that committed nothing leaves another chart's layout alone.
         if (event.type === 'dragend' && hierarchyNodes && boxHosts.length) {
             chart.stroking = false;
             // The dropped row never pushes a container aside; it gives way instead.
-            const settled = settledNodes(chart.tables, null, heldStill(), {
+            const settled = ownsLayout() ? settledNodes(chart.tables, null, heldStill(), {
                 since: chart.strokeNodes,
                 yields: chart.strokeRow != null ? new Set([chart.strokeRow]) : null,
-            });
+            }) : chart.tables[hierarchyNodes];
             chart.strokeNodes = null;
             chart.strokeRow = null;
             if (settled !== chart.tables[hierarchyNodes]) {
@@ -437,5 +439,20 @@ export function createDispatch(chart, deps) {
         }
     };
 
-    return { handleEvent, rowTargeted };
+    // Another chart committed, so the rows this chart's gesture holds may have
+    // moved: drop the stroke's latches and null every driver's session keys.
+    const dropStroke = () => {
+        planeGrab = null;
+        directStroke = false;
+        strokeLive = {};
+        for (const fid of Object.keys(ui.session || {})) {
+            if (!ui.session[fid]) continue;
+            /** @type {Record<string, null>} */
+            const nulls = {};
+            for (const d of drivers) for (const k of d.sessionKeys || []) nulls[k] = null;
+            ui.session[fid] = { ...ui.session[fid], ...nulls };
+        }
+    };
+
+    return { handleEvent, rowTargeted, dropStroke };
 }

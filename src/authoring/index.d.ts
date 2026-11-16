@@ -1240,7 +1240,7 @@ export type Driver = {
     selects?: boolean | undefined;
     /**
      * only chooses the row, so
-     * `el.control(name, index)` can run its edits on a named row directly
+     * `chart.control(name, index)` can run its edits on a named row directly
      */
     targetsRow?: boolean | undefined;
     /**

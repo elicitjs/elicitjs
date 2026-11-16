@@ -30,7 +30,7 @@ describe('constraint descriptor + context', () => {
             constraints: [constraints.clamp({ max: 40 })],
             marks: [plot.barY({ channels: { x: { field: 'k' }, y: { field: 'p', edit: edit.move({ name: 'v' }) } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         el.control('v', 0).set(90);
         expect(el.getData()[0].p).toBeCloseTo(40, 6);
@@ -49,7 +49,7 @@ describe('constraint descriptor + context', () => {
             ],
             marks: [plot.barY({ channels: { x: { field: 'k' }, y: { field: 'p', edit: edit.move({ name: 'v' }) } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         el.control('v', 0).set(30);
         expect(seen).toEqual({ field: 'p', table: 'data', tables: ['data'] });

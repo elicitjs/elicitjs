@@ -17,7 +17,8 @@ constraints, guides/effects/rendering, elements/legends, public API.
 ## Entry points
 
 - `src/index.js` — public API. `src/index.d.ts` / `src/types.d.ts` — the source of truth for shapes.
-- `src/core/elicit.js` — engine entry; wires `src/core/engine/` (`tables`, `features`, `nodes`, `stages`, `selection`, `history`, `compute`, `dispatch`, `render`, `api`).
+- `src/core/dataset.js` — the dataset: rows, schema, lock, context, constraints, history, selection, `set`.
+- `src/core/elicit.js` — engine entry: `Elicit`, `Elicit.dataset`, the chart; wires `src/core/engine/` (`tables`, `features`, `nodes`, `stages`, `selection`, `history`, `compute`, `dispatch`, `render`, `api`).
 - `src/plot/mark.js` — shared mark foundation. `src/plot/composite.js` — glyphs.
 - `src/edit/index.js` — edits; `src/edit/drivers/` — multi-event lifecycles.
 - `src/elements/index.js` — axis / grid / legend / axisRadial.
@@ -62,10 +63,10 @@ not an `isAxis || isLegend` disjunction, when you mean "is this a chart element"
 - **One name per thing.** No aliases, no deprecated wrappers (the library is unreleased; there is nobody to deprecate for). "Author your own X" is `custom` in every namespace.
 - **The schema owns a field's data type and domain** (`spec.schema`, `src/core/schema.js`). A channel never carries `domain` or `range`; a channel's `type` is a data type, its `scale` is the scale.
 - **Never branch on `scale.type`.** Read the capability flags `kind`, `temporal`, `invertible`. A new scale type is a case in `core/scales.js` only.
-- **`Elicit` owns the one dataset; marks never do.** No `data`/`onChange` option on a mark, no per-feature data store. Marks, edits and constraints each see one array (`tableOf(feature)`).
+- **The dataset owns the data; charts and marks never do.** No `data`/`onChange` option on a mark or a chart spec, no per-feature data store. Several charts may share one dataset. Marks, edits and constraints each see one array (`tableOf(feature)`).
 - **One interaction model: `edit` + drivers.** No second interaction system, and no engine branch on a specific `pick` or edit `type` — that is what drivers are for.
 - **An edit writes a column.** Silently corrupting the elicited data is the worst failure available; never add a write site that skips `resolveChannels`.
-- **Constraints are declared only in `spec.constraints`.** Never on a mark or element, never scoped to a feature.
+- **Constraints are declared only on the dataset spec** (`Elicit.dataset({ constraints })`; `Elicit(spec)` takes it too). Never on a mark, element or chart, never scoped to a feature.
 - **An option never names a data column.** `channels` is the only place a mark names a field.
 - **Capabilities are declared, never allowlisted by type** (`cardinality`, `inverts`, `requires`, `inline`, `viewport`, …).
 - **No silent degradation.** If a mark or edit can't do what the spec asked, warn — a chart that still draws hides the bug.

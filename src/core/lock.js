@@ -1,5 +1,5 @@
 // @ts-check
-// lock.js — read-only rows. `ElicitSpec.lock` marks rows as given rather than
+// lock.js — read-only rows. `DatasetSpec.lock` marks rows as given rather than
 // elicited: no gesture can change or delete them; creating rows stays free.
 // Two halves:
 //   data     a dataset invariant the engine runs last. It repairs rather than

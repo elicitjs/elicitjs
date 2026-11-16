@@ -51,7 +51,7 @@ const routes = [
     '/editing', '/editing/gestures', '/editing/sweep', '/editing/selection', '/editing/lock',
     '/editing/existence', '/editing/probe', '/editing/stages', '/editing/axis',
     '/editing/external-controls', '/editing/zoom',
-    '/editing/history', '/widgets', '/scales', '/schema', '/constraints',
+    '/editing/history', '/widgets', '/scales', '/schema', '/dataset', '/constraints',
     '/effects', '/guides', '/theming', '/theming/themes', '/playground',
     '/case-studies/glyphs',
 ];

@@ -60,9 +60,9 @@ describe('palette rotation', () => {
                 plot.lineY({ channels: { x: { field: 'x' }, y: { field: 'y' }, stroke: { field: 's' } } }),
             ],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
-        const paths = [...el.querySelectorAll('path.mark-line')];
+        const paths = [...el.dom().querySelectorAll('path.mark-line')];
         const strokes = new Set(paths.map((p) => p.getAttribute('stroke')).filter((c) => c && c !== 'white'));
         // tableau10 (the default palette) starts with #4e79a7; Dark2 would give #1b9e77.
         expect([...strokes].some((c) => /4e79a7/i.test(c))).toBe(true);
@@ -86,11 +86,11 @@ describe('missing values', () => {
             data: [{ x: 0, y: 2 }, { x: 1, y: 4 }, { x: 2, y: null }, { x: 3, y: 4 }, { x: 4, y: 2 }],
             marks: [plot.lineY({ channels: { x: { field: 'x' }, y: { field: 'y', edit: edit.move() } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
-        const path = el.querySelector('path.mark-line');
+        const path = el.dom().querySelector('path.mark-line');
         expect((path.getAttribute('d').match(/M/g) || []).length).toBe(2);
-        expect(el.querySelectorAll('circle.mark').length).toBe(4);
+        expect(el.dom().querySelectorAll('circle.mark').length).toBe(4);
     });
 });
 
@@ -102,9 +102,9 @@ describe('area over an ordinal x', () => {
             data: [{ k: 'mid', v: 5 }, { k: 'alpha', v: 2 }, { k: 'zeta', v: 8 }],
             marks: [plot.areaY({ handles: false, channels: { x: { field: 'k' }, y: { field: 'v' } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
-        const d = el.querySelector('path.mark-line').getAttribute('d');
+        const d = el.dom().querySelector('path.mark-line').getAttribute('d');
         const xs = [...d.matchAll(/([ML])([\d.]+),/g)].slice(0, 3).map((m) => +m[2]);
         expect(xs[0]).toBeLessThan(xs[1]);
         expect(xs[1]).toBeLessThan(xs[2]);
@@ -119,9 +119,9 @@ describe('a clockwise arc', () => {
             data: [{ k: 'a', v: 10 }, { k: 'b', v: 20 }, { k: 'c', v: 30 }],
             marks: [plot.arc({ start: 90, end: -270, channels: { theta: { field: 'v' }, fill: { field: 'k' } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
-        expect(el.querySelectorAll('path.mark-line').length).toBe(3);
+        expect(el.dom().querySelectorAll('path.mark-line').length).toBe(3);
     });
 });
 
@@ -133,9 +133,9 @@ describe('geo coordinates read raw', () => {
             data: [{ lon: 10, name: 'x' }],
             marks: [plot.geoPoint({ channels: { lon: { field: 'lon' }, lat: { value: 49 } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
-        expect(el.querySelectorAll('circle.mark').length).toBe(1);
+        expect(el.dom().querySelectorAll('circle.mark').length).toBe(1);
     });
 });
 
@@ -159,12 +159,12 @@ describe('guides', () => {
             ],
             marks: [plot.barY({ channels: { x: { field: 'k' }, y: { field: 'v' } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
-        const texts = [...el.querySelectorAll('text')].map((t) => t.textContent);
+        const texts = [...el.dom().querySelectorAll('text')].map((t) => t.textContent);
         expect(texts).toContain('target');
         expect(texts).toContain('70.0 people left');
-        const outlined = [...el.querySelectorAll('rect')].some((r) => r.getAttribute('stroke') === 'red');
+        const outlined = [...el.dom().querySelectorAll('rect')].some((r) => r.getAttribute('stroke') === 'red');
         expect(outlined).toBe(true);
     });
     it('proximity() with no options does not throw', () => {
@@ -180,11 +180,11 @@ describe('missing values on dot-like marks', () => {
             data: [{ k: 'a', v: 4 }, { k: 'b', v: null }],
             marks: [plot.tickY({ channels: { x: { field: 'k' }, y: { field: 'v' } } }), plot.point({ channels: { x: { field: 'k' }, y: { field: 'v' } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
-        expect(el.querySelectorAll('line.mark-line, line').length).toBeGreaterThanOrEqual(1);
-        expect(el.querySelectorAll('circle.mark').length).toBe(1);
-        const ticks = [...el.querySelectorAll('line')].filter((l) => l.__data__ && l.__data__.index != null);
+        expect(el.dom().querySelectorAll('line.mark-line, line').length).toBeGreaterThanOrEqual(1);
+        expect(el.dom().querySelectorAll('circle.mark').length).toBe(1);
+        const ticks = [...el.dom().querySelectorAll('line')].filter((l) => l.__data__ && l.__data__.index != null);
         expect(ticks.length).toBe(1);
     });
     it('an area with stroke none still shows grabbable handles', async () => {
@@ -194,9 +194,9 @@ describe('missing values on dot-like marks', () => {
             data: [{ x: 0, y: 2 }, { x: 1, y: 5 }],
             marks: [plot.areaY({ stroke: 'none', fill: '#0a0', channels: { x: { field: 'x' }, y: { field: 'y', edit: edit.move() } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
-        const fills = [...el.querySelectorAll('circle.mark')].map((c) => c.getAttribute('fill'));
+        const fills = [...el.dom().querySelectorAll('circle.mark')].map((c) => c.getAttribute('fill'));
         expect(fills.length).toBe(2);
         expect(fills.every((f) => f && f !== 'none')).toBe(true);
     });

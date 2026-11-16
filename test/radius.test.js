@@ -20,7 +20,7 @@ function rose(extra = {}) {
         } })],
         ...extra,
     });
-    document.body.appendChild(el);
+    document.body.appendChild(el.dom());
     return el;
 }
 
@@ -33,7 +33,7 @@ describe('radius channel', () => {
     it('gives each slice its own rim', async () => {
         const el = rose();
         await tick();
-        const radii = [...el.querySelectorAll('path.mark-line')].map((p) => p.__data__.sector.r1);
+        const radii = [...el.dom().querySelectorAll('path.mark-line')].map((p) => p.__data__.sector.r1);
         expect(radii.length).toBe(4);
         expect(radii[0]).toBeLessThan(radii[1]);
         expect(radii[1]).toBeLessThan(radii[2]);
@@ -52,7 +52,7 @@ describe('radius channel', () => {
     it('axisRadial({ channel: "radius" }) draws rings', async () => {
         const el = rose({ elements: [elements.axisRadial({ channel: 'radius', ticks: 4 })] });
         await tick();
-        const rings = [...el.querySelectorAll('circle')].filter((c) => c.getAttribute('fill') === 'none');
+        const rings = [...el.dom().querySelectorAll('circle')].filter((c) => c.getAttribute('fill') === 'none');
         expect(rings.length).toBeGreaterThan(1);
     });
 });
@@ -64,7 +64,7 @@ describe('relative move on radius', () => {
             radius: { field: 'r', edit: edit.move({ mode: 'relative' }) },
         } })] });
         await tick();
-        const path = [...el.querySelectorAll('path.mark-line')][1];
+        const path = [...el.dom().querySelectorAll('path.mark-line')][1];
         const node = { ...path.__data__ };
         const { cx, cy, a0, a1 } = node.sector;
         const mid = ((a0 + a1) / 2) * Math.PI / 180;

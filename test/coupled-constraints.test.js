@@ -21,7 +21,7 @@ function glyph(extraConstraints = []) {
             plot.tickY({ channels: { x: { field: 'k' }, y: { field: 'hi', edit: edit.move({ name: 'hi' }) } } }),
         ],
     });
-    document.body.appendChild(el);
+    document.body.appendChild(el.dom());
     return el;
 }
 
@@ -78,10 +78,10 @@ describe('symmetric', () => {
 describe('widgets.interval', () => {
     it('moves both caps with the mean, and mirrors with symmetric: true', async () => {
         const el = Elicit(widgets.interval({ mean: 50, lo: 30, hi: 70 }));
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         // Find the mean's edit through the composite: the point part carries it.
-        const circle = el.querySelector('circle.mark');
+        const circle = el.dom().querySelector('circle.mark');
         expect(circle).not.toBeNull();
         const node = { ...circle.__data__ };
         const cy = +circle.getAttribute('cy');
@@ -92,7 +92,7 @@ describe('widgets.interval', () => {
         expect(r.mean).toBeGreaterThan(50);
         expect(r.hi - r.lo).toBeCloseTo(40, 6);
         const sym = Elicit(widgets.interval({ mean: 50, lo: 30, hi: 70, symmetric: true }));
-        document.body.appendChild(sym);
+        document.body.appendChild(sym.dom());
         await tick();
         const spec = widgets.interval({ symmetric: true });
         expect(spec.constraints.some((c) => c.type === 'symmetric')).toBe(true);

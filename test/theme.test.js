@@ -22,11 +22,11 @@ function bars(extra = {}, markOpts = {}) {
         marks: [plot.barY({ channels: { x: { field: 'k' }, y: { field: 'v' } }, ...markOpts })],
         ...extra,
     });
-    document.body.appendChild(el);
+    document.body.appendChild(el.dom());
     return el;
 }
 /** Every scene node the renderer bound, by element selector. */
-const nodes = (el, sel) => [...el.querySelectorAll(sel)].map((n) => n.__data__).filter(Boolean);
+const nodes = (el, sel) => [...el.dom().querySelectorAll(sel)].map((n) => n.__data__).filter(Boolean);
 const bgLines = (el) => nodes(el, 'g line').filter((d) => d.background);
 const labels = (el) => nodes(el, 'text').filter((d) => d.background);
 
@@ -74,7 +74,7 @@ describe('named themes', () => {
                     data: [{ x: 0, y: 1, s: 'p' }, { x: 2, y: 5, s: 'p' }, { x: 0, y: 3, s: 'q' }, { x: 2, y: 9, s: 'q' }],
                     marks: [plot.lineY({ channels: { x: { field: 'x' }, y: { field: 'y' }, stroke: { field: 's' } } })],
                 });
-                document.body.appendChild(el);
+                document.body.appendChild(el.dom());
             }
             await tick();
         } finally {
@@ -125,7 +125,7 @@ describe('axis styling', () => {
         const l = labels(turned)[0];
         expect(l.angle).toBe(45);
         expect(l.textAnchor).toBe('end');
-        const top = (el) => +el.querySelector('g.scene-container').getAttribute('transform').match(/,([\d.]+)\)/)[1];
+        const top = (el) => +el.dom().querySelector('g.scene-container').getAttribute('transform').match(/,([\d.]+)\)/)[1];
         const plotH = (el) => nodes(el, 'rect.mark').reduce((m, d) => Math.max(m, d.y + d.height), 0);
         expect(top(turned)).toBe(top(flat));
         expect(plotH(turned)).toBeLessThan(plotH(flat));
@@ -183,7 +183,7 @@ describe('the space-saving axis', () => {
             },
             marks: [plot.barX({ channels: { y: { field: 'k', scale: { padding: 0 } }, x: { field: 'v' } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         return el;
     };
 
@@ -200,7 +200,7 @@ describe('the space-saving axis', () => {
     it('reserves no side room for inward labels', async () => {
         const el = spaceSaving();
         await tick();
-        expect(el.querySelector('g.scene-container').getAttribute('transform')).toMatch(/^translate\(4,/);
+        expect(el.dom().querySelector('g.scene-container').getAttribute('transform')).toMatch(/^translate\(4,/);
     });
 
     it('draws band gridlines between the categories', async () => {
@@ -247,7 +247,7 @@ describe('grid, panel, legend and text', () => {
         await tick();
         const panel = nodes(el, 'rect.bg-rect').find((d) => d.panel);
         expect(panel.fill).toBe('#ebebeb');
-        const bg = el.querySelector('rect.bg-rect');
+        const bg = el.dom().querySelector('rect.bg-rect');
         expect(bg.__data__).toBe(panel);
     });
 
@@ -266,9 +266,9 @@ describe('grid, panel, legend and text', () => {
             data: [{ x: 0.5 }],
             marks: [plot.text({ text: 'hi', fontWeight: 'bold', fontStyle: 'italic', fontFamily: 'Georgia', channels: { x: { field: 'x' } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
-        const t = [...el.querySelectorAll('text')].find((n) => n.textContent === 'hi');
+        const t = [...el.dom().querySelectorAll('text')].find((n) => n.textContent === 'hi');
         expect(t.getAttribute('font-weight')).toBe('bold');
         expect(t.getAttribute('font-style')).toBe('italic');
         expect(t.getAttribute('font-family')).toBe('Georgia');
@@ -277,7 +277,7 @@ describe('grid, panel, legend and text', () => {
     it('a title takes its own family', async () => {
         const el = bars({ title: 'Headline', theme: 'nyt' });
         await tick();
-        const t = [...el.querySelectorAll('text')].find((n) => n.textContent === 'Headline');
+        const t = [...el.dom().querySelectorAll('text')].find((n) => n.textContent === 'Headline');
         expect(t.getAttribute('font-family')).toBe('Georgia, serif');
     });
 

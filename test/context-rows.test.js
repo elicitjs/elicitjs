@@ -27,7 +27,7 @@ function chart(extra = {}) {
         ],
         ...extra,
     });
-    document.body.appendChild(el);
+    document.body.appendChild(el.dom());
     return { el, changes };
 }
 
@@ -51,7 +51,7 @@ describe('context rows', () => {
         setWarnings(false);
         const { el } = chart();
         await tick();
-        const dots = [...el.querySelectorAll('circle.mark:not([data-hit])')];
+        const dots = [...el.dom().querySelectorAll('circle.mark:not([data-hit])')];
         expect(dots.length).toBe(5);
         const inert = dots.filter((c) => c.style.pointerEvents === 'none');
         expect(inert.length).toBe(3);
@@ -86,7 +86,7 @@ describe('context rows', () => {
         el.setData([{ year: 2026, value: 10 }]);
         await tick();
         expect(el.getData()).toEqual([{ year: 2026, value: 10 }]);
-        expect(el.querySelectorAll('circle.mark:not([data-hit])').length).toBe(4);
+        expect(el.dom().querySelectorAll('circle.mark:not([data-hit])').length).toBe(4);
         el.control('xy', 0).set({ value: 60 });
         expect(el.getData()[0].value).toBeCloseTo(60, 6);
         el.undo();
@@ -160,24 +160,24 @@ describe('a row missing a mark\'s columns draws nothing for it', () => {
             },
             data: rows, marks: [mark],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         return el;
     };
 
     it('text', async () => {
         const el = await draw(plot.text({ channels: { x: { field: 'lo' }, y: { field: 'hi' }, text: { field: 'label' } } }));
-        expect([...el.querySelectorAll('text.mark')].map((t) => t.textContent)).toEqual(['L', 'M']);
+        expect([...el.dom().querySelectorAll('text.mark')].map((t) => t.textContent)).toEqual(['L', 'M']);
     });
 
     it('rect', async () => {
         const el = await draw(plot.rect({ channels: { x1: { field: 'lo' }, x2: { field: 'hi' }, y1: { field: 'lo' }, y2: { field: 'hi' } } }));
-        expect(el.querySelectorAll('rect.mark:not([data-hit])').length).toBe(2);
+        expect(el.dom().querySelectorAll('rect.mark:not([data-hit])').length).toBe(2);
     });
 
     it('bar with no category', async () => {
         const el = await draw(plot.barY({ channels: { x: { field: 'cat' }, y1: { field: 'lo' }, y2: { field: 'hi' } } }));
-        expect(el.querySelectorAll('rect.mark:not([data-hit])').length).toBe(2);
+        expect(el.dom().querySelectorAll('rect.mark:not([data-hit])').length).toBe(2);
     });
 });
 
@@ -196,11 +196,11 @@ describe('a span rule over a row missing its columns draws nothing', () => {
                 plot.ruleX({ channels: { x: { field: 'hp' }, y1: { field: 'lo' }, y2: { field: 'hi' } } }),
             ],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         // One horizontal rule for the answer row; no vertical rule (no hp on it,
         // and the car row has no lo/hi).
-        expect(el.querySelectorAll('line.mark').length).toBe(1);
+        expect(el.dom().querySelectorAll('line.mark').length).toBe(1);
     });
 });
 
@@ -235,18 +235,18 @@ describe('every mark ignores a row with none of its columns', () => {
             () => plot.areaY({ channels: { x: { field: 'x' }, y: { field: 'y' } } })]) {
             const el = Elicit({ width: 300, height: 200, axes: false, schema, context: (d) => d.other != null,
                 data: [{ x: 1, y: 1 }, { other: 1 }, { x: 9, y: 9 }], marks: [make()] });
-            document.body.appendChild(el);
+            document.body.appendChild(el.dom());
             await tick();
-            const paths = [...el.querySelectorAll('svg path')].filter((p) => !p.hasAttribute('data-hit'));
+            const paths = [...el.dom().querySelectorAll('svg path')].filter((p) => !p.hasAttribute('data-hit'));
             expect(paths.length).toBe(1);
             expect((paths[0].getAttribute('d').match(/M/g) || []).length).toBe(1);
         }
     });
     const count = async (mark, data) => {
         const el = Elicit({ width: 300, height: 200, axes: false, schema, data, context: true, marks: [mark] });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
-        return el.querySelectorAll('svg .mark:not([data-hit])').length;
+        return el.dom().querySelectorAll('svg .mark:not([data-hit])').length;
     };
     for (const [name, make] of Object.entries(cases)) {
         it(name, async () => {

@@ -22,6 +22,7 @@ import { markLabel } from '../guards.js';
  *   nodesTableName: string | null,
  *   hierarchyNodes: string | null,
  *   isLockedIn: (name: string) => ((d: any, i: number) => boolean) | null,
+ *   settleTurn: (stroking: boolean) => { space: boolean } | null,
  * }} deps
  */
 export function createNodes(chart, deps) {
@@ -142,8 +143,6 @@ export function createNodes(chart, deps) {
     chart.stroking = false;
     chart.strokeNodes = null;
     chart.strokeRow = null;
-    // Data from outside a gesture (the seed, setData) is spaced on its next settle.
-    chart.spaceNext = true;
     /**
      * Settle the hierarchy's node rows after something changed them: place, carry,
      * space, fit (core/fit.js). A no-op for every other structure.
@@ -157,6 +156,21 @@ export function createNodes(chart, deps) {
     const settleNodes = (before = null, frozen = heldStill(), dodge = null) => {
         if (!hierarchyNodes || !boxHosts.length) return;
         chart.tables[hierarchyNodes] = settledNodes(chart.tables, before, frozen, dodge);
+    };
+    /**
+     * Settle outside a commit (a render, or the chart's first settle), only when
+     * this chart owns the layout or outside data waits (core/dataset.js `layout`).
+     * @returns {boolean} whether the node rows changed
+     */
+    const settleOwn = () => {
+        if (!hierarchyNodes || !boxHosts.length) return false;
+        const turn = deps.settleTurn(chart.stroking);
+        if (!turn) return false;
+        const was = chart.tables[hierarchyNodes];
+        // Rows are pushed apart only for data that just arrived from outside; a
+        // hover or resize never pushes an answer aside.
+        settleNodes(null, heldStill(), turn.space ? {} : null);
+        return chart.tables[hierarchyNodes] !== was;
     };
     /**
      * The settled node rows for a dataset (committed, or a proposal's overlay).
@@ -206,6 +220,6 @@ export function createNodes(chart, deps) {
 
     return {
         boxHosts, nodeBoxRule, nodePortsRule, containsRule,
-        settleNodes, settledNodes, inFlight, heldStill,
+        settleNodes, settleOwn, settledNodes, inFlight, heldStill,
     };
 }

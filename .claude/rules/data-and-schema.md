@@ -1,6 +1,7 @@
 ---
 paths:
   - "src/core/schema.js"
+  - "src/core/dataset.js"
   - "src/core/lock.js"
   - "src/core/hierarchy.js"
   - "src/core/engine/tables.js"
@@ -16,7 +17,7 @@ paths:
 ## The schema
 
 - `src/core/schema.js` owns the schema: declaration, inference, creation defaults (`schemaDefaults`) and validation.
-- `validateDataset(schema, data)` runs once per `Elicit()` and per `setData()`. It reports: `data` with no schema, an undeclared data column, a `FieldSchema` with a domain but no `type`, a value contradicting its declared type, a value outside its declared domain. Add new checks there, not in a mark.
+- `validateDataset(schema, data)` runs once per dataset (`Elicit()` or `Elicit.dataset()`) and per `setData()`. It reports: `data` with no schema, an undeclared data column, a `FieldSchema` with a domain but no `type`, a value contradicting its declared type, a value outside its declared domain. Add new checks there, not in a mark.
 - It deliberately does not type-check discrete fields — any value can be a category key (a geo mark declares a GeoJSON geometry `categorical`). The domain is the constraint there.
 - `resolveScales` takes a positional axis domain as the union of the schema domains of every field on that axis (`unionDomains`) — that is why an error bar's `mean`/`lo`/`hi` share one y axis. Don't add a per-channel domain "just for this chart"; declare the field.
 - `normalizeSchema` is the only place an author's schema spelling is read. It applies three sugars (bare field map = single-table schema; bare table entry takes its role from its name; bare-array `data` = primary table) and returns the canonical `SchemaSpec`. Nothing else re-sniffs the shape. `getSchema()`/`getData()` denormalize on the way out so a single-table chart still returns the bare map and array — the canonical form never leaks.
@@ -30,18 +31,20 @@ paths:
 
 ## Structures, tables and roles
 
-- A chart elicits exactly one dataset. Its `structure` (`STRUCTURES` in `schema.js`) defines named roles: `table` → `data`; `network` → `nodes`, `links`; `hierarchy` → `nodes`, `nesting`, optional `links`. The engine holds them as `chart.tables` (`core/engine/state.js`).
+- The dataset (`core/dataset.js`) owns the rows, schema, lock, context, constraints, history and selection; a chart draws exactly one dataset and never owns data. Several charts may share one. Its `structure` (`STRUCTURES` in `schema.js`) defines named roles: `table` → `data`; `network` → `nodes`, `links`; `hierarchy` → `nodes`, `nesting`, optional `links`. The dataset holds them; `chart.tables` (`core/engine/state.js`) forwards to it.
 - A mark is a view over exactly one table (`feature.table`). `table:` names it; with none, the mark takes the table filling its `tableRole` (`link` declares `'links'`), else the primary table. The engine resolves this once when flattening features and warns on an undeclared name. Elements have no `table`. A `composite` stamps its table on its box and every part.
 - Name ≠ role. Defaults resolve by role so an argument map can call its tables `claims`/`supports` and write no `table:`. Never hard-code `'nodes'`/`'links'`/`'data'` as a lookup key — go through `byRole`.
 - Marks, edits and constraints each still see one array: the engine hands `tableOf(feature)`. Never pass a table map into a mark or edit. The one exception is `build`'s optional 5th argument, for `link` alone.
 - A selection key is qualified by table (node 3 ≠ link 3); the index-based public API means the primary table.
+- A hierarchy's node rows are settled in one chart's pixels. Only the layout owner (`layout.owner` in `core/dataset.js`: the chart that committed, or the first to render after outside data) re-settles them at render time; other charts draw the stored boxes.
+- `ds.set(field, value, { index, table })` writes an existing cell through `checkRows` (constraints, then the lock): one history step, every chart redrawn. No edit runs, so no edit-scoped `constrain`.
 
 ## Context rows
 
 - `spec.context` (`true` | `(d, i, table) => boolean`) marks reference rows of the elicited table (history behind a forecast). They share the table's columns, every mark draws them, and they are locked (`isLockedIn` ORs them in).
 - Everything the chart reports leaves them out: `getData()`/`onChange` (`reportedRows`) and the index-addressed API (`select*`, `getSelection*`, the `select` event, `control(name, i)`), so `getData()[i]` and `select(i)` name the same row.
 - Membership is decided once, over the seed, and held as row identity (`contextRows`, a `WeakSet` per table). Never re-ask the predicate of live rows — an answer dragged into the region would vanish from `getData()`. This relies on `lockConstraint` returning a locked row as the same object on every path.
-- Undo carries membership as indices; `setData(rows)` replaces answers and keeps context rows ahead of them. Constraints see context rows, with `locked` to tell them apart.
+- Undo carries membership as indices (one history per dataset, shared by its charts); `setData(rows)` replaces answers and keeps context rows ahead of them. Constraints see context rows, with `locked` to tell them apart.
 - There is no context table; `normalizeSchema` throws on `{ context: true, fields }`. Reference data with other columns goes in the same table; unrelated data is a guide.
 
 ## References and network facts

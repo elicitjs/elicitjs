@@ -15,10 +15,10 @@ function chart(extra = {}) {
         marks: [plot.barY({ tip: true, channels: { x: { field: 'k' }, y: { field: 'v', edit: edit.move() } } })],
         ...extra,
     });
-    document.body.appendChild(el);
+    document.body.appendChild(el.dom());
     return el;
 }
-const guideTexts = (el) => [...el.querySelectorAll('.guide-front-layer text')].map((t) => t.textContent);
+const guideTexts = (el) => [...el.dom().querySelectorAll('.guide-front-layer text')].map((t) => t.textContent);
 
 describe('mark tip', () => {
     it('shows the row under the pointer and hides when it leaves', async () => {
@@ -51,7 +51,7 @@ describe('mark tip', () => {
         const el = chart();
         await tick();
         el.emit({ type: 'pointermove', x: 210, y: 100 });
-        const node = { ...el.querySelectorAll('rect.mark')[1].__data__ };
+        const node = { ...el.dom().querySelectorAll('rect.mark')[1].__data__ };
         el.emit({ type: 'dragstart', node, x: 210, y: 36 });
         el.emit({ type: 'drag', node, x: 210, y: 90 });
         el.emit({ type: 'dragend', node, x: 210, y: 90 });
@@ -75,10 +75,10 @@ describe('guides.crosshair', () => {
             guides: [guides.crosshair()],
             marks: [plot.point({ channels: { x: { field: 'x' }, y: { field: 'y' } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         el.emit({ type: 'pointermove', x: 140, y: 90 });
-        const lines = el.querySelectorAll('.guide-front-layer line');
+        const lines = el.dom().querySelectorAll('.guide-front-layer line');
         expect(lines.length).toBe(2);
         const texts = guideTexts(el);
         expect(texts).toContain('140');
@@ -98,11 +98,11 @@ describe('tip layering and options', () => {
             data: [{ k: 'a', v: 42.1234 }],
             marks: [plot.barY({ tip: { text: ['v'], format: '.1f' }, channels: { x: { field: 'k' }, y: { field: 'v' } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         el.emit({ type: 'pointermove', x: 140, y: 150 });
-        expect(el.querySelectorAll('.guide-front-layer rect.guide-rect').length).toBe(1);
-        expect(el.querySelectorAll('.guide-back-layer rect, .guide-regions-layer rect').length).toBe(0);
+        expect(el.dom().querySelectorAll('.guide-front-layer rect.guide-rect').length).toBe(1);
+        expect(el.dom().querySelectorAll('.guide-back-layer rect, .guide-regions-layer rect').length).toBe(0);
         expect(guideTexts(el).some((t) => /v: 42\.1$/.test(t))).toBe(true);
     });
 });
@@ -118,7 +118,7 @@ describe('a bound tip under an inert label', () => {
                 plot.text({ fontSize: 40, channels: { x: { field: 'k' }, y: { value: 100 }, text: { field: 'k' } } }),
             ],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         // Over the label's anchor, which sits on bar b.
         el.emit({ type: 'pointermove', x: 210, y: 100 });
@@ -134,7 +134,7 @@ describe('a tip over a line or an area', () => {
             data: [{ x: 0, y: 10 }, { x: 1, y: 50 }, { x: 2, y: 90 }],
             marks: [plot.areaY({ tip: ['x', 'y'], channels: { x: { field: 'x' }, y: { field: 'y' } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         // Inside the band near x = 1 (pixel 140), below the top edge.
         el.emit({ type: 'pointermove', x: 140, y: 150 });
@@ -153,7 +153,7 @@ describe('a tip over a geo region', () => {
             data: regions,
             marks: [plot.geoPolygon({ tip: ['name'], channels: { geometry: { field: 'geometry', scale: null } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         el.emit({ type: 'pointermove', x: 225, y: 100 });
         expect(guideTexts(el).some((t) => /name: east/.test(t))).toBe(true);
@@ -172,9 +172,9 @@ describe('a tip over a geo region under an identity projection', () => {
             data: regions,
             marks: [plot.geoPolygon({ tip: ['name'], channels: { geometry: { field: 'geometry', scale: null } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
-        const right = [...el.querySelectorAll('path')].find((p) => p.__data__ && p.__data__.data && p.__data__.data.name === 'right');
+        const right = [...el.dom().querySelectorAll('path')].find((p) => p.__data__ && p.__data__.data && p.__data__.data.name === 'right');
         const pts = right.__data__.d.match(/-?[\d.]+/g).map(Number);
         const xs = pts.filter((_, i) => i % 2 === 0), ys = pts.filter((_, i) => i % 2 === 1);
         el.emit({ type: 'pointermove', x: (Math.min(...xs) + Math.max(...xs)) / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2 });

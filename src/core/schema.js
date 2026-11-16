@@ -354,7 +354,7 @@ export function isBareForm(spec) {
 
 /**
  * The canonical form back in the author's spelling (the inverse of sugar 1), so
- * `el.getSchema()` on a single-table chart returns the bare field map.
+ * `getSchema()` on a single-table dataset returns the bare field map.
  * @param {import('../types').SchemaSpec} spec
  * @returns {any}
  */

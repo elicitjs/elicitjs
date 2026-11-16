@@ -46,7 +46,7 @@ function normalizeScaleOption(opt) {
  * Resolves global scales across features.
  * @param {any[]} features
  * @param {Record<string, any[]>} tables the chart's dataset, one rows array per table name
- * @param {import('../types').ElicitSpec & { schema: import('../types').Schema, schemaSpec: import('../types').SchemaSpec }} spec
+ * @param {import('../types').ChartSpec & { schema: import('../types').Schema, schemaSpec: import('../types').SchemaSpec }} spec
  *   the engine's live spec view: `schema` is the primary table's field map,
  *   `schemaSpec` the canonical schema.
  * @param {{ width: number, height: number }} dims

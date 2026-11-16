@@ -17,9 +17,9 @@ const frame = { width: 320, height: 220, axes: false, margins: { top: 10, right:
 const schema = { x: { type: 'quantitative', domain: [0, 3] }, lo: { type: 'quantitative', domain: [0, 100] }, hi: { type: 'quantitative', domain: [0, 100] }, y: { type: 'quantitative', domain: [0, 100] } };
 
 /** The hovered effect's solid outline (the catchment ring is dashed). */
-const hoverOutline = (el) => [...el.querySelectorAll('circle.effect')].find((c) => !c.getAttribute('stroke-dasharray'));
+const hoverOutline = (el) => [...el.dom().querySelectorAll('circle.effect')].find((c) => !c.getAttribute('stroke-dasharray'));
 /** The handle circles a mark drew (not the effect overlays, not the hit plane). */
-const handles = (el) => [...el.querySelectorAll('circle')].filter((c) => !c.classList.contains('effect'));
+const handles = (el) => [...el.dom().querySelectorAll('circle')].filter((c) => !c.classList.contains('effect'));
 
 function band() {
     const el = Elicit({
@@ -31,7 +31,7 @@ function band() {
             y2: { field: 'hi', edit: edit.line.sweep() },
         } })],
     });
-    document.body.appendChild(el);
+    document.body.appendChild(el.dom());
     return el;
 }
 
@@ -59,7 +59,7 @@ function line(extra) {
         marks: [plot.lineY({ channels: { x: { field: 'x' }, y: { field: 'y', edit: edit.line.sweep() } } })],
         ...extra,
     });
-    document.body.appendChild(el);
+    document.body.appendChild(el.dom());
     return el;
 }
 
@@ -86,7 +86,7 @@ describe('row handles', () => {
             context: (d) => d.x < 2,
             marks: [plot.lineY({ handles: true, channels: { x: { field: 'x' }, y: { field: 'y' } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         expect(handles(el).length).toBe(4);
     });
@@ -96,7 +96,7 @@ describe('row handles', () => {
             data: [0, 1, 2, 3].map((x) => ({ x, y: 50 })),
             marks: [plot.lineY({ channels: { x: { field: 'x' }, y: { field: 'y', edit: edit.line.sweep({ stage: 1 }) } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         expect(handles(el).length).toBe(0);
         el.setStage(1);

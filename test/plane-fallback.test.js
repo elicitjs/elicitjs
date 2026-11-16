@@ -21,13 +21,13 @@ function mount(sweepWhen) {
             plot.barY({ channels: { x: { field: 'x' }, y: { field: 'y', edit: edit.move({ when: edit.when.noShift }) } } }),
         ],
     });
-    document.body.appendChild(el);
+    document.body.appendChild(el.dom());
     return el;
 }
 
 /** A point just inside the TOP of the n-th bar (where its value is), in scene coordinates. */
 function barTop(el, n) {
-    const rect = el.querySelectorAll('rect.mark')[n];
+    const rect = el.dom().querySelectorAll('rect.mark')[n];
     const x = +rect.getAttribute('x') + +rect.getAttribute('width') / 2;
     const y = +rect.getAttribute('y') + 2;
     return { x, y };
@@ -37,7 +37,7 @@ describe('plane gesture falls back to the direct mark under the pointer', () => 
     it('a plain drag reaches the bar when the sweep is gated on Shift', async () => {
         const el = mount(edit.when.shift);
         await tick();
-        expect(el.querySelector('rect.plane').nextElementSibling).not.toBeNull();
+        expect(el.dom().querySelector('rect.plane').nextElementSibling).not.toBeNull();
         const { x, y } = barTop(el, 1);
         const raw = { shiftKey: false };
         el.emit({ type: 'dragstart', x, y, rawEvent: raw });
@@ -85,7 +85,7 @@ describe('a press on a direct mark beside an ungated sweep', () => {
                 plot.barY({ channels: { x: { field: 'x' }, y: { field: 'y', edit: edit.move() } } }),
             ],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         const { x, y } = barTop(el, 2);
         el.emit({ type: 'dragstart', x, y });

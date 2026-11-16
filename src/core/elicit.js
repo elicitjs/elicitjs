@@ -7,31 +7,60 @@ import { autoEditGuides } from '../edit/guide.js';
 import { D3Renderer } from '../renderers/d3-renderer/index.js';
 import { resolveEffects } from './effects.js';
 import { resolveTheme } from './theme.js';
-import { validateTables, normalizeSchema, normalizeData } from './schema.js';
-import { nestingOf, enforceTree } from './hierarchy.js';
+import { nestingOf } from './hierarchy.js';
 import { warn } from './dev.js';
+import { createDataset } from './dataset.js';
 import { createChartState } from './engine/state.js';
-import { createHistory } from './engine/history.js';
-import { createTables } from './engine/tables.js';
-import { createSelection } from './engine/selection.js';
 import { createStages } from './engine/stages.js';
 import { createNodes } from './engine/nodes.js';
 import { createCompute } from './engine/compute.js';
 import { createDispatch } from './engine/dispatch.js';
 import { createRender } from './engine/render.js';
 import { resolveMotion } from './motion.js';
-import { attachApi } from './engine/api.js';
+import { createChartApi } from './engine/api.js';
 import {
     assembleFeatures, bindFeatureTables, desugarPorts, desugarContainers, tipGuidesOf, viewerChannelsOf,
 } from './engine/features.js';
 import { warnUnknownSpecKeys } from './guards.js';
 
 /**
+ * A dataset and one chart over it, from one spec: `Elicit.dataset(spec).chart(spec)`.
+ * Both halves read the same object, each its own keys.
  * @param {import('../types').ElicitSpec} spec
- * @returns {import('../types').ElicitElement}
+ * @returns {import('../types').Chart}
  */
 export function Elicit(spec) {
-    warnUnknownSpecKeys(spec);
+    warnUnknownSpecKeys(spec, 'Elicit');
+    return createChart(createDataset(spec, chartOf), spec);
+}
+
+/**
+ * A dataset that any number of charts read and write (`ds.chart(spec)`).
+ * @param {import('../types').DatasetSpec} spec
+ * @returns {import('../types').Dataset}
+ */
+Elicit.dataset = (spec) => {
+    warnUnknownSpecKeys(spec, 'Elicit.dataset');
+    return createDataset(spec, chartOf).api;
+};
+
+/**
+ * `ds.chart(spec)`: a chart spec alone, so a dataset key here is a mistake.
+ * @param {import('./dataset.js').Dataset} dataset
+ * @param {import('../types').ChartSpec} spec
+ */
+function chartOf(dataset, spec) {
+    warnUnknownSpecKeys(spec, 'chart');
+    return createChart(dataset, spec);
+}
+
+/**
+ * Builds one chart over a dataset (core/dataset.js) and attaches it.
+ * @param {import('./dataset.js').Dataset} dataset
+ * @param {import('../types').ChartSpec} spec
+ * @returns {import('../types').Chart}
+ */
+function createChart(dataset, spec) {
     const {
         width = 600,
         height = 400,
@@ -70,21 +99,38 @@ export function Elicit(spec) {
     // Does an axis carry a title that may need room past the author's margin?
     const hasAxisTitles = features.some((f) => f && f.isAxis && typeof f.measureTitle === 'function');
 
+    // The data side: schema, rows, context, lock, constraints, undo, selection
+    // (core/dataset.js).
+    const { schemaSpec, seedSchemaSpec } = dataset;
+
     // The bindings a commit or a resize reassigns live on one shared object, so the
     // engine modules wired below read the live value (see engine/state.js).
-    const chart = createChartState();
+    // `chart.tables` / `chart.contextRows` read and write the dataset.
+    const chart = createChartState(dataset);
     // Transient interaction state, never part of the dataset:
     //   session    per-feature driver session (proximity selection, sweep/draw locks)
     //   preview    per-feature uncommitted proposal a driver parked (probe hover/drag),
     //              drawn as an inert ghost of the rows it would change. Never reaches
     //              onChange or getData; cleared on commit, hoverout and stage change.
-    //   selection  selected rows, qualified by table (engine/selection.js)
+    //   selection  selected rows, qualified by table: the dataset's set (engine/selection.js)
     //   hover      the feature+row under the pointer, from the renderer's hover events
     //   grab       the feature+row a drag is on, so the state pass decides `grabbed`
     //   pointer, hit, hits  the pointer in scene coordinates and the rows under it,
     //              recorded only when a guide `tracksPointer`; never dispatched
     /** @type {{ session: Record<string, any>, preview: Record<string, { table: string, rows: any[], pointer?: { x: number, y: number }, dropInto?: number | null }> | null, selection: Set<string>, hover: { featureId: string, index: number, node?: any } | null, grab: { featureId: string, index: number } | null, pointer: { x: number, y: number } | null, hit: { featureId: string, index: number, node: any } | null, hits: { featureId: string, index: number, node: any }[] }} */
-    const ui = { session: {}, preview: null, selection: new Set(), hover: null, grab: null, pointer: null, hit: null, hits: [] };
+    const ui = { session: {}, preview: null, selection: dataset.selection, hover: null, grab: null, pointer: null, hit: null, hits: [] };
+
+    // This chart's way into the dataset (attached below, once the chart is built).
+    // Commits made through it are this chart's.
+    const recordHistory = () => port.recordHistory();
+    const notifyChange = () => port.notifyChange();
+    /** @param {any} sel @param {string} [table] */
+    const commitSelectionEdit = (sel, table) => port.commitSelectionEdit(sel, table);
+    const txn = {
+        recordHistory,
+        gestureTxn: (/** @type {string} */ type) => port.gestureTxn(type),
+        endTxn: () => port.endTxn(),
+    };
 
     // Working dims. 'reflow' tracks the container's width; marks and scales read
     // the inner dims, so a resize only recomputes those.
@@ -99,32 +145,16 @@ export function Elicit(spec) {
     chart.innerWidth = chart.curW - chart.effectiveMargins.left - chart.effectiveMargins.right;
     chart.innerHeight = chart.curH - chart.effectiveMargins.top - chart.effectiveMargins.bottom;
 
-    // The engine owns a clone of the schema: a domain edit (edit.axis.*) writes it,
-    // never the caller's spec. `normalizeSchema` applies the author-side sugars
-    // once; `el.getSchema()` denormalizes on the way out.
-    /** @type {import('../types').SchemaSpec} */
-    const schemaSpec = normalizeSchema(structuredClone(spec.schema || {}));
-    // The schema as declared: the ceiling a zoom widens back to, and what
-    // `setDomain(field, null)` restores.
-    const seedSchemaSpec = structuredClone(schemaSpec);
     // The primary table's field map, by identity, so in-place domain writes keep
     // schemaSpec consistent.
     /** @type {Record<string, import('../types').FieldSchema>} */
     const schema = schemaSpec.tables[schemaSpec.primary].fields;
 
-    // 1. The dataset, whose structure the schema declares. structuredClone keeps
-    //    seed `Date` values; `normalizeData` splits rows per table.
-    chart.tables = normalizeData(structuredClone(spec.data ?? null), schemaSpec);
-
     // Dataset accessors (engine/tables.js).
     const {
         tableOf, targetTableOf, primaryRows,
-        seedContext, isContextRow, reportedRows, rowIndexOf, reportedIndexOf, shapeData,
-        recountSeed, isLockedIn, lockRowsIn, constraintsIn,
-    } = createTables(chart, { spec, schemaSpec });
-
-    // Context rows (spec.context) are decided once, over the seed (engine/tables.js).
-    seedContext();
+        rowIndexOf, isLockedIn, constraintsIn, checkRows,
+    } = dataset;
 
     // Which table each feature is a view over, by name or by role (engine/features.js).
     bindFeatureTables(features, schemaSpec);
@@ -145,20 +175,14 @@ export function Elicit(spec) {
     // settling, read once from the marks that draw the nodes (engine/nodes.js).
     const {
         boxHosts, nodeBoxRule, nodePortsRule, containsRule,
-        settleNodes, settledNodes, inFlight, heldStill,
-    } = createNodes(chart, { features, schemaSpec, ui, nodesTableName, hierarchyNodes, isLockedIn });
+        settleNodes, settleOwn, settledNodes, inFlight, heldStill,
+    } = createNodes(chart, {
+        features, schemaSpec, ui, nodesTableName, hierarchyNodes, isLockedIn,
+        settleTurn: (stroking) => port.settleTurn(stroking),
+    });
     // The channel map of the mark that draws a table (engine/features.js).
     const channelsDrawing = viewerChannelsOf(features);
 
-    // Seed row counts for `lock: 'seed'`, taken once the seed is final.
-    recountSeed();
-
-    // Check the seed rows against the schema once (core/schema.js). An edit cannot
-    // add an undeclared column, so the seed is the only source of a mismatch.
-    validateTables(schemaSpec, chart.tables);
-    // A hierarchy must be a tree: drop the rows validateTables flagged. No-op for
-    // other structures.
-    enforceTree(schemaSpec, chart.tables);
     // The resolver sees the resolved theme, for its colour-range fallbacks.
     const liveSpec = { ...spec, schema, schemaSpec, theme };
 
@@ -199,42 +223,22 @@ export function Elicit(spec) {
         : '');
 
     // Caller-facing observers: `change` per committed edit, `stage` on setStage,
-    // `select` on a selection change (no data moved, so not a `change`).
+    // `select` on a selection change (no data moved, so not a `change`). `change`
+    // and `select` are the dataset's; `stage` is the chart's.
     /** @type {{ change: Set<Function>, stage: Set<Function>, select: Set<Function> }} */
-    const listeners = { change: new Set(), stage: new Set(), select: new Set() };
+    const listeners = { change: dataset.listeners.change, stage: new Set(), select: dataset.listeners.select };
 
     // Multi-stage elicitation (engine/stages.js): `activeEdits` is the single gate
     // the dispatch/editable/plane-on-top paths run their edits through.
-    const stages = createStages({ spec, ui, listeners, update: () => update() });
+    const stages = createStages({
+        spec, ui, listeners, update: () => update(),
+        clearSelection: () => { commitSelectionEdit({ clear: true }); },
+    });
     const { getStage, activeEdits, applyStage } = stages;
 
     // Selection (engine/selection.js): which rows the reader has picked, stored
-    // qualified BY table, and the commit path both edit.select and el.select* use.
-    const selection = createSelection(chart, {
-        schemaSpec, ui, listeners, primaryRows, reportedRows, rowIndexOf, reportedIndexOf,
-        update: () => update(),
-    });
-    const {
-        selectionIn, selectionPrimary, selectionList,
-        commitSelectionEdit,
-    } = selection;
-
-    // ---- Undo history --------------------------------------------------------
-    // One snapshot per gesture (engine/history.js).
-    const history = createHistory(chart, {
-        schemaSpec, ui,
-        isContextRow: (name, d) => isContextRow(name, d),
-        applyResize: (size) => applyResize(size),
-        notifyChange: () => notifyChange(),
-        update: () => update(),
-    });
-    const { endTxn, recordHistory } = history;
-
-    // Notify a committed change; undo/redo notify through it too.
-    const notifyChange = () => {
-        if (spec.onChange) spec.onChange(shapeData());
-        for (const cb of listeners.change) cb(structuredClone(shapeData()));
-    };
+    // qualified BY table, and the commit path both edit.select and the select* API use.
+    const { selectionIn, selectionPrimary, selectionList } = dataset;
 
     // The most recently built scene nodes per feature, so plane-pick edits can
     // hit-test against exact mark geometry and guides can look marks up by index.
@@ -246,10 +250,10 @@ export function Elicit(spec) {
     // trial commits that decide which drop targets show.
     const {
         frameScalesFor, arbitrates, runEdit,
-        commitDomainEdit, previewEdit, reachableKeys, portAvailable,
+        previewEdit, reachableKeys, portAvailable,
     } = createCompute(chart, {
         schemaSpec, seedSchemaSpec, ui, featureNodes, hierarchyNodes, boxHosts,
-        tableOf, targetTableOf, isLockedIn, lockRowsIn, constraintsIn,
+        tableOf, targetTableOf, isLockedIn, checkRows,
         nodeBoxRule, nodePortsRule, containsRule, channelsDrawing,
         settleNodes, settledNodes, heldStill, activeEdits,
         selectionPrimary, commitSelectionEdit, recordHistory, notifyChange,
@@ -260,34 +264,64 @@ export function Elicit(spec) {
     //    the schema. Recomputed each render so inferred domains track edits.
     const dims = { width: chart.innerWidth, height: chart.innerHeight };
     chart.scales = resolveScales(features, chart.tables, liveSpec, dims);
-    // Settle a seeded hierarchy now, against the declared size, so `getData()` is
-    // already exact before the first (deferred) render.
-    settleNodes(null, null, {});
-    chart.spaceNext = false;
 
     // Rendering (engine/render.js): the container and its size, and `update()`,
     // which rebuilds the scene from current state and hands it to the renderer.
     const { container, measure, applyResize, update, stopMotion } = createRender(chart, {
-        features, featureById, ui, spec, theme, effects, renderer, mode, overflow, focusOutline, designW, authorMargins, dims, liveSpec, schema, schemaSpec, allGuides, datasetConstraints, tracksPointer, hasLegends, hasAxisTitles, featureNodes, hierarchyNodes, boxHosts, tableOf, targetTableOf, primaryRows, isLockedIn, constraintsIn, nodeBoxRule, nodePortsRule, settleNodes, settledNodes, heldStill, inFlight, activeEdits, getStage, selectionIn, selectionList, selectionPrimary, portAvailable, handleKey, clipNow, visibleAt,
+        features, featureById, ui, spec, theme, effects, renderer, mode, overflow, focusOutline, designW, authorMargins, dims, liveSpec, schema, schemaSpec, allGuides, datasetConstraints, tracksPointer, hasLegends, hasAxisTitles, featureNodes, hierarchyNodes, boxHosts, tableOf, targetTableOf, primaryRows, isLockedIn, constraintsIn, nodeBoxRule, nodePortsRule, settleOwn, settledNodes, heldStill, inFlight, activeEdits, getStage, selectionIn, selectionList, selectionPrimary, portAvailable, handleKey, clipNow, visibleAt,
+        layoutMoved: () => port.layoutMoved(),
         motionDuration: resolveMotion(spec.motion),
         handleEvent: (/** @type {any} */ event) => handleEvent(event),
     });
 
     // Event routing (engine/dispatch.js): the one path from a renderer's event to
     // the edits — direct to the touched mark, plane gestures through the drivers.
-    const { handleEvent, rowTargeted } = createDispatch(chart, {
+    const { handleEvent, rowTargeted, dropStroke } = createDispatch(chart, {
         features, featureById, ui, effects, tracksPointer, featureNodes, hierarchyNodes, boxHosts,
-        history, tableOf, activeEdits, getStage, applyStage, arbitrates, frameScalesFor,
+        history: txn, tableOf, activeEdits, getStage, applyStage, arbitrates, frameScalesFor,
         runEdit, previewEdit, reachableKeys, settledNodes, heldStill, notifyChange,
+        ownsLayout: () => port.ownsLayout(),
         handleKey, visibleAt,
         update: () => update(),
     });
 
-    const el = /** @type {import('../types').ElicitElement} */ (/** @type {any} */ (container));
-    // The public el.* API (engine/api.js). Observation only: edits stay the one
+    // Attach to the dataset. It redraws this chart after another chart's commit,
+    // an undo, `set` or a selection change; an undo step also restores the chart's
+    // size (an axis grow). Commits made through the port are this chart's, so the
+    // dataset redraws only the others (this one renders itself).
+    const port = dataset.attach({
+        update: () => update(),
+        settles: () => !!hierarchyNodes && boxHosts.length > 0,
+        snapshot: () => ({ width: chart.curW, height: chart.curH }),
+        restore: (size) => {
+            if (size && (size.width !== chart.curW || size.height !== chart.curH)) applyResize(size);
+            ui.preview = null;
+        },
+        drop: (what) => {
+            ui.preview = null;
+            if (what === 'preview') return;
+            // Another chart's commit or new data: the row indices these hold may be stale.
+            ui.hover = null;
+            ui.grab = null;
+            dropStroke();
+            chart.stroking = false;
+            chart.strokeNodes = null;
+            chart.strokeRow = null;
+            if (what === 'reseed' && hierarchyNodes) chart.snapNext = true;
+        },
+    });
+
+    // Settle a seeded hierarchy now, against the declared size, so `getData()` is
+    // already exact before the first (deferred) render. Only the first chart to
+    // settle a dataset does; a later one draws the rows as they are.
+    if (settleOwn()) port.layoutMoved();
+
+    // The public Chart (engine/api.js). Observation only: edits stay the one
     // path that mutates data.
-    attachApi(el, chart, {
-        features, ui, listeners, featureNodes, schemaSpec, seedSchemaSpec, mode, container, history, selection, stages, tableOf, shapeData, isContextRow, rowIndexOf, recountSeed, frameScalesFor, commitDomainEdit, rowTargeted, endTxn, measure, stopMotion,
+    const api = createChartApi(chart, {
+        dataset: dataset.api, detach: port.detach, features, listeners, featureNodes, schemaSpec, mode,
+        container: /** @type {HTMLDivElement} */ (container),
+        stages, tableOf, rowIndexOf, frameScalesFor, rowTargeted, measure, stopMotion,
         handleEvent: (/** @type {any} */ event) => handleEvent(event),
         update: () => update(),
     });
@@ -296,5 +330,5 @@ export function Elicit(spec) {
     // if the renderer needs measured dimensions.
     setTimeout(update, 0);
 
-    return el;
+    return api;
 }

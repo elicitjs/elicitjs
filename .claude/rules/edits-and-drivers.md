@@ -41,7 +41,7 @@ paths:
 - A driver may claim a direct-pick edit by capability (relative `slide`/`move`); `runDrivers` then hands it `ctx.index` and the plane stays down. Don't force an edit onto the plane when it only needs a dragstart snapshot.
 - Sessions are per feature (`ui.session[featureId]`), shared by every driver on that mark. Each driver lists `sessionKeys`; the engine's `session.clear()` nulls exactly those. Never wholesale-clear.
 - `Driver.options` declares the knobs it reads; `warnUnknownEditOptions` subtracts them.
-- `targetsRow: true` (`nearest`, `sweep`) means the driver only chooses a row, so `el.control(name, i)` runs that edit directly on row `i`. Other plane edits warn on `control()`. Never emulate the plane with a synthetic gesture at the row's pixel.
+- `targetsRow: true` (`nearest`, `sweep`) means the driver only chooses a row, so `chart.control(name, i)` runs that edit directly on row `i`. Other plane edits warn on `control()`. Never emulate the plane with a synthetic gesture at the row's pixel.
 - A sweep locks an edge; it doesn't run every edit on a band each tick.
 
 ## Dispatch and arbitration
@@ -70,4 +70,4 @@ paths:
 - `edit.axis.scale` is `pick: 'direct'`, claimed by the `axisDrag` driver by type; the plane stays down.
 - `edit.axis.zoom` is `pick: 'plane'` on `gesture: 'wheel'`; never raises the plane. Renderers report wheel (and prevent scroll) only when `RenderContext.hasWheel`. Ticks coalesce into one undo entry.
 - `edit.axis.pan` has its own `pan` driver; each tick shifts by pointer travel since the last tick through the live scale (so a mid-drag zoom composes). Zoom and pan share `fitWithin`/`ceilingOf`.
-- Both write the domain via `commitDomainEdit` — never a view transform. `el.setDomain(field, domain | null)` is the external twin (`null` restores `seedSchema`). Both declare `viewport: true`, which turns on clipping.
+- Both write the domain via `commitDomainEdit` — never a view transform. `ds.setDomain(field, domain | null)` is the external twin (`null` restores `seedSchema`); the domain is the dataset's, so every chart over it zooms. Both declare `viewport: true`, which turns on clipping.

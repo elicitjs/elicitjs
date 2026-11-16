@@ -8,10 +8,10 @@ import { isBareForm } from '../schema.js';
  * index-based and means the primary table. Selection is not belief data: it
  * fires `select`, never `change`, and bypasses undo.
  *
- * @param {import('./state.js').ChartState} chart
+ * @param {import('../dataset.js').DataState} state
  * @param {{
  *   schemaSpec: import('../../types').SchemaSpec,
- *   ui: any,
+ *   selected: Set<string>,
  *   listeners: { select: Set<Function> },
  *   primaryRows: () => any[],
  *   reportedRows: (name: string) => any[],
@@ -20,8 +20,8 @@ import { isBareForm } from '../schema.js';
  *   update: () => void,
  * }} deps
  */
-export function createSelection(chart, deps) {
-    const { schemaSpec, ui, listeners, primaryRows, reportedRows, rowIndexOf, reportedIndexOf } = deps;
+export function createSelection(state, deps) {
+    const { schemaSpec, selected, listeners, primaryRows, reportedRows, rowIndexOf, reportedIndexOf } = deps;
 
     /** @param {string} table @param {number} index @returns {string} */
     const selKey = (table, index) => `${table}\u0000${index}`;
@@ -34,7 +34,7 @@ export function createSelection(chart, deps) {
     const selectionIn = (table) => {
         /** @type {Set<number>} */
         const out = new Set();
-        for (const key of ui.selection) {
+        for (const key of selected) {
             const s = selParse(key);
             if (s.table === table) out.add(s.index);
         }
@@ -53,7 +53,7 @@ export function createSelection(chart, deps) {
     // Every live selected index in one table, ascending.
     /** @param {string} [table] @returns {number[]} */
     const selectionList = (table = schemaSpec.primary) => {
-        const n = (chart.tables[table] || []).length;
+        const n = (state.tables[table] || []).length;
         return [...selectionIn(table)].filter((i) => i >= 0 && i < n).sort((a, b) => a - b);
     };
 
@@ -69,19 +69,19 @@ export function createSelection(chart, deps) {
         // Single-table charts report bare indices; multi-table ones report {table, index}.
         const all = isBareForm(schemaSpec)
             ? [...selectionIn(schemaSpec.primary)].map((i) => reportedIndexOf(schemaSpec.primary, i)).filter((i) => i != null)
-            : [...ui.selection].map(selParse)
+            : [...selected].map(selParse)
                 .map((sel) => ({ ...sel, index: reportedIndexOf(sel.table, sel.index) }))
                 .filter((sel) => sel.index != null);
         for (const cb of listeners.select) cb(primary, /** @type {any} */ (all));
     };
 
-    // Commit a selection edit to `ui.selection`, skipping constraints and undo.
+    // Commit a selection edit to `selected`, skipping constraints and undo.
     // Returns whether the selection moved; it does not render (the caller does).
     /** @param {{ index?: number | null, exclusive?: boolean, toggle?: boolean, clear?: boolean }} sel */
     const commitSelectionEdit = (sel, table = schemaSpec.primary) => {
-        const before = [...ui.selection].join(',');
+        const before = [...selected].join(',');
         applySelection(sel, table);
-        const after = [...ui.selection].join(',');
+        const after = [...selected].join(',');
         if (before === after) return false;
         notifySelect();
         return true;
@@ -92,18 +92,18 @@ export function createSelection(chart, deps) {
     // when exclusive, but any member when additive.
     /** @param {{ index?: number | null, exclusive?: boolean, toggle?: boolean, clear?: boolean }} sel */
     const applySelection = (sel, table = schemaSpec.primary) => {
-        if (sel.clear || sel.index == null) { ui.selection.clear(); return; }
+        if (sel.clear || sel.index == null) { selected.clear(); return; }
         const key = selKey(table, sel.index);
-        const has = ui.selection.has(key);
+        const has = selected.has(key);
         if (sel.exclusive !== false) {
-            const sole = has && ui.selection.size === 1;
-            ui.selection.clear();
+            const sole = has && selected.size === 1;
+            selected.clear();
             if (sel.toggle && sole) return; // toggled the sole selection off — leave empty
         } else if (sel.toggle && has) {
-            ui.selection.delete(key);
+            selected.delete(key);
             return;
         }
-        ui.selection.add(key);
+        selected.add(key);
     };
 
     // ── The public selection API ──────────────────────────────────────────────
@@ -135,10 +135,10 @@ export function createSelection(chart, deps) {
             const list = index.filter(ok).map(row);
             if (!list.length) return driveSelection({ index: null, clear: true });
             // One commit: `select` fires and the chart renders once.
-            const before = [...ui.selection].join(',');
+            const before = [...selected].join(',');
             applySelection({ index: list[0], exclusive: true, toggle: false });
             for (const i of list.slice(1)) applySelection({ index: i, exclusive: false, toggle: false });
-            if ([...ui.selection].join(',') === before) return false;
+            if ([...selected].join(',') === before) return false;
             notifySelect();
             deps.update();
             return true;

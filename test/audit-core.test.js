@@ -13,12 +13,12 @@ import { normalizeSchema } from '../src/core/schema.js';
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const mounted = [];
-afterEach(() => { mounted.splice(0).forEach((el) => el.remove()); setWarnings(false); });
+afterEach(() => { mounted.splice(0).forEach((el) => el.dom().remove()); setWarnings(false); });
 setWarnings(false);
 
 function mount(spec) {
     const el = Elicit(spec);
-    document.body.appendChild(el);
+    document.body.appendChild(el.dom());
     mounted.push(el);
     return el;
 }
@@ -58,9 +58,9 @@ describe('adopted d3 scale', () => {
             marks: [plot.point({ channels: { x: { field: 'x', scale: d3.scaleLinear() }, y: { field: 'y' } } })],
         });
         await tick();
-        expect(+el.querySelector('circle').getAttribute('cx')).toBeCloseTo(100, 3);
+        expect(+el.dom().querySelector('circle').getAttribute('cx')).toBeCloseTo(100, 3);
         el.setDomain('x', [0, 50]);
-        expect(+el.querySelector('circle').getAttribute('cx')).toBeCloseTo(200, 3);
+        expect(+el.dom().querySelector('circle').getAttribute('cx')).toBeCloseTo(200, 3);
     });
 
     it('picks up new categories on an adopted band scale with an inferred domain', () => {
@@ -155,9 +155,9 @@ describe('chart title', () => {
             marks: [plot.barY({ channels: { x: { field: 'k' }, y: { field: 'v' }, fill: { field: 'k', legend: { anchor: 'left' } } } })],
         });
         await tick();
-        const m = el.querySelector('g.scene-container').getAttribute('transform').match(/translate\(([\d.]+),([\d.]+)\)/);
+        const m = el.dom().querySelector('g.scene-container').getAttribute('transform').match(/translate\(([\d.]+),([\d.]+)\)/);
         expect(+m[1]).toBeGreaterThan(10); // the legend took room on the left
-        const title = [...el.querySelectorAll('text')].find((t) => t.textContent.startsWith('aaaa'));
+        const title = [...el.dom().querySelectorAll('text')].find((t) => t.textContent.startsWith('aaaa'));
         const drawn = Math.max(1, title.querySelectorAll('tspan').length);
         expect(drawn).toBeGreaterThan(1);
         expect(+m[2]).toBeCloseTo(10 + 16 * 1.3 * drawn + 6, 3);
@@ -263,7 +263,7 @@ describe('plane stroke after a lost dragend', () => {
             ],
         });
         await tick();
-        const rect = (n) => el.querySelectorAll('rect.mark')[n];
+        const rect = (n) => el.dom().querySelectorAll('rect.mark')[n];
         const midX = (n) => +rect(n).getAttribute('x') + +rect(n).getAttribute('width') / 2;
         const raw = {};
         // A direct grab of bar B whose dragend never arrives.

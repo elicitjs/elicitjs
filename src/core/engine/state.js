@@ -5,12 +5,15 @@
  *
  * Read a field at call time (`chart.tables`), never destructure it at creation:
  * a local copy keeps the rows from before the next commit.
+ *
+ * `tables` and `contextRows` belong to the dataset (core/dataset.js); here they
+ * are accessors that read and write it.
  */
 
 /**
  * @typedef {object} ChartState
- * @property {Record<string, any[]>} tables  the elicited dataset, one array per table NAME
- * @property {Record<string, WeakSet<object>>} contextRows  context membership, by row identity (see core/lock.js)
+ * @property {Record<string, any[]>} tables  the elicited dataset, one array per table NAME (the dataset's)
+ * @property {Record<string, WeakSet<object>>} contextRows  context membership, by row identity (the dataset's)
  * @property {number} curW  the chart's working width (tracks the container in 'reflow' mode)
  * @property {number} curH  the chart's working height
  * @property {{ top: number, right: number, bottom: number, left: number }} effectiveMargins
@@ -24,10 +27,17 @@
  * @property {any[] | null} strokeNodes  the hierarchy's node rows as the current stroke began
  * @property {number | null} strokeRow  the hierarchy node row the current stroke grabbed
  * @property {boolean} snapNext  draw the hierarchy's next layout at once, not eased (data arrived from outside)
- * @property {boolean} spaceNext  space the hierarchy's rows on the next settle (data arrived from outside)
  */
 
-/** @returns {ChartState} */
-export function createChartState() {
-    return /** @type {ChartState} */ ({});
+/**
+ * @param {import('../dataset.js').DataState} dataset
+ * @returns {ChartState}
+ */
+export function createChartState(dataset) {
+    const chart = /** @type {ChartState} */ ({});
+    Object.defineProperties(chart, {
+        tables: { get: () => dataset.tables, set: (v) => { dataset.tables = v; }, enumerable: true },
+        contextRows: { get: () => dataset.contextRows, set: (v) => { dataset.contextRows = v; }, enumerable: true },
+    });
+    return chart;
 }

@@ -105,7 +105,7 @@ describe('a fast sweep over bars', () => {
             data: cats.map((k) => ({ k, v: 20 })),
             marks: [plot.barY({ channels: { x: { field: 'k' }, y: { field: 'v', edit: edit.move({ pick: 'sweep' }) } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         // One jump from the first bar to the last, at value 80 (y = 200 - 160).
         el.emit({ type: 'dragstart', x: 20, y: 40 });
@@ -135,7 +135,7 @@ describe('line.newSeries', () => {
                 plot.lineY({ channels: { x: { field: 't' }, y: { value: 50 } }, edits: [edit.line.newSeries()] }),
             ],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         el.emit({ type: 'dblclick', x: 100, y: 100 });
         for (const row of el.getData()) {
@@ -154,10 +154,10 @@ describe('maintainSum guide', () => {
             constraints: [constraints.maintainSum({ total: 100, field: 'v' })],
             marks: [plot.barY({ channels: { x: { field: 'k' }, y: { field: 'v', edit: edit.move({ guide: true }) } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         // One cap per bar; a NaN position reaches the DOM as a missing attribute.
-        const caps = [...el.querySelectorAll('line.guide-line')];
+        const caps = [...el.dom().querySelectorAll('line.guide-line')];
         expect(caps.length).toBe(3);
         expect(caps.every((l) => Number.isFinite(parseFloat(l.getAttribute('y1'))))).toBe(true);
     });

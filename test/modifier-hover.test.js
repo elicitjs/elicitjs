@@ -20,11 +20,11 @@ function chart() {
             y: { field: 'b' }, size: { value: 20 },
         } })],
     });
-    document.body.appendChild(el);
+    document.body.appendChild(el.dom());
     return el;
 }
 
-const rings = (el) => el.querySelectorAll('.effect').length;
+const rings = (el) => el.dom().querySelectorAll('.effect').length;
 
 describe('a modifier-gated plane edit\'s hover', () => {
     it('lights while the modifier is down and retires when it is released', async () => {

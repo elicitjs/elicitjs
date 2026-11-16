@@ -20,7 +20,7 @@ async function mount(edits) {
         data: [{ x: 5, y: 5 }],
         marks: [plot.point({ channels: { x: { field: 'x' }, y: { field: 'y' } }, edits })],
     });
-    document.body.appendChild(el);
+    document.body.appendChild(el.dom());
     await tick();
     return el;
 }

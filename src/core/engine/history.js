@@ -2,29 +2,36 @@
 /**
  * Undo history as snapshots, one per gesture (dragstart to dragend; a click or
  * typed commit is its own). The first commit in a gesture records the state
- * before it. Snapshots also carry the schema and chart size, which axis edits change.
+ * before it. Snapshots also carry the schema, which axis edits change, each
+ * attached chart's own state (its size, which an axis grow changes), and which
+ * chart's pixels a hierarchy was settled in (so a restore is not re-settled).
+ *
+ * The open transaction has an owner: the chart whose gesture opened it, or none
+ * for a dataset method. A chart closes only its own, and a commit by another
+ * owner records a new step, so events in one chart never merge into or split
+ * another chart's gesture.
  */
 
 const MAX_HISTORY = 100;
 
 /**
- * @param {import('./state.js').ChartState} chart
+ * @param {import('../dataset.js').DataState} state
  * @param {{
  *   schemaSpec: import('../../types').SchemaSpec,
- *   ui: any,
+ *   charts: import('../dataset.js').ChartHook[],
+ *   layout: { owner: import('../dataset.js').ChartHook | null },
  *   isContextRow: (name: string, d: any) => boolean,
- *   applyResize: (size: { width?: number, height?: number }) => any,
  *   notifyChange: () => void,
  *   update: () => void,
  * }} deps
  */
-export function createHistory(chart, deps) {
-    const { schemaSpec, ui } = deps;
+export function createHistory(state, deps) {
+    const { schemaSpec, charts } = deps;
     /** @type {any[]} */
     let past = [];
     /** @type {any[]} */
     let future = [];
-    /** @type {{ recorded: boolean } | null} */
+    /** @type {{ owner: any, recorded: boolean } | null} */
     let txn = null;
     /** @type {any} */
     let wheelTimer = null;
@@ -37,21 +44,24 @@ export function createHistory(chart, deps) {
         for (const name of Object.keys(schemaSpec.tables)) schemas[name] = structuredClone(schemaSpec.tables[name].fields);
         /** @type {Record<string, number[]>} */
         const context = {};
-        for (const name of Object.keys(chart.contextRows)) {
+        for (const name of Object.keys(state.contextRows)) {
             context[name] = [];
-            (chart.tables[name] || []).forEach((d, i) => { if (deps.isContextRow(name, d)) context[name].push(i); });
+            (state.tables[name] || []).forEach((d, i) => { if (deps.isContextRow(name, d)) context[name].push(i); });
         }
-        return { tables: structuredClone(chart.tables), schemas, context, width: chart.curW, height: chart.curH };
+        return {
+            tables: structuredClone(state.tables), schemas, context,
+            charts: new WeakMap(charts.map((c) => [c, c.snapshot()])), owner: deps.layout.owner,
+        };
     };
 
     /** @param {any} snap */
     const restoreSnapshot = (snap) => {
-        chart.tables = structuredClone(snap.tables);
+        state.tables = structuredClone(snap.tables);
         for (const [name, idx] of Object.entries(snap.context)) {
             /** @type {WeakSet<object>} */
             const set = new WeakSet();
-            for (const i of /** @type {number[]} */ (idx)) if (chart.tables[name] && chart.tables[name][i]) set.add(chart.tables[name][i]);
-            chart.contextRows[name] = set;
+            for (const i of /** @type {number[]} */ (idx)) if (state.tables[name] && state.tables[name][i]) set.add(state.tables[name][i]);
+            state.contextRows[name] = set;
         }
         // Replace each schema's contents in place; closures hold the field maps.
         for (const [name, fields] of Object.entries(snap.schemas)) {
@@ -60,39 +70,41 @@ export function createHistory(chart, deps) {
             for (const k of Object.keys(live)) delete live[k];
             Object.assign(live, structuredClone(fields));
         }
-        if (snap.width !== chart.curW || snap.height !== chart.curH) {
-            deps.applyResize({ width: snap.width, height: snap.height });
-        }
-        ui.preview = null;
+        // A chart attached after the snapshot has no entry; it restores nothing.
+        for (const c of charts) c.restore(snap.charts.get(c));
+        deps.layout.owner = snap.owner;
     };
 
-    // Open a transaction if none is open. The snapshot is taken lazily by
+    // Open a transaction for `owner`. The snapshot is taken lazily by
     // recordHistory, so a gesture that never commits clones nothing.
-    const beginTxn = () => { if (!txn) txn = { recorded: false }; };
-    const endTxn = () => { txn = null; };
+    /** @param {any} owner */
+    const beginTxn = (owner) => { txn = { owner, recorded: false }; };
+    // Close `owner`'s transaction; with no owner (a dataset method), whichever is open.
+    /** @param {any} [owner] */
+    const endTxn = (owner) => { if (owner === undefined || (txn && txn.owner === owner)) txn = null; };
 
-    // Called by every commit path before it mutates state. The first commit in a
-    // transaction snapshots the state and drops the redo stack.
-    const recordHistory = () => {
-        if (!txn) beginTxn();
-        if (!txn || txn.recorded) return;
+    // Called by every commit path before it mutates state. The first commit in
+    // `owner`'s transaction snapshots the state and drops the redo stack.
+    /** @param {any} [owner] */
+    const recordHistory = (owner) => {
+        if (txn && txn.owner === owner && txn.recorded) return;
         past.push(snapshot());
         if (past.length > MAX_HISTORY) past.shift();
         future = [];
-        txn.recorded = true;
+        txn = { owner, recorded: true };
     };
 
     // Decide which transaction an incoming event belongs to. A dragstart always
     // opens a fresh one, so a lost dragend can't leak into the next gesture.
-    /** @param {string} type the event's type */
-    const gestureTxn = (type) => {
+    /** @param {string} type the event's type @param {any} owner the chart it reached */
+    const gestureTxn = (type, owner) => {
         // A wheel burst is one transaction, closed by a timer once the wheel goes quiet.
         if (type === 'wheel') {
-            if (!txn || wheelTimer == null) { endTxn(); beginTxn(); }
+            if (!txn || txn.owner !== owner || wheelTimer == null) beginTxn(owner);
             if (wheelTimer != null) clearTimeout(wheelTimer);
-            wheelTimer = setTimeout(() => { wheelTimer = null; endTxn(); }, 350);
-        } else if (type === 'dragstart') { endTxn(); beginTxn(); }
-        else if (!txn) beginTxn();
+            wheelTimer = setTimeout(() => { wheelTimer = null; endTxn(owner); }, 350);
+        } else if (type === 'dragstart') beginTxn(owner);
+        else if (!txn) beginTxn(owner);
     };
 
     // Clear history on a reseed (setData).

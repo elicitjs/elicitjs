@@ -37,7 +37,9 @@ import type {
   Edit,
   EditOptions,
   EditTextOptions,
-  ElicitElement,
+  Chart,
+  Dataset,
+  DatasetSpec,
   ElicitSpec,
   EllipseOptions,
   FaceOptions,
@@ -118,7 +120,12 @@ import type {
 
 export type * from './types.js';
 
-export function Elicit(spec: ElicitSpec): ElicitElement;
+/** A dataset and one chart over it: `Elicit.dataset(spec).chart(spec)` in one call. */
+export function Elicit(spec: ElicitSpec): Chart;
+export namespace Elicit {
+  /** A dataset that any number of charts read and write: `ds.chart(spec)`. */
+  function dataset(spec: DatasetSpec): Dataset;
+}
 
 /**
  * MARKS — features that view DATA (`views: 'data'`): one node per row, channels

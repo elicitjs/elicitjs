@@ -86,8 +86,8 @@ export interface FieldSchema {
   to?: string;
 }
 
-// Which rows of the dataset are READ-ONLY (see ElicitSpec.lock, core/lock.js).
-// 'seed' (or true) fixes the rows the chart was seeded with — they are given, not
+// Which rows of the dataset are READ-ONLY (see DatasetSpec.lock, core/lock.js).
+// 'seed' (or true) fixes the rows the dataset was seeded with — they are given, not
 // elicited — and leaves every row an edit adds free. A predicate locks rows by
 // what they are (`d => d.year <= 1990`).
 // `table` is the name of the table the row belongs to — so one predicate can lock
@@ -97,9 +97,9 @@ export type LockSpec =
   | boolean
   | ((datum: Datum, index: number, table?: string) => boolean);
 
-// Which rows are CONTEXT (see ElicitSpec.context, core/lock.js): reference rows of
+// Which rows are CONTEXT (see DatasetSpec.context, core/lock.js): reference rows of
 // the elicited table — observed history behind a forecast — that are drawn, read-
-// only, and left out of everything the chart reports. `true` makes every seeded
+// only, and left out of everything the dataset reports. `true` makes every seeded
 // row context; a predicate picks seeded rows. Asked ONCE, of the seed: a row an
 // edit adds or moves never becomes context.
 export type ContextSpec =
@@ -112,7 +112,7 @@ export type ContextSpec =
 export type Schema = Record<string, FieldSchema>;
 
 // ── Structure: which tables the dataset has ─────────────────────────────────
-// A chart elicits ONE dataset; its STRUCTURE says what shape that dataset is —
+// A dataset's STRUCTURE says what shape it is —
 // a set of named tables, each filling a ROLE the structure defines.
 //
 //   'table'   (the default)  one table, role `data`
@@ -140,7 +140,7 @@ export interface TableSpec {
   selfLoops?: boolean;
 }
 
-// `ElicitSpec.schema` as an author may write it. A bare field map is a single-table
+// `DatasetSpec.schema` as an author may write it. A bare field map is a single-table
 // schema (the form every pre-structure spec uses, valid forever); the long form
 // names its tables. normalizeSchema brings both to SchemaSpec.
 export type SchemaInput =
@@ -358,7 +358,7 @@ export interface EditContext {
   // locked series, an axis drag's handle snapshot. Read (and, for pointer
   // tracking, mutated) across a single press-drag. Set by the edit's driver.
   session?: Session | null;
-  // Chart geographic projection when `ElicitSpec.projection` is set. Geo edits
+  // Chart geographic projection when `ChartSpec.projection` is set. Geo edits
   // invert the pointer through the same object geo marks use for apply/path.
   projection?: ProjectionContext | null;
   // The primary selected datum index (transient pipeline state — ui.selection),
@@ -468,9 +468,9 @@ export type Constraint = ConstraintSpec | ConstraintFn;
 export interface Edit {
   type: string;
   // Stable handle an external controller addresses this edit by, via
-  // `el.control(name)`. null (default) = not externally addressable; the edit
+  // `chart.control(name)`. null (default) = not externally addressable; the edit
   // stays purely pointer/keyboard-driven. Naming an edit adds no dispatch path —
-  // `el.control` synthesizes the same events the pointer does (see ElicitElement).
+  // `chart.control` synthesizes the same events the pointer does (see Chart).
   name: string | null;
   gesture: string;
   channels: string[] | null;
@@ -587,7 +587,7 @@ export interface Edit {
 // keys the descriptor doesn't know pass through onto it for a driver to read
 // (see the note on Edit.apply).
 export interface EditOptions {
-  // Stable handle for `el.control(name)` (see Edit.name).
+  // Stable handle for `chart.control(name)` (see Edit.name).
   name?: string;
   // The raw gesture this edit claims: 'drag' | 'click' | 'dblclick' | 'commit'.
   gesture?: string;
@@ -1011,7 +1011,7 @@ export interface Channels extends StyleChannels {
   [channel: string]: ChannelSpec | undefined;
 }
 
-/** The object form of `ElicitSpec.clip`: clip, to the plot rect grown by `pad`. */
+/** The object form of `ChartSpec.clip`: clip, to the plot rect grown by `pad`. */
 export interface ClipSpec {
   /** Pixels past the plot rect the marks may still draw: one number for every
    *  side, or per side. Default 0. */
@@ -1030,9 +1030,9 @@ export interface ClipRect {
 // `channels` carries the bindings; the shorthands are sugar that desugar into
 // constant channels via normalizeMarkOptions (an explicit `channels` entry wins).
 //
-// A mark NEVER owns data: `Elicit` owns the one dataset, and a mark is a view
+// A mark NEVER owns data: the dataset does (DatasetSpec), and a mark is a view
 // over it that encodes some columns and may edit them. There is no `data` or
-// `onChange` here — both live on ElicitSpec. Nor does it own a domain: that is
+// `onChange` here — both live on DatasetSpec. Nor does it own a domain: that is
 // the data's, declared once on the schema.
 export interface MarkOptions {
   channels?: Channels;
@@ -1072,14 +1072,14 @@ export interface MarkOptions {
   // Which TABLE this mark is a view over, by NAME (see Mark.table).
   table?: string;
   /**
-   * `false` draws this mark past the chart's clip (`ElicitSpec.clip`): an
+   * `false` draws this mark past the chart's clip (`ChartSpec.clip`): an
    * annotation or a label meant to sit in the margin. Its nodes stay grabbable
    * and tippable there too. Unset, the mark follows the chart.
    */
   clip?: boolean;
   // No `constraints` here on purpose: a constraint is a DATASET invariant and gates
   // every edit from every mark, so one written inside a mark reads as scoped to that
-  // mark and is not. `ElicitSpec.constraints` is the only home.
+  // mark and is not. `DatasetSpec.constraints` is the only home.
   //
   // CLOSED: a mark's own options are typed on its interface (BarOptions, …), and
   // `src/vocabulary.js` is the runtime twin `check:exports` holds them to.
@@ -1442,7 +1442,7 @@ export type GuideOption<T> = T | ((ctx: any) => T);
  * and `constraints` for a long time: a mark could accept an option and never pass
  * it on, and nothing caught it. Typing the return makes that a typecheck failure.
  *
- * A mark NEVER owns data: `Elicit` owns the chart's one dataset and hands the rows
+ * A mark NEVER owns data: the dataset owns the rows, and the chart hands them
  * to `build`. There is deliberately no `data` and no `onChange` here.
  */
 /**
@@ -1469,7 +1469,7 @@ export type GuideOption<T> = T | ((ctx: any) => T);
  *
  * The type is documentation and a checkable shape; the engine still branches on
  * `views === 'scale'` rather than on this interface. Both `axes` and `legends` on
- * the spec desugar into these; authors may also pass them via `ElicitSpec.elements`.
+ * the spec desugar into these; authors may also pass them via `ChartSpec.elements`.
  */
 
 /**
@@ -2032,7 +2032,7 @@ export interface FeatureNode {
   // Answers the pointer for HOVER only (a node mark whose edit lives on its
   // ports): no cursor, no drag, never a hit-test target.
   hoverable?: boolean;
-  // Set by the engine when the node's row is READ-ONLY (ElicitSpec.lock): the node
+  // Set by the engine when the node's row is READ-ONLY (DatasetSpec.lock): the node
   // is never `editable`, is pointer-transparent, and proximity picking skips it. A
   // line's connector path is locked when every row of its series is.
   locked?: boolean;
@@ -2122,7 +2122,7 @@ export interface FeatureNode {
   polygon?: boolean;
   // A guide rect that sits ABOVE the marks (a tip's box) rather than behind them.
   front?: boolean;
-  // Escapes the mark clip (`ElicitSpec.clip`): stamped by the engine on every node
+  // Escapes the mark clip (`ChartSpec.clip`): stamped by the engine on every node
   // a chart element draws (an axis handle on the plot edge, a legend swatch).
   unclipped?: boolean;
   // A gradient fill (a mark's `gradient` option), painted by the renderers as a
@@ -2474,20 +2474,13 @@ export interface EffectStyle {
   };
 }
 
-export interface ElicitSpec {
-  width?: number;
-  height?: number;
-  margins?: { top: number; right: number; bottom: number; left: number };
-  marks?: (Mark | Mark[])[];
-  // Chart elements (`elicit.elements.*` — axis / grid / legend / axisRadial).
-  // Concatenated with `marks` into the feature list; same factories also work
-  // inside `marks`. Prefer this key when the
-  // intent is scale chrome rather than a data view.
-  elements?: ChartElement[];
-  // THE dataset. A chart elicits exactly one — even a slider elicits a one-row
-  // dataset. Seed rows are a starting point; every mark is a view over these rows,
-  // encoding some columns and (where it carries an edit) writing them back. Marks
-  // never own data. May be omitted: with a `schema`, scales resolve and `create`
+// What `Elicit.dataset(spec)` reads: the rows, their schema and the invariants
+// over them. Every chart made from the dataset reads and writes these rows.
+export interface DatasetSpec {
+  // The seed rows. A chart draws exactly one dataset — even a slider elicits a
+  // one-row dataset — and several charts may share one. Every mark is a view over
+  // these rows, encoding some columns and (where it carries an edit) writing them
+  // back. Marks and charts never own data. May be omitted: with a `schema`, scales resolve and `create`
   // mints rows from nothing.
   //
   // A bare array is the PRIMARY table's rows — which is every single-table chart.
@@ -2496,7 +2489,7 @@ export interface ElicitSpec {
   // built entirely by gesture needs no `data` at all.
   data?: Datum[] | Record<string, Datum[]>;
   // The elicited-dataset schema (field -> measurement type/domain/default), and
-  // the contract of the chart. REQUIRED: it owns every field's data type and
+  // the contract of every chart over it. REQUIRED: it owns every field's data type and
   // DOMAIN, so a mark never declares one. A field encoded but left out of the
   // schema is inferred from `data` with a dev-warning; a field with neither a
   // schema entry nor data throws (there is nothing to build a scale from).
@@ -2510,7 +2503,7 @@ export interface ElicitSpec {
   // by what they are. A locked row can't be changed or deleted by any gesture (a
   // dataset invariant, run last, so it outranks every other repair), its marks are
   // not grabbable, and proximity picking (nearest / sweep / draw) skips them. Note
-  // `setData` re-seeds the chart, so it also re-takes a `'seed'` lock.
+  // `setData` re-seeds the dataset, so it also re-takes a `'seed'` lock.
   lock?: LockSpec;
   // Reference rows. `true` makes every row in `data` context; a predicate picks
   // which seeded rows are (`d => d.year <= 2020`). Context rows share the table's
@@ -2525,13 +2518,28 @@ export interface ElicitSpec {
   // The dataset's invariants. They gate and REPAIR every edit, whichever mark fired
   // it: a rejected proposal is dropped; a returned array replaces it, and the marks
   // re-derive from the repaired rows on the next render. Declared in exactly one
-  // place: `ElicitSpec.constraints`.
+  // place: `DatasetSpec.constraints`.
   constraints?: Constraint[];
-  // Called with the committed dataset after each edit, shaped like `data` itself
-  // (a bare array for a single-table chart). Hover previews never fire it.
+  // Called with the committed dataset once per commit, from whichever chart made
+  // it (or `set`, `setDomain`, undo), shaped like `data` itself (a bare array for a
+  // single-table dataset). Hover previews never fire it.
   // Declared as a METHOD, not a function-valued property, so it stays bivariant: a
   // single-table consumer (every widget) may hand in a plain (rows: Datum[]) => void.
   onChange?(data: Datum[] | Record<string, Datum[]>): void;
+  // NO index signature: the key set is CLOSED (see ChartSpec).
+}
+
+// What `dataset.chart(spec)` reads: how one chart draws and edits the dataset.
+export interface ChartSpec {
+  width?: number;
+  height?: number;
+  margins?: { top: number; right: number; bottom: number; left: number };
+  marks?: (Mark | Mark[])[];
+  // Chart elements (`elicit.elements.*` — axis / grid / legend / axisRadial).
+  // Concatenated with `marks` into the feature list; same factories also work
+  // inside `marks`. Prefer this key when the
+  // intent is scale chrome rather than a data view.
+  elements?: ChartElement[];
   // Global axis convenience: `false` = no axes; `{ x, y }` = per-channel config or
   // `false` to suppress that channel; omitted = default axes on both positional
   // channels. Desugars into composable axis/grid marks.
@@ -2615,11 +2623,13 @@ export interface ElicitSpec {
    *  window (`edit.axis.zoom`, `edit.axis.pan`), off otherwise. */
   clip?: boolean | ClipSpec;
   // NO index signature. The spec's key set is CLOSED: an unknown key is a typo
-  // that would otherwise draw a wrong chart in silence, and `warnUnknownSpecKeys`
-  // (core/elicit.js) reports it at run time. Closing it here is the compile-time
-  // half — and it is what lets the planned JSON grammar be generated from a key
-  // set that is actually known.
+  // that would otherwise draw a wrong chart in silence, and core/guards.js reports
+  // it at run time. Closing it here is the compile-time half — and it is what lets
+  // the planned JSON grammar be generated from a key set that is actually known.
 }
+
+// What `Elicit(spec)` reads: a dataset and one chart over it, in one object.
+export type ElicitSpec = DatasetSpec & ChartSpec;
 
 // The shared option surface every survey widget (src/widgets/*) accepts, so the
 // family reads consistently. A widget adds its own instrument-specific options
@@ -2640,30 +2650,43 @@ export interface WidgetOptions {
   theme?: ThemeSpec;
 }
 
-// The DOM element Elicit returns: the chart container plus a small observation
-// API over the belief-data store. `getData`/`setData` read/replace the committed
-// dataset; `on` subscribes to commits and stage changes. These add no interaction
-// path — edits + constraints remain the only way a gesture mutates data.
-export interface ElicitElement extends HTMLDivElement {
+// The dataset `Elicit.dataset(spec)` returns: the rows, their schema, undo history
+// and selection, shared by every chart made from it with `chart(spec)`. Its
+// methods read and replace the data from outside; they add no interaction path —
+// edits + constraints remain the only way a gesture mutates data.
+export interface Dataset {
+  // Make a chart over this dataset. Append `chart.dom()` to the page.
+  chart(spec: ChartSpec): Chart;
   // A deep copy of the committed dataset. Shaped like `spec.data`: a bare array for
-  // a single-table chart, one array per table NAME for a multi-table structure.
+  // a single-table dataset, one array per table NAME for a multi-table structure.
   getData(): Datum[] | Record<string, Datum[]>;
-  // A deep copy of the engine-owned schema, including any DOMAIN an editable axis
+  // A deep copy of the dataset's schema, including any DOMAIN an editable axis
   // (edit.axis.*) reshaped. The caller's original spec.schema is never mutated.
-  // Returned in the spelling it was GIVEN in — a single-table chart gets its bare
+  // Returned in the spelling it was GIVEN in — a single-table dataset gets its bare
   // field map back, so the engine's canonical form never leaks.
   getSchema(): SchemaInput;
-  // Replace the dataset and re-render. Bypasses constraints (trusted seed/reset).
+  // Replace the rows and re-render. Bypasses constraints (trusted seed/reset).
   // Also clears the undo history: a reseed is a new starting point, not an edit.
   setData(data: Datum[] | Record<string, Datum[]>): void;
   /**
    * Set a field's DOMAIN from outside — the external twin of `edit.axis.zoom` /
-   * `edit.axis.scale`: a zoom button, a "reset view" control. Goes through the
-   * same domain commit as a gesture (undoable, notifies `change`). `null`
-   * restores the domain declared at `Elicit()`. Returns false (and warns) when
-   * the field is not declared.
+   * `edit.axis.scale`: a zoom button, a "reset view" control. Undoable, and
+   * notifies `change`. `null` restores the declared domain. Returns false (and
+   * warns) when the field is not declared.
    */
   setDomain(field: string, domain: any[] | null, options?: { table?: string }): boolean;
+  /**
+   * Write one cell from outside any chart: a slider, an input, a script. The
+   * proposal runs the table's constraints and then the lock, as an edit's does
+   * (an edit's own `constrain` does not run); a repair commits the repaired rows.
+   * One undoable step; fires `change` and redraws every chart. `index` counts the
+   * rows `getData()` reports (context rows left out) and defaults to 0; `table`
+   * defaults to the primary table. Writes existing rows only. Returns whether it
+   * committed: false when a constraint rejects it, the row is locked, or the value
+   * is unchanged; false with a warning for an undeclared field, an index out of
+   * range, or a value the field's type cannot hold.
+   */
+  set(field: string, value: any, options?: { index?: number; table?: string }): boolean;
   // Step back / forward one GESTURE. A drag is one entry however many commits it
   // made along the way; a click or a typed commit is its own. Both restore the
   // dataset AND the schema (an axis edit reshapes a domain) and fire 'change'.
@@ -2672,16 +2695,15 @@ export interface ElicitElement extends HTMLDivElement {
   redo(): boolean;
   canUndo(): boolean;
   canRedo(): boolean;
-  // Subscribe to committed changes ('change': (data)), stage advances
-  // ('stage': (stageIndex, stageLabel?)), or selection changes ('select':
-  // (primaryIndex | null, indices[])). Selection is not the belief data, so it has
-  // its OWN event — a 'select' listener hears it, 'change'/getData never do.
-  // Returns an unsubscribe function.
+  // Subscribe to committed changes ('change': (data)) or selection changes
+  // ('select': (primaryIndex | null, indices[])). Selection is not the belief data,
+  // so it has its OWN event — a 'select' listener hears it, 'change'/getData never
+  // do. Returns an unsubscribe function.
   //
-  // 'select' second argument: bare row indices for a single-table chart (a bare
+  // 'select' second argument: bare row indices for a single-table dataset (a bare
   // index names a row unambiguously there), `{ table, index }` for a multi-table
   // one — where a number alone would name a row in no particular table.
-  on(type: 'change' | 'stage' | 'select', cb: (...args: any[]) => void): () => void;
+  on(type: 'change' | 'select', cb: (...args: any[]) => void): () => void;
   // ── Selection: transient pipeline state, NOT the belief data. Its own tiny API
   // beside getData/setData because a `selected` data column is exactly what this
   // replaces (see edit.select). All routes go through one applySelection, so an
@@ -2712,9 +2734,22 @@ export interface ElicitElement extends HTMLDivElement {
   ): boolean;
   // Clear the selection entirely.
   clearSelection(): boolean;
-  // Multi-stage controls (see ElicitSpec.stage). getStage reads the current index.
+}
+
+// A chart: what `dataset.chart(spec)` and `Elicit(spec)` return. A plain object,
+// not a DOM node — append `dom()`. It carries its dataset's methods too, delegating
+// to `chart.dataset`, so `Elicit(spec).getData()` works.
+export interface Chart extends Omit<Dataset, 'chart' | 'on'> {
+  // The chart's container element. Append it to the page.
+  dom(): HTMLDivElement;
+  // The dataset this chart reads and writes.
+  dataset: Dataset;
+  // 'change' and 'select' are the dataset's (see Dataset.on); 'stage' is this
+  // chart's: (stageIndex, stageLabel?) on a stage change.
+  on(type: 'change' | 'stage' | 'select', cb: (...args: any[]) => void): () => void;
+  // Multi-stage controls (see ChartSpec.stage). getStage reads the current index.
   getStage(): number;
-  // Optional label for the current stage (from ElicitSpec.stageLabels), or null.
+  // Optional label for the current stage (from ChartSpec.stageLabels), or null.
   getStageLabel(): string | null;
   setStage(stage: number): void;
   nextStage(): void;
@@ -2722,8 +2757,7 @@ export interface ElicitElement extends HTMLDivElement {
   // a rotate icon, a plain function). A new input SOURCE, not a second interaction
   // system: `emit`/`control` synthesize the same renderer-shaped events the pointer
   // and keyboard already produce and feed them to the one dispatch, so constraints,
-  // undo, guides, and 'change' all run identically. See the keyboard-`nudge`
-  // precedent in core/elicit.js.
+  // undo, guides, and 'change' all run identically.
   //
   // Low-level: inject a renderer-shaped event. x/y are INNER (margin-subtracted)
   // pixels. Prefer `control` unless you already hold pixels.
@@ -2733,8 +2767,8 @@ export interface ElicitElement extends HTMLDivElement {
   // forward-encoded through the channel's scale for positional edits, or carried
   // whole for a `set()`/`editText()` value edit.
   control(name: string, index?: number): EditControl;
-  // Detach the ResizeObserver used by `responsive: 'reflow'`. No-op otherwise;
-  // call it when unmounting a reflow chart. Present on every element.
+  // Detach the chart from its dataset and stop its observers (the ResizeObserver
+  // of `responsive: 'reflow'`). Call it when unmounting a chart.
   destroy(): void;
 }
 
@@ -2760,7 +2794,7 @@ export interface RenderContext {
    *  synthetic gesture at a data value. Read-only: the engine rebuilds it each frame. */
   scales: ScaleMap;
   /** The spec the chart was built from, as the author passed it. Read-only. */
-  spec: ElicitSpec;
+  spec: ChartSpec;
   // True when active edits are plane-driven (sweep/draw/nearest): the renderer must
   // route all gestures as plane events (no node) rather than hit-testing marks.
   planeOnTop?: boolean;
@@ -2774,7 +2808,7 @@ export interface RenderContext {
   tracksPointer?: boolean;
   responsive?: 'fixed' | 'scale' | 'reflow';
   overflow?: 'hidden' | 'visible';
-  // See ElicitSpec.focusOutline. Renderers that focus mark nodes honour this;
+  // See ChartSpec.focusOutline. Renderers that focus mark nodes honour this;
   // CanvasRenderer has no keyboard focus path today, so it ignores it.
   focusOutline?: boolean;
   effects?: any;
@@ -2814,14 +2848,14 @@ export interface GestureEvent {
   nudge?: boolean;
   // Addresses ONE edit by its `name` (Edit.name). Direct dispatch then runs only that
   // edit instead of fanning to every same-gesture edit on the feature — so several
-  // `set()`s on one feature (a face's params) stay independent. Set by `el.control`;
+  // `set()`s on one feature (a face's params) stay independent. Set by `chart.control`;
   // native pointer events leave it unset (and keep the ordinary fan-out).
   editName?: string;
   rawEvent?: any;
   [key: string]: any;
 }
 
-// A handle bound to a named edit + datum (from `el.control`). It reads the edit's
+// A handle bound to a named edit + datum (from `chart.control`). It reads the edit's
 // own `gesture` to route value-space vs pointer-space — the handle branches; the
 // engine dispatch never learns a controller exists.
 export interface EditControl {
@@ -2832,7 +2866,7 @@ export interface EditControl {
   // Works on a direct edit and on a plane edit whose pick only chooses the row
   // (`nearest`, `sweep`): the row is the one this control names. A plane edit that
   // needs a pointer path or position (a draw, a brush, a create) warns and does
-  // nothing; drive it with `el.emit({ type, x, y })`.
+  // nothing; drive it with `chart.emit({ type, x, y })`.
   set(value: any): void;
   // Bracket a LIVE drag so many `.set()` ticks collapse into ONE undo entry, exactly
   // like a pointer drag's dragstart..dragend.

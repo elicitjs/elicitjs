@@ -23,9 +23,9 @@ describe('slide on x', () => {
             data: [{ k: 'a', v: 50 }],
             marks: [plot.point({ size: 10, channels: { x: { value: 140 }, y: { field: 'k' }, size: { field: 'v', edit: edit.slide({ axis: 'x', extent: 100, name: 's' }) } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
-        const c = el.querySelector('circle.mark');
+        const c = el.dom().querySelector('circle.mark');
         const x = +c.getAttribute('cx'), y = +c.getAttribute('cy');
         el.emit({ type: 'dragstart', node: null, x, y });
         // Drive through the node: a direct drag.
@@ -46,13 +46,13 @@ describe('line and area handles', () => {
             data: [{ x: 0, y: 2 }, { x: 1, y: 4 }, { x: 2, y: 3 }],
         };
         const plain = Elicit({ ...base, marks: [plot.lineY({ channels: { x: { field: 'x' }, y: { field: 'y' } } }), plot.areaY({ channels: { x: { field: 'x' }, y: { field: 'y' } } })] });
-        document.body.appendChild(plain);
+        document.body.appendChild(plain.dom());
         await tick();
-        expect(plain.querySelectorAll('circle.mark').length).toBe(0);
+        expect(plain.dom().querySelectorAll('circle.mark').length).toBe(0);
         const live = Elicit({ ...base, marks: [plot.lineY({ channels: { x: { field: 'x' }, y: { field: 'y', edit: edit.move() } } })] });
-        document.body.appendChild(live);
+        document.body.appendChild(live.dom());
         await tick();
-        expect(live.querySelectorAll('circle.mark').length).toBe(3);
+        expect(live.dom().querySelectorAll('circle.mark').length).toBe(3);
     });
 
     it('fill a handle with the series colour', async () => {
@@ -63,10 +63,10 @@ describe('line and area handles', () => {
             data: [{ x: 0, y: 2, s: 'a' }, { x: 1, y: 4, s: 'a' }, { x: 0, y: 6, s: 'b' }, { x: 1, y: 8, s: 'b' }],
             marks: [plot.lineY({ channels: { x: { field: 'x' }, y: { field: 'y', edit: edit.move() }, stroke: { field: 's' } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
-        const lines = [...el.querySelectorAll('path.mark-line')].map((p) => p.getAttribute('stroke'));
-        const fills = [...el.querySelectorAll('circle.mark')].map((c) => c.getAttribute('fill'));
+        const lines = [...el.dom().querySelectorAll('path.mark-line')].map((p) => p.getAttribute('stroke'));
+        const fills = [...el.dom().querySelectorAll('circle.mark')].map((c) => c.getAttribute('fill'));
         expect(new Set(fills)).toEqual(new Set(lines));
     });
 });
@@ -81,14 +81,14 @@ describe('y-axis title', () => {
             marks: [plot.barY({ channels: { x: { field: 'k' }, y: { field: 'v' } } })],
         };
         const el = Elicit({ ...spec, axes: { x: {}, y: { title: 'value' } } });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
-        const t = [...el.querySelectorAll('text')].find((n) => n.textContent === 'value');
+        const t = [...el.dom().querySelectorAll('text')].find((n) => n.textContent === 'value');
         expect(t.getAttribute('transform')).toMatch(/rotate/);
         const flat = Elicit({ ...spec, axes: false, elements: [elements.axisY({ title: 'value', titleAngle: 0 })] });
-        document.body.appendChild(flat);
+        document.body.appendChild(flat.dom());
         await tick();
-        const f = [...flat.querySelectorAll('text')].find((n) => n.textContent === 'value');
+        const f = [...flat.dom().querySelectorAll('text')].find((n) => n.textContent === 'value');
         expect(f.getAttribute('transform') || '').not.toMatch(/rotate/);
     });
 });
@@ -102,7 +102,7 @@ describe('false-positive warnings', () => {
                 data: [{ k: 'a', n: 30 }],
                 marks: [plot.point({ channels: { x: { field: 'k' }, y: { value: 50 }, fill: { field: 'n', scale: { scheme: 'blues' }, edit: edit.slide({ axis: 'x' }) } } })],
             });
-            document.body.appendChild(el);
+            document.body.appendChild(el.dom());
             await tick();
         });
         expect(seen.some((w) => /cannot be inverted/.test(w))).toBe(false);
@@ -116,7 +116,7 @@ describe('false-positive warnings', () => {
                 axes: { x: { edit: edit.axis.scale() }, y: {} },
                 marks: [plot.point({ channels: { x: { field: 'x' }, y: { field: 'y', edit: edit.move({ pick: 'nearest' }) } } })],
             });
-            document.body.appendChild(el);
+            document.body.appendChild(el.dom());
             await tick();
         });
         expect(seen.some((w) => /plane-pick edit over the same rows/.test(w))).toBe(false);
@@ -131,7 +131,7 @@ describe('false-positive warnings', () => {
                 data: [{ geometry: square }],
                 marks: [plot.geoPolygon({ channels: { geometry: { field: 'geometry', scale: null } } })],
             });
-            document.body.appendChild(el);
+            document.body.appendChild(el.dom());
             await tick();
         });
         expect(seen.some((w) => /ring winding/.test(w))).toBe(false);
@@ -148,12 +148,12 @@ describe('axis titles reserve their room', () => {
             axes: { x: {}, y: { title: 'population' } },
             marks: [plot.barY({ channels: { x: { field: 'k' }, y: { field: 'v' } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
-        const m = el.querySelector('g.scene-container').getAttribute('transform').match(/translate\(([\d.]+),/);
+        const m = el.dom().querySelector('g.scene-container').getAttribute('transform').match(/translate\(([\d.]+),/);
         expect(+m[1]).toBeGreaterThan(30);
-        const t = [...el.querySelectorAll('text')].find((n) => n.textContent === 'population');
+        const t = [...el.dom().querySelectorAll('text')].find((n) => n.textContent === 'population');
         expect(+t.getAttribute('x') + +m[1]).toBeGreaterThan(0);
-        expect(el.querySelector('svg').getAttribute('width')).toBe('300');
+        expect(el.dom().querySelector('svg').getAttribute('width')).toBe('300');
     });
 });

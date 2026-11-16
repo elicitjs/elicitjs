@@ -6,9 +6,10 @@ import { collectEdits } from '../../edit/route.js';
  * stage (null = always). `activeEdits` is the one gate every edit path uses.
  *
  * @param {{
- *   spec: import('../../types').ElicitSpec,
+ *   spec: import('../../types').ChartSpec,
  *   ui: any,
  *   listeners: { stage: Set<Function> },
+ *   clearSelection: () => void,
  *   update: () => void,
  * }} deps
  */
@@ -37,7 +38,9 @@ export function createStages(deps) {
         ui.preview = null;
         ui.hover = null;
         ui.grab = null;
-        ui.selection.clear(); // selection is per-stage transient, like the session
+        // The selection is the dataset's: clearing it fires `select` and redraws
+        // the other charts.
+        deps.clearSelection();
         for (const cb of listeners.stage) cb(currentStage, stageLabelOf(currentStage));
     };
 

@@ -45,7 +45,7 @@ function applyGhostStyle(node, ghost) {
  * @property {any[]} features
  * @property {Map<string, any>} featureById
  * @property {any} ui
- * @property {import('../../types').ElicitSpec} spec
+ * @property {import('../../types').ChartSpec} spec
  * @property {any} theme
  * @property {any} effects
  * @property {any} renderer
@@ -73,7 +73,8 @@ function applyGhostStyle(node, ghost) {
  * @property {(table: string) => import('../../types').Constraint[]} constraintsIn
  * @property {() => import('../../types').NodeBoxRule | null} nodeBoxRule
  * @property {((row: any, i: number, rows: any[]) => Record<string, string> | null) | null} nodePortsRule
- * @property {(before?: any[] | null, frozen?: Set<number> | null, dodge?: any) => void} settleNodes
+ * @property {() => boolean} settleOwn  settle at render time when this chart may (engine/nodes.js)
+ * @property {() => void} layoutMoved  that settle changed the rows: redraw the other charts
  * @property {(from: Record<string, any[]>, before: any[] | null, frozen: Set<number> | null, dodge?: any) => any[]} settledNodes
  * @property {() => Set<number> | null} heldStill
  * @property {() => number[] | null} inFlight
@@ -99,7 +100,7 @@ function applyGhostStyle(node, ghost) {
  */
 export function createRender(chart, deps) {
     const {
-        features, featureById, ui, spec, theme, effects, renderer, mode, overflow, focusOutline, designW, authorMargins, dims, liveSpec, schema, schemaSpec, allGuides, datasetConstraints, tracksPointer, hasLegends, hasAxisTitles, featureNodes, hierarchyNodes, boxHosts, tableOf, targetTableOf, primaryRows, isLockedIn, constraintsIn, nodeBoxRule, nodePortsRule, settleNodes, settledNodes, heldStill, inFlight, activeEdits, getStage, selectionIn, selectionList, selectionPrimary, portAvailable, handleKey, clipNow, visibleAt, motionDuration,
+        features, featureById, ui, spec, theme, effects, renderer, mode, overflow, focusOutline, designW, authorMargins, dims, liveSpec, schema, schemaSpec, allGuides, datasetConstraints, tracksPointer, hasLegends, hasAxisTitles, featureNodes, hierarchyNodes, boxHosts, tableOf, targetTableOf, primaryRows, isLockedIn, constraintsIn, nodeBoxRule, nodePortsRule, settleOwn, layoutMoved, settledNodes, heldStill, inFlight, activeEdits, getStage, selectionIn, selectionList, selectionPrimary, portAvailable, handleKey, clipNow, visibleAt, motionDuration,
     } = deps;
     const handleEvent = (/** @type {any} */ event) => deps.handleEvent(event);
 
@@ -193,7 +194,7 @@ export function createRender(chart, deps) {
     };
 
     // SCALES: re-resolve the global scales from the live data, stamp the reserved keys on
-    // the scale map, and settle a hierarchy.
+    // the scale map, and settle a hierarchy. Returns whether the settle moved rows.
     const resolvePass = () => {
         chart.scales = resolveScales(features, chart.tables, liveSpec, dims);
         // Reserved non-Scale keys on the scale map, shared by build() and edit ctx:
@@ -206,10 +207,9 @@ export function createRender(chart, deps) {
         /** @type {any} */ (chart.scales).selectionAll = selectionList;
         /** @type {any} */ (chart.scales).schema = schema;
         warnProjectionCartesianMix(features, chart.scales);
-        // Settle the hierarchy against the current scales. Rows are pushed apart only
-        // for data that just arrived from outside; a hover or resize never moves an answer.
-        settleNodes(null, heldStill(), chart.spaceNext && !chart.stroking ? {} : null);
-        if (!chart.stroking) chart.spaceNext = false;
+        // Settle the hierarchy against the current scales, if this chart's pixels
+        // are the ones its rows are settled in. Another chart's rows are drawn as stored.
+        return settleOwn();
     };
 
     // PLANE: whether the interaction plane sits on top, listens to the wheel, and which
@@ -746,7 +746,7 @@ export function createRender(chart, deps) {
         if (motion) motion.begin();
         scene.clear();
         layoutPass();
-        resolvePass();
+        const moved = resolvePass();
         const { planeOnTop, hasWheel, planeCursor } = planeState();
         buildPass();
         ghostPass();
@@ -776,6 +776,8 @@ export function createRender(chart, deps) {
         });
         // Keep drawing until the layout has arrived.
         if (motion && motion.moving() && !frame) frame = raf(() => { frame = 0; update(); });
+        // The other charts draw what this settle wrote; they do not settle it again.
+        if (moved) layoutMoved();
     };
 
     return { container, measure, applyResize, update, stopMotion };

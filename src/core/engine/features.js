@@ -16,7 +16,7 @@ import { markLabel } from '../guards.js';
  * The flattened feature list: auto axes, the author's elements and marks, then
  * the implicit legends. Stamps an id on every feature that has none.
  *
- * @param {import('../../types').ElicitSpec} spec
+ * @param {import('../../types').ChartSpec} spec
  * @param {any} theme the resolved theme
  * @returns {any[]}
  */

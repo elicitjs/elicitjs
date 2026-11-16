@@ -14,11 +14,11 @@ const data = [{ cat: 'a', x: 5, y: 5 }, { cat: 'b', x: 2, y: 8 }];
 
 async function mount(marks) {
     const el = Elicit({ width: 200, height: 100, schema, data, marks });
-    document.body.appendChild(el);
+    document.body.appendChild(el.dom());
     await tick();
     return el;
 }
-const cursorOf = (el, sel) => el.querySelector(sel).style.cursor;
+const cursorOf = (el, sel) => el.dom().querySelector(sel).style.cursor;
 
 describe('cursor heuristic', () => {
     it('a horizontal bar dragged along x shows ew-resize', async () => {

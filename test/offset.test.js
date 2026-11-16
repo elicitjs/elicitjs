@@ -27,10 +27,10 @@ function chart(marks, extra = {}) {
         width: 320, height: 220, axes: false, margins: { top: 10, right: 10, bottom: 10, left: 10 },
         schema, data: rows(), marks, ...extra,
     });
-    document.body.appendChild(el);
+    document.body.appendChild(el.dom());
     return el;
 }
-const nodes = (el, sel) => [...el.querySelectorAll(sel)].map((n) => n.__data__).filter((d) => d && d.data);
+const nodes = (el, sel) => [...el.dom().querySelectorAll(sel)].map((n) => n.__data__).filter((d) => d && d.data);
 
 describe('offset channels: the family', () => {
     it('are not axes, nest inside x/y, and always take a band for a category', () => {
@@ -179,7 +179,7 @@ describe('every category-placed mark honours it', () => {
         const el = chart([plot.dotStackY({ size: 4, channels: { x: { field: 'category' }, xOffset: { field: 'group' } } })],
             { data, schema: { category: schema.category, group: schema.group } });
         await tick();
-        const all = [...el.querySelectorAll('circle')].map((n) => n.__data__);
+        const all = [...el.dom().querySelectorAll('circle')].map((n) => n.__data__);
         const tokens = all.filter((d) => d && d.data);
         const ghosts = all.filter((d) => d && !d.data && d.fill === 'none');
         expect(ghosts.length).toBe(9);

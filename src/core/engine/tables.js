@@ -1,47 +1,51 @@
 // @ts-check
 import { resolveLock, resolveContext, lockConstraint } from '../lock.js';
-import { isBareForm } from '../schema.js';
+import { isBareForm, fieldsOf } from '../schema.js';
+import { treeProblems } from '../hierarchy.js';
+import { applyConstraint } from '../../constraints/define.js';
+import { constraintLabel, describe } from '../guards.js';
 import { warn } from '../dev.js';
 
 /**
  * The dataset's accessors: which table a feature draws and an edit writes,
- * which rows are context or locked, what the chart reports, and each table's
- * constraints. Rows are read from `chart.tables` at call time.
+ * which rows are context or locked, what the chart reports, each table's
+ * constraints, and `checkRows`, the invariants every write runs. Rows are read
+ * from `state.tables` at call time.
  *
- * @param {import('./state.js').ChartState} chart
- * @param {{ spec: import('../../types').ElicitSpec, schemaSpec: import('../../types').SchemaSpec }} deps
+ * @param {import('../dataset.js').DataState} state
+ * @param {{ spec: import('../dataset.js').DatasetSpec, schemaSpec: import('../../types').SchemaSpec }} deps
  */
-export function createTables(chart, deps) {
+export function createTables(state, deps) {
     const { spec, schemaSpec } = deps;
 
     // The one table a feature draws.
     /** @param {any} feature @returns {any[]} */
-    const tableOf = (feature) => chart.tables[feature.table] || [];
+    const tableOf = (feature) => state.tables[feature.table] || [];
     // The table an edit writes: its `table` role, else its mark's table. The one
     // resolver, so computeEdit and runEdit can't disagree.
     /** @param {any} feature @param {import('../../types').Edit} edit @returns {string} */
     const targetTableOf = (feature, edit) =>
         (edit && edit.table && schemaSpec.byRole[edit.table]) || feature.table;
     // The primary table's rows.
-    const primaryRows = () => chart.tables[schemaSpec.primary];
+    const primaryRows = () => state.tables[schemaSpec.primary];
 
     // Context rows (spec.context): drawn and locked, left out of what the chart
     // reports. Decided once over the seed and held by row identity, so an answer
     // dragged into the context region is never swallowed.
     const seedContext = () => {
-        chart.contextRows = {};
+        state.contextRows = {};
         let seen = 0;
         let matched = 0;
-        for (const name of Object.keys(chart.tables)) {
+        for (const name of Object.keys(state.tables)) {
             const pred = resolveContext(spec.context, name);
             if (!pred) continue;
             /** @type {WeakSet<object>} */
             const set = new WeakSet();
-            chart.tables[name].forEach((d, i) => {
+            state.tables[name].forEach((d, i) => {
                 seen++;
                 if (d && typeof d === 'object' && pred(d, i)) { set.add(d); matched++; }
             });
-            chart.contextRows[name] = set;
+            state.contextRows[name] = set;
         }
         if (seen && !matched) {
             warn(
@@ -53,19 +57,19 @@ export function createTables(chart, deps) {
     };
     /** @param {string} name @param {any} d @returns {boolean} */
     const isContextRow = (name, d) =>
-        !!(chart.contextRows[name] && d && typeof d === 'object' && chart.contextRows[name].has(d));
+        !!(state.contextRows[name] && d && typeof d === 'object' && state.contextRows[name].has(d));
     // A table's rows minus context rows. The index-addressed API uses these
-    // indices, so `getData()[i]` and `el.select(i)` name the same row.
+    // indices, so `getData()[i]` and `select(i)` name the same row.
     /** @param {string} name @returns {any[]} */
     const reportedRows = (name) => {
-        const rows = chart.tables[name] || [];
-        return chart.contextRows[name] ? rows.filter((d) => !isContextRow(name, d)) : rows;
+        const rows = state.tables[name] || [];
+        return state.contextRows[name] ? rows.filter((d) => !isContextRow(name, d)) : rows;
     };
     // A reported index -> the row's index in the table, or -1.
     /** @param {string} name @param {number} i @returns {number} */
     const rowIndexOf = (name, i) => {
-        if (!chart.contextRows[name]) return i;
-        const rows = chart.tables[name] || [];
+        if (!state.contextRows[name]) return i;
+        const rows = state.tables[name] || [];
         let k = -1;
         for (let j = 0; j < rows.length; j++) {
             if (isContextRow(name, rows[j])) continue;
@@ -76,8 +80,8 @@ export function createTables(chart, deps) {
     // A table index -> its reported index, or null for a context row.
     /** @param {string} name @param {number} j @returns {number | null} */
     const reportedIndexOf = (name, j) => {
-        if (!chart.contextRows[name]) return j;
-        const rows = chart.tables[name] || [];
+        if (!state.contextRows[name]) return j;
+        const rows = state.tables[name] || [];
         if (isContextRow(name, rows[j])) return null;
         let k = 0;
         for (let m = 0; m < j && m < rows.length; m++) if (!isContextRow(name, rows[m])) k++;
@@ -89,7 +93,7 @@ export function createTables(chart, deps) {
         if (isBareForm(schemaSpec)) return reportedRows(schemaSpec.primary);
         /** @type {Record<string, any[]>} */
         const out = {};
-        for (const name of Object.keys(chart.tables)) out[name] = reportedRows(name);
+        for (const name of Object.keys(state.tables)) out[name] = reportedRows(name);
         return out;
     };
 
@@ -100,7 +104,7 @@ export function createTables(chart, deps) {
     // Count the rows each table was seeded with (at Elicit() and on setData).
     const recountSeed = () => {
         seedCounts = {};
-        for (const name of Object.keys(chart.tables)) seedCounts[name] = chart.tables[name].length;
+        for (const name of Object.keys(state.tables)) seedCounts[name] = state.tables[name].length;
     };
     /** @type {Record<string, ((d: any, i: number) => boolean) | null>} */
     const lockPredicates = {};
@@ -111,7 +115,7 @@ export function createTables(chart, deps) {
         if (!(name in lockPredicates)) {
             // Context rows are locked too. `contextRows` is read live; setData and undo rebuild it.
             const lock = resolveLock(spec.lock, () => seedCounts[name] || 0, name);
-            lockPredicates[name] = !(name in chart.contextRows) ? lock
+            lockPredicates[name] = !(name in state.contextRows) ? lock
                 : lock ? (d, i) => isContextRow(name, d) || lock(d, i)
                 : (d) => isContextRow(name, d);
         }
@@ -143,9 +147,59 @@ export function createTables(chart, deps) {
     /** @param {string} table @returns {import('../../types').Constraint[]} */
     const constraintsIn = (table) => constraintsByTable[table] || [];
 
+    // A table's invariants over proposed rows: its constraints, then `extra` (an
+    // edit's `constrain`), then the lock, last, so no repair can write a read-only
+    // row. A nesting proposal must also keep the tree; refused here, not repaired
+    // after commit, so trial commits never offer such a drop. Edits and
+    // `Dataset.set` both go through it.
+    /**
+     * @param {string} table
+     * @param {any[]} rows the proposed rows
+     * @param {{ activeIndex?: number | null, field?: string, scales?: any, markChannels?: any }} [context]
+     *   the touched row and column; an edit also passes its scales and channels,
+     *   which give a constraint's `domain` (else the schema's)
+     * @param {import('../../types').Constraint[]} [extra]
+     * @returns {any[] | null} the repaired rows, or null if rejected
+     */
+    const checkRows = (table, rows, context = {}, extra = []) => {
+        const lockRows = lockRowsIn(table);
+        const invariants = [...constraintsIn(table), ...extra, ...(lockRows ? [lockRows] : [])];
+        const cctx = {
+            activeIndex: context.activeIndex ?? null,
+            scales: context.scales, markChannels: context.markChannels,
+            // The column being written, for a constraint with no `field`.
+            field: context.field,
+            tables: state.tables, table,
+            schema: fieldsOf(schemaSpec, table),
+            locked: isLockedIn(table),
+        };
+        let out = rows;
+        const before = state.tables[table] || [];
+        for (const constraint of invariants) {
+            const r = applyConstraint(constraint, out, before, cctx);
+            if (r === false) return null;
+            if (r === true || r === undefined) continue;
+            // Anything but an array would become the dataset, so warn and ignore it.
+            // Only hand-written constraints can get here; defineConstraint normalizes.
+            if (!Array.isArray(r)) {
+                warn(
+                    `constraint:return:${constraintLabel(constraint)}`,
+                    `constraint ${constraintLabel(constraint)} returned ${describe(r)}; a constraint must ` +
+                    `return the repaired rows (an array), false to reject the edit, or ` +
+                    `true/undefined to accept it unchanged. Ignoring the return value.`
+                );
+                continue;
+            }
+            out = r;
+        }
+        if (table === schemaSpec.byRole.nesting
+            && treeProblems(schemaSpec, { ...state.tables, [table]: out }).length) return null;
+        return out;
+    };
+
     return {
         tableOf, targetTableOf, primaryRows,
         seedContext, isContextRow, reportedRows, rowIndexOf, reportedIndexOf, shapeData,
-        recountSeed, isLockedIn, lockRowsIn, constraintsIn,
+        recountSeed, isLockedIn, lockRowsIn, constraintsIn, checkRows,
     };
 }

@@ -19,7 +19,7 @@ function chart(extra = {}) {
         marks: [plot.barY({ channels: { x: { field: 'x' }, y: { field: 'y', edit: edit.move({ name: 'pos' }) } } })],
         ...extra,
     });
-    document.body.appendChild(el);
+    document.body.appendChild(el.dom());
     return { el, changes };
 }
 
@@ -27,7 +27,7 @@ describe('Elicit smoke', () => {
     it('renders, commits a controlled edit, notifies once, and undoes', async () => {
         const { el, changes } = chart();
         await tick();
-        expect(el.querySelector('svg')).not.toBeNull();
+        expect(el.dom().querySelector('svg')).not.toBeNull();
         expect(el.getData()).toEqual([{ x: 'A', y: 10 }, { x: 'B', y: 20 }]);
 
         el.control('pos', 1).set(30);
@@ -67,9 +67,9 @@ describe('chart elements in spec.elements', () => {
             elements: [elements.axisX({ ticks: 3, title: 'category' }), elements.axisY({ ticks: 4, title: 'n' }), elements.gridY()],
             marks: [plot.barY({ channels: { x: { field: 'cat' }, y: { field: 'n', edit: edit.move() } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
-        const svg = el.querySelector('svg');
+        const svg = el.dom().querySelector('svg');
         expect(svg).not.toBeNull();
         expect(svg.querySelectorAll('rect').length).toBeGreaterThanOrEqual(3);
         expect(svg.querySelectorAll('text').length).toBeGreaterThan(3);

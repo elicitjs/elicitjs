@@ -19,12 +19,12 @@ const xy = { x: { type: 'quantitative', domain: [0, 3] }, y: { type: 'quantitati
 /** Mount a chart and wait for its first render. */
 async function mount(spec) {
     const el = Elicit({ ...frame, ...spec });
-    document.body.appendChild(el);
+    document.body.appendChild(el.dom());
     await tick();
     return el;
 }
 /** The scene nodes bound to the drawn elements matching `selector`. */
-const nodesOf = (el, selector) => [...el.querySelectorAll(selector)].map((n) => n.__data__).filter(Boolean);
+const nodesOf = (el, selector) => [...el.dom().querySelectorAll(selector)].map((n) => n.__data__).filter(Boolean);
 
 describe('area span edits', () => {
     it('a mark-level edit on one edge does not move the other', async () => {
@@ -288,7 +288,7 @@ describe('a tip over a curved link', () => {
         const [mx, my] = hit.points[Math.floor(hit.points.length / 2)];
         expect(Math.abs(my - 150)).toBeGreaterThan(20); // well off the chord
         el.emit({ type: 'pointermove', x: mx, y: my });
-        const texts = [...el.querySelectorAll('.guide-front-layer text')].map((t) => t.textContent);
+        const texts = [...el.dom().querySelectorAll('.guide-front-layer text')].map((t) => t.textContent);
         expect(texts.some((t) => /because/.test(t))).toBe(true);
     });
 });

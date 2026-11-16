@@ -1,12 +1,10 @@
 // @ts-check
 import { resolveChannels } from '../../edit/route.js';
-import { applyConstraint } from '../../constraints/define.js';
 import { enforceRefs, inferMeasureOfDomain, fieldsOf } from '../schema.js';
 import { axisOf } from '../encoding.js';
-import { treeOf, treeProblems } from '../hierarchy.js';
+import { treeOf } from '../hierarchy.js';
 import { fitChannelsOf } from '../fit.js';
 import { warn } from '../dev.js';
-import { constraintLabel, describe } from '../guards.js';
 
 /**
  * Runs an edit from gesture to commit. `editContext` builds apply()'s ctx,
@@ -25,8 +23,7 @@ import { constraintLabel, describe } from '../guards.js';
  *   tableOf: (feature: any) => any[],
  *   targetTableOf: (feature: any, edit: import('../../types').Edit) => string,
  *   isLockedIn: (name: string) => ((d: any, i: number) => boolean) | null,
- *   lockRowsIn: (name: string) => import('../../types').Constraint | null,
- *   constraintsIn: (table: string) => import('../../types').Constraint[],
+ *   checkRows: (table: string, rows: any[], context?: any, extra?: import('../../types').Constraint[]) => any[] | null,
  *   nodeBoxRule: () => import('../../types').NodeBoxRule | null,
  *   nodePortsRule: ((row: any, i: number, rows: any[]) => Record<string, string> | null) | null,
  *   containsRule: ((row: any, i: number, rows: any[]) => boolean) | null,
@@ -45,7 +42,7 @@ import { constraintLabel, describe } from '../guards.js';
 export function createCompute(chart, deps) {
     const {
         schemaSpec, seedSchemaSpec, ui, featureNodes, hierarchyNodes, boxHosts,
-        tableOf, targetTableOf, isLockedIn, lockRowsIn, constraintsIn,
+        tableOf, targetTableOf, isLockedIn, checkRows,
         nodeBoxRule, nodePortsRule, containsRule, channelsDrawing,
         settleNodes, settledNodes, heldStill, activeEdits,
         selectionPrimary, commitSelectionEdit, recordHistory, notifyChange,
@@ -200,48 +197,21 @@ export function createCompute(chart, deps) {
             : edit.cardinality === 'delete' ? null
                 : /** @type {number | null} */ (index));
 
-        // Runs the table's constraints, then `edit.constrain`, then the lock. The
-        // lock runs last so no repair can write a read-only row.
+        // Runs a table's invariants (engine/tables.js `checkRows`), with
+        // `edit.constrain` on the written table only.
         /**
          * @param {any[]} rows
          * @param {string} [forTable] the table these rows belong to (default: the
-         *   written table). `edit.constrain` runs on the written table only.
+         *   written table)
          * @returns {any[] | null} the repaired rows, or null if rejected
          */
         const runInvariants = (rows, forTable = targetTable) => {
             const own = forTable === targetTable;
-            const lockRows = lockRowsIn(forTable);
-            const invariants = [
-                ...constraintsIn(forTable), ...(own ? edit.constrain : []), ...(lockRows ? [lockRows] : []),
-            ];
-            const cctx = {
-                activeIndex: own ? activeIndexOf(rows) : null, scales: chart.scales, markChannels,
-                // The column the edit writes, for a constraint with no `field`.
+            return checkRows(forTable, rows, {
+                activeIndex: own ? activeIndexOf(rows) : null,
                 field: own && resolved[0] ? resolved[0].field : undefined,
-                tables: chart.tables, table: forTable,
-                schema: fieldsOf(schemaSpec, forTable),
-                locked: isLockedIn(forTable),
-            };
-            let out = rows;
-            const before = own ? currentData : (chart.tables[forTable] || []);
-            for (const constraint of invariants) {
-                const r = applyConstraint(constraint, out, before, cctx);
-                if (r === false) return null;
-                if (r === true || r === undefined) continue;
-                // Anything but an array would become the dataset, so warn and ignore it.
-                // Only hand-written constraints can get here; defineConstraint normalizes.
-                if (!Array.isArray(r)) {
-                    warn(
-                        `constraint:return:${constraintLabel(constraint)}`,
-                        `constraint ${constraintLabel(constraint)} returned ${describe(r)}; a constraint must ` +
-                        `return the repaired rows (an array), false to reject the edit, or ` +
-                        `true/undefined to accept it unchanged. Ignoring the return value.`
-                    );
-                    continue;
-                }
-                out = r;
-            }
-            return out;
+                scales: chart.scales, markChannels,
+            }, own ? edit.constrain : []);
         };
 
         // A domain edit returns { domains, data?, tables?, resize? }. The domains
@@ -287,10 +257,6 @@ export function createCompute(chart, deps) {
 
         const rows = runInvariants(newData);
         if (!rows) return null;
-        // Refuse a proposal that breaks the nesting tree. Refused here, not repaired
-        // after commit, so trial commits never offer such a drop.
-        if (targetTable === schemaSpec.byRole.nesting
-            && treeProblems(schemaSpec, { ...chart.tables, [targetTable]: rows }).length) return null;
         return { kind: 'rows', rows };
     };
 

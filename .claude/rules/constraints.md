@@ -9,7 +9,7 @@ paths:
 
 - A constraint is a descriptor `{ type, field?, options, apply(ctx) }`, built by `makeConstraint` / `defineConstraint` (`constraints.custom`). A bare function is still accepted; `applyConstraint` (`constraints/define.js`) runs either.
 - It is a pure data invariant. `ctx` = `{ data, oldData, activeIndex, active, field, value, domain, schema, locked }` — never pixels or a scale used as geometry. Return `false` to gate, or corrected rows to repair. It holds for every edit from every mark over those rows.
-- Declared only in `spec.constraints`. A mark option `constraints` is rejected via `MISTAKEN_OPTIONS` (`plot/mark.js`). Never scope one to a feature. If its guide only makes sense for some marks, guard the guide, not the constraint.
+- Declared only in the dataset spec's `constraints` (`Elicit.dataset({ constraints })`, or `Elicit(spec)`, which takes the dataset keys too). They hold for every chart over the dataset and for `ds.set`. A `constraints` key on `ds.chart()` warns and is ignored. A mark option `constraints` is rejected via `MISTAKEN_OPTIONS` (`plot/mark.js`). Never scope one to a feature. If its guide only makes sense for some marks, guard the guide, not the constraint.
 - `field` omitted = the column the dispatching edit writes (threaded into the context). Never default to a literal column name. `field` is a name or ordered list (`ordering({ field: ['lo','hi'] })`); a sum is `total`.
 - Validate options like every other factory (`CONSTRAINT_OPTIONS` in `src/vocabulary.js`).
 - Repair every changed cell: iterate `changedCells(ctx)` (every `(row, field)` of `ctx.fields` that differs from committed rows), not just `ctx.value`. Respect the field's measure (`snap` must not turn a Date into a number).

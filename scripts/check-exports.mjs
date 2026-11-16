@@ -109,6 +109,21 @@ for (const name of declaredTop) {
     }
 }
 
+// Statics on an exported function (`Elicit.dataset`): the namespace loop below
+// skips functions, so compare their own members here, both directions.
+for (const [name, live] of Object.entries(runtime)) {
+    if (typeof live !== 'function' || !declaredTop.has(name)) continue;
+    const declared = declaredMembers(name);
+    if (!declared) continue;
+    for (const member of Object.keys(live)) {
+        if (!declared.has(member)) fail(`runtime exports \`${name}.${member}\` but src/index.d.ts does not declare it.`);
+    }
+    for (const member of declared) {
+        if (!(member in live)) fail(`src/index.d.ts declares \`${name}.${member}\` but the runtime does not export it.`);
+    }
+}
+if (typeof runtime.Elicit?.dataset !== 'function') fail('`Elicit.dataset` is missing at runtime.');
+
 for (const ns of NAMESPACES) {
     const live = runtime[ns];
     if (!live || typeof live !== 'object') continue;

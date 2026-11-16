@@ -16,7 +16,7 @@ describe('move({ pick: "sweep" }) on bars', () => {
             data: [{ k: 'a', v: 20 }, { k: 'b', v: 20 }, { k: 'c', v: 20 }],
             marks: [plot.barY({ channels: { x: { field: 'k' }, y: { field: 'v', edit: edit.move({ pick: 'sweep' }) } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         // Inner plot 280x180; bar b spans the middle third; value 80 sits at y=36.
         el.emit({ type: 'dragstart', x: 140, y: 36 });
@@ -39,7 +39,7 @@ describe('a mark-level edit.line.sweep()', () => {
             data: [{ x: 0, y: 20 }, { x: 1, y: 20 }, { x: 2, y: 20 }],
             marks: [plot.lineY({ channels: { x: { field: 'x' }, y: { field: 'y' } }, edits: [edit.line.sweep()] })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         expect(spy.mock.calls.some((c) => /names no channel/.test(String(c[0])))).toBe(true);
         spy.mockRestore();
@@ -59,7 +59,7 @@ describe('a mark-level edit.line.sweep()', () => {
             data: [{ x: 0, y: 20 }, { x: 1, y: 20 }],
             marks: [plot.areaY({ handles: false, channels: { x: { field: 'x' }, y: { field: 'y', edit: edit.line.sweep() } } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         expect(spy.mock.calls.some((c) => /handles: false/.test(String(c[0])))).toBe(true);
         spy.mockRestore();
@@ -77,7 +77,7 @@ describe('line.anchor({ into: "nearest" }) beside a locked line', () => {
             data: [{ x: 1, y: 5, s: 'given' }, { x: 5, y: 5, s: 'given' }],
             marks: [plot.lineY({ channels: { x: { field: 'x' }, y: { field: 'y' }, series: { field: 's' } }, edits: [edit.line.anchor()] })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         // Just above the line's midpoint (y=5 → pixel 90), within the 40px threshold.
         el.emit({ type: 'click', x: 100, y: 80 });
@@ -105,9 +105,9 @@ describe('a sticker whose only edit is on its ports', () => {
                 plot.link(),
             ],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
-        const circles = [...el.querySelectorAll('circle.mark')].filter((c) => c.getAttribute('r') === '12');
+        const circles = [...el.dom().querySelectorAll('circle.mark')].filter((c) => c.getAttribute('r') === '12');
         expect(circles.length).toBe(2);
         expect(circles[0].style.pointerEvents).not.toBe('none');
     });
@@ -128,7 +128,7 @@ describe('slide on a colour ramp', () => {
                         edit: edit.slide({ axis: 'x' }) },
             } })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         await tick();
         const dead = spy.mock.calls.map((c) => String(c[0])).filter((m) => m.includes('cannot be inverted'));
         spy.mockRestore();

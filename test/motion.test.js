@@ -133,12 +133,12 @@ describe('a hierarchy drag with motion', () => {
                 edits: [edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()],
             })],
         });
-        document.body.appendChild(el);
+        document.body.appendChild(el.dom());
         vi.advanceTimersByTime(1); // the first render
         return el;
     };
     // The 60-wide boxes as drawn, by centre.
-    const small = (el) => [...el.querySelectorAll('rect')]
+    const small = (el) => [...el.dom().querySelectorAll('rect')]
         .filter((r) => +r.getAttribute('width') === 60)
         .map((r) => ({ x: +r.getAttribute('x') + 30, y: +r.getAttribute('y') + 15 }));
     // b is the one that is not under the pointer.
