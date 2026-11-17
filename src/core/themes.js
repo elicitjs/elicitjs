@@ -166,6 +166,11 @@ function fromFlint(f) {
             cellStroke: structure.grid,
             label: text.secondary,
             question: text.primary,
+            // Boxes and cards sit on the theme's own surface, edged by its grid.
+            surface: f.surface || undefined,
+            soft: f.surface || undefined,
+            stroke: structure.grid,
+            grip: text.secondary,
         }),
         marks: Object.keys(markOverrides).length ? markOverrides : undefined,
     });
@@ -616,6 +621,44 @@ export const DD = {
     diverging: ['#2B5D87', '#7FB1CB', '#F5F3EE', '#F4B49E', '#D8593B']
 };
 
+// The survey look's widget tokens: outlined boxes holding a radio or a checkbox.
+const SURVEY_WIDGET = {
+    design: 'box',
+    accent: '#4f46e5',
+    onAccent: '#ffffff',
+    tint: '#eeeffe',
+    surface: '#ffffff',
+    soft: '#eef1f6',
+    stroke: '#d3d9e3',
+    ring: '#c3cbd8',
+    track: '#e2e7ee',
+    cellFill: '#f8fafc',
+    cellStroke: '#e2e8f0',
+    label: '#475569',
+    question: '#1e293b',
+    grip: '#94a0b3',
+    labelSize: 12,
+    questionSize: 14,
+    questionWeight: 600,
+    itemSize: 13,
+    radius: 8,
+    corner: 8,
+    gap: 8,
+    optionHeight: 74,
+    rowHeight: 40
+};
+
+// A dark surface's widget chrome, shared by the dark themes.
+const DARK_WIDGET = {
+    onAccent: '#0b1017',
+    tint: '#1b2a47',
+    surface: '#161a21',
+    soft: '#232a35',
+    stroke: '#38414f',
+    grip: '#6b7789',
+    shadow: 'rgba(0, 0, 0, 0.55)'
+};
+
 /** @type {Record<import('../types').ThemeName, import('../types').DeepPartial<import('../types').Theme> & { extends?: string }>} */
 export const themes = {
     // The identity theme — resolves to DEFAULT_THEME unchanged.
@@ -636,17 +679,39 @@ export const themes = {
         axis: { stroke: '#cbd5e1', labelFill: '#475569', fontSize: 11, handle: '#4f46e5' },
         grid: { stroke: '#f1f5f9', strokeWidth: 1 },
         constraint: { color: '#e11d48' },
+        widget: SURVEY_WIDGET
+    },
+
+    // The same instrument drawn as filled blocks: the chosen one turns solid.
+    surveyBlocks: {
+        extends: 'survey',
+        ink: '#0f766e',
+        accent: '#0f766e',
+        axis: { handle: '#0f766e' },
         widget: {
-            accent: '#4f46e5',
-            ring: '#cbd5e1',
-            track: '#e2e8f0',
-            cellFill: '#f8fafc',
-            cellStroke: '#e2e8f0',
-            label: '#475569',
-            question: '#1e293b',
-            labelSize: 13,
-            questionSize: 15,
-            radius: 12
+            design: 'block',
+            accent: '#0f766e',
+            tint: '#dff3f0',
+            soft: '#eef1f6',
+            corner: 6,
+            optionHeight: 54
+        }
+    },
+
+    // The same instrument with nothing boxed: controls and hairlines.
+    surveyLines: {
+        extends: 'survey',
+        ink: '#111827',
+        accent: '#111827',
+        axis: { handle: '#111827' },
+        widget: {
+            design: 'line',
+            accent: '#111827',
+            tint: '#eef0f3',
+            corner: 6,
+            gap: 0,
+            optionHeight: 66,
+            rowHeight: 38
         }
     },
 
@@ -666,6 +731,7 @@ export const themes = {
         },
         constraint: { color: '#fb7185' },
         widget: {
+            ...DARK_WIDGET,
             accent: '#38bdf8',
             ring: '#334155',
             track: '#1e293b',

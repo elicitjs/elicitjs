@@ -6,7 +6,7 @@ import { rect } from '../plot/index.js';
 import { brushRect } from '../edit/index.js';
 import { clamp } from '../constraints/index.js';
 import { prompt } from './theme.js';
-import { widgetTheme } from './shared.js';
+import { widgetLook } from './shared.js';
 
 /**
  * @param {import('../types').WidgetOptions & { xDomain?: [number, number], yDomain?: [number, number],
@@ -25,12 +25,14 @@ export function region(opts = {}) {
         stage,
         theme
     } = opts;
-    const t = widgetTheme(theme);
+    const look = widgetLook(theme);
+    const { t, design } = look;
+    const corner = design.bar(t).corner;
 
     return {
         width,
         height,
-        theme,
+        theme: look.theme,
         margins: { top: 40, right: 24, bottom: 36, left: 40 },
         schema: {
             x1: { type: 'quantitative', domain: xDomain },
@@ -50,9 +52,10 @@ export function region(opts = {}) {
         marks: [
             rect({
                 id: 'region',
-                fill: t.widget.accent,
+                fill: t.accent,
                 fillOpacity: 0.35,
-                stroke: t.widget.accent,
+                stroke: t.accent,
+                ...(corner ? { rx: corner } : {}),
                 channels: {
                     x1: { field: 'x1' }, x2: { field: 'x2' },
                     y1: { field: 'y1' }, y2: { field: 'y2' }

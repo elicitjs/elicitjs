@@ -16,6 +16,7 @@ import { reserveTitles, titleNodes } from '../titles.js';
 import { treeOf, nestingOf } from '../hierarchy.js';
 import { layoutIO } from '../fit.js';
 import { createMotion, easeRows } from '../motion.js';
+import { createNodeMotion } from './carry.js';
 import { fieldsOf } from '../schema.js';
 import { cursorFor, planeCursorFor } from '../../edit/cursor.js';
 import {
@@ -92,7 +93,7 @@ function applyGhostStyle(node, ghost) {
  * @property {() => any} clipNow
  * @property {(nodes: any[], x: number, y: number) => any[]} visibleAt
  * @property {(event: any) => any} handleEvent
- * @property {number} motionDuration  ms a hierarchy's layout takes to ease; 0 for none
+ * @property {number} motionDuration  ms an eased change takes to settle; 0 for none
  */
 
 /**
@@ -258,17 +259,21 @@ export function createRender(chart, deps) {
     const layoutSignature = () => layoutIO(chart.scales, boxHosts)
         .map((io) => `${io.field}:${io.invert(0)}:${io.invert(100)}`).join('|')
         + `|${chart.innerWidth}|${chart.innerHeight}`;
+    // The other client: a mark with `motion: true` eases its built nodes (engine/carry.js).
+    const nodeMotion = createNodeMotion(chart, {
+        motion, features, featureById, ui, featureNodes, activeEdits, handleKey, schemaSpec,
+    });
     /**
      * The node rows to draw this frame, on their way to `rows`.
      * @param {any[]} rows @param {Set<number>} flying rows the pointer carries
      * @param {(i: number) => boolean} isContainer
+     * @param {boolean} snapAll data arrived from outside: draw at once
      */
-    const easedLayout = (rows, flying, isContainer) => {
+    const easedLayout = (rows, flying, isContainer, snapAll) => {
         const columns = layoutIO(chart.scales, boxHosts);
         const sig = `${layoutSignature()}|${rows.length}`;
-        const snap = sig !== layoutSig || chart.snapNext;
+        const snap = sig !== layoutSig || snapAll;
         layoutSig = sig;
-        chart.snapNext = false;
         const sizes = columns.filter((c) => c.extent).map((c) => c.field);
         return easeRows(/** @type {any} */ (layoutTrack), rows, columns, {
             keyOf: (row, i) => (nodeKey && row[nodeKey] != null ? row[nodeKey] : `#${i}`),
@@ -308,7 +313,8 @@ export function createRender(chart, deps) {
     // node would change container, else the committed rows settled around the stroke.
     // So the drag shows containers growing or shrinking and nodes making room. The
     // rows in flight stay committed, so the node under the pointer keeps following it.
-    const liveTables = () => {
+    /** @param {boolean} snapAll */
+    const liveTables = (snapAll) => {
         if (!hierarchyNodes) return chart.tables;
         const committed = chart.tables[hierarchyNodes] || [];
         const live = Object.values(ui.preview || {}).find((p) => p && p.live);
@@ -333,7 +339,7 @@ export function createRender(chart, deps) {
         let drawn = rows && rows !== committed
             ? rows.map((row, i) => (flying.has(i) ? committed[i] : row))
             : committed;
-        if (layoutTrack) drawn = easedLayout(drawn, flying, (i) => tree.hasChildren(i));
+        if (layoutTrack) drawn = easedLayout(drawn, flying, (i) => tree.hasChildren(i), snapAll);
         return drawn === committed ? chart.tables : { ...chart.tables, [hierarchyNodes]: drawn };
     };
 
@@ -346,7 +352,10 @@ export function createRender(chart, deps) {
         // Built nodes per feature, ordered by `paintOrder` once all are known.
         /** @type {{ glyph?: string, nodes: any[] }[]} */
         const built = [];
-        const drawn = liveTables();
+        // Data from outside is drawn at once by both motion clients.
+        const snapAll = chart.snapNext;
+        chart.snapNext = false;
+        const drawn = liveTables(snapAll);
 
         features.forEach(feature => {
             // A feature draws its committed rows, or a live proposal's. Any other
@@ -439,6 +448,9 @@ export function createRender(chart, deps) {
             });
             built.push({ glyph: feature.glyph, nodes });
         });
+
+        // Ease the nodes of `motion` marks before anything reads or orders them.
+        nodeMotion.apply(snapAll);
 
         // The plot area's own surface (theme.panel), first so it is the floor.
         panelNodes(theme, chart.innerWidth, chart.innerHeight).forEach((/** @type {any} */ node) => scene.add(node));
@@ -851,11 +863,11 @@ export function createRender(chart, deps) {
             theme,
             onEvent: handleEvent
         });
-        // Keep drawing until the layout has arrived.
+        // Keep drawing until everything eased has arrived.
         if (motion && motion.moving() && !frame) frame = raf(() => { frame = 0; update(); });
         // The other charts draw what this settle wrote; they do not settle it again.
         if (moved) layoutMoved();
     };
 
-    return { container, measure, applyResize, update, stopMotion };
+    return { container, measure, applyResize, update, stopMotion, followsPointer: nodeMotion.followsPointer };
 }

@@ -187,14 +187,14 @@ export function resolveStyle(scales: import("../types.js").ScaleMap, channels: R
  */
 export function seriesFieldOf(channels?: Record<string, any>): string | null;
 /**
- * The options every mark passes through verbatim: id, edits, table, tip, clip.
+ * The options every mark passes through verbatim: id, edits, table, tip, clip, motion.
  * Spread first in a factory's returned object; a key stated after it wins.
  *
  * `table:` names the one table a mark draws. Without it the mark takes the table
  * filling its `tableRole` (`link` declares 'links'; other marks get the primary
  * table). Names go in `table:`; roles go in `tableRole` and `Edit.table`.
  * @param {any} opts the result of normalizeMarkOptions
- * @returns {{ id: any, edits: any, table: any, tip: any, clip: any }}
+ * @returns {{ id: any, edits: any, table: any, tip: any, clip: any, motion: any }}
  */
 export function markCommon(opts: any): {
     id: any;
@@ -202,6 +202,7 @@ export function markCommon(opts: any): {
     table: any;
     tip: any;
     clip: any;
+    motion: any;
 };
 /**
  * Desugar top-level style shorthands (`fill: 'steelblue'`, `size: 9`) into
@@ -1299,27 +1300,71 @@ export function defineConstraint(reducer: (ctx: import("../types.js").Constraint
     guide?: (ctx: any) => any[];
 }): import("../types.js").ConstraintSpec;
 // ── from src/widgets/theme.js ───────────────────────────────────────────────
-export namespace THEME {
-    let accent: string;
-    let ring: string;
-    let track: string;
-    let cellFill: string;
-    let cellStroke: string;
-    let label: string;
-    let question: string;
-    let labelSize: number;
-    let questionSize: number;
-    let radius: number;
-}
+/** The default widget tokens: `DEFAULT_THEME.widget`. */
+export const THEME: any;
 // ── from src/widgets/shared.js ──────────────────────────────────────────────
 /**
- * Resolve a widget's theme for its answer mark's ink and size: DEFAULT_THEME, then
- * the setTheme() base, then the widget's `theme` option, the same precedence the
- * engine applies to `spec.theme`.
+ * Resolve a widget's theme the way the engine resolves `spec.theme`: DEFAULT_THEME,
+ * then the setTheme() base, then the widget's `theme` option.
  * @param {import('../types.js').ThemeSpec | undefined} [theme]
  * @returns {import('../types.js').Theme}
  */
 export function widgetTheme(theme?: import("../types.js").ThemeSpec | undefined): import("../types.js").Theme;
+/**
+ * A widget's look: its tokens, the design they name, and the theme to put on the
+ * spec. The spec's theme carries the resolved widget tokens, so a guide (which
+ * reads the theme each frame) and a mark (which took its paint when the widget
+ * was built) cannot disagree.
+ * @param {import('../types.js').ThemeSpec | undefined} [theme]
+ * @returns {{ t: import('../types.js').WidgetTokens, design: import('../types.js').ResolvedWidgetDesign, theme: import('../types.js').ThemeSpec }}
+ */
+export function widgetLook(theme?: import("../types.js").ThemeSpec | undefined): {
+    t: import("../types.js").WidgetTokens;
+    design: import("../types.js").ResolvedWidgetDesign;
+    theme: import("../types.js").ThemeSpec;
+};
+// ── from src/widgets/designs.js ─────────────────────────────────────────────
+/**
+ * A label centred on (x, y), wrapped to `width` when given.
+ * @param {any} text @param {number} x @param {number} y
+ * @param {import('../types.js').WidgetTokens} t
+ * @param {{ width?: number, anchor?: 'start' | 'middle' | 'end', fill?: string,
+ *   fontSize?: number, fontWeight?: number | string }} [o]
+ * @returns {import('../types.js').FeatureNode}
+ */
+export function labelNode(text: any, x: number, y: number, t: import("../types.js").WidgetTokens, o?: {
+    width?: number;
+    anchor?: "start" | "middle" | "end";
+    fill?: string;
+    fontSize?: number;
+    fontWeight?: number | string;
+}): import("../types.js").FeatureNode;
+/**
+ * A tick, centred on (cx, cy), drawn on the accent.
+ * @param {number} cx @param {number} cy @param {import('../types.js').WidgetTokens} t
+ * @returns {import('../types.js').FeatureNode}
+ */
+export function checkNode(cx: number, cy: number, t: import("../types.js").WidgetTokens): import("../types.js").FeatureNode;
+/**
+ * An empty control: a radio's ring or a checkbox's square, centred on (cx, cy).
+ * The answer's ink is a mark drawn over it (`answer`).
+ * @param {number} cx @param {number} cy @param {'radio' | 'check'} control
+ * @param {boolean} selected @param {import('../types.js').WidgetTokens} t
+ * @returns {import('../types.js').FeatureNode[]}
+ */
+export function controlNodes(cx: number, cy: number, control: "radio" | "check", selected: boolean, t: import("../types.js").WidgetTokens): import("../types.js").FeatureNode[];
+/**
+ * Register a widget design under `name`, so `theme.widget.design: name` draws
+ * the widgets with it. State only the parts that differ: the rest come from
+ * `extends` (default `'ring'`). With `theme`, the design also registers a named
+ * theme, so `theme: name` selects the design and its tokens in one word.
+ * @param {string} name
+ * @param {import('../types.js').WidgetDesign} design
+ * @returns {void}
+ */
+export function registerDesign(name: string, design: import("../types.js").WidgetDesign): void;
+/** The names of the registered designs. @returns {string[]} */
+export function designNames(): string[];
 // ── from src/core/projection.js ─────────────────────────────────────────────
 export type ProjectionContext = {
     apply: (p: [number, number]) => [number, number] | null;

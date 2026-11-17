@@ -26,7 +26,7 @@
  * @property {boolean} stroking  is a hierarchy drag stroke in progress? (nothing is pushed apart mid-stroke)
  * @property {any[] | null} strokeNodes  the hierarchy's node rows as the current stroke began
  * @property {number | null} strokeRow  the hierarchy node row the current stroke grabbed
- * @property {boolean} snapNext  draw the hierarchy's next layout at once, not eased (data arrived from outside)
+ * @property {boolean} snapNext  draw the next frame at once, not eased (data arrived from outside)
  */
 
 /**

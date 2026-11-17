@@ -159,7 +159,7 @@ ElicitJS is layered for extensibility:
 
 7. **Format (`elicit.format.*`)** — display formatters for text marks (and anywhere a value is shown as a string). A mark's `format` option takes a d3-format string or `(v) => string`; helpers mint common ones (`format.number('.1f')`, `format.percent()`, `format.si()`, `format.time('%b %Y')`, `format.prefix('$')`, `format.suffix(' kg')`). Display-only — the underlying field stays the raw value.
 
-8. **Widgets (`elicit.widgets.*`)** — higher-level named elicitations, each a pure recipe over the core API (no new interaction surface): `likert`, `multipleChoice`, `slider`, `matrix`, `lineCone`, `ranking`, `allocation`, `probabilityTokens`, `interval`, `histogram`, `region`, `thermometer`, `labeledValue`. Each returns an **ElicitSpec** you pass straight to `Elicit(widgets.likert({…}))`. They share one option contract — `question`, `value`/`values`, `onChange`, `width`/`height`, `stage`, and `theme` — and look like survey instruments rather than charts (option rings, a cell grid, a track), but that styling is *only* the guide layer (`optionRings`, `cellGrid`, `sliderTrack`, `crosshair`), so each has a plain-chart twin built from the same mark, edit and constraint. Pass `theme: themes.survey` (or any partial) and the whole family restyles at once.
+8. **Widgets (`elicit.widgets.*`)** — higher-level named elicitations, each a pure recipe over the core API (no new interaction surface): `likert`, `multipleChoice`, `slider`, `matrix`, `lineCone`, `ranking`, `allocation`, `probabilityTokens`, `interval`, `histogram`, `region`, `thermometer`, `labeledValue`. Each returns an **ElicitSpec** you pass straight to `Elicit(widgets.likert({…}))`. They share one option contract — `question`, `value`/`values`, `onChange`, `width`/`height`, `stage`, and `theme` — and look like survey instruments rather than charts, but each has a plain-chart twin built from the same mark, edit and constraint. How they look is a **design** (`src/widgets/designs.js`): a set of small drawers, one per part (an option, the answer in it, a slider's track, a ranking card, a bar), named by `theme.widget.design`. Four ship: `ring` (the default), `box` (`theme: 'survey'`), `block` (`'surveyBlocks'`) and `line` (`'surveyLines'`). A widget asks the design for its parts and never branches on a design's name, so `authoring.registerDesign(name, design)` restyles all thirteen at once. The chrome is the guide layer (`prompt`, `options`, `cellGrid`, `sliderTrack`, `quadrants`); the answer is always a mark.
 
 9. **Theme (`elicit.themes`, `setTheme`, `spec.theme`)** — the **style layer**: one data object of default colours, fonts, a `background`, and affordance tokens, deep-merged over the built-in `DEFAULT_THEME`. It supplies the *defaults* marks/chrome/renderers draw with (a per-datum paint channel still wins, and per-mark `theme.marks[name]` overrides sit in between). Resolved once per chart the way `effects` is (`spec.theme → resolveTheme → ctx.theme`, threaded to marks on the scale map), so it never adds a second style path. Built-ins: `themes.survey` (a professional survey look) and `themes.dark` (a self-contained dark mode — its `background` token paints the chart's own surface). `setTheme(partial)` sets an app-wide default. See `/theming`.
 
@@ -222,7 +222,7 @@ elicitjs/
 │   │   ├── tiles.js        # Slippy-map tile cover for geoTile (Web Mercator check + {z}/{x}/{y} placement)
 │   │   ├── samples.js      # Domain sampling for line authoring
 │   │   ├── effects.js      # Interaction-feedback layer (grab / select)
-│   │   ├── motion.js       # Eased drawing: tracks of keyed pixel values, stepped once per frame (spec.motion)
+│   │   ├── motion.js       # Eased drawing: tracks of keyed pixel values, stepped once per frame (spec.motion); easeRows, easeNodes
 │   │   ├── theme.js        # Style layer: DEFAULT_THEME, resolveTheme, setTheme, per-mark defaults
 │   │   ├── themes.js       # Built-in themes (default, survey)
 │   │   └── scene.js        # Abstract scene graph
@@ -246,7 +246,7 @@ elicitjs/
 │   │   ├── shared.js       # makeEdit + datum/series helpers
 │   │   └── drivers/        # Self-describing interaction modes (plane/nearest/sweep/draw/brush/brushRect/geoBrush/probe/axisDrag/slide)
 │   ├── constraints/        # Data-layer invariants (define/clamp/maintainSum/count/unique/snap)
-│   ├── widgets/            # Named survey instruments (likert/choice/slider/matrix/lineCone/ranking/allocation/…) + shared.js (contract) + theme.js (affordances)
+│   ├── widgets/            # Named survey instruments (likert/choice/slider/matrix/lineCone/ranking/allocation/…) + designs.js (the design registry) + parts.js (answer, card, bar) + shared.js (look, layout) + theme.js (guides)
 │   ├── guides/             # rule / region / proximity / custom annotations
 │   ├── format.js           # Display formatters (number/percent/si/time/prefix/suffix)
 │   ├── renderers/
@@ -281,7 +281,7 @@ Three visual statements, three homes (do not collapse them):
 
 An effect has two layers. The **state** is what is happening to a row (`hovered`, `selected`, `target`, `grabbed`). The **treatment** is how rows look because of it: a state's own style is the *highlight* (rows in the state), its `others` is the *mute* (rows in no state while it has one), and `neighbours` extends the highlight to linked rows on network and hierarchy data. Add a treatment, not a state, when the question is how something looks.
 
-**Motion** (`spec.motion`, `core/motion.js`) is a fourth, separate thing: how a drawn value gets to where it belongs. The engine eases rows before `build()`, so both renderers, links, hit-testing and effects see the same eased geometry. A client opens a track and steps keyed pixel values toward goals; `update()` re-renders each frame until every track arrives. The data is never eased. The hierarchy's layout is the first client.
+**Motion** (`spec.motion`, `core/motion.js`) is a fourth, separate thing: how a drawn value gets to where it belongs. The engine decides it before the scene reaches a renderer, so both renderers, hit-testing and effects see the same eased geometry. There are two clients on one clock. The hierarchy's layout eases rows before `build()`, so links follow. A mark with `motion: true` eases its nodes after `build()` (`core/engine/carry.js`), which is the only way to ease a position on a discrete scale: a `rank` has no value between two slots. A client opens a track and steps keyed pixel values toward goals; `update()` re-renders each frame until every track arrives. The data is never eased. A grabbed row is never eased either: along an edited channel whose scale has slots it is drawn at the pointer, and it eases into its slot on release.
 
 **Handle contract** (`handles` on every mark that draws a grip): `true` drawn+grabbable, `false` neither, `'hit'` invisible but grabbable. Axis/legend end-grips go through `resolveHandles` too.
 
@@ -333,5 +333,5 @@ Chart surfaces are client components (`'use client'`); the lab page that embeds 
 ## Roadmap
 
 - Faceted layouts (one spec drawing small multiples). Several charts over one dataset already work (`Elicit.dataset`); a chart over derived data (a histogram of another chart's points) and independent zoom per chart do not.
-- Motion for more than the hierarchy's layout (`core/motion.js` tracks) / alternate renderers (WebGL).
+- More adopters of `motion: true` (bars under `maintainSum`, a Likert answer) and feedback for a write a constraint refused / alternate renderers (WebGL).
 - Needle uncertainty fuzz.

@@ -292,7 +292,7 @@ function createChart(dataset, spec) {
 
     // Rendering (engine/render.js): the container and its size, and `update()`,
     // which rebuilds the scene from current state and hands it to the renderer.
-    const { container, measure, applyResize, update, stopMotion } = createRender(chart, {
+    const { container, measure, applyResize, update, stopMotion, followsPointer } = createRender(chart, {
         features, featureById, ui, spec, theme, effects, renderer, mode, overflow, focusOutline, designW, authorMargins, dims, liveSpec, schema, schemaSpec, allGuides, datasetConstraints, tracksPointer, hasLegends, hasAxisTitles, featureNodes, hierarchyNodes, boxHosts, tableOf, targetTableOf, primaryRows, isLockedIn, constraintsIn, nodeBoxRule, nodePortsRule, settleOwn, settledNodes, heldStill, inFlight, activeEdits, getStage, selectionIn, selectionList, selectionPrimary, hoverRow: dataset.hoverRow, hoverLink, hoverWide, portAvailable, handleKey, clipNow, visibleAt,
         layoutMoved: () => port.layoutMoved(),
         motionDuration: resolveMotion(spec.motion),
@@ -307,6 +307,7 @@ function createChart(dataset, spec) {
         runEdit, previewEdit, reachableKeys, settledNodes, heldStill, notifyChange,
         ownsLayout: () => port.ownsLayout(),
         handleKey, visibleAt, hoverLink, hoverWide, commitHover,
+        followsPointer: () => followsPointer(),
         update: () => update(),
     });
 
@@ -333,7 +334,7 @@ function createChart(dataset, spec) {
             chart.stroking = false;
             chart.strokeNodes = null;
             chart.strokeRow = null;
-            if (what === 'reseed' && hierarchyNodes) chart.snapNext = true;
+            if (what === 'reseed') chart.snapNext = true;
         },
     });
 

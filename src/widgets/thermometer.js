@@ -5,8 +5,9 @@
 import { barY } from '../plot/index.js';
 import { move } from '../edit/index.js';
 import { clamp, snap } from '../constraints/index.js';
-import { prompt } from './theme.js';
-import { widgetTheme } from './shared.js';
+import { prompt, barTracks } from './theme.js';
+import { widgetLook } from './shared.js';
+import { barPaint } from './parts.js';
 
 /**
  * @param {import('../types').WidgetOptions & { domain?: [number, number], step?: number, value?: number }} [opts]
@@ -24,7 +25,8 @@ export function thermometer(opts = {}) {
         stage,
         theme
     } = opts;
-    const t = widgetTheme(theme);
+    const look = widgetLook(theme);
+    const { t, design } = look;
 
     /** @type {any[]} */
     const constraints = [clamp({ min: domain[0], max: domain[1], field: 'value' })];
@@ -33,7 +35,7 @@ export function thermometer(opts = {}) {
     return {
         width,
         height,
-        theme,
+        theme: look.theme,
         margins: { top: 40, right: 40, bottom: 36, left: 48 },
         schema: {
             cat: { type: 'categorical', domain: ['v'] },
@@ -42,12 +44,11 @@ export function thermometer(opts = {}) {
         data: [{ cat: 'v', value: value != null ? value : domain[0] }],
         constraints,
         onChange,
-        guides: [prompt(question)],
+        guides: [prompt(question), barTracks()],
         marks: [
             barY({
                 id: 'thermo',
-                fill: t.widget.accent,
-                fillOpacity: 0.8,
+                ...barPaint(t, design, 0.8),
                 channels: {
                     x: { field: 'cat' },
                     y: { field: 'value' }

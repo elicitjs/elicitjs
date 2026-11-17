@@ -6,7 +6,7 @@
 
 /** Options every mark accepts. (`constraints` belongs on the spec, not a mark.)
  *  @type {string[]} */
-export const MARK_UNIVERSAL_OPTIONS = ['channels', 'id', 'edits', 'table', 'tip', 'clip'];
+export const MARK_UNIVERSAL_OPTIONS = ['channels', 'id', 'edits', 'table', 'tip', 'clip', 'motion'];
 
 /** Top-level constant shorthands every mark desugars into channels
  *  (`fill: 'red'` -> `channels.fill = { value: 'red' }`). `size` and the text
@@ -100,7 +100,7 @@ export const GUIDE_OPTIONS = {
     proximity: ['target', 'stroke', 'strokeDash', 'strokeWidth', 'opacity'],
     // Survey-instrument guides (widgets/theme.js).
     prompt: ['y'],
-    optionRings: ['labelOffset', 'radius'],
+    options: ['labelOffset', 'radius', 'control'],
     cellGrid: ['pad'],
     sliderTrack: ['format'],
     quadrants: ['x', 'y'],

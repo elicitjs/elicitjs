@@ -133,6 +133,17 @@ const FIXTURES = {
         theme: { marks: { bar: { rx: 2 } }, extends: 'nyt' },
         stageLabels: ['one', null],
     }),
+    'a glyph that eases': ({ plot, edit }) => ({
+        schema: { item: { type: 'categorical' }, rank: { type: 'ordinal', domain: [1, 2, 3] } },
+        scales: { y: { type: 'band', range: [0, 120] } },
+        marks: [plot.composite({
+            id: 'card', motion: true, channels: {},
+            parts: [
+                plot.rect({ height: 30, rx: 6, channels: { y: { field: 'rank', edit: edit.rank({ cursor: 'grab' }) } } }),
+                plot.text({ channels: { x: { value: 20 }, y: { field: 'rank' }, text: { field: 'item' } } }),
+            ],
+        })],
+    }),
     'a widget with chart keys beside it': ({ widgets }) => ({
         ...widgets.slider({ question: 'How much?', domain: [0, 10], format: (v) => v + ' pts' }),
         responsive: 'reflow',

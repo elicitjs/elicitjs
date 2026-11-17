@@ -135,18 +135,34 @@ export const DEFAULT_THEME = {
     // fill/stroke/strokeDash overrides the mark's paint.
     ghost: { opacity: 0.45, fill: null, stroke: null, strokeDash: null },
 
-    // Survey-instrument tokens (widgets/theme.js).
+    // Survey-instrument tokens (widgets/). `design` names how the widgets are
+    // drawn (widgets/designs.js); every other token is a colour or a size the
+    // designs read.
     widget: {
+        design: 'ring',
         accent: '#2563eb',      // a committed answer
+        onAccent: '#ffffff',    // text and ticks drawn on the accent
+        tint: '#e9f0fe',        // a chosen option's wash
+        surface: '#ffffff',     // an option box, a card
+        soft: '#f1f5f9',        // a filled block, a bar's track
+        stroke: '#d5dbe5',      // the edge of a box or a card
         ring: '#cbd5e1',        // an empty option
         track: '#e2e8f0',
         cellFill: '#f8fafc',
         cellStroke: '#e2e8f0',
         label: '#334155',
         question: '#0f172a',
+        grip: '#94a3b8',        // a card's drag handle
+        shadow: 'rgba(15, 23, 42, 0.18)', // under a lifted card
         labelSize: 12,
         questionSize: 13,
-        radius: 11
+        questionWeight: 400,
+        itemSize: 13,           // a list row's or a card's text
+        radius: 11,             // a ring, a radio
+        corner: 10,             // a box's, block's or card's corner
+        gap: 8,                 // between options, between cards
+        optionHeight: 74,       // an option in a row of boxes
+        rowHeight: 40           // a list row, a card
     },
 
     // Sparse per-mark overrides keyed by mark name (`marks: { bar: { fill: 'crimson' } }`).

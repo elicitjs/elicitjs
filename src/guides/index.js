@@ -13,9 +13,9 @@ export { proximity } from './proximity.js';
 // Arbitrary read-only nodes from the render context.
 export { custom } from './custom.js';
 
-// Widget chrome: a prompt, Likert option rings, a matrix's cell grid, a slider
+// Widget chrome: a prompt, a choice's options, a matrix's cell grid, a slider
 // track, a quadrant frame.
-export { optionRings, cellGrid, sliderTrack, prompt, quadrants } from '../widgets/theme.js';
+export { options, cellGrid, sliderTrack, prompt, quadrants } from '../widgets/theme.js';
 
 // Pointer-following guides, reading `ui.pointer` / `ui.hit`. A mark's `tip: true`
 // desugars into `tip({ mark })`.

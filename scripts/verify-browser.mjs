@@ -4912,6 +4912,108 @@ async function main() {
         check('hierarchy motion: the layout comes to rest after the release',
             Math.abs(easeWRest - (await groupWidth())) < 0.01, `width ${easeWRest}`);
 
+        // ---- Widgets: the ranking card, its motion, and the designs --------
+        // A card is a glyph whose body alone takes the drag, so a press on its
+        // label must reach the body. With motion on, the grabbed card is drawn at
+        // the pointer and the others ease to their slots; with reduced motion,
+        // cards only ever sit on slots. None of this shows in a unit test's
+        // synthetic events: it needs real pointer capture and real frames.
+        console.log('\nWidgets: ranking card and designs (/widgets)');
+        { // own scope: the names below are common ones in this file
+            const rkItems = ['Cost', 'Speed', 'Quality', 'Risk'];
+            const rkEl = '#ranking .chart > div';   // the first chart in the section: the widget
+            const rkOrder = () => page.$eval(rkEl, (e) => e.__chart.getData().slice()
+                .sort((a, b) => a.rank - b.rank).map((d) => d.item).join(','));
+            const rkLabels = () => page.$eval(rkEl, (e, items) => Object.fromEntries([...e.querySelectorAll('text')]
+                .filter((t) => items.includes(t.textContent))
+                .map((t) => { const b = t.getBoundingClientRect(); return [t.textContent, b.top + b.height / 2]; })), rkItems);
+            // Press on the "Cost" LABEL and drag it 1.6 slots down, sampling each frame.
+            const rkDrag = async () => {
+                await open('/widgets', '#ranking .chart svg rect.mark');
+                await page.locator(`${rkEl} svg`).first().scrollIntoViewIfNeeded();
+                await page.waitForTimeout(200);
+                const start = await rkLabels();
+                const step = start.Speed - start.Cost;
+                const label = page.locator(`${rkEl} svg text`, { hasText: 'Cost' }).first();
+                const box = await label.boundingBox();
+                const x = box.x + box.width / 2, y = box.y + box.height / 2;
+                await page.mouse.move(x, y);
+                await page.mouse.down();
+                const samples = [];
+                for (let i = 1; i <= 14; i++) {
+                    const at = y + step * 1.6 * i / 14;
+                    await page.mouse.move(x, at);
+                    await page.waitForTimeout(16);
+                    samples.push({ pointer: at, ...(await rkLabels()) });
+                }
+                return { start, step, samples };
+            };
+
+            const rk = await rkDrag();
+            const rkMid = await rkOrder();
+            check('ranking: a press on a card\'s label drags the card (the label is inert)',
+                rkMid === 'Speed,Quality,Cost,Risk', `order mid-drag ${rkMid}`);
+            const rkOff = Math.max(...rk.samples.map((m) => Math.abs(m.Cost - m.pointer)));
+            check('ranking motion: the grabbed card stays on the pointer', rkOff < 2, `largest offset ${rkOff.toFixed(2)}px`);
+            const rkSpeed = rk.samples.map((m) => m.Speed);
+            const rkBetween = rkSpeed.filter((v) => v < rk.start.Speed - 1 && v > rk.start.Cost + 1).length;
+            const rkSteps = rkSpeed.map((v, i) => Math.abs(v - (i ? rkSpeed[i - 1] : rk.start.Speed)));
+            check('ranking motion: the next card eases into the freed slot',
+                rkBetween >= 2 && Math.max(...rkSteps) < rk.step * 0.6,
+                `in-between samples ${rkBetween}, largest step ${Math.max(...rkSteps).toFixed(1)} of ${rk.step}`);
+            await page.waitForTimeout(450);
+            const rkHeld = await rkLabels();
+            check('ranking motion: the others come to rest on their slots while the card is held',
+                Math.abs(rkHeld.Speed - rk.start.Cost) < 0.5 && Math.abs(rkHeld.Quality - rk.start.Speed) < 0.5,
+                `Speed ${rkHeld.Speed} (slot ${rk.start.Cost}), Quality ${rkHeld.Quality} (slot ${rk.start.Speed})`);
+            await page.mouse.up();
+            const rkHome = [];
+            for (let i = 0; i < 5; i++) { await page.waitForTimeout(16); rkHome.push((await rkLabels()).Cost); }
+            await page.waitForTimeout(500);
+            const rkEnd = await rkLabels();
+            check('ranking motion: the released card eases into its slot',
+                Math.abs(rkHome[0] - rk.start.Quality) > 1 && Math.abs(rkEnd.Cost - rk.start.Quality) < 0.5,
+                `first frame ${rkHome[0].toFixed(1)}, slot ${rk.start.Quality}, at rest ${rkEnd.Cost}`);
+            await page.$eval(rkEl, (e) => e.__chart.undo());
+            await page.waitForTimeout(500);
+            const rkUndone = await rkLabels();
+            check('ranking: one undo restores the order, and the drawing follows',
+                (await rkOrder()) === rkItems.join(',') && Math.abs(rkUndone.Cost - rk.start.Cost) < 0.5,
+                `order ${await rkOrder()}, Cost at ${rkUndone.Cost} (slot ${rk.start.Cost})`);
+
+            // Reduced motion: the same drag, and the card is only ever drawn on a slot.
+            await page.emulateMedia({ reducedMotion: 'reduce' });
+            const still = await rkDrag();
+            const slots = Object.values(still.start);
+            const offSlot = still.samples.filter((m) => !slots.some((v) => Math.abs(v - m.Cost) < 0.5)).length;
+            await page.mouse.up();
+            check('ranking, reduced motion: the card steps from slot to slot',
+                offSlot === 0 && (await rkOrder()) === 'Speed,Quality,Cost,Risk', `${offSlot} samples off a slot; order ${await rkOrder()}`);
+            await page.emulateMedia({ reducedMotion: 'no-preference' });
+
+            // The designs: the same click answers in each, on a row or on a block.
+            await open('/widgets', '#designs .chart svg');
+            const dsChartEl = (n) => page.locator('#designs .chart > div').nth(n);
+            const dsAnswers = (n) => dsChartEl(n).evaluate((e) => e.__chart.getData().map((d) => d.choice).sort().join(','));
+            const dsClick = async (n, text) => {
+                const t = dsChartEl(n).locator('svg text', { hasText: text }).first();
+                await t.scrollIntoViewIfNeeded();
+                const b = await t.boundingBox();
+                await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
+                await page.waitForTimeout(120);
+            };
+            await dsClick(0, 'Cheap');
+            const dsTwo = await dsAnswers(0);
+            await dsClick(0, 'Reliable');
+            const dsThird = await dsAnswers(0);
+            await dsClick(0, 'Fast');
+            check('designs: a click on a boxed row toggles it, and a third pick is refused',
+                dsTwo === 'Cheap,Fast' && dsThird === 'Cheap,Fast' && (await dsAnswers(0)) === 'Cheap',
+                `after one click ${dsTwo}; after a third ${dsThird}; after un-picking ${await dsAnswers(0)}`);
+            await dsClick(1, 'Neutral');
+            check('designs: a click on a block moves the answer to it', (await dsAnswers(1)) === 'Neutral', `answer ${await dsAnswers(1)}`);
+        }
+
         // ---- Several charts on one dataset -------------------------------
         // Every example on /dataset puts two or three charts on one dataset. A
         // real gesture in one chart must redraw the others. The charts of an

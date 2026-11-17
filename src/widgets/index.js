@@ -16,5 +16,6 @@ export { region } from './region.js';
 export { thermometer } from './thermometer.js';
 export { labeledValue } from './labeledValue.js';
 
-// The widget guides (option rings, cell grid, slider track, prompt, quadrants) are
-// `guides.*`; `THEME` and `widgetTheme` are `authoring.*`.
+// The widget guides (options, cell grid, slider track, prompt, quadrants) are
+// `guides.*`. How every widget is drawn is a design (designs.js), named by
+// `theme.widget.design`; `registerDesign`, `widgetLook` and `THEME` are `authoring.*`.

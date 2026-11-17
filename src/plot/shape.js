@@ -81,13 +81,17 @@ export function shape(options = {}) {
                 const spec = channels.symbol
                     ? resolveSymbol(scales, channels, d, i, currentData)
                     : (typeof path === 'function' ? path(d, i, currentData) : path);
-                const { d: pathD, points } = placeShape(unitOf(spec), cx, cy, size, angle || 0);
+                const unit = unitOf(spec);
+                const { d: pathD, points } = placeShape(unit, cx, cy, size, angle || 0);
                 return {
                     type: 'path',
                     d: pathD,
                     points,
                     polygon: true,
                     cx, cy,
+                    // How `d` was made from (cx, cy), so the engine can draw the
+                    // shape somewhere else (eased drawing, core/motion.js).
+                    placed: { unit, r: size, angle: angle || 0 },
                     ...style,
                     data: d,
                     index: i,

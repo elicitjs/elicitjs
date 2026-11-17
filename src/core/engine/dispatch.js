@@ -40,6 +40,7 @@ import { elementEffectOf } from '../effects.js';
  *   hoverWide: () => boolean,
  *   commitHover: (row: { table: string, index: number } | null) => boolean,
  *   handleKey: (node: any) => string,
+ *   followsPointer: () => boolean,
  *   visibleAt: (nodes: any[], x: number, y: number) => any[],
  *   update: () => void,
  * }} deps
@@ -49,7 +50,7 @@ export function createDispatch(chart, deps) {
         features, featureById, ui, effects, tracksPointer, featureNodes, hierarchyNodes, boxHosts,
         tableOf, activeEdits, getStage, applyStage, arbitrates, frameScalesFor,
         runEdit, previewEdit, reachableKeys, settledNodes, heldStill, ownsLayout, notifyChange,
-        handleKey, visibleAt, hoverLink, hoverWide, commitHover,
+        handleKey, visibleAt, hoverLink, hoverWide, commitHover, followsPointer,
     } = deps;
     const { history } = deps;
     const { endTxn, recordHistory } = history;
@@ -270,6 +271,22 @@ export function createDispatch(chart, deps) {
         return null;
     };
 
+    // The grab a dragstart opens: the row, which of its handles, where the pointer
+    // is and how far that is from the drawn node's centre. The event's node is the
+    // one bound at press (stale, or a stub), so the centre is read from the last build.
+    /** @param {any} event */
+    const grabOf = (event) => {
+        const { featureId, index } = event.node;
+        const handle = handleKey(event.node);
+        const drawn = (featureNodes[featureId] || []).find((n) => n && !n.ghost && handleKey(n) === handle);
+        const c = markCenter(drawn);
+        const at = event.x != null && event.y != null ? { x: event.x, y: event.y } : (c ? { x: c.cx, y: c.cy } : null);
+        return {
+            featureId, index, handle, at,
+            offset: at && c ? { x: at.x - c.cx, y: at.y - c.cy } : { x: 0, y: 0 },
+        };
+    };
+
     // Route one renderer event.
     /**
      * @param {any} event
@@ -410,14 +427,21 @@ export function createDispatch(chart, deps) {
         // on change even if no data moved, so a press lights the mark.
         if (event.type === 'dragstart' || event.type === 'dragend') {
             const next = event.type === 'dragstart' && event.node && event.node.index != null
-                ? { featureId: event.node.featureId, index: event.node.index }
+                ? grabOf(event)
                 : null;
             const changed = !!ui.grab !== !!next
                 || !!(ui.grab && next && (ui.grab.featureId !== next.featureId || ui.grab.index !== next.index));
+            // A carried row is let go: draw it once more so it eases home.
+            if (ui.grab && followsPointer()) shouldRender = true;
             ui.grab = next;
             const g = effects.grabbed;
             if (changed && g && g.enabled !== false && (g.outline || elementEffectOf(g))) shouldRender = true;
+        } else if (event.type === 'drag' && ui.grab && event.x != null && event.y != null) {
+            // Where the stroke's pointer is now. Same object for the whole stroke.
+            ui.grab.at = { x: event.x, y: event.y };
         }
+        // The motion client draws a carried row at the pointer, so every tick shows.
+        if ((event.type === 'dragstart' || event.type === 'drag') && ui.grab && followsPointer()) shouldRender = true;
 
         if (event.node) {
             // Dispatch to the touched mark's feature (direct pick).

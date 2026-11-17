@@ -159,5 +159,5 @@ export function sticker(options = {}) {
     ];
 
     // The composite gets nothing editable, so it can't route edits to the label.
-    return composite({ id: common.id, table: common.table, clip: common.clip, channels: {}, parts });
+    return composite({ id: common.id, table: common.table, clip: common.clip, motion: common.motion, channels: {}, parts });
 }

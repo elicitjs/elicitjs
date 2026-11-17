@@ -1,122 +1,142 @@
 // @ts-check
-// theme.js: the survey-instrument guides (option rings, cell grid, slider track,
+// theme.js: the survey-instrument guides (options, cell grid, slider track,
 // prompt, quadrants), each built on `guides.custom`.
 //
-// Their tokens are read each frame from `ctx.theme.widget`, so `spec.theme` or
-// `setTheme()` restyles them. `THEME` is the default (same as `DEFAULT_THEME.widget`).
+// They draw through the design `theme.widget.design` names (widgets/designs.js)
+// and read its tokens each frame, so `spec.theme` or `setTheme()` restyles them.
 
 import { custom } from '../guides/index.js';
 import { warnUnknownGuideOptions } from '../guides/shared.js';
 import { GUIDE_OPTIONS } from '../vocabulary.js';
 import { resolveFormat } from '../format.js';
+import { bandwidthOf } from '../core/scales.js';
+import { DEFAULT_THEME } from '../core/theme.js';
+import { lookOf } from './designs.js';
 
 /** Stamp the guide's own keyword (not `custom`), since a spec names it. @param {string} type @param {import('../types').Guide} g */
 const typed = (type, g) => Object.assign(g, { type });
-import { bandwidthOf } from '../core/scales.js';
 
-export const THEME = {
-    accent: '#2563eb',      // a committed answer
-    ring: '#cbd5e1',        // an empty option
-    track: '#e2e8f0',
-    cellFill: '#f8fafc',
-    cellStroke: '#e2e8f0',
-    label: '#334155',
-    question: '#0f172a',
-    labelSize: 12,
-    questionSize: 13,
-    radius: 11
-};
-
-/** The widget tokens for this frame: the chart's theme, else the built-in default.
- * @param {any} ctx render context (carries `theme`) @returns {typeof THEME} */
-const tokensOf = (ctx) => ctx?.theme?.widget || THEME;
+/** The default widget tokens: `DEFAULT_THEME.widget`. */
+export const THEME = /** @type {any} */ (DEFAULT_THEME).widget;
 
 /** The categories of a band/point scale, in domain order. @param {any} scale */
 const categoriesOf = (scale) => (scale && Array.isArray(scale.domainConfig) ? scale.domainConfig : []);
 
 /**
- * A row of option rings with labels and a track between them. Rings sit on the
- * plot's vertical centre, where a `point` with no y channel lands.
- * @param {{ labelOffset?: number, radius?: number }} [options]
+ * The column the chart's marks draw along an axis, so a guide can tell which
+ * options the rows hold.
+ * @param {any} ctx @param {'x' | 'y'} axis @returns {string | null}
  */
-export function optionRings(options = {}) {
-    warnUnknownGuideOptions('optionRings', options, GUIDE_OPTIONS.optionRings);
-    const { labelOffset = 30, radius: radiusOpt } = options;
-    return typed('optionRings', custom((/** @type {any} */ ctx) => {
-        const { scales, height } = ctx;
-        const tw = tokensOf(ctx);
-        const radius = radiusOpt != null ? radiusOpt : tw.radius;
-        const cats = categoriesOf(scales.x);
-        if (!cats.length) return [];
-        const cy = height / 2;
-        const cxOf = (/** @type {any} */ c) => scales.x.encode(c);
+const fieldOn = (ctx, axis) => {
+    for (const f of ctx.features || []) {
+        if (!f || (f.views && f.views !== 'data')) continue;
+        const spec = f.channels && f.channels[axis];
+        if (spec && spec.field != null) return spec.field;
+    }
+    return null;
+};
 
-        /** @type {any[]} */
-        const nodes = [];
-        // Track segments between rings, so no line crosses an unfilled ring.
-        for (let i = 0; i < cats.length - 1; i++) {
-            nodes.push({
-                type: 'line',
-                x1: cxOf(cats[i]) + radius, y1: cy,
-                x2: cxOf(cats[i + 1]) - radius, y2: cy,
-                stroke: tw.track, strokeWidth: 3, background: true
-            });
-        }
-        for (const c of cats) {
-            nodes.push({
-                type: 'circle', cx: cxOf(c), cy, r: radius,
-                fill: 'none', stroke: tw.ring, strokeWidth: 1.5
-            });
-            nodes.push({
-                type: 'text', x: cxOf(c), y: cy + labelOffset, text: String(c),
-                textAnchor: 'middle', fontSize: tw.labelSize, fill: tw.label
-            });
-        }
-        return nodes;
+/** A slot's start and size along a discrete scale. @param {any} scale @param {any} value @param {number} fallback */
+const slotOf = (scale, value, fallback) => {
+    const size = bandwidthOf(scale, fallback) || fallback;
+    return { start: scale.encode(value) - size / 2, size };
+};
+
+/** The edges between a scale's slots, ends included. @param {any} scale @param {any[]} cats @param {number} fallback */
+const edgesOf = (scale, cats, fallback) => {
+    const centres = cats.map((c) => scale.encode(c));
+    if (!centres.length) return [];
+    const step = centres.length > 1 ? centres[1] - centres[0] : (bandwidthOf(scale, fallback) || fallback);
+    return [centres[0] - step / 2, ...centres.map((c) => c + step / 2)];
+};
+
+/**
+ * The options of a choice: one per category of the chart's discrete axis, drawn
+ * in the theme's design (rings on a track by default). They run in a row when
+ * the categories are on x, and stack as a list when they are on y.
+ * @param {{ labelOffset?: number, radius?: number, control?: 'radio' | 'check' }} [options]
+ */
+export function options(options = {}) {
+    warnUnknownGuideOptions('options', options, GUIDE_OPTIONS.options);
+    const { labelOffset = 30, radius: radiusOpt, control = 'radio' } = options;
+    return typed('options', custom((/** @type {any} */ ctx) => {
+        const { scales, width, height } = ctx;
+        const look = lookOf(ctx);
+        const t = radiusOpt != null ? { ...look.t, radius: radiusOpt } : look.t;
+        const axis = categoriesOf(scales.x).length ? 'x' : (categoriesOf(scales.y).length ? 'y' : null);
+        if (!axis) return [];
+        const scale = scales[axis];
+        const cats = categoriesOf(scale);
+        const field = fieldOn(ctx, axis);
+        const chosen = new Set(field != null ? (ctx.data || []).map((/** @type {any} */ r) => r && r[field]) : []);
+        const layout = axis === 'x' ? 'row' : 'list';
+
+        const boxes = cats.map((/** @type {any} */ c) => {
+            const { start, size } = slotOf(scale, c, axis === 'x' ? 40 : 30);
+            return axis === 'x'
+                ? { x: start, y: 0, width: size, height, cx: start + size / 2, cy: height / 2 }
+                : { x: 0, y: start, width, height: size, cx: width / 2, cy: start + size / 2 };
+        });
+        return cats.flatMap((/** @type {any} */ c, /** @type {number} */ i) => look.design.option({
+            ...boxes[i],
+            label: String(c),
+            selected: chosen.has(c),
+            control,
+            layout,
+            index: i,
+            count: cats.length,
+            next: layout === 'row' && boxes[i + 1] ? { cx: boxes[i + 1].cx, cy: boxes[i + 1].cy } : null,
+            labelOffset,
+        }, t));
     }));
 }
 
 /**
- * A question matrix's cell grid: a rect per (question, option) cell, column
- * headers above and row labels in the left margin.
+ * A question matrix's cell grid: a cell per (question, option), column headers
+ * above and row labels in the left margin. Cells are drawn in the theme's design.
  * @param {{ pad?: number }} [options]
  */
 export function cellGrid(options = {}) {
     warnUnknownGuideOptions('cellGrid', options, GUIDE_OPTIONS.cellGrid);
     const { pad = 3 } = options;
     return typed('cellGrid', custom((/** @type {any} */ ctx) => {
-        const { scales } = ctx;
-        const tw = tokensOf(ctx);
+        const { scales, width, height } = ctx;
+        const { t, design } = lookOf(ctx);
         const cols = categoriesOf(scales.x);
         const rows = categoriesOf(scales.y);
         if (!cols.length || !rows.length) return [];
         const bw = bandwidthOf(scales.x, 40);
         const bh = bandwidthOf(scales.y, 30);
+        const xField = fieldOn(ctx, 'x');
+        const yField = fieldOn(ctx, 'y');
+        const answered = (/** @type {any} */ r, /** @type {any} */ c) => xField != null && yField != null
+            && (ctx.data || []).some((/** @type {any} */ d) => d && d[xField] === c && d[yField] === r);
 
         /** @type {any[]} */
-        const nodes = [];
-        for (const r of rows) {
+        const nodes = [...design.grid({
+            x: 0, y: 0, width, height, cx: width / 2, cy: height / 2,
+            rows: edgesOf(scales.y, rows, 30), columns: edgesOf(scales.x, cols, 40),
+        }, t)];
+        rows.forEach((/** @type {any} */ r, /** @type {number} */ i) => {
             for (const c of cols) {
-                nodes.push({
-                    type: 'rect',
-                    x: scales.x.encode(c) - bw / 2 + pad,
-                    y: scales.y.encode(r) - bh / 2 + pad,
-                    width: bw - 2 * pad,
-                    height: bh - 2 * pad,
-                    fill: tw.cellFill, stroke: tw.cellStroke, strokeWidth: 1
-                });
+                const cx = scales.x.encode(c), cy = scales.y.encode(r);
+                nodes.push(...design.option({
+                    x: cx - bw / 2 + pad, y: cy - bh / 2 + pad, width: bw - 2 * pad, height: bh - 2 * pad, cx, cy,
+                    label: String(c), selected: answered(r, c), control: 'radio', layout: 'cell',
+                    index: i, count: rows.length, next: null, labelOffset: 0,
+                }, t));
             }
-        }
+        });
         for (const c of cols) {
             nodes.push({
                 type: 'text', x: scales.x.encode(c), y: -14, text: String(c),
-                textAnchor: 'middle', fontSize: tw.labelSize, fill: tw.label
+                textAnchor: 'middle', fontSize: t.labelSize, fill: t.label
             });
         }
         for (const r of rows) {
             nodes.push({
                 type: 'text', x: -10, y: scales.y.encode(r) + 4, text: String(r),
-                textAnchor: 'end', fontSize: tw.labelSize, fill: tw.label
+                textAnchor: 'end', fontSize: t.labelSize, fill: t.label
             });
         }
         return nodes;
@@ -124,8 +144,8 @@ export function cellGrid(options = {}) {
 }
 
 /**
- * A slider's track: a rule along the plot's centre line with end caps and value
- * labels at the domain ends.
+ * A slider's track along the plot's centre line, with value labels at the domain
+ * ends. The track is drawn in the theme's design.
  * @param {{ format?: string | ((v: any) => string) }} [options]
  */
 export function sliderTrack(options = {}) {
@@ -133,17 +153,19 @@ export function sliderTrack(options = {}) {
     const format = resolveFormat(options.format);
     return typed('sliderTrack', custom((/** @type {any} */ ctx) => {
         const { scales, width, height } = ctx;
-        const tw = tokensOf(ctx);
+        const { t, design } = lookOf(ctx);
         if (!scales.x) return [];
         const cy = height / 2;
         const dom = scales.x.domainConfig || [0, 1];
         const lo = dom[0], hi = dom[dom.length - 1];
+        const field = fieldOn(ctx, 'x');
+        const row = (ctx.data || [])[0];
+        const value = row && field != null ? row[field] : null;
+        const at = value != null ? scales.x.encode(value) : null;
         return [
-            { type: 'line', x1: 0, y1: cy, x2: width, y2: cy, stroke: tw.track, strokeWidth: 4, background: true },
-            { type: 'line', x1: 0, y1: cy - 7, x2: 0, y2: cy + 7, stroke: tw.ring, strokeWidth: 2 },
-            { type: 'line', x1: width, y1: cy - 7, x2: width, y2: cy + 7, stroke: tw.ring, strokeWidth: 2 },
-            { type: 'text', x: 0, y: cy + 26, text: format(lo), textAnchor: 'start', fontSize: tw.labelSize, fill: tw.label },
-            { type: 'text', x: width, y: cy + 26, text: format(hi), textAnchor: 'end', fontSize: tw.labelSize, fill: tw.label }
+            ...design.track({ x1: 0, x2: width, y: cy, at: Number.isFinite(at) ? at : null }, t),
+            { type: 'text', x: 0, y: cy + 26, text: format(lo), textAnchor: 'start', fontSize: t.labelSize, fill: t.label },
+            { type: 'text', x: width, y: cy + 26, text: format(hi), textAnchor: 'end', fontSize: t.labelSize, fill: t.label }
         ];
     }));
 }
@@ -157,10 +179,12 @@ export function prompt(text, options = {}) {
     warnUnknownGuideOptions('prompt', options, GUIDE_OPTIONS.prompt);
     const { y = -18 } = options;
     return typed('prompt', custom((/** @type {any} */ ctx) => {
-        const tw = tokensOf(ctx);
+        const { t } = lookOf(ctx);
+        const heavy = t.questionWeight != null && +t.questionWeight !== 400 && t.questionWeight !== 'normal';
         return text ? [{
             type: 'text', x: 0, y, text,
-            textAnchor: 'start', fontSize: tw.questionSize, fill: tw.question
+            textAnchor: 'start', fontSize: t.questionSize, fill: t.question,
+            ...(heavy ? { fontWeight: t.questionWeight } : {})
         }] : [];
     }));
 }
@@ -175,7 +199,7 @@ export function quadrants(labels = {}) {
     const { x = 'x', y = 'y' } = labels;
     return typed('quadrants', custom((/** @type {any} */ ctx) => {
         const { width, height } = ctx;
-        const tw = tokensOf(ctx);
+        const { t: tw } = lookOf(ctx);
         const cx = width / 2, cy = height / 2;
         /**
          * @param {number} px @param {number} py @param {string} text @param {string} anchor
@@ -184,7 +208,7 @@ export function quadrants(labels = {}) {
         const t = (px, py, text, anchor) =>
             ({ type: 'text', x: px, y: py, text, textAnchor: anchor, fontSize: tw.labelSize, fill: tw.label });
         // A side label stacks one word per line, plus its extreme, so it fits the margin.
-        const lineH = 14;
+        const lineH = Math.round(tw.labelSize * 1.17);
         const side = (/** @type {number} */ px, /** @type {string} */ extreme, /** @type {string} */ anchor) => {
             const lines = [...String(x).split(/\s+/), `(${extreme})`];
             const top = cy - ((lines.length - 1) * lineH) / 2;
@@ -200,4 +224,36 @@ export function quadrants(labels = {}) {
             t(cx, height + 20, `${y} (low)`, 'middle')
         ];
     }));
+}
+
+/**
+ * The lines between a ranking list's slots, where the design draws any.
+ * Internal: a widget's own chrome, not a spec keyword.
+ */
+export function rankSlots() {
+    return custom((/** @type {any} */ ctx) => {
+        const { scales, width, height } = ctx;
+        const { t, design } = lookOf(ctx);
+        const rows = categoriesOf(scales.y);
+        if (!rows.length) return [];
+        return design.slots({ x: 0, y: 0, width, height, cx: width / 2, cy: height / 2, rows: edgesOf(scales.y, rows, t.rowHeight) }, t);
+    });
+}
+
+/**
+ * A soft column behind each bar, where the design draws bars on a track.
+ * Internal: a widget's own chrome, not a spec keyword.
+ */
+export function barTracks() {
+    return custom((/** @type {any} */ ctx) => {
+        const { scales, height } = ctx;
+        const { t, design } = lookOf(ctx);
+        const bar = design.bar(t);
+        const cats = categoriesOf(scales.x);
+        if (!bar.track || !cats.length) return [];
+        return cats.map((/** @type {any} */ c) => {
+            const { start, size } = slotOf(scales.x, c, 40);
+            return /** @type {any} */ ({ type: 'rect', x: start, y: 0, width: size, height, rx: bar.corner || 0, fill: t.soft });
+        });
+    });
 }

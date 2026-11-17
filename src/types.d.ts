@@ -1078,6 +1078,15 @@ export interface MarkOptions {
    * and tippable there too. Unset, the mark follows the chart.
    */
   clip?: boolean;
+  /**
+   * `true` eases this mark's drawing: when its rows change, the nodes travel to
+   * their new places over `ChartSpec.motion`'s duration. A grabbed row is never
+   * eased; along an edited channel whose scale has slots (band, point) it is drawn
+   * at the pointer and eases into its slot on release. Only the drawing is eased,
+   * never the data. Off when `ChartSpec.motion` is `false` or the reader asks for
+   * reduced motion. A mark that draws a path per row cannot be eased and warns.
+   */
+  motion?: boolean;
   // No `constraints` here on purpose: a constraint is a DATASET invariant and gates
   // every edit from every mark, so one written inside a mark reads as scoped to that
   // mark and is not. `DatasetSpec.constraints` is the only home.
@@ -1363,6 +1372,9 @@ export interface CompositeOptions {
   // `false` draws the whole glyph past the chart's clip (see MarkOptions.clip);
   // stamped onto its box and every part that doesn't state its own.
   clip?: boolean;
+  // `true` eases the whole glyph (see MarkOptions.motion); stamped onto its box
+  // and every part that doesn't state its own.
+  motion?: boolean;
 }
 
 /**
@@ -1742,6 +1754,8 @@ export interface Mark {
   table?: string;
   /** `false`: this mark's nodes escape the chart's clip (MarkOptions.clip). */
   clip?: boolean;
+  /** `true`: this mark's nodes ease to where they belong (MarkOptions.motion). */
+  motion?: boolean;
   /**
    * The ROLE whose table this mark draws when it states no `table`. Set by the mark
    * factory, not the author: `link` declares `'links'`, everything else leaves it
@@ -2124,6 +2138,10 @@ export interface FeatureNode {
   // A filled path whose `points` is its outline polygon (a shape mark): the pick
   // layer tests containment, and `cx`/`cy` is its centre.
   polygon?: boolean;
+  // How a `shape`'s path was made from its centre: the unit outline, the radius
+  // and the angle. With it the engine can draw the shape somewhere else, which is
+  // what lets a mark with `motion: true` ease a path.
+  placed?: { unit: { segments: any[] }; r: number; angle: number };
   // A guide rect that sits ABOVE the marks (a tip's box) rather than behind them.
   front?: boolean;
   // Escapes the mark clip (`ChartSpec.clip`): stamped by the engine on every node
@@ -2232,7 +2250,7 @@ export type DeepPartial<T> = {
  * transcribed from its presets.
  */
 export type ThemeName =
-  | 'default' | 'survey' | 'dark' | 'dd'
+  | 'default' | 'survey' | 'surveyBlocks' | 'surveyLines' | 'dark' | 'dd'
   | 'nyt' | 'economist' | 'swiss' | 'nature' | 'mckinsey' | 'datawrapper'
   | 'powerbi' | 'powerbiLight' | 'pop' | 'cartoon' | 'apple' | 'deStijl' | 'bbc' | 'material';
 
@@ -2242,6 +2260,161 @@ export type ThemeName =
  * with `extends` (Flint's word for the same idea).
  */
 export type ThemeSpec = ThemeName | (DeepPartial<Theme> & { extends?: ThemeName });
+
+/**
+ * How the survey widgets are drawn: the value of `theme.widget.design`. The four
+ * built-in designs, or the name of one registered with `authoring.registerDesign`.
+ */
+export type WidgetDesignName = 'ring' | 'box' | 'block' | 'line' | (string & {});
+
+/** The widget tokens (`theme.widget`): the design, then the colours and sizes it reads. */
+export interface WidgetTokens {
+  /** How the widgets are drawn. Default `'ring'`. */
+  design: WidgetDesignName;
+  /** A committed answer. */
+  accent: string;
+  /** Text and ticks drawn on the accent. */
+  onAccent: string;
+  /** A chosen option's wash. */
+  tint: string;
+  /** An option box, a card. */
+  surface: string;
+  /** A filled block, a bar's track. */
+  soft: string;
+  /** The edge of a box or a card. */
+  stroke: string;
+  /** An empty option. */
+  ring: string;
+  track: string;
+  cellFill: string;
+  cellStroke: string;
+  label: string;
+  question: string;
+  /** A card's drag handle. */
+  grip: string;
+  /** Under a lifted card. */
+  shadow: string;
+  labelSize: number;
+  questionSize: number;
+  questionWeight: number | string;
+  /** A list row's or a card's text size. */
+  itemSize: number;
+  /** A ring's or a radio's radius. */
+  radius: number;
+  /** A box's, block's or card's corner radius. */
+  corner: number;
+  /** The space between options and between cards. */
+  gap: number;
+  /** The height of an option in a row of boxes. */
+  optionHeight: number;
+  /** The height of a list row or a card. */
+  rowHeight: number;
+}
+
+/** The box a design draws one part in, in plot pixels. */
+export interface DesignBox {
+  x: number; y: number; width: number; height: number;
+  /** The box's centre. */
+  cx: number; cy: number;
+}
+
+/** One option handed to `WidgetDesign.option`. */
+export interface DesignOption extends DesignBox {
+  label: string;
+  selected: boolean;
+  /** One answer (`'radio'`) or several (`'check'`). */
+  control: 'radio' | 'check';
+  /** A row of options, a stacked list, or a matrix cell (no label). */
+  layout: 'row' | 'list' | 'cell';
+  /** The option's place among its siblings. */
+  index: number;
+  count: number;
+  /** The next option's centre in a row, or null for the last. */
+  next: { cx: number; cy: number } | null;
+  /** How far under a ring its label sits (`guides.options({ labelOffset })`). */
+  labelOffset: number;
+}
+
+/** Where a design puts the answer's ink inside an option. */
+export interface DesignAnswer {
+  /** A dot or a square on the control, or a block that fills the option. */
+  shape: 'dot' | 'square' | 'block';
+  /** A dot's radius, or half a square's side. */
+  size?: number;
+  /** The ink's distance from the option's left edge; unset, its centre. */
+  left?: number;
+  /** The ink's distance from the option's top edge; unset, its centre. */
+  top?: number;
+  /** A square's or a block's corner radius. */
+  corner?: number;
+  fill?: string;
+  stroke?: string;
+  strokeWidth?: number;
+}
+
+/** One part of a ranking card (`WidgetDesign.card`), placed from the card's left or right edge. */
+export interface DesignCardPart {
+  /** `body` is the card and takes the drag; the others are drawn on it. */
+  part: 'body' | 'badge' | 'rank' | 'label' | 'grip';
+  /** Distance of the part's anchor from the card's left edge. */
+  left?: number;
+  /** Distance from the card's right edge, in place of `left`. */
+  right?: number;
+  fill?: string;
+  stroke?: string;
+  strokeWidth?: number;
+  /** `body`: the corner radius. `badge`, `grip`: the radius. */
+  size?: number;
+  fontSize?: number;
+  fontWeight?: number | string;
+  textAnchor?: 'start' | 'middle' | 'end';
+  /** `grip`: `'dots'` (the default), `'bars'`, an SVG path or a shape name. */
+  path?: string;
+  /** `body`: its look while the pointer is over it, and while it is dragged. */
+  hovered?: Record<string, any>;
+  grabbed?: Record<string, any>;
+}
+
+/**
+ * A widget design: how each part of the survey widgets is drawn. Every member is
+ * optional; a design that `extends` another takes the rest from it. Drawers
+ * return scene nodes (`rect`, `circle`, `line`, `text`, `path`) in plot pixels.
+ * Register one with `authoring.registerDesign(name, design)` and name it in
+ * `theme.widget.design`.
+ */
+export interface WidgetDesign {
+  /** The design this one starts from. Default `'ring'`. */
+  extends?: WidgetDesignName;
+  /** Does multiple choice stack its options as a list (`true`) or run them in a row? */
+  list?: boolean;
+  /**
+   * Does each option fill its cell (`true`), so the widget sizes the plot to the
+   * options from `optionHeight`, `rowHeight` and `gap`? Or do options sit on the
+   * plot's centre line (`false`, the `ring` look)?
+   */
+  tiles?: boolean;
+  /** The chrome of one option: its box, its control, its label. */
+  option?: (option: DesignOption, tokens: WidgetTokens) => FeatureNode[];
+  /** The answer's ink inside an option. */
+  answer?: (option: Pick<DesignOption, 'control' | 'layout' | 'width' | 'height'>, tokens: WidgetTokens) => DesignAnswer;
+  /** Chrome around a whole matrix: a frame, the lines between its rows. */
+  grid?: (grid: DesignBox & { rows: number[]; columns: number[] }, tokens: WidgetTokens) => FeatureNode[];
+  /** A slider's track. `at` is the value's pixel, or null with no value. */
+  track?: (track: { x1: number; x2: number; y: number; at: number | null }, tokens: WidgetTokens) => FeatureNode[];
+  /** A slider's handle. */
+  thumb?: (tokens: WidgetTokens) => { size: number; fill: string; stroke?: string; strokeWidth?: number };
+  /** A ranking card's parts, back to front. */
+  card?: (card: { width: number; height: number }, tokens: WidgetTokens) => DesignCardPart[];
+  /** Chrome behind a ranking list: the lines between its slots. */
+  slots?: (list: DesignBox & { rows: number[] }, tokens: WidgetTokens) => FeatureNode[];
+  /** How a bar is drawn in the widgets that sit on chart axes. */
+  bar?: (tokens: WidgetTokens) => { corner?: number; fillOpacity?: number; track?: boolean };
+  /** A named theme to register with the design, so `theme: name` selects it. */
+  theme?: DeepPartial<Theme> & { extends?: ThemeName };
+}
+
+/** A design with its `extends` chain folded in: every part is there. */
+export type ResolvedWidgetDesign = Required<Omit<WidgetDesign, 'extends' | 'theme'>>;
 
 /** A title part's typography (`theme.title` / `subtitle` / `caption`). */
 export interface TitleTokens {
@@ -2369,11 +2542,9 @@ export interface Theme {
   // Ghost-preview styling (probe driver): a ghost multiplies its opacity by
   // `opacity`; a non-null fill/stroke/strokeDash overrides the committed paint.
   ghost: { opacity: number; fill: string | null; stroke: string | null; strokeDash: string | null };
-  // Survey-instrument affordance tokens (widgets/theme.js), read live per frame.
-  widget: {
-    accent: string; ring: string; track: string; cellFill: string; cellStroke: string;
-    label: string; question: string; labelSize: number; questionSize: number; radius: number;
-  };
+  // Survey-instrument tokens: the design the widgets are drawn in, and the
+  // colours and sizes it reads (widgets/designs.js).
+  widget: WidgetTokens;
   // Sparse per-mark default overrides, keyed by mark name (e.g. { bar: { fill } }).
   marks: Record<string, Record<string, any>>;
 }
@@ -2667,8 +2838,8 @@ export type ElicitSpec = DatasetSpec & ChartSpec;
 // The shared option surface every survey widget (src/widgets/*) accepts, so the
 // family reads consistently. A widget adds its own instrument-specific options
 // (e.g. `options`, `domain`, `categories`) on top. `theme` is the style hook: the
-// widget bakes the resolved tokens into its answer mark and forwards the partial to
-// `spec.theme` so the affordances and chrome restyle too (see widgets/shared.js).
+// widget resolves it once, draws its parts in the design `theme.widget.design`
+// names, and pins the resolved tokens on `spec.theme` (see widgets/shared.js).
 export interface WidgetOptions {
   // The question prompt, drawn into the top margin.
   question?: string;
@@ -3268,7 +3439,14 @@ export interface ProximityGuideOptions {
   opacity?: number;
 }
 export interface PromptGuideOptions { id?: string; y?: number }
-export interface OptionRingsGuideOptions { id?: string; labelOffset?: number; radius?: number }
+export interface OptionsGuideOptions {
+  id?: string;
+  /** How far under a ring its label sits (the `ring` design). */
+  labelOffset?: number;
+  radius?: number;
+  /** One answer (`'radio'`, the default) or several (`'check'`): which control a box design draws. */
+  control?: 'radio' | 'check';
+}
 export interface CellGridGuideOptions { id?: string; pad?: number }
 export interface SliderTrackGuideOptions { id?: string; format?: Format }
 export interface QuadrantsGuideOptions { id?: string; x?: string; y?: string }

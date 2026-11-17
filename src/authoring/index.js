@@ -132,11 +132,15 @@ export { registerDriver } from '../edit/drivers/index.js';
 // The same function as the spec keyword `constraints.custom`.
 export { defineConstraint } from '../constraints/define.js';
 
-// ── Writing a widget ────────────────────────────────────────────────────────
-// The built-in instruments' palette. Their guides (`optionRings`, …) are `guides.*`.
+// ── Writing a widget, or a design for the built-in ones ─────────────────────
+// The default widget tokens (`DEFAULT_THEME.widget`). The widgets' guides
+// (`options`, `cellGrid`, …) are `guides.*`.
 export { THEME } from '../widgets/theme.js';
 // Resolve a widget's theme the way the engine resolves `spec.theme`.
-export { widgetTheme } from '../widgets/shared.js';
+export { widgetTheme, widgetLook } from '../widgets/shared.js';
+// A design draws every widget's parts. Register one, and name it in
+// `theme.widget.design`; the node helpers draw the pieces designs share.
+export { registerDesign, designNames, labelNode, checkNode, controlNodes } from '../widgets/designs.js';
 
 // ── Chart-level services a custom mark may need ─────────────────────────────
 // A geographic projection: apply / invert, and the tile arithmetic a basemap uses.

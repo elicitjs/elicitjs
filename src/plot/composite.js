@@ -232,6 +232,7 @@ export function composite(options = {}) {
         table,
         // Stamped on the box and every part that does not state its own.
         clip,
+        motion,
         channels: groupChannels = {},
         // Stamped onto parts that don't state their own.
         discreteScale = 'band'
@@ -349,6 +350,7 @@ export function composite(options = {}) {
             id: part.id || `${name}/${i}`,
             table: part.table || table,
             clip: part.clip != null ? part.clip : clip,
+            motion: part.motion != null ? part.motion : motion,
             discreteScale: part.discreteScale || discreteScale,
             // Composite-level edits go on the last part only, so they fire once.
             // In box mode they go on the box instead.
@@ -384,6 +386,7 @@ export function composite(options = {}) {
         edits,
         table,
         clip,
+        motion,
         discreteScale,
         ...positionalKeys(boxChannels),
         /**

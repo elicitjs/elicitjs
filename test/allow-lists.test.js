@@ -63,7 +63,7 @@ describe('mark option vocabularies match the factory bodies', () => {
 const GUIDE_FILE = {
     rule: 'guides/rule', region: 'guides/region', remaining: 'guides/remaining', proximity: 'guides/proximity',
     tip: 'guides/tip', crosshair: 'guides/crosshair', custom: 'guides/custom',
-    prompt: 'widgets/theme', optionRings: 'widgets/theme', cellGrid: 'widgets/theme',
+    prompt: 'widgets/theme', options: 'widgets/theme', cellGrid: 'widgets/theme',
     sliderTrack: 'widgets/theme', quadrants: 'widgets/theme',
 };
 

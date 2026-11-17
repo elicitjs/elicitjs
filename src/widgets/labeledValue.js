@@ -6,7 +6,7 @@ import { text } from '../plot/index.js';
 import { move, editText } from '../edit/index.js';
 import { clamp } from '../constraints/index.js';
 import { prompt } from './theme.js';
-import { widgetTheme } from './shared.js';
+import { widgetLook } from './shared.js';
 
 /**
  * @param {import('../types').WidgetOptions & { input?: 'number' | 'text', value?: any,
@@ -26,13 +26,14 @@ export function labeledValue(opts = {}) {
         stage,
         theme
     } = opts;
-    const t = widgetTheme(theme);
+    const look = widgetLook(theme);
+    const { t } = look;
 
     if (input === 'text') {
         return {
             width,
             height,
-            theme,
+            theme: look.theme,
             margins: { top: 40, right: 24, bottom: 24, left: 24 },
             // x/y are declared (though no axis is drawn) because the label is
             // draggable; inferring them from one seed row gives a zero-width domain.
@@ -48,8 +49,8 @@ export function labeledValue(opts = {}) {
             marks: [
                 text({
                     id: 'label',
-                    fontSize: 18,
-                    fill: t.widget.accent,
+                    fontSize: t.itemSize + 5,
+                    fill: t.accent,
                     channels: {
                         x: { field: 'x' },
                         y: { field: 'y' },
@@ -64,7 +65,7 @@ export function labeledValue(opts = {}) {
     return {
         width,
         height,
-        theme,
+        theme: look.theme,
         margins: { top: 40, right: 40, bottom: 36, left: 48 },
         schema: {
             cat: { type: 'categorical', domain: ['v'] },
@@ -77,8 +78,8 @@ export function labeledValue(opts = {}) {
         marks: [
             text({
                 id: 'readout',
-                fontSize: 22,
-                fill: t.widget.accent,
+                fontSize: t.itemSize + 9,
+                fill: t.accent,
                 channels: {
                     x: { field: 'cat' },
                     y: { field: 'n', edit: move({ guide: true, stage }) },

@@ -6,7 +6,7 @@ import { dotStackY } from '../plot/index.js';
 import { create, remove } from '../edit/index.js';
 import { count } from '../constraints/index.js';
 import { prompt } from './theme.js';
-import { widgetTheme } from './shared.js';
+import { widgetLook } from './shared.js';
 
 /**
  * @param {import('../types').WidgetOptions & { bins?: string[], maxTokens?: number }} [opts]
@@ -23,12 +23,13 @@ export function probabilityTokens(opts = {}) {
         stage,
         theme
     } = opts;
-    const t = widgetTheme(theme);
+    const look = widgetLook(theme);
+    const { t } = look;
 
     return {
         width,
         height,
-        theme,
+        theme: look.theme,
         margins: { top: 40, right: 24, bottom: 36, left: 40 },
         schema: {
             bin: { type: 'categorical', domain: bins }
@@ -40,7 +41,7 @@ export function probabilityTokens(opts = {}) {
         marks: [
             dotStackY({
                 id: 'tokens',
-                fill: t.widget.accent,
+                fill: t.accent,
                 channels: {
                     x: { field: 'bin' }
                 },

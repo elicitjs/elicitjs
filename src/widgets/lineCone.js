@@ -13,6 +13,7 @@ import { composite, trend, trendBand } from '../plot/index.js';
 import { trend as editTrend } from '../edit/index.js';
 import { clamp } from '../constraints/index.js';
 import { quadrants, prompt } from './theme.js';
+import { widgetLook } from './shared.js';
 
 // Minimum margins for the prompt and axis labels; the square plot fits inside the rest.
 const MIN_MARGINS = { top: 56, right: 92, bottom: 52, left: 92 };
@@ -61,11 +62,12 @@ export function lineCone(opts = {}) {
         height = 400,
         theme
     } = opts;
+    const look = widgetLook(theme);
 
     return {
         width,
         height,
-        theme,
+        theme: look.theme,
         margins: squareMargins(width, height),
         // Matched standardized units on both axes, so r is the slope.
         schema: {

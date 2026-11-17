@@ -92,7 +92,7 @@ const G = {
  */
 export function face(options = {}) {
     const opts = normalizeMarkOptions(options, { mark: 'face', allow: MARK_OPTIONS.face });
-    const { id, edits, table, clip, ink = G.ink } = opts;
+    const { id, edits, table, clip, motion, ink = G.ink } = opts;
 
     /** @type {Record<string, any>} */
     const channels = { ...opts.channels };
@@ -173,6 +173,7 @@ export function face(options = {}) {
         edits,
         table,
         clip,
+        motion,
         // The placement channels define the box, edits included.
         channels: {
             x: channels.x,

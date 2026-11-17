@@ -7,7 +7,7 @@ import { composite, point, ruleY, tick } from '../plot/index.js';
 import { move } from '../edit/index.js';
 import { clamp, ordering, follow, symmetric } from '../constraints/index.js';
 import { prompt } from './theme.js';
-import { widgetTheme } from './shared.js';
+import { widgetLook } from './shared.js';
 
 /**
  * `follow` moves the interval with its mean, `ordering` keeps lo ≤ mean ≤ hi, and
@@ -31,12 +31,13 @@ export function interval(opts = {}) {
         stage,
         theme
     } = opts;
-    const t = widgetTheme(theme);
+    const look = widgetLook(theme);
+    const { t } = look;
 
     return {
         width,
         height,
-        theme,
+        theme: look.theme,
         margins: { top: 40, right: 24, bottom: 36, left: 48 },
         schema: {
             cat: { type: 'categorical', domain: [category] },
@@ -59,7 +60,7 @@ export function interval(opts = {}) {
                 parts: [
                     // Inert whisker: no edit, so it never swallows a handle's drag.
                     ruleY({
-                        stroke: t.widget.accent,
+                        stroke: t.accent,
                         strokeWidth: 2,
                         channels: {
                             x: { field: 'cat' },
@@ -68,15 +69,15 @@ export function interval(opts = {}) {
                         }
                     }),
                     point({
-                        size: t.widget.radius - 2,
-                        fill: t.widget.accent,
+                        size: t.radius - 2,
+                        fill: t.accent,
                         channels: {
                             x: { field: 'cat' },
                             y: { field: 'mean', edit: move({ stage, guide: true }) }
                         }
                     }),
                     tick({
-                        stroke: t.widget.accent,
+                        stroke: t.accent,
                         strokeWidth: 2,
                         channels: {
                             x: { field: 'cat' },
@@ -84,7 +85,7 @@ export function interval(opts = {}) {
                         }
                     }),
                     tick({
-                        stroke: t.widget.accent,
+                        stroke: t.accent,
                         strokeWidth: 2,
                         channels: {
                             x: { field: 'cat' },

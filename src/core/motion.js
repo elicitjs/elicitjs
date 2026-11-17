@@ -5,7 +5,10 @@
 // until every track has arrived. Only the drawing is eased: the data,
 // `getData()` and `onChange` never see a value in between.
 //
-// The first client is the hierarchy's layout (engine/render.js, `liveTables`).
+// Two clients. The hierarchy's layout eases ROWS before `build()` (`easeRows`,
+// engine/render.js `liveTables`): the eased value is a real value of its column.
+// A mark with `motion: true` eases its NODES after `build()` (`easeNodes`,
+// engine/carry.js): a discrete scale has nothing between two slots.
 
 import { warn } from './dev.js';
 
@@ -18,6 +21,9 @@ const REST_SPEED = 5;
 
 /** The longest step one frame takes, in ms (a background tab comes back late). */
 const MAX_STEP = 64;
+
+/** The first step after a rest, in ms: the clock is stale, so it is one frame. */
+const FIRST_STEP = 16;
 
 const MOTION_KEYS = ['duration'];
 
@@ -69,6 +75,8 @@ function damp(x, v, goal, time, dt) {
  * @typedef {object} StepOptions
  * @property {boolean} [snap]  arrive at once (the goals are not comparable with the last ones)
  * @property {(key: any) => boolean} [fixed]  keys that are never eased (what the pointer carries)
+ * @property {(key: any) => Record<string, number> | null | undefined} [carried]
+ *   values to draw a key at instead of its goal: never eased, and where it eases from once let go
  * @property {(key: any, was: Record<string, number>, goal: Record<string, number>) => number} [slow]
  *   a factor on the duration for one key
  *
@@ -76,6 +84,7 @@ function damp(x, v, goal, time, dt) {
  * @property {(goals: Map<any, Record<string, number>>, options?: StepOptions) => Map<any, Record<string, number>>} step
  *   The values to draw this frame for each key, on their way to `goals`.
  *   A key seen for the first time starts at its goal.
+ * @property {(key: any) => boolean} arrived  was this key drawn at its goal on the last step?
  *
  * @typedef {object} Motion
  * @property {() => void} begin  start a frame: every track steps by the same time
@@ -97,7 +106,8 @@ export function createMotion(duration) {
 
     const begin = () => {
         const t = now();
-        dt = Math.min(Math.max(t - lastTime, 0), MAX_STEP) / 1000;
+        // Nothing was moving: most of the time since the last frame was a wait, not a step.
+        dt = Math.min(Math.max(t - lastTime, 0), moving ? MAX_STEP : FIRST_STEP) / 1000;
         lastTime = t;
         moving = false;
     };
@@ -106,15 +116,20 @@ export function createMotion(duration) {
     const makeTrack = () => {
         /** @type {Map<any, Record<string, { x: number, v: number }>>} */
         let state = new Map();
+        /** Keys drawn short of their goal on the last step. @type {Set<any>} */
+        let short = new Set();
         return {
-            step(goals, { snap = false, fixed, slow } = {}) {
+            arrived: (key) => !short.has(key),
+            step(goals, { snap = false, fixed, slow, carried } = {}) {
                 /** @type {typeof state} */
                 const next = new Map();
                 /** @type {Map<any, Record<string, number>>} */
                 const out = new Map();
+                short = new Set();
                 for (const [key, goal] of goals) {
                     const was = snap ? undefined : state.get(key);
                     const held = !was || !!(fixed && fixed(key));
+                    const hand = carried ? carried(key) : null;
                     /** @type {Record<string, number>} */
                     const from = {};
                     if (was) for (const name of Object.keys(was)) from[name] = was[name].x;
@@ -127,9 +142,14 @@ export function createMotion(duration) {
                         const g = goal[name];
                         const p = was && was[name];
                         let s = { x: g, v: 0 };
-                        if (p && !held) {
+                        if (hand && hand[name] !== undefined) {
+                            // In the hand: drawn where it is held. Not `moving`, since
+                            // the pointer's own events redraw it.
+                            s = { x: hand[name], v: 0 };
+                            if (Math.abs(s.x - g) >= REST) short.add(key);
+                        } else if (p && !held) {
                             const d = damp(p.x, p.v, g, time, dt);
-                            if (Math.abs(d.x - g) >= REST || Math.abs(d.v) >= REST_SPEED) { s = d; moving = true; }
+                            if (Math.abs(d.x - g) >= REST || Math.abs(d.v) >= REST_SPEED) { s = d; moving = true; short.add(key); }
                         }
                         at[name] = s;
                         drawn[name] = s.x;
@@ -202,4 +222,113 @@ export function easeRows(track, rows, columns, { keyOf, snap, fixed, slow }) {
         out[at(key)] = { ...rows[at(key)], ...patch };
     }
     return out;
+}
+
+/**
+ * The numbers that place each scene primitive. A path has no entry: its position
+ * is baked into `d`. One that says how it was placed (`node.placed`, a `shape`)
+ * eases by its centre and is redrawn there; any other path is drawn at once.
+ * @type {Record<string, string[]>}
+ */
+export const NODE_GEOMETRY = {
+    rect: ['x', 'y', 'width', 'height'],
+    image: ['x', 'y', 'width', 'height'],
+    circle: ['cx', 'cy', 'r'],
+    ellipse: ['cx', 'cy', 'rx', 'ry'],
+    line: ['x1', 'y1', 'x2', 'y2'],
+    text: ['x', 'y'],
+};
+
+/** A placed path moves by its centre. */
+const PLACED = ['cx', 'cy'];
+
+/**
+ * The fields that place this node, or undefined when it cannot be eased.
+ * @param {any} node @returns {string[] | undefined}
+ */
+export function geometryOf(node) {
+    if (!node) return undefined;
+    return NODE_GEOMETRY[node.type] || (node.placed ? PLACED : undefined);
+}
+
+/** Which axis a geometry field runs along; sizes have none. @type {Record<string, 'x' | 'y'>} */
+const FIELD_AXIS = { x: 'x', cx: 'x', x1: 'x', x2: 'x', y: 'y', cy: 'y', y1: 'y', y2: 'y' };
+
+/** Move whatever is drawn about a node (its edit box, its outline shape) with it. */
+const SATELLITES = ['editBox', 'effectShape'];
+
+/**
+ * Ease built nodes: each is drawn part-way from where it was last drawn to where
+ * `build()` just put it. Mutates the nodes, so hit-testing, effects and both
+ * renderers see the eased geometry. Only nodes `geometryOf` can place move.
+ * @param {Track} track
+ * @param {any[]} nodes the nodes one feature built this frame
+ * @param {{ keyOf: (node: any, n: number) => any, snap?: boolean,
+ *   fixed?: (node: any) => boolean,
+ *   shift?: (node: any) => { x?: number, y?: number } | null | undefined,
+ *   redraw?: (node: any) => void }} options
+ *   `shift`: draw this node that far from its goal (the pointer carries it).
+ *   `redraw`: a moved node whose shape is baked from its position (`node.placed`)
+ * @returns {Set<any>} the nodes drawn short of their goal this frame
+ */
+export function easeNodes(track, nodes, { keyOf, snap, fixed, shift, redraw }) {
+    /** @type {Map<any, Record<string, number>>} */
+    const goals = new Map();
+    /** @type {Map<any, any>} */
+    const nodeOf = new Map();
+    /** @type {Map<any, Record<string, number>>} */
+    const held = new Map();
+    nodes.forEach((node, n) => {
+        const fields = geometryOf(node);
+        if (!fields) return;
+        /** @type {Record<string, number>} */
+        const goal = {};
+        for (const f of fields) if (Number.isFinite(node[f])) goal[f] = node[f];
+        const key = keyOf(node, n);
+        goals.set(key, goal);
+        nodeOf.set(key, node);
+        const by = shift ? shift(node) : null;
+        if (by) {
+            /** @type {Record<string, number>} */
+            const at = {};
+            for (const f of Object.keys(goal)) {
+                const axis = FIELD_AXIS[f];
+                at[f] = goal[f] + ((axis && by[axis]) || 0);
+            }
+            held.set(key, at);
+        }
+    });
+    const drawn = track.step(goals, {
+        snap,
+        fixed: fixed ? (key) => fixed(nodeOf.get(key)) : undefined,
+        carried: held.size ? (key) => held.get(key) : undefined,
+    });
+    /** @type {Set<any>} */
+    const short = new Set();
+    for (const [key, values] of drawn) {
+        const node = nodeOf.get(key);
+        const goal = /** @type {Record<string, number>} */ (goals.get(key));
+        let dx = 0, dy = 0;
+        for (const f of Object.keys(values)) {
+            if (values[f] === goal[f]) continue;
+            // The first position field on each axis says how far the node moved.
+            if (FIELD_AXIS[f] === 'x' && !dx) dx = values[f] - goal[f];
+            if (FIELD_AXIS[f] === 'y' && !dy) dy = values[f] - goal[f];
+            node[f] = values[f];
+        }
+        if ((dx || dy) && node.placed && redraw) redraw(node);
+        if (dx || dy) {
+            for (const name of SATELLITES) {
+                const part = node[name];
+                if (!part || typeof part !== 'object') continue;
+                const moved = { ...part };
+                for (const f of Object.keys(FIELD_AXIS)) {
+                    if (Number.isFinite(moved[f])) moved[f] += FIELD_AXIS[f] === 'x' ? dx : dy;
+                }
+                node[name] = moved;
+            }
+        }
+        if (!track.arrived(key)) short.add(node);
+    }
+    return short;
 }

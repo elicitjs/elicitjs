@@ -670,14 +670,14 @@ export function orderFieldOf(channels = {}) {
 }
 
 /**
- * The options every mark passes through verbatim: id, edits, table, tip, clip.
+ * The options every mark passes through verbatim: id, edits, table, tip, clip, motion.
  * Spread first in a factory's returned object; a key stated after it wins.
  *
  * `table:` names the one table a mark draws. Without it the mark takes the table
  * filling its `tableRole` (`link` declares 'links'; other marks get the primary
  * table). Names go in `table:`; roles go in `tableRole` and `Edit.table`.
  * @param {any} opts the result of normalizeMarkOptions
- * @returns {{ id: any, edits: any, table: any, tip: any, clip: any }}
+ * @returns {{ id: any, edits: any, table: any, tip: any, clip: any, motion: any }}
  */
 export function markCommon(opts) {
     return {
@@ -692,6 +692,9 @@ export function markCommon(opts) {
         // `false` draws this mark past the clip (an annotation in the margin):
         // the engine stamps its nodes `unclipped`, as it does a chart element's.
         clip: opts.clip,
+        // `true` eases this mark's drawn nodes to where they belong, and draws a
+        // grabbed row at the pointer (engine/carry.js). `spec.motion` keeps the clock.
+        motion: opts.motion,
     };
 }
 

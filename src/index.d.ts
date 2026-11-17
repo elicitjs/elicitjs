@@ -77,7 +77,7 @@ import type {
   NetworkEndpointOptions,
   NewSeriesOptions,
   NodeOptions,
-  OptionRingsGuideOptions,
+  OptionsGuideOptions,
   OrderingOptions,
   FollowOptions,
   SymmetricOptions,
@@ -393,8 +393,8 @@ export const guides: {
   custom(fn: (ctx: any) => import('./types.js').FeatureNode[], options?: { tracksPointer?: boolean }): Guide;
   /** A question prompt above an instrument. */
   prompt(text: string, options?: PromptGuideOptions): Guide;
-  /** The option rings of a Likert-style scale. */
-  optionRings(options?: OptionRingsGuideOptions): Guide;
+  /** A choice's options, one per category, drawn in the theme's design (rings by default). */
+  options(options?: OptionsGuideOptions): Guide;
   /** A matrix instrument's cell grid. */
   cellGrid(options?: CellGridGuideOptions): Guide;
   /** A slider's track. */
@@ -409,9 +409,10 @@ export const guides: {
 
 /**
  * WIDGETS — named survey instruments. Each is a pure recipe over the core API and
- * returns a whole `ElicitSpec`. Note the spec holds marks and edits, which carry
- * functions: it composes like any other spec, but is not JSON until the planned
- * JSON layer lands.
+ * returns a whole `ElicitSpec`; in JSON it sits under `widget`. How they are drawn
+ * is the design `theme.widget.design` names: `'ring'` (the default), `'box'`
+ * (`theme: 'survey'`), `'block'` (`'surveyBlocks'`), `'line'` (`'surveyLines'`),
+ * or one registered with `authoring.registerDesign`.
  */
 export const widgets: {
   likert(options?: LikertOptions): ElicitSpec;

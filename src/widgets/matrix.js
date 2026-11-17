@@ -1,16 +1,12 @@
 // @ts-check
-// matrix.js: a question matrix (a grid of Likert rows). A band y of questions
-// crossed with a band x of options; the cell grid and labels are guides. `toggle`
-// on (x, y) picks a cell, and `unique({ field: 'question', strategy: 'replace' })`
-// keeps one answer per row.
-//
-// Returns an ElicitSpec: Elicit(matrix({ questions, options })).
+// matrix.js: a grid of questions by options, one answer per question.
+// Plain-chart twin: a mark on two band scales + toggle({ pick: 'probe' }) + unique.
 
-import { point } from '../plot/index.js';
 import { toggle } from '../edit/index.js';
 import { unique } from '../constraints/index.js';
 import { cellGrid, prompt } from './theme.js';
-import { widgetTheme } from './shared.js';
+import { widgetLook } from './shared.js';
+import { answerMark } from './parts.js';
 
 /**
  * @param {import('../types').WidgetOptions & { questions?: any[], options?: any[], value?: any[] }} [opts]
@@ -28,44 +24,44 @@ export function matrix(opts = {}) {
         stage,
         theme
     } = opts;
-    const t = widgetTheme(theme);
+    const look = widgetLook(theme);
+    const { t, design } = look;
 
     const margins = { top: 62, right: 30, bottom: 20, left: 130 };
+    const innerWidth = width - margins.left - margins.right;
     const innerHeight = height - margins.top - margins.bottom;
 
     return {
         width,
         height,
-        theme,
+        theme: look.theme,
         margins,
-        // The contract of the elicited dataset: which option answers which question.
         schema: {
             option: { type: 'ordinal', domain: options },
             question: { type: 'categorical', domain: questions }
         },
         scales: {
-            // A band, so each cell gets an interval rather than a tick.
             x: { type: 'band' },
-            // A y band defaults to [height, 0]; pin it so the first question is on top.
             y: { type: 'band', range: [0, innerHeight] }
         },
-        // The elicited dataset: one row per answered question.
         data: value,
-        // One answer per row: a pick elsewhere in the row replaces it.
         constraints: [unique({ field: 'question', strategy: 'replace' })],
         onChange,
         axes: false,
-        guides: [prompt(question || '', { y: -38 }), cellGrid()],
+        // A design whose answer fills the cell draws its cells edge to edge.
+        guides: [prompt(question || '', { y: -38 }), cellGrid(design.tiles ? { pad: 0 } : {})],
         marks: [
-            point({
-                id: 'matrix',
-                size: t.widget.radius - 3,
-                fill: t.widget.accent,
+            answerMark({
+                id: 'matrix', t, design, layout: 'cell', control: 'radio',
+                cell: {
+                    width: innerWidth / Math.max(1, options.length),
+                    height: innerHeight / Math.max(1, questions.length),
+                },
                 channels: {
                     x: { field: 'option' },
                     y: { field: 'question' }
                 },
-                edits: [toggle({ pick: 'probe', channels: ['x', 'y'], advance: false, stage })]
+                edits: [toggle({ pick: 'probe', channels: ['x', 'y'], advance: false, stage })],
             })
         ]
     };

@@ -44,11 +44,14 @@ paths:
 
 ## Motion
 
-- Motion is eased drawing (`core/motion.js`), decided in the engine before `build()`. Renderers never transition; both draw whatever rows they are handed.
-- A client opens a track (`motion.track(name)`) and steps keyed pixel values toward their goals; `easeRows` does this for a table's rows through its columns' scales. `update()` calls `motion.begin()` once and re-renders each frame until `motion.moving()` is false. Add a client, not a second clock.
-- Only the drawing is eased. Never ease a committed value, and never ease what the pointer carries (`fixed`).
-- Snap when goals are not comparable with the last ones: a scale or size change, data from outside (`chart.snapNext`).
-- The first client is the hierarchy's layout (`liveTables` in `engine/render.js`). `spec.motion` is `false | { duration }`; reduced motion turns it off.
+- Motion is eased drawing (`core/motion.js`), decided in the engine before the scene is handed to a renderer. Renderers never transition; both draw the nodes they are handed.
+- Two clients, one clock. Rows before `build()` when the eased value is a real value of its column: the hierarchy's layout (`easeRows`, `liveTables` in `engine/render.js`), so links follow. Nodes after `build()` when it is not: a mark with `motion: true` (`easeNodes`, `engine/carry.js`), because a discrete scale has nothing between two slots. Never put an in-between value in a discrete column.
+- A client opens a track (`motion.track(name)`) and steps keyed pixel values toward their goals. `update()` calls `motion.begin()` once and re-renders each frame until `motion.moving()` is false. Add a client, not a second clock.
+- Only the drawing is eased. Never ease a committed value, and never ease what the pointer carries: `fixed` holds a key at its goal, `carried` draws it where the pointer holds it and is where it eases from on release.
+- The carry is derived, never declared per edit: the grabbed row, on each axis one of its drag edits writes through a band or point scale (`isDiscrete`, never `scale.type`), in every `motion` mark over the table that binds the same field there. Dispatch records the stroke on `ui.grab` (`at`, `offset`, `handle`) and nothing else. A carried row is `raise`d until it is home.
+- `geometryOf(node)` says what can be eased: the primitives in `NODE_GEOMETRY`, and a path that states how it was placed (`node.placed`, stamped by `shape`). Any other path is drawn at once and warns. A mark over a network's or hierarchy's `nodes` table is not eased by the node client (links dock from rows).
+- Snap when goals are not comparable with the last ones: a scale or size change, a row-count change, data from outside (`chart.snapNext`, read once per frame for both clients).
+- `spec.motion` is `false | { duration }` and keeps the clock; a mark's `motion: true` says it takes part. Reduced motion turns both off, and then nothing is carried either.
 
 ## Clipping
 

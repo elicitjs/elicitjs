@@ -5,8 +5,9 @@
 import { barY } from '../plot/index.js';
 import { move } from '../edit/index.js';
 import { clamp, maintainSum } from '../constraints/index.js';
-import { prompt } from './theme.js';
-import { widgetTheme } from './shared.js';
+import { prompt, barTracks } from './theme.js';
+import { widgetLook } from './shared.js';
+import { barPaint } from './parts.js';
 
 /**
  * @param {import('../types').WidgetOptions & { categories?: string[], total?: number,
@@ -25,7 +26,8 @@ export function allocation(opts = {}) {
         stage,
         theme
     } = opts;
-    const t = widgetTheme(theme);
+    const look = widgetLook(theme);
+    const { t, design } = look;
 
     const equal = total / categories.length;
     const data = categories.map((cat, i) => ({
@@ -36,7 +38,7 @@ export function allocation(opts = {}) {
     return {
         width,
         height,
-        theme,
+        theme: look.theme,
         margins: { top: 40, right: 24, bottom: 36, left: 48 },
         schema: {
             cat: { type: 'categorical', domain: categories },
@@ -48,12 +50,11 @@ export function allocation(opts = {}) {
             maintainSum({ total, field: 'share', strategy: 'redistribute' })
         ],
         onChange,
-        guides: [prompt(question)],
+        guides: [prompt(question), barTracks()],
         marks: [
             barY({
                 id: 'alloc',
-                fill: t.widget.accent,
-                fillOpacity: 0.75,
+                ...barPaint(t, design, 0.75),
                 channels: {
                     x: { field: 'cat' },
                     y: { field: 'share', edit: move({ guide: true, stage }) }

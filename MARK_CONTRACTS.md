@@ -158,7 +158,7 @@ N/A = use a different edit family (documented).
 <td>composite channels → parts. BOX MODE (switched on by a part stating <code>frame:</code>): x/y/size define a per-datum box and are withheld from the trickle; a local part with no x/y sits at the ORIGIN</td>
 <td>depends on parts; mark-level edits ride the LAST part, or the BOX in box mode</td>
 <td>per-part features; in box mode <code>node.frame</code> carries the scales an edit inverts through, and <code>node.dm</code> the positional local channels</td>
-<td>stamps <code>discreteScale</code> and a <code>glyph</code> key (the parts PAINT as one object: nodes ordered by ROW, parts in declared order within it, so a later glyph covers an earlier one whole); in box mode emits the BOX first — one <code>hit</code> circle per row, kept at the bottom of the group, so an edit on x/y/size grabs the whole glyph without outranking a part</td>
+<td>stamps <code>discreteScale</code> and a <code>glyph</code> key (the parts PAINT as one object: nodes ordered by ROW, parts in declared order within it, so a later glyph covers an earlier one whole); in box mode emits the BOX first — one <code>hit</code> circle per row, kept at the bottom of the group, so an edit on x/y/size grabs the whole glyph without outranking a part. <code>clip</code> and <code>motion</code> are stamped on every part that states none, so <code>motion: true</code> eases the whole glyph and carries a grabbed row as one object</td>
 </tr>
 </tbody>
 </table>

@@ -165,7 +165,7 @@ describe('maintainSum guide', () => {
 
 describe('survey guides validate their options', () => {
     const cases = {
-        optionRings: () => guides.optionRings({ raduis: 4 }),
+        options: () => guides.options({ raduis: 4 }),
         cellGrid: () => guides.cellGrid({ padding: 2 }),
         sliderTrack: () => guides.sliderTrack({ fromat: String }),
         prompt: () => guides.prompt('q', { dy: 4 }),
