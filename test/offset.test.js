@@ -110,8 +110,8 @@ describe('grouped bar', () => {
             { category: 'A', group: 'x', part: 'p', value: 20 }, { category: 'A', group: 'x', part: 'q', value: 30 },
             { category: 'A', group: 'y', part: 'p', value: 10 },
         ];
-        const el = chart([plot.barY({ stack: true, channels: {
-            x: { field: 'category' }, xOffset: { field: 'group' }, y: { field: 'value' }, series: { field: 'part' },
+        const el = chart([plot.barY({ channels: {
+            x: { field: 'category' }, xOffset: { field: 'group' }, y: { field: 'value' }, stack: { field: 'part' },
         } })], { data, schema: { ...schema, part: { type: 'categorical', domain: ['p', 'q'] } } });
         await tick();
         const bars = nodes(el, 'rect.mark');

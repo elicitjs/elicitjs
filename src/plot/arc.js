@@ -6,6 +6,7 @@
 //     outerRadius: 100, innerRadius: 40,   // donut
 //     channels: {
 //       theta: { field: 'share' },         // magnitude → slice width
+//       stack: { field: 'party' },         // optional: names and orders the slices
 //       fill:  { field: 'party' },
 //     },
 //   })
@@ -27,13 +28,17 @@
 // A boundary drag moves share between two adjacent slices of one donut and keeps
 // that donut's total fixed. The magnitude is `theta` (a polar position), not
 // `angle` (a rotation in place).
+//
+// A pie always stacks, so `stack` is optional: it orders the slices by its field's
+// categories and is the field `edit.stack.cut` names a new slice in. Without it,
+// slices follow data order.
 
 import { encodeChannel, resolveStyle, normalizeMarkOptions, markDefaults, resolveHandles, handlePaint, markCommon} from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 import { warn } from '../core/dev.js';
 import { arcSpan, arcPath, polarToXY } from './polar.js';
 import { isBand, bandwidthOf } from '../core/scales.js';
-import { groupByPosition, stackLayout, stackDescriptor } from './stack.js';
+import { groupByPosition, stackLayout, stackDescriptor, stackFieldOf, stackFieldSchema, stackOrder, orderMembers, checkStackChannel } from './stack.js';
 
 /**
  * @param {any} [options]
@@ -69,6 +74,7 @@ export function arc(options = {}) {
         end: end != null ? end : (arcOpt ? undefined : 180),
     });
     const thetaField = channels.theta && channels.theta.field;
+    const stackField = stackFieldOf(channels);
 
     return {
         ...markCommon(opts),
@@ -76,7 +82,7 @@ export function arc(options = {}) {
         channels,
         // `theta` is raw on arc: the mark normalizes its own magnitudes, so no theta
         // scale (and no radial axis or legend) is built. `needle` scales it instead.
-        rawChannels: ['theta'],
+        rawChannels: ['theta', 'stack'],
         // The `radius` scale's px extent; build() fits the ring by the same rule
         // (core/encoding.js radiusExtent).
         radiusRange: { inner: innerRadius, outer: outerOpt != null ? outerOpt : null },
@@ -92,12 +98,17 @@ export function arc(options = {}) {
          * @param {any} scales
          * @param {number} width
          * @param {number} height
+         * @param {any} [ctx]
          * @returns {import('../types').FeatureNode[]}
          */
-        build: (currentData, scales, width, height) => {
+        build: (currentData, scales, width, height, ctx) => {
             // One donut per distinct x/y position (one bucket when neither is bound).
-            // Rows keep their global index and first-seen order.
-            const bucketList = groupByPosition(currentData, channels, ['x', 'y']);
+            // Slices follow the stack field's order, else data order.
+            const fieldSchema = stackFieldSchema(stackField, scales, ctx);
+            checkStackChannel('arc', channels, fieldSchema);
+            const order = stackField ? stackOrder(currentData, stackField, fieldSchema) : [];
+            const bucketList = groupByPosition(currentData, channels, ['x', 'y'])
+                .map((g) => ({ ...g, members: orderMembers(g.members, currentData, stackField, order) }));
 
             // Default outer radius: fit a band cell, or shrink in a scatter of several.
             const bandX = isBand(scales.x), bandY = isBand(scales.y);
@@ -116,10 +127,10 @@ export function arc(options = {}) {
             const arcDefaults = markDefaults(scales, 'arc', { fill: '#4f46e5', stroke: '#fff', strokeWidth: 1 });
 
             bucketList.forEach((bucket) => {
-                const rep = bucket.rep;
                 const members = bucket.members;
                 // A slot's position and radius come from its first row.
                 const repIndex = members[0];
+                const rep = currentData[repIndex];
                 const cx = encodeChannel(scales, channels, 'x', rep, width / 2, repIndex, currentData);
                 const cy = encodeChannel(scales, channels, 'y', rep, height / 2, repIndex, currentData);
                 // Outer radius: explicit px > per-donut `size` field > fit default.

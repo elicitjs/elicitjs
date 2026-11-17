@@ -149,7 +149,7 @@ into `npm run check:bundle` (`scripts/check-bundle.mjs`).
 *Found 2026-11-10 while looking at the gallery's stacked-bar examples. Proposed, not
 yet decided.*
 
-**Rendering is already fine; the gap is interaction.** `bar({ stack: true })` stacks
+**Rendering is already fine; the gap is interaction.** A bar with a `stack` channel stacks
 in DATA units through the value scale — nothing normalizes it. The docs examples
 only look full-height because they seed percentages summing to 100 against a
 `[0, 100]` domain. Seed counts with a domain covering the largest total and you get

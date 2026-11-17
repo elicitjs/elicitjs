@@ -32,7 +32,7 @@ export function markLabel(feature) {
 export const SCOPE_CAPABILITY = {
     line: { flag: 'supportsSeries', expects: 'a line mark (line/area)' },
     geo: { flag: 'supportsGeo', expects: 'a geo* mark (geoPoint, geoLine, …)' },
-    stack: { flag: 'supportsStack', expects: 'a stacked mark (bar with `stack`, or arc/donut)' },
+    stack: { flag: 'supportsStack', expects: 'a stacked mark (bar with a `stack` channel, or arc/donut)' },
     waffle: { flag: 'supportsWaffle', expects: 'a waffle mark' },
     axis: { flag: 'isAxis', expects: 'an axis element (axisX/axisY/axisRadial)' },
     trend: { flag: 'supportsTrend', expects: 'a trend mark (trend/trendBand)' },

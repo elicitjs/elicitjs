@@ -2,11 +2,99 @@
 // stack.js — the shared layout for marks that divide a group of rows into a
 // whole: a stacked bar's segments, a pie's slices.
 //   groupByPosition   which rows form one group
+//   stackFieldOf      the field that names each part (the `stack` channel)
+//   stackOrder        that field's category order
+//   orderMembers      a group's rows in stack order
 //   stackLayout       shares and cumulative bounds, in data units
 //   stackDescriptor   what to stamp on a node so an edit can invert it
 // No pixels here: each mark encodes the bounds through its own scale.
 
 import { categoryOf } from './mark.js';
+import { fieldsOf } from '../core/schema.js';
+import { warn } from '../core/dev.js';
+
+/**
+ * The field that names each part of a whole: the `stack` channel's field, or null.
+ * `stack` is a raw channel, so marks list it in `Mark.rawChannels`.
+ * @param {Record<string, any>} [channels]
+ * @returns {string | null}
+ */
+export function stackFieldOf(channels = {}) {
+    return (channels.stack && channels.stack.field) || null;
+}
+
+/**
+ * The stack field's schema entry, from the build context (the mark's own table),
+ * else the primary table's fields on the scale map.
+ * @param {string | null} field
+ * @param {any} scales
+ * @param {any} [ctx] build()'s fifth argument
+ * @returns {import('../types').FieldSchema | undefined}
+ */
+export function stackFieldSchema(field, scales, ctx) {
+    if (!field) return undefined;
+    const fields = ctx && ctx.schema ? fieldsOf(ctx.schema, ctx.table) : scales && scales.schema;
+    return fields ? fields[field] : undefined;
+}
+
+/**
+ * Warn when the `stack` channel can't name the parts: no field, or a field
+ * that isn't categorical or ordinal.
+ * @param {string} mark the mark's name, for the message
+ * @param {Record<string, any>} channels
+ * @param {import('../types').FieldSchema | undefined} fieldSchema
+ */
+export function checkStackChannel(mark, channels, fieldSchema) {
+    if (!channels.stack) return;
+    const field = stackFieldOf(channels);
+    if (!field) {
+        warn(`${mark}:stack:field`,
+            `${mark}(): the \`stack\` channel needs a field, e.g. stack: { field: 'party' }. ` +
+            `It names each part of the stack, so a constant or a function has nothing to name.`);
+        return;
+    }
+    const type = fieldSchema && fieldSchema.type;
+    if (type && type !== 'categorical' && type !== 'ordinal') {
+        warn(`${mark}:stack:type:${field}`,
+            `${mark}(): the \`stack\` field "${field}" is ${type}. A stack's parts are categories, ` +
+            `so declare schema.${field} as categorical or ordinal.`);
+    }
+}
+
+/**
+ * The stack field's category order: its schema domain when declared, else its
+ * values in first-seen order across the data.
+ * @param {any[]} data
+ * @param {string} field
+ * @param {import('../types').FieldSchema | undefined} fieldSchema
+ * @returns {any[]}
+ */
+export function stackOrder(data, field, fieldSchema) {
+    if (fieldSchema && Array.isArray(fieldSchema.domain)) return fieldSchema.domain;
+    const seen = new Set();
+    for (const d of data) if (d) seen.add(d[field]);
+    return [...seen];
+}
+
+/**
+ * A group's members sorted by their stack value's place in `order`, so a part sits
+ * at the same place in every group. Ties keep data order; a value outside `order`
+ * sorts last. With no field, data order.
+ * @param {number[]} members global row indices, in data order
+ * @param {any[]} data
+ * @param {string | null} field
+ * @param {any[]} order
+ * @returns {number[]}
+ */
+export function orderMembers(members, data, field, order) {
+    if (!field) return members;
+    const rank = new Map(order.map((v, i) => [v, i]));
+    const at = (/** @type {number} */ gi) => {
+        const r = rank.get(data[gi] && data[gi][field]);
+        return r === undefined ? order.length : r;
+    };
+    return [...members].sort((a, b) => at(a) - at(b));
+}
 
 /**
  * Which rows form one group. The positional channels in `keys` that carry a field

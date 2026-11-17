@@ -11,7 +11,7 @@ The contract is the `Mark` interface in `src/types.d.ts` (prose at the top of `s
 
 ## Mark or option?
 
-Decide by the data model, not the look. A new mark when the data model changes; an option when only geometry does. `link` is a mark because its geometry joins another table. `dotStack` is a mark because one row = one token. `bar({ stack })` is an option because one row is still one value and one rect. `barX`/`barY` are one factory.
+Decide by the data model, not the look. A new mark when the data model changes; an option when only geometry does. `link` is a mark because its geometry joins another table. `dotStack` is a mark because one row = one token. A stacked bar is a channel (`stack`), not a mark, because one row is still one value and one rect. `barX`/`barY` are one factory.
 
 ## Adding a mark — checklist
 
@@ -47,7 +47,9 @@ Decide by the data model, not the look. A new mark when the data model changes; 
 
 ## Stacks
 
-- `plot/stack.js` is the one stack structure for stacked bars and pies: `groupByPosition` (the encoding is the grouping — no `groupBy` option anywhere), `stackLayout` (shares and bounds in data units), `stackDescriptor`.
+- `plot/stack.js` is the one stack structure for stacked bars and pies: `groupByPosition` (the encoding is the grouping — no `groupBy` option anywhere), `stackOrder`/`orderMembers` (the order), `stackLayout` (shares and bounds in data units), `stackDescriptor`.
+- The `stack` channel (raw, categorical or ordinal) names each part and sets its order: the schema domain, else first appearance. On `bar` binding it is what stacks; `arc` always stacks and reads it only for order. Never infer the stack field from `fill`/`series`.
+- `edit.stack.cut` writes the new part's category into the `stack` field and refuses (warns) without one. It picks a category that sorts next to the cut part, so the parts don't reorder.
 - The mark stamps `node.stack`; `edit.stack.{cut,edge,merge}` invert through it. `geometry` is pure data (`{ kind: 'linear', axis }` / `{ kind: 'angular', … }`), never a closure; edits re-derive magnitudes from live `ctx.data` each tick. The pointer → cumulative inversion is a table keyed by `kind`.
 - Totals are preserved by arithmetic; don't use `maintainSum` (it sums the whole dataset).
 

@@ -1008,6 +1008,13 @@ export interface Channels extends StyleChannels {
   xOffset?: ChannelSpec;
   /** `xOffset`'s twin, nested inside each y category (a grouped horizontal bar). */
   yOffset?: ChannelSpec;
+  // The field that names each part of a whole: a stacked bar's segments, a pie's
+  // slices. `xOffset`'s counterpart along the value axis: rows that share a band
+  // stack end to end, in the order of the field's categories (its schema domain,
+  // else first appearance). Binding it is what stacks a `bar`; an `arc` always
+  // stacks, and there it only orders the slices. `edit.stack.cut` writes the new
+  // segment's category into it. Raw (never scaled); categorical or ordinal.
+  stack?: ChannelSpec;
   [channel: string]: ChannelSpec | undefined;
 }
 
@@ -2977,8 +2984,6 @@ export interface BarOptions extends MarkOptions, HandleOptions {
   gradient?: GradientSpec;
   /** Corner radius, px. Default: the theme's `marks.bar.rx` (none). */
   rx?: number;
-  /** Stack the bars sharing a band on each other's cumulative total. */
-  stack?: boolean;
 }
 export interface CurveOptions extends MarkOptions {
   orientation?: Orientation;
@@ -3137,8 +3142,6 @@ export interface StackCutOptions extends EditOptions {
   defaults?: Record<string, any>;
   /** The minted category's label, when the domain is `open`. */
   label?: string | ((n: number) => string);
-  /** The category column, when it isn't the series channel's. */
-  categoryField?: string;
 }
 export interface GeoRemoveVertexOptions extends EditOptions {
   /** Refuse to drop below this many vertices. */

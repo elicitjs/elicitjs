@@ -1,8 +1,9 @@
 // @ts-check
 import { baselineOf } from '../core/scales.js';
-import { encodeChannel, encodeValue, categorySlot, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, handlePaint, markCommon, resolveValueAxis, orientationOf, missingValue } from './mark.js';
+import { encodeChannel, encodeValue, categorySlot, resolveStyle, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, resolveHandles, handlePaint, markCommon, resolveValueAxis, orientationOf, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
-import { groupByPosition, stackLayout, stackDescriptor } from './stack.js';
+import { warn } from '../core/dev.js';
+import { groupByPosition, stackLayout, stackDescriptor, stackFieldOf, stackFieldSchema, stackOrder, orderMembers, checkStackChannel } from './stack.js';
 
 // bar: a rect per row. The category axis sets position and thickness; the value
 // axis sets length from the baseline.
@@ -14,58 +15,66 @@ import { groupByPosition, stackLayout, stackDescriptor } from './stack.js';
 // band-kind scale, then which of x/y is bound) unless `orientation` is given.
 //
 // A span (x1/x2 or y1/y2) places the bar between two values instead of from the
-// baseline. `stack: true` stacks rows that share a category; the `series` channel
-// decides the grouping. Span wins over stack.
-
-/**
- * Stack order within one band: data order, or first-seen series key order when
- * there is a series field, so a series sits at the same height in every band.
- * Ties keep data order; an unseen key sorts last.
- * @param {number[]} members global row indices, in data order
- * @param {any[]} data
- * @param {string | null} seriesField
- * @returns {number[]}
- */
-function orderMembers(members, data, seriesField) {
-    if (!seriesField) return members;
-    /** @type {any[]} */
-    const seriesOrder = [];
-    for (const d of data) {
-        const s = d[seriesField];
-        if (!seriesOrder.includes(s)) seriesOrder.push(s);
-    }
-    const rank = (/** @type {number} */ gi) => {
-        const at = seriesOrder.indexOf(data[gi][seriesField]);
-        return at < 0 ? seriesOrder.length : at;
-    };
-    return [...members].sort((a, b) => rank(a) - rank(b));
-}
+// baseline. The `stack` channel stacks rows that share a band, in the order of
+// its field's categories. Without it, rows that share a band overlap (warned).
 
 /**
  * Cumulative data-space bounds for stacked bars, keyed by row index, plus each
- * band's members so a segment can stamp what a stack edit needs. Grouping and
- * accumulation come from plot/stack.js.
+ * band's members so a segment can stamp what a stack edit needs. Grouping,
+ * order and accumulation come from plot/stack.js.
  * @param {any[]} data
  * @param {Record<string, any>} channels
  * @param {'x' | 'y'} catChannel the band axis
  * @param {string | undefined} catKey its xKey/yKey fallback
  * @param {string | undefined} valueKey the magnitude column
- * @param {string | null} seriesField
+ * @param {string | null} stackField
+ * @param {any[]} order the stack field's category order
  * @returns {Map<number, { y0: number, y1: number, members: number[], local: number }>}
  */
-function stackOffsets(data, channels, catChannel, catKey, valueKey, seriesField) {
+function stackOffsets(data, channels, catChannel, catKey, valueKey, stackField, order) {
     /** @type {Map<number, { y0: number, y1: number, members: number[], local: number }>} */
     const out = new Map();
     // A nested offset is part of the grouping: a stacked grouped bar stacks per sub-band.
     const grouping = [catChannel, catChannel === 'x' ? 'xOffset' : 'yOffset'];
     for (const group of groupByPosition(data, channels, grouping, { [catChannel]: catKey })) {
-        const members = orderMembers(group.members, data, seriesField);
+        const members = orderMembers(group.members, data, stackField, order);
         const { bounds } = stackLayout(members, data, valueKey);
         members.forEach((gi, local) => {
             out.set(gi, { y0: bounds[local][0], y1: bounds[local][1], members, local });
         });
     }
     return out;
+}
+
+/**
+ * Warn when rows share a band with nothing to stack or dodge them: each bar starts
+ * at the baseline, so all but the last are hidden. Rows with no value draw nothing
+ * to hide, bars on opposite sides of zero don't cover each other, and translucent
+ * bars are layered on purpose.
+ * @param {any[]} data
+ * @param {Record<string, any>} channels
+ * @param {'x' | 'y'} catChannel
+ * @param {'x' | 'y'} valueChannel
+ * @param {string | undefined} catKey
+ */
+function warnOverlap(data, channels, catChannel, valueChannel, catKey) {
+    const cat = channels[catChannel];
+    if (!(cat && cat.field != null)) return;
+    const translucent = ['opacity', 'fillOpacity'].some((c) => channels[c] && channels[c].value != null && channels[c].value < 1);
+    if (translucent) return;
+    const offset = catChannel === 'x' ? 'xOffset' : 'yOffset';
+    const valueField = channels[valueChannel] && channels[valueChannel].field;
+    for (const group of groupByPosition(data, channels, [catChannel, offset], { [catChannel]: catKey })) {
+        const drawn = group.members.filter((i) => !missingValue(channels, catChannel, data[i])
+            && !missingValue(channels, offset, data[i]) && !missingValue(channels, valueChannel, data[i]));
+        const below = valueField != null ? drawn.filter((i) => Number(data[i][valueField]) < 0).length : 0;
+        const above = drawn.length - below;
+        if (Math.max(above, below) < 2) continue;
+        warn('bar:overlap',
+            `bar(): ${Math.max(above, below)} rows share the band "${group.rep[cat.field]}" and draw over ` +
+            `each other. Bind the \`stack\` channel to stack them, or \`${offset}\` to place them side by side.`);
+        return;
+    }
 }
 
 /**
@@ -81,7 +90,6 @@ export function bar(options = {}) {
         channels = {},
         edits,
         orientation: orientationOption,
-        stack,
         // Dots on the interior boundaries between stacked segments (node.edge),
         // grabbed by edit.stack.*. Drawn only when a stack edit is wired.
         handles = true,
@@ -97,9 +105,15 @@ export function bar(options = {}) {
     // Span mode: both endpoint channels declared on that axis.
     const hasXSpan = !!(channels.x1 && channels.x2);
     const hasYSpan = !!(channels.y1 && channels.y2);
-    // The `series` channel groups the stack; `stack` only switches it on.
-    const seriesField = stack ? seriesFieldOf(channels) : null;
-    const doStack = !!stack && !hasXSpan && !hasYSpan;
+    // The `stack` channel switches stacking on and names each segment.
+    const stackField = stackFieldOf(channels);
+    const doStack = !!stackField && !hasXSpan && !hasYSpan;
+    if (stackField && !doStack) {
+        warn('bar:stack:span', 'bar(): a span (x1/x2 or y1/y2) places each bar itself, so the `stack` channel is ignored.');
+    }
+    if (channels.series) {
+        warn('bar:series', 'bar() has no `series` channel. To stack segments, bind `stack` to the field that names them.');
+    }
 
     const markEdits = edits || [];
     // Boundary handles address a row pair (loIndex/hiIndex), so only stack edits use them.
@@ -109,8 +123,8 @@ export function bar(options = {}) {
         ...markCommon(opts),
         type: 'bar',
         channels,
-        // The grouping key is read off the datum, never scaled.
-        rawChannels: ['series'],
+        // The stack key is read off the datum, never scaled.
+        rawChannels: ['stack'],
         edits: markEdits,
         // Capability for edit.stack.*: only a stacked bar partitions a total.
         supportsStack: doStack,
@@ -120,9 +134,12 @@ export function bar(options = {}) {
         /**
          * @param {any[]} currentData
          * @param {import('../types').ScaleMap} scales
+         * @param {number} [_width]
+         * @param {number} [_height]
+         * @param {any} [ctx]
          * @returns {import('../types').FeatureNode[]}
          */
-        build: (currentData, scales) => {
+        build: (currentData, scales, _width, _height, ctx) => {
             const { x: xScale, y: yScale } = scales;
 
             const orientation = orientationOf(resolveValueAxis(channels, scales, { orientation: orientationOption }));
@@ -135,9 +152,13 @@ export function bar(options = {}) {
             const hasSpan = horizontal ? hasXSpan : hasYSpan;
             const baseline = baselineOf(horizontal ? xScale : yScale);
 
+            const fieldSchema = stackFieldSchema(stackField, scales, ctx);
+            checkStackChannel('bar', channels, fieldSchema);
             const stacks = doStack
-                ? stackOffsets(currentData, channels, catChannel, catKey, valueKey, seriesField)
+                ? stackOffsets(currentData, channels, catChannel, catKey, valueKey, stackField,
+                    stackOrder(currentData, /** @type {string} */ (stackField), fieldSchema))
                 : null;
+            if (!stacks && !hasSpan) warnOverlap(currentData, channels, catChannel, valueChannel, catKey);
 
             // Theme defaults. A stacked bar also gets a seam stroke so abutting
             // segments of one hue stay distinct.

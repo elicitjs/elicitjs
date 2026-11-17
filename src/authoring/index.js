@@ -68,7 +68,7 @@ export { LINK_SHAPES } from '../plot/linkGeometry.js';
 export { sampleQuadratic, sampleCubic } from '../plot/hitpath.js';
 
 // Stack layout shared by stacked bars and pies.
-export { groupByPosition, stackLayout, stackDescriptor } from '../plot/stack.js';
+export { groupByPosition, stackFieldOf, stackOrder, orderMembers, stackLayout, stackDescriptor } from '../plot/stack.js';
 
 // Text measurement (one lazy context, safe under SSR). `noteBox` is `sticker`'s
 // sizing rule, for sizing something else to match a note.

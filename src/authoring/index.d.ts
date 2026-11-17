@@ -740,6 +740,33 @@ export function sampleQuadratic(p1: [number, number], c: [number, number], p2: [
 export function sampleCubic(p1: [number, number], c1: [number, number], c2: [number, number], p2: [number, number]): [number, number][];
 // ── from src/plot/stack.js ──────────────────────────────────────────────────
 /**
+ * The field that names each part of a whole: the `stack` channel's field, or null.
+ * `stack` is a raw channel, so marks list it in `Mark.rawChannels`.
+ * @param {Record<string, any>} [channels]
+ * @returns {string | null}
+ */
+export function stackFieldOf(channels?: Record<string, any>): string | null;
+/**
+ * The stack field's category order: its schema domain when declared, else its
+ * values in first-seen order across the data.
+ * @param {any[]} data
+ * @param {string} field
+ * @param {import('../types.js').FieldSchema | undefined} fieldSchema
+ * @returns {any[]}
+ */
+export function stackOrder(data: any[], field: string, fieldSchema: import("../types.js").FieldSchema | undefined): any[];
+/**
+ * A group's members sorted by their stack value's place in `order`, so a part sits
+ * at the same place in every group. Ties keep data order; a value outside `order`
+ * sorts last. With no field, data order.
+ * @param {number[]} members global row indices, in data order
+ * @param {any[]} data
+ * @param {string | null} field
+ * @param {any[]} order
+ * @returns {number[]}
+ */
+export function orderMembers(members: number[], data: any[], field: string | null, order: any[]): number[];
+/**
  * Which rows form one group. The positional channels in `keys` that carry a field
  * partition the dataset; with none bound, every row is one group. Keys resolve
  * through `categoryOf`, so `{ fn }` and `{ datum }` channels group the way they

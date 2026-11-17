@@ -32,7 +32,7 @@ export const GUIDE_UNIVERSAL_OPTIONS = ['id'];
 export const MARK_OPTIONS = {
     arc: ['outerRadius', 'innerRadius', 'padAngle', 'arc', 'start', 'end', 'handles', 'handleSize', 'handleColor'],
     area: ['orientation', 'curve', 'handles', 'handleSize', 'handleColor', 'connect', 'gradient'],
-    bar: ['orientation', 'stack', 'handles', 'handleSize', 'handleColor', 'gradient', 'rx'],
+    bar: ['orientation', 'handles', 'handleSize', 'handleColor', 'gradient', 'rx'],
     composite: ['parts', 'discreteScale'],
     curve: ['orientation', 'length'],
     dotStack: ['orientation', 'gap', 'ghost', 'label'],
@@ -153,7 +153,7 @@ export const EDIT_OPTIONS = {
     'scale.removeCategory': ['field', 'mode'],
     'legend.category': [],
     'legend.value': [],
-    'stack.cut': ['label', 'categoryField'],
+    'stack.cut': ['label'],
     'stack.edge': [],
     'stack.merge': [],
     'trend.intercept': ['anchor', 'probe'],

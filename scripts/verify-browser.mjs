@@ -1571,6 +1571,13 @@ async function main() {
         check('stack cut: each cut takes a distinct category',
             new Set(bandOf(full, '2023').map((r) => r.asset)).size === bandOf(full, '2023').length,
             JSON.stringify(bandOf(full, '2023').map((r) => r.asset)));
+        // The `stack` channel orders segments by the schema domain, whatever order the cuts left the rows in.
+        const drawnOrder = await page.$eval(sliceEl, (e) => [...e.querySelectorAll('rect.mark')]
+            .map((n) => n.__data__).filter((d) => d && d.data && d.data.year === '2023')
+            .sort((a, b) => b.y - a.y).map((d) => d.data.asset));
+        check('stack: segments follow the stack field\'s domain, bottom to top',
+            JSON.stringify(drawnOrder) === JSON.stringify(['stocks', 'bonds', 'cash', 'gold']),
+            JSON.stringify(drawnOrder));
         await cutIn(0, 0.5);
         const refused = await barStack();
         check('stack cut: a closed domain refuses once its categories run out',

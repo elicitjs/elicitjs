@@ -9,7 +9,7 @@
 // live `ctx.data` each tick, since the node is a frame behind.
 
 import { makeEdit, andWhen, schemaDefaults, nextCategory } from './shared.js';
-import { stackLayout } from '../plot/stack.js';
+import { stackLayout, stackFieldOf, stackOrder } from '../plot/stack.js';
 import { pointerDegrees } from '../core/encoding.js';
 import { warn } from '../core/dev.js';
 
@@ -82,48 +82,74 @@ function groupOf(node, ctx) {
 }
 
 /**
- * The segment's category field (`fill`, else `stroke`) with its domain and
- * openness from the schema. An undeclared field uses the scale's domain and is open.
- * @param {import('../types').EditContext} ctx @param {string | undefined} override
- * @returns {{ field: string | null, domain: any[], open: boolean }}
+ * The mark's `stack` field, with its category order and openness. A declared
+ * domain is the order; an undeclared field orders by first appearance and is open.
+ * @param {import('../types').EditContext} ctx
+ * @returns {{ field: string, order: any[], open: boolean, declared: boolean } | null}
  */
-function categoryOfStack(ctx, override) {
-    const mc = /** @type {any} */ (ctx.markChannels) || {};
-    const field = override
-        || (mc.fill && mc.fill.field)
-        || (mc.stroke && mc.stroke.field)
-        || null;
-    if (!field) return { field: null, domain: [], open: true };
-
+function stackCategory(ctx) {
+    const field = stackFieldOf(/** @type {any} */ (ctx.markChannels) || {});
+    if (!field) return null;
     const spec = ctx.schema && /** @type {any} */ (ctx.schema)[field];
-    const declared = spec && Array.isArray(spec.domain) ? spec.domain : null;
-    if (declared) return { field, domain: declared, open: !!spec.open };
+    if (spec && Array.isArray(spec.domain)) return { field, order: spec.domain, open: !!spec.open, declared: true };
+    return { field, order: stackOrder(ctx.data, field, undefined), open: true, declared: false };
+}
 
-    // Undeclared: use the scale's domain, so a cut avoids categories in play.
-    for (const name of ['fill', 'stroke']) {
-        const ch = mc[name];
-        if (!ch || ch.field !== field) continue;
-        const scale = /** @type {any} */ (ctx.scales)[name];
-        const dom = scale && Array.isArray(scale.domainConfig) ? scale.domainConfig : null;
-        if (dom) return { field, domain: dom, open: true };
+/**
+ * The new segment's category, chosen so the segments don't reorder. It takes the
+ * upper part when its category sorts between the cut segment and the next one, or
+ * the lower part when it sorts between the previous one and the cut segment. An
+ * open domain mints a new category just after the cut one. A closed domain with
+ * no free category in either gap uses any free one, and the segment moves to its
+ * place in the order.
+ * @param {{ field: string, order: any[], open: boolean }} cat
+ * @param {any[]} values the group's stack values, in stack order
+ * @param {number} local the cut segment
+ * @param {any} label
+ * @returns {{ value: any, upper: boolean, order: any[] } | undefined}
+ */
+function newCategory(cat, values, local, label) {
+    const { field, order } = cat;
+    const used = new Set(values);
+    const rank = (/** @type {any} */ v) => { const r = order.indexOf(v); return r < 0 ? order.length : r; };
+    const cur = rank(values[local]);
+    const next = local + 1 < values.length ? rank(values[local + 1]) : Infinity;
+    const prev = local > 0 ? rank(values[local - 1]) : -1;
+    const free = (/** @type {number} */ lo, /** @type {number} */ hi) =>
+        order.find((v, i) => i > lo && i < hi && !used.has(v));
+
+    const after = free(cur, next);
+    if (after !== undefined) return { value: after, upper: true, order };
+    const before = free(prev, cur);
+    if (before !== undefined) return { value: before, upper: false, order };
+
+    if (cat.open) {
+        // Every listed category counts as taken, so this mints a fresh name.
+        const taken = [...values, ...order].map((v) => ({ [field]: v }));
+        const value = nextCategory(taken, field, order, { open: true, label });
+        if (value === undefined) return undefined;
+        const at = Math.min(cur + 1, order.length);
+        return { value, upper: true, order: [...order.slice(0, at), value, ...order.slice(at)] };
     }
-    return { field, domain: [], open: true };
+    const any = free(-1, Infinity);
+    return any === undefined ? undefined : { value: any, upper: true, order };
 }
 
 /**
  * edit.stack.cut — click inside a segment to divide it there.
  *
- * The magnitude splits at the pointer, keeping the total. The new row is spliced in
- * after the original, since stack order is data order. Its category is the group's
- * next unused one (`nextCategory`); an open domain grows, so this is a
- * `target: 'domain'` edit that commits schema and rows together.
+ * The magnitude splits at the pointer, keeping the total. The new row's category
+ * goes in the mark's `stack` field (`newCategory`); an open domain grows, so this
+ * is a `target: 'domain'` edit that commits schema and rows together. With no
+ * `stack` channel there is no field to name the new segment, so the cut warns and
+ * does nothing.
  *
  * @param {any} [options] `defaults` seeds the new row, `label` names an open-domain
- *   placeholder, `categoryField` overrides which column carries the identity
+ *   placeholder
  * @returns {import('../types').Edit}
  */
 export function cut(options = {}) {
-    const { defaults = {}, label, categoryField, when: userWhen, ...rest } = options;
+    const { defaults = {}, label, when: userWhen, ...rest } = options;
     return makeEdit({
         type: 'stack.cut',
         gesture: 'click',
@@ -151,48 +177,65 @@ export function cut(options = {}) {
             const gi = members[local];
             const sibling = ctx.data[gi];
 
+            const cat = stackCategory(ctx);
+            if (!cat) {
+                warn(
+                    'stack:cut:field',
+                    'edit.stack.cut() needs a `stack` channel on the mark: it names the new segment ' +
+                    'in that field. Without it the new row would have no category, so the cut is refused.'
+                );
+                return undefined;
+            }
+
             // The free category is per group, not per dataset.
-            const cat = categoryOfStack(ctx, categoryField);
-            const groupRows = members.map((mi) => ctx.data[mi]);
-            const minted = nextCategory(groupRows, cat.field, cat.domain, { open: cat.open, label });
-            if (cat.field && minted === undefined) {
+            const values = members.map((mi) => ctx.data[mi] && ctx.data[mi][cat.field]);
+            const minted = newCategory(cat, values, local, label);
+            if (minted === undefined) {
                 warn(
                     `stack:domainfull:${cat.field}`,
                     `edit.stack.cut() has no category left to give a new segment: this stack already ` +
-                    `uses every value in schema.${cat.field}'s domain (${JSON.stringify(cat.domain)}). ` +
+                    `uses every value in schema.${cat.field}'s domain (${JSON.stringify(cat.order)}). ` +
                     `A declared domain is the whole vocabulary, so the cut is refused. Declare more ` +
                     `categories, or set schema.${cat.field}.open = true to let a cut add one.`
                 );
                 return undefined;
             }
 
-            // Copy the positional keys so the new row stays in this group.
+            // Copy the position (and nested offset) so the new row stays in this group.
             /** @type {Record<string, any>} */
             const groupKeys = {};
-            for (const c of ['x', 'y']) {
+            for (const c of ['x', 'y', 'xOffset', 'yOffset']) {
                 const f = /** @type {any} */ (ctx.markChannels)[c] && /** @type {any} */ (ctx.markChannels)[c].field;
                 if (f) groupKeys[f] = sibling[f];
             }
 
+            // The new segment takes the part on its side of the cut.
+            const [mine, theirs] = minted.upper ? [at - lo, hi - at] : [hi - at, at - lo];
             // Other fields start at schema defaults. Not mintDatum: no pointer to invert.
             const newRow = {
                 ...schemaDefaults(ctx.schema),
                 ...groupKeys,
-                ...(cat.field ? { [cat.field]: minted } : {}),
-                [field]: hi - at,
+                [cat.field]: minted.value,
+                [field]: theirs,
                 ...defaults,
             };
 
-            const rows = ctx.data.slice();          // never mutates ctx.data
-            rows[gi] = { ...sibling, [field]: at - lo };
-            rows.splice(gi + 1, 0, newRow);
+            let insertAt = minted.upper ? gi + 1 : gi;
+            // Undeclared order is first appearance, so a fresh category must appear
+            // before the next segment's category does.
+            if (!cat.declared && minted.upper && !cat.order.includes(minted.value) && local + 1 < members.length) {
+                const firstNext = ctx.data.findIndex((d) => d && d[cat.field] === values[local + 1]);
+                if (firstNext >= 0) insertAt = Math.min(insertAt, firstNext);
+            }
 
-            // An open domain grows to hold the new category.
+            const rows = ctx.data.slice();          // never mutates ctx.data
+            rows[gi] = { ...sibling, [field]: mine };
+            rows.splice(insertAt, 0, newRow);
+
+            // A declared open domain grows to hold the new category, in its place.
             /** @type {Record<string, any[]>} */
             const domains = {};
-            if (cat.field && cat.open && !cat.domain.includes(minted)) {
-                domains[cat.field] = [...cat.domain, minted];
-            }
+            if (cat.declared && minted.order !== cat.order) domains[cat.field] = minted.order;
             return { domains, data: rows };
         },
     });

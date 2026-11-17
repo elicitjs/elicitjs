@@ -51,10 +51,10 @@ N/A = use a different edit family (documented).
 <tr>
 <td><code>bar</code> / <code>barX</code> / <code>barY</code></td>
 <td>data</td>
-<td>band + value (or x1/x2, y1/y2 span); stack</td>
+<td>band + value (or x1/x2, y1/y2 span); <code>stack</code> channel (raw) stacks</td>
 <td>remove ok; create awkward (aggregates). Stacked: <code>edit.stack.cut</code> / <code>merge</code></td>
 <td>whole bar; stacked also boundary dots (<code>node.edge</code>)</td>
-<td>band on category; <code>supportsStack</code> when stacked</td>
+<td>band on category; <code>supportsStack</code> when stacked; warns when rows share a band unstacked</td>
 </tr>
 <tr>
 <td><code>rect</code> / <code>rectX</code> / <code>rectY</code></td>
@@ -147,7 +147,7 @@ N/A = use a different edit family (documented).
 <tr>
 <td><code>arc</code> / <code>donut</code></td>
 <td>data</td>
-<td><code>theta</code> magnitudes (raw; the mark normalizes them); optional x/y</td>
+<td><code>theta</code> magnitudes (raw; the mark normalizes them); optional x/y; optional <code>stack</code> (raw) orders slices</td>
 <td><code>edit.stack.cut</code> / <code>merge</code></td>
 <td>rim boundary dots (<code>node.edge</code>)</td>
 <td><code>supportsStack</code></td>
