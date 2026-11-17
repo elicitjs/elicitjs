@@ -31,12 +31,16 @@ function resolveGuideOption(value, ctx) {
  * Resolve every value of an options object with resolveGuideOption.
  * @param {Record<string, any>} options
  * @param {any} ctx
+ * @param {{ keep?: string[] }} [config] `keep` names options left as given: a
+ *   function there takes the value, not the chart context
  * @returns {Record<string, any>}
  */
-export function resolveGuideOptions(options, ctx) {
+export function resolveGuideOptions(options, ctx, { keep = [] } = {}) {
     /** @type {Record<string, any>} */
     const out = {};
-    for (const [key, value] of Object.entries(options)) out[key] = resolveGuideOption(value, ctx);
+    for (const [key, value] of Object.entries(options)) {
+        out[key] = keep.includes(key) ? value : resolveGuideOption(value, ctx);
+    }
     return out;
 }
 

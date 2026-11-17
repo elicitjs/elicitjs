@@ -20,6 +20,7 @@ paths:
 - Grammar namespaces and `ElicitSpec` have closed key sets — no index signatures (an unknown name must be a compile error, and the JSON Schema is generated from the key set).
 - One name per concept. Removed aliases must stay removed: `plot.group` (= `composite`), `pie` (= `arc`; `donut` stays — it pins `innerRadius`), `connectedScatter` (= `path`), `z` (= `series`), `edit.arc.edge`, `edit.axis.categories`, `widgets.ci`, `constraints.normalize`, `youDrawIt` (= `sweep`), `Edit.guideColor`, `effects.grab`/`effects.select`, top-level `elicit.when`.
 - Mark variants (`barX`/`barY`, …) are keywords, declared in `index.d.ts`.
+- Every namespace member is a JSON keyword (`{ "type": "barY" }`), so a name is permanent once shipped. See the JSON spec rule.
 
 ## Vocabulary and types
 

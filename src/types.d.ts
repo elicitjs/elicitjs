@@ -820,15 +820,9 @@ export interface ChannelSpec {
   // series' first row. i/data are supplied by per-datum marks, undefined elsewhere.
   fn?: ChannelFn;
   /**
-   * RESERVED for the planned JSON spec layer — the declarative twin of `fn`.
-   *
-   * `fn` is the one deliberately non-serializable channel form, which means a JSON
-   * spec can express `{field}`, `{value}` and `{datum}` but not a derived channel.
-   * `expr` is where that gap will be closed (`{ expr: "datum.x > 50" }`), and the
-   * key is claimed NOW because discovering later that it collides with a shipped
-   * meaning is expensive, while reserving it costs nothing.
-   *
-   * Not implemented in 0.1: setting it warns and the channel falls back.
+   * The declarative twin of `fn`, for a JSON spec: `{ expr: "datum.x > 50" }`.
+   * `compile()` lowers it to `fn`, so a spec passed straight to `Elicit()` must
+   * use `fn`; an `expr` there warns and the channel falls back.
    */
   expr?: string;
   // The field's DATA type. Overrides the schema's declaration for this channel;
@@ -3082,8 +3076,8 @@ export interface RuleOptions extends MarkOptions {
 export interface TextOptions extends MarkOptions {
   orientation?: Orientation;
   format?: Format;
-  /** Wrap width in px (`true` = the plot width). */
-  wrap?: number | boolean;
+  /** Wrap width in px (`true` = the plot width), or a function of the row. */
+  wrap?: number | boolean | ((d: Datum, i: number, data: Datum[]) => number | boolean);
   /** Baseline step between wrapped lines, in px. */
   lineHeight?: number;
 }
@@ -3254,21 +3248,24 @@ export interface RemainingGuideOptions {
   field?: GuideOption<string>;
   /** The target. Defaults to the chart's maintainSum total. */
   total?: GuideOption<number>;
-  unit?: GuideOption<string>;
-  format?: GuideOption<Format>;
-  anchor?: GuideOption<'top' | 'right' | 'bottom' | 'left'>;
-  label?: GuideOption<string>;
+  /** A noun ('token'), or a [singular, plural] pair. */
+  unit?: GuideOption<string | [string, string]>;
+  /** Formats the number. Takes the value, not the chart context. */
+  format?: Format;
+  anchor?: GuideOption<'top-right' | 'top-left' | 'bottom-right' | 'bottom-left'>;
+  /** Overrides the whole string. Takes the numbers, not the chart context. */
+  label?: (remaining: number, used: number, total: number) => string;
   fill?: GuideOption<string>;
   fontSize?: GuideOption<number>;
 }
 export interface ProximityGuideOptions {
   id?: string;
   /** The feature id whose proximity session the guide draws. */
-  target?: GuideOption<string>;
-  stroke?: GuideOption<string>;
-  strokeDash?: GuideOption<string>;
-  strokeWidth?: GuideOption<number>;
-  opacity?: GuideOption<number>;
+  target?: string;
+  stroke?: string;
+  strokeDash?: string;
+  strokeWidth?: number;
+  opacity?: number;
 }
 export interface PromptGuideOptions { id?: string; y?: number }
 export interface OptionRingsGuideOptions { id?: string; labelOffset?: number; radius?: number }

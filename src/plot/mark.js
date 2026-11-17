@@ -188,13 +188,12 @@ export function categorySlot(scales, channels, axis, datum, key, index, data, fa
 function encodeOwn(scales, channels, channel, datum, fallback, index, data) {
     const spec = channels[channel];
     if (!spec) return fallback;
-    // `expr` is reserved for the JSON spec layer; warn rather than ignore it.
+    // `expr` belongs to a JSON spec, which `compile()` lowers to `fn`.
     if (spec.expr !== undefined) {
         warn(
             `expr:${channel}`,
-            `channel "${channel}" uses { expr: … }, which is RESERVED for the planned JSON ` +
-            `spec layer and is not implemented in 0.1. In JavaScript, write the derived ` +
-            `form instead: { fn: (d, i, data) => … }.`,
+            `channel "${channel}" uses { expr: … }, which only a JSON spec reads: pass the ` +
+            `spec through compile() first. In JavaScript, write { fn: (d, i, data) => … }.`,
         );
     }
     if (spec.field === undefined) {

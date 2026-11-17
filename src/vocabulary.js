@@ -190,3 +190,114 @@ export const CONSTRAINT_OPTIONS = {
     symmetric: ['field', 'about'],
     custom: [],
 };
+
+// ── The JSON spec grammar ────────────────────────────────────────────────────
+// What `compile()` (src/json) needs to know about an option beyond its name. A
+// factory call `ns.keyword(options)` is written `{ "type": "keyword", ...options }`,
+// and the namespace comes from where the descriptor sits.
+
+/** The bare mark behind a keyword (`barX` -> `bar`, `donut` -> `arc`), or null.
+ *  @param {string} keyword @returns {string | null} */
+export function baseMark(keyword) {
+    if (MARK_OPTIONS[keyword]) return keyword;
+    const alias = /** @type {Record<string, string>} */ ({ path: 'line', donut: 'arc' })[keyword];
+    if (alias) return alias;
+    const bare = keyword.slice(0, -1);
+    return /[XY]$/.test(keyword) && MARK_OPTIONS[bare] ? bare : null;
+}
+
+/** The bare element behind a keyword (`axisX` -> `axis`, `legendColor` -> `legend`), or null.
+ *  @param {string} keyword @returns {string | null} */
+export function baseElement(keyword) {
+    if (ELEMENT_OPTIONS[keyword]) return keyword;
+    if (/^axis[XY]$/.test(keyword)) return 'axis';
+    if (/^grid[XY]$/.test(keyword)) return 'grid';
+    if (/^legend/.test(keyword)) return 'legend';
+    return null;
+}
+
+// A function option's parameters, which are the variables an `expr` may read:
+//   a list   the parameter names, in order
+//   'ctx'    one context object; an `expr` reads its keys as variables
+//   'fn'     a registered function only, no `expr`
+const ROW = ['datum', 'index', 'data'];
+const ROW_IN_TABLE = ['datum', 'index', 'table'];
+const TICK = ['value', 'index'];
+const VALUE = ['value'];
+const TIP = ['datum', 'ctx'];
+
+/** An option key that holds factory results: the namespaces its descriptors are
+ *  looked up in, and the signature of a function given in their place.
+ *  `marks` and `parts` also take elements, as the engine does.
+ *  @type {Record<string, { ns: string[], fn?: string[] | string }>} */
+export const SPEC_SLOTS = {
+    marks: { ns: ['plot', 'elements'] },
+    parts: { ns: ['plot', 'elements'] },
+    elements: { ns: ['elements'] },
+    guides: { ns: ['guides'] },
+    constraints: { ns: ['constraints'], fn: 'fn' },
+    constrain: { ns: ['constraints'], fn: 'fn' },
+    edit: { ns: ['edit'] },
+    edits: { ns: ['edit'] },
+    when: { ns: ['when'], fn: 'ctx' },
+    format: { ns: ['format'], fn: VALUE },
+    tickFormat: { ns: ['format'], fn: VALUE },
+};
+
+/** Every option that takes a function, by owner. An owner is a keyword's dotted
+ *  path (`plot.rect`, `guides.rule`, `edit.stack.cut`), a kind (`mark`, `channel`,
+ *  `axis`, `grid`, `legend`, `tip`, `outline`, `widget`) or `spec` for the top level.
+ *  A function reference anywhere else is an error.
+ *  @type {Record<string, Record<string, string[] | string>>} */
+export const SPEC_FUNCTIONS = {
+    spec: { lock: ROW_IN_TABLE, context: ROW_IN_TABLE, onChange: 'fn', projection: 'fn' },
+    scales: { '*': 'fn' },
+    channel: { fn: ROW, scale: 'fn' },
+    mark: { ...Object.fromEntries(MARK_SHORTHANDS.map((k) => [k, ROW])), tip: TIP },
+    'plot.rect': { width: ROW, height: ROW },
+    'plot.shape': { path: ROW },
+    'plot.text': { wrap: ROW },
+    'plot.geoTile': { url: ['tile'] },
+    tip: { text: TIP },
+    axis: { transform: 'ctx', tickSize: TICK, stroke: TICK, fill: TICK, fontWeight: TICK },
+    grid: { stroke: TICK, strokeWidth: TICK, strokeDash: TICK },
+    legend: { row: ['data', 'state'] },
+    outline: { color: ['color', 'node'] },
+    'guides.rule': { x: 'ctx', y: 'ctx', stroke: 'ctx', strokeDash: 'ctx', strokeWidth: 'ctx', opacity: 'ctx', label: 'ctx' },
+    'guides.region': { x: 'ctx', y: 'ctx', fill: 'ctx', opacity: 'ctx', stroke: 'ctx', label: 'ctx' },
+    'guides.remaining': {
+        field: 'ctx', total: 'ctx', unit: 'ctx', anchor: 'ctx', fill: 'ctx', fontSize: 'ctx',
+        label: ['remaining', 'used', 'total'],
+    },
+    'guides.tip': { text: TIP },
+    'guides.custom': { fn: 'ctx' },
+    'edit.custom': { fn: 'ctx' },
+    'edit.stack.cut': { label: ['n'] },
+    'constraints.custom': { fn: 'ctx', guide: 'fn' },
+    widget: { onChange: 'fn' },
+};
+
+/** A factory's leading positional parameters, by dotted path. In JSON each is a
+ *  key of the descriptor: `edit.custom(fn, options)` <-> `{ "type": "custom", "fn": … }`.
+ *  A `when` or `format` member listed here is called; one that is not is the value itself.
+ *  @type {Record<string, string[]>} */
+export const SPEC_POSITIONAL = {
+    'edit.custom': ['fn'],
+    'constraints.custom': ['fn'],
+    'guides.custom': ['fn'],
+    'guides.prompt': ['text'],
+    'when.modifier': ['key'],
+    'when.noModifier': ['key'],
+    'when.nearWithin': ['threshold'],
+    'format.number': ['specifier'],
+    'format.percent': ['specifier'],
+    'format.si': ['specifier'],
+    'format.time': ['specifier'],
+    'format.prefix': ['prefix', 'inner'],
+    'format.suffix': ['suffix', 'inner'],
+};
+
+/** Keys whose value is the author's data, so `compile()` never looks inside:
+ *  rows, schemas, GeoJSON, constants and themes.
+ *  @type {string[]} */
+export const SPEC_OPAQUE = ['data', 'schema', 'defaults', 'geojson', 'domain', 'theme', 'value', 'datum', 'options'];

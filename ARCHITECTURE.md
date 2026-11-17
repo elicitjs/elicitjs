@@ -79,8 +79,8 @@ reach for while **writing** new vocabulary lives in `authoring.*` (also importab
 as `elicitjs/authoring`): `encodeChannel`, `makeEdit`, `resolveHandles`,
 `registerDriver`, and the rest.
 
-That split is not cosmetic. A planned JSON spec layer compiles a keyword to a
-factory, so a namespace's members become spec keywords — `plot.arcPath` would read
+That split is not cosmetic. The JSON spec layer (`src/json/`, `compile(json)`)
+compiles a keyword to a factory, so a namespace's members are spec keywords — `plot.arcPath` would read
 as a mark that draws nothing. Keeping the split honest keeps the JS API and the
 grammar the same list. The same reasoning drives one name per thing: an alias is a
 second keyword for one concept, which is free to remove now and permanent later.

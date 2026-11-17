@@ -30,7 +30,8 @@ function targetFromConstraints(constraints, field) {
 
 /**
  * A read-only statement of what is left to allocate. Each option may be a
- * literal or a function of the chart context.
+ * literal or a function of the chart context, except `format` and `label`,
+ * which are functions of the number.
  *   field    the column being allocated (default 'y')
  *   total    the target sum; omitted, it is read from a `maintainSum` constraint
  *   unit     singular noun for the countable phrasing ('token' -> "3 tokens left")
@@ -48,16 +49,16 @@ export function remaining(options = {}) {
         type: 'remaining',
         build: (rows, _scales, width, height, ctx) => {
             const t = ctx?.theme?.guide?.rule || {};
+            // `format` and `label` take the number, not the context.
+            const { format, label } = options;
             const {
                 field = 'y',
                 total,
                 unit,
-                format,
                 anchor = 'top-right',
-                label,
                 fill = t.stroke || '#64748b',
                 fontSize = 11,
-            } = resolveGuideOptions(options, ctx);
+            } = resolveGuideOptions(options, ctx, { keep: ['format', 'label'] });
 
             const data = rows || [];
             const target = typeof total === 'number'

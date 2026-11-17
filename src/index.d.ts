@@ -355,7 +355,7 @@ export const constraints: {
    *  "author your own X" in every grammar namespace — cf. `edit.custom`,
    *  `guides.custom`. (`authoring.defineConstraint` is the same function.) */
   custom(
-    apply: (ctx: ConstraintContext) => ConstraintResult,
+    fn: (ctx: ConstraintContext) => ConstraintResult,
     meta?: { type?: string; field?: string | string[]; options?: Record<string, unknown>; table?: string; guide?: (ctx: any) => any[] },
   ): Constraint;
   clamp(options?: ClampOptions): Constraint;
@@ -390,7 +390,7 @@ export const guides: {
   proximity(options?: ProximityGuideOptions): Guide;
   /** The escape hatch: arbitrary read-only nodes from the live context. Named to
    *  match `edit.custom` / `constraints.custom`. */
-  custom(build: (ctx: any) => import('./types.js').FeatureNode[], options?: { tracksPointer?: boolean }): Guide;
+  custom(fn: (ctx: any) => import('./types.js').FeatureNode[], options?: { tracksPointer?: boolean }): Guide;
   /** A question prompt above an instrument. */
   prompt(text: string, options?: PromptGuideOptions): Guide;
   /** The option rings of a Likert-style scale. */
@@ -480,3 +480,48 @@ export const DEFAULT_THEME: Theme;
  * silence them explicitly.
  */
 export function setWarnings(enabled: boolean): void;
+
+// ── The JSON spec layer ─────────────────────────────────────────────────────
+/** A function in a JSON spec: the name it was registered under, or an expression. */
+export type JsonFunction = { fn: string } | { expr: string };
+/** What `compile` takes. A JSON spec is the JavaScript spec with every factory
+ *  call written `{ "type": "<keyword>", ...options }` and every function written
+ *  as a `JsonFunction`. */
+export type JsonSpec = Record<string, unknown>;
+export interface CompileOptions {
+  /** Functions the spec names with `{ "fn": "<name>" }`. Wins over `registerFunction`. */
+  functions?: Record<string, Function>;
+}
+/**
+ * Compile a JSON spec into the spec `Elicit()`, `Elicit.dataset()` or
+ * `dataset.chart()` takes: `Elicit(compile(json))`. A compiled spec builds one
+ * chart, so compile again for another.
+ */
+export function compile(json: JsonSpec, options?: CompileOptions): ElicitSpec;
+/** Register a function under the name a JSON spec refers to it by. */
+export function registerFunction(name: string, fn: Function): void;
+
+/** What `recorder()` returns: the library's namespaces, recording. */
+export interface Recorder {
+  plot: typeof plot;
+  elements: typeof elements;
+  edit: typeof edit;
+  constraints: typeof constraints;
+  guides: typeof guides;
+  widgets: typeof widgets;
+  format: typeof format;
+  /** The JSON for a spec built from these namespaces, and the functions it names.
+   *  Throws, with the path, for a value that has no JSON form. */
+  toJSON(spec: object): { json: JsonSpec; functions: Record<string, Function> };
+  /** Run `fn` with the namespaces building for real, as a function the spec keeps may need. */
+  live<T>(fn: () => T): T;
+  /** From now on the namespaces build for real. */
+  stop(): void;
+}
+/**
+ * Record a spec written in JavaScript as its JSON spec. Build the spec from the
+ * recorder's namespaces, then call `toJSON(spec)`. An arrow function that reads as
+ * an expression becomes an `expr`; any other function is named, from `functions`
+ * or after its option, and returned alongside.
+ */
+export function recorder(options?: CompileOptions): Recorder;

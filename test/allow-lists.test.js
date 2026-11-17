@@ -81,7 +81,7 @@ function guideReadsOf(src) {
     const keys = new Set();
     // Drop block comments first: an inline JSDoc cast carries braces of its own.
     src = src.replace(/\/\*[\s\S]*?\*\//g, '');
-    for (const m of src.matchAll(/const \{([^{}]*)\} = (?:options|labels|resolveGuideOptions\(options, ctx\));/g)) {
+    for (const m of src.matchAll(/const \{([^{}]*)\} = (?:options|labels|resolveGuideOptions\(options, ctx(?:, [^;]*)?\));/g)) {
         for (const part of m[1].split(',')) {
             const k = part.trim().split(/[:=\s]/)[0];
             if (k) keys.add(k);

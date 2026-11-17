@@ -101,24 +101,15 @@ and `remove` to work on geo marks unchanged), not by symmetry alone.
 
 ---
 
-## 3. Registries (half done — finish if the JSON layer starts)
+## 3. Registries (done 2026-11-16, as the JSON spec layer)
 
-`src/*/registry.js` gives each family a `name → { factory, options, … }` map, so a
-JSON compiler resolves a keyword to a factory and validates its options from one
-source.
+`src/json/keywords.js` resolves a keyword to its factory by walking the live
+namespaces, and the `SPEC_*` tables in `src/vocabulary.js` say which options take a
+function, hold a factory or hold data. `compile()` and `recorder()` read both.
 
-**Done (checked 2026-11-10):** the option vocabularies are hoisted.
-`src/vocabulary.js` (imports nothing) holds `MARK_OPTIONS`, `ELEMENT_OPTIONS`,
-`GUIDE_OPTIONS`, `EDIT_OPTIONS`, `CONSTRAINT_OPTIONS`; every factory passes
-`allow: MARK_OPTIONS.<mark>`, and `check:exports` + `test/allow-lists.test.js` hold
-the lists to `types.d.ts` and to the factory bodies.
-
-**Remaining work:** the `name → factory` half. No `registry.js` exists yet, so a
-keyword cannot be resolved to a factory without importing the namespaces by hand.
-Build it from `vocabulary.js`'s keys.
-
-Value beyond the compiler: one source for the docs API tables, `MARK_CONTRACTS.md`
-(generate it), and the JSON Schema.
+**Still open:** a generated JSON Schema file, one document holding a dataset and
+several charts, `data` from a URL, and generating `MARK_CONTRACTS.md` and the docs
+API tables from the same tables.
 
 ---
 
@@ -134,11 +125,6 @@ Value beyond the compiler: one source for the docs API tables, `MARK_CONTRACTS.m
   The next structural target after the surface work; no behaviour change, purely
   extracting the passes (`update`, the state pass, dispatch, the external-control
   API). Unblocked since the 0.1.0-alpha.0 release.
-- **`edit.scale.categories()` returns an array of three edits** (it was
-  `edit.axis.categories` when this was written) — the only factory that does. Fine
-  as an authoring act, but a JSON compiler needs it flagged as a macro so it expands
-  uniformly rather than being special-cased.
-
 **Done, removed from this list:** "`grep` cannot search `dist/elicit.js`" — folded
 into `npm run check:bundle` (`scripts/check-bundle.mjs`).
 

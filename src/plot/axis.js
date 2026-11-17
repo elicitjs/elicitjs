@@ -8,7 +8,7 @@ import { ELEMENT_OPTIONS } from '../vocabulary.js';
 // translate (e.g. cross at the origin).
 
 import * as d3 from 'd3';
-import { positionOnScale, isDiscrete, isBand, bandStartOf, bandwidthOf } from '../core/scales.js';
+import { positionOnScale, isDiscrete, isBand, bandStartOf, bandwidthOf, toDate } from '../core/scales.js';
 import { themeOf, axisToken } from '../core/theme.js';
 import { measureText } from '../core/measure.js';
 import { warnUnknownElementOptions, resolveHandles, elementEdits } from './mark.js';
@@ -88,7 +88,8 @@ export function tickData(scale, opts = {}) {
 
     let values;
     if (tickValues) {
-        values = tickValues;
+        // A temporal axis hands its formatter Dates, however the ticks were written.
+        values = scale.temporal ? tickValues.map(toDate) : tickValues;
     } else if (categorical) {
         values = scale.domain();
     } else if (typeof scale.ticks === 'function') {

@@ -154,10 +154,7 @@ for (const ns of NAMESPACES) {
 // nobody can call. `widgets`, `format` and `authoring` carry no vocabulary yet
 // and are skipped; so is any member whose options parameter is not an object.
 const vocab = await import(path.join(root, 'src/vocabulary.js'));
-const baseMark = (m) => (vocab.MARK_OPTIONS[m] ? m
-    : ({ path: 'line', donut: 'arc' })[m] || (/[XY]$/.test(m) && vocab.MARK_OPTIONS[m.slice(0, -1)] ? m.slice(0, -1) : null));
-const baseElement = (m) => (vocab.ELEMENT_OPTIONS[m] ? m
-    : /^axis[XY]$/.test(m) ? 'axis' : /^grid[XY]$/.test(m) ? 'grid' : /^legend/.test(m) ? 'legend' : null);
+const { baseMark, baseElement } = vocab;
 const VOCAB = {
     plot: { universal: [...vocab.MARK_UNIVERSAL_OPTIONS, ...vocab.MARK_SHORTHANDS], of: (m) => { const b = baseMark(m); return b ? vocab.MARK_OPTIONS[b] : null; } },
     elements: { universal: vocab.ELEMENT_UNIVERSAL_OPTIONS, of: (m) => { const b = baseElement(m); return b ? vocab.ELEMENT_OPTIONS[b] : null; } },
@@ -258,6 +255,88 @@ for (const [ns, family] of EDIT_FAMILIES) {
     }
 }
 
+// ── The JSON grammar covers the declared surface ────────────────────────────
+// `compile()` (src/json) turns `{ "type": "bar", … }` into `plot.bar({ … })`. It
+// finds every factory by walking the namespaces, but three facts about a factory
+// are not in its name, and each must be stated in src/vocabulary.js or the JSON
+// form of that factory is silently wrong:
+//   a positional argument           SPEC_POSITIONAL
+//   an option that takes a function SPEC_FUNCTIONS (or a slot that takes one)
+//   an option that holds a factory  SPEC_SLOTS
+// So read them off the declarations and hold the tables to them.
+const { ownersOf, signatureOf } = await import(path.join(root, 'src/json/compile.js'));
+const FACTORY_RESULTS = new Set(['Mark', 'Edit', 'ConstraintSpec', 'Guide', 'ChartElement']);
+
+/** The types a declared type is made of: union members and array elements. */
+function partsOf(type) {
+    if (type.isUnion()) return type.types.flatMap(partsOf);
+    if (checker.isArrayType(type)) return checker.getTypeArguments(type).flatMap(partsOf);
+    return [type];
+}
+const isAny = (type) => !!(type.flags & ts.TypeFlags.Any);
+const takesFunction = (type) => partsOf(type).some((t) => t.getCallSignatures().length > 0);
+const holdsFactory = (type) => partsOf(type).some((t) => FACTORY_RESULTS.has((t.aliasSymbol || t.symbol)?.getName()));
+const typeOf = (symbol) => checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration || symbol.declarations?.[0] || source);
+/** An options bag: an object with named properties that is not itself callable. */
+const isOptionsBag = (type) => partsOf(type).filter((t) => !(t.flags & ts.TypeFlags.Undefined))
+    .every((t) => !!(t.flags & (ts.TypeFlags.Object | ts.TypeFlags.Intersection)) && !t.getCallSignatures().length && !checker.isArrayType(t));
+
+/** Hold one options type to the grammar tables. */
+function checkOptionGrammar(label, optionsType, owners) {
+    for (const t of partsOf(optionsType)) {
+        for (const prop of t.getProperties()) {
+            const name = prop.getName();
+            const type = typeOf(prop);
+            if (isAny(type) || vocab.SPEC_OPAQUE.includes(name)) continue;
+            const slot = vocab.SPEC_SLOTS[name];
+            if (holdsFactory(type) && !slot) {
+                fail(`${label}: option \`${name}\` holds a factory result, so a JSON spec writes it as { "type": … }. Add it to SPEC_SLOTS (src/vocabulary.js).`);
+            } else if (takesFunction(type) && !(slot && slot.fn) && !signatureOf(owners, name)) {
+                fail(`${label}: option \`${name}\` takes a function, so a JSON spec writes it as { "fn" } or { "expr" }. Add its parameters to SPEC_FUNCTIONS (src/vocabulary.js).`);
+            }
+        }
+    }
+}
+
+let grammarChecked = 0;
+for (const ns of ['plot', 'elements', 'guides', 'constraints', 'edit', 'widgets', 'format']) {
+    const nsSymbol = checker.getExportsOfModule(moduleSymbol).find((sym) => sym.getName() === ns);
+    if (!nsSymbol) continue;
+    for (const [member, symbol] of members(nsSymbol)) {
+        if (ns === 'format' && member === 'resolveFormat') continue;
+        const sig = typeOf(symbol).getCallSignatures()[0];
+        if (!sig) continue;
+        const params = sig.getParameters();
+        const isWhen = ns === 'edit' && member.startsWith('when.');
+        const key = isWhen ? member : `${ns}.${member}`;
+        let positional;
+        if (isWhen) {
+            // A member that returns a predicate is called; one that IS a predicate is not.
+            positional = sig.getReturnType().getCallSignatures().length ? params.map((q) => q.getName()) : [];
+        } else if (ns === 'format') {
+            positional = params.map((q) => q.getName());
+        } else {
+            const bag = params.findLastIndex((q) => isOptionsBag(typeOf(q)));
+            positional = params.filter((_, i) => i !== bag).map((q) => q.getName());
+            if (bag >= 0) checkOptionGrammar(`${key}()`, typeOf(params[bag]), ownersOf(ns, member));
+        }
+        grammarChecked += 1;
+        const declaredPositional = vocab.SPEC_POSITIONAL[key] || [];
+        if (positional.join(',') !== declaredPositional.join(',')) {
+            fail(`${key}() takes the positional arguments [${positional.join(', ')}] but SPEC_POSITIONAL (src/vocabulary.js) says [${declaredPositional.join(', ')}], ` +
+                `so its JSON descriptor would pass the wrong arguments.`);
+        }
+    }
+}
+for (const key of Object.keys(vocab.SPEC_POSITIONAL)) {
+    const [ns, ...rest] = key.split('.');
+    const live = rest.reduce((o, k) => (o ? o[k] : undefined), ns === 'when' ? runtime.edit.when : runtime[ns]);
+    if (typeof live !== 'function') fail(`SPEC_POSITIONAL names \`${key}\`, which is not an exported factory.`);
+}
+// The spec's own keys (`lock`, `context`, `onChange`).
+const specSymbol = checker.getExportsOfModule(moduleSymbol).find((sym) => sym.getName() === 'ElicitSpec');
+if (specSymbol) checkOptionGrammar('ElicitSpec', checker.getDeclaredTypeOfSymbol(specSymbol), ['spec']);
+
 if (failures.length) {
     console.error(`\ncheck-exports: ${failures.length} drift${failures.length === 1 ? '' : 's'} between the runtime and src/index.d.ts\n`);
     for (const f of failures) console.error(`  · ${f}`);
@@ -269,4 +348,4 @@ const counted = NAMESPACES
     .filter((ns) => runtime[ns] && typeof runtime[ns] === 'object')
     .map((ns) => `${ns}: ${Object.keys(runtime[ns]).length}`)
     .join(', ');
-console.log(`check-exports: OK — ${declaredTop.size} top-level exports (${counted}); ${signaturesChecked} option signatures match src/vocabulary.js`);
+console.log(`check-exports: OK — ${declaredTop.size} top-level exports (${counted}); ${signaturesChecked} option signatures match src/vocabulary.js; ${grammarChecked} factories match the JSON grammar`);

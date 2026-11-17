@@ -22,7 +22,8 @@ constraints, guides/effects/rendering, elements/legends, public API.
 - `src/plot/mark.js` — shared mark foundation. `src/plot/composite.js` — glyphs.
 - `src/edit/index.js` — edits; `src/edit/drivers/` — multi-event lifecycles.
 - `src/elements/index.js` — axis / grid / legend / axisRadial.
-- `src/vocabulary.js` — every factory's option list (imports nothing).
+- `src/vocabulary.js` — every factory's option list, and the JSON grammar tables (`SPEC_*`). Imports nothing.
+- `src/json/index.js` — the JSON spec layer: `compile`, `registerFunction`, `recorder`.
 
 ## Commands
 
@@ -35,9 +36,9 @@ npm run check:warnings && npm run verify:browser
 ```
 
 - `npm test` — vitest unit tests in `test/`.
-- `npm run check:exports` — runtime exports ↔ `src/index.d.ts`, both directions; option interfaces ↔ `vocabulary.js`; scoped edit `type` = dotted path.
+- `npm run check:exports` — runtime exports ↔ `src/index.d.ts`, both directions; option interfaces ↔ `vocabulary.js`; scoped edit `type` = dotted path; every factory ↔ the JSON grammar tables.
 - `npm run gen:types` — regenerates `src/authoring/index.d.ts` from JSDoc. Never hand-edit that file.
-- `npm run check:warnings` — visits every docs route under Next/webpack and fails on any `[elicit]` warning. A warning is either a broken docs example or a false positive in a guard.
+- `npm run check:warnings` — visits every docs route under Next/webpack and fails on any `[elicit]` warning. A warning is either a broken docs example or a false positive in a guard. It visits each route again with `?spec=json`, where every example is built from its JSON spec; an example with no JSON form must be listed in `../elicitjs-docs/lib/json-exceptions.json`.
 - `npm run verify:browser` — boots `../elicitjs-docs`, drives real Chromium pointer events. If you touched dispatch, marks or edits, add a check here: interaction bugs are invisible to typecheck. A single red route that passed earlier in the same run is dev-server noise; re-run first.
 - `npm run dev` — docs dev server, for driving a gesture by hand.
 - After touching `src/core/dev.js`, confirm warnings survive the build with node (grep on the one-line bundle reports nothing):
@@ -62,7 +63,12 @@ not an `isAxis || isLegend` disjunction, when you mean "is this a chart element"
 
 ## Rules that apply everywhere
 
-- **A grammar namespace contains only spec keywords.** `plot.*`, `edit.*`, `constraints.*`, `guides.*`, `elements.*`, `widgets.*` hold only what can appear in a spec; building blocks (`encodeChannel`, `makeEdit`, `registerDriver`, …) go in `authoring.*`. A planned JSON layer compiles keywords to factories, so namespace members become keywords.
+- **A grammar namespace contains only spec keywords.** `plot.*`, `edit.*`, `constraints.*`, `guides.*`, `elements.*`, `widgets.*` hold only what can appear in a spec; building blocks (`encodeChannel`, `makeEdit`, `registerDriver`, …) go in `authoring.*`. `compile()` turns a keyword into its factory, so every namespace member is a JSON keyword.
+- **The JSON spec is the same grammar.** `compile(json)` (`src/json/`) turns `{ "type": "bar", … }` into `plot.bar({ … })` by walking the live namespaces, so while the API changes every change must also compile from JSON:
+  - A new factory is a keyword the moment it is exported, and a keyword is permanent. Name it by the conventions below.
+  - An option that takes a function, holds another factory's result or holds the author's data needs its entry in `SPEC_FUNCTIONS`, `SPEC_SLOTS` or `SPEC_OPAQUE` (`src/vocabulary.js`). A positional argument needs one in `SPEC_POSITIONAL`.
+  - JSON and JS share one spelling for every keyword and option. No JSON-only alias, and no JS-only option without a stated "no JSON form".
+  - `check:exports`, `test/json-*.test.js` and the `?spec=json` pass of `check:warnings` hold this. `npm run verify:browser -- --json` runs the gesture checks on charts built from JSON.
 - **One name per thing.** No aliases, no deprecated wrappers (the library is unreleased; there is nobody to deprecate for). "Author your own X" is `custom` in every namespace.
 - **The schema owns a field's data type and domain** (`spec.schema`, `src/core/schema.js`). A channel never carries `domain` or `range`; a channel's `type` is a data type, its `scale` is the scale.
 - **Never branch on `scale.type`.** Read the capability flags `kind`, `temporal`, `invertible`. A new scale type is a case in `core/scales.js` only.

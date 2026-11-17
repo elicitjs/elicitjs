@@ -7,6 +7,7 @@
 //   constraints.*  invariants   rules over the elicited dataset
 //   widgets.*      instruments  whole specs
 // `authoring.*` (also `elicitjs/authoring`) holds the building blocks.
+// `compile(json)` turns a JSON spec into the same spec these factories build.
 import { Elicit } from "./core/elicit.js";
 import * as plot from "./plot/index.js";
 import * as elements from "./elements/index.js";
@@ -21,6 +22,7 @@ import { CanvasRenderer } from "./renderers/canvas/index.js";
 import { setTheme, resolveTheme, DEFAULT_THEME } from "./core/theme.js";
 import { themes } from "./core/themes.js";
 import { setWarnings } from "./core/dev.js";
+import { compile, registerFunction, recorder } from "./json/index.js";
 
 export {
   Elicit,
@@ -45,4 +47,10 @@ export {
   DEFAULT_THEME,
   // Warnings are on by default, off under NODE_ENV=production or setWarnings(false).
   setWarnings,
+  // The JSON spec layer: `Elicit(compile(json))`. A spec names its functions,
+  // which `registerFunction` (or `compile`'s `functions` option) supplies.
+  compile,
+  registerFunction,
+  // The other direction: a spec written in JavaScript, recorded as JSON.
+  recorder,
 };

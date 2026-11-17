@@ -24,6 +24,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright';
+import { routes } from './docs-routes.mjs';
 
 const docsRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../elicitjs-docs');
 
@@ -37,6 +38,18 @@ const BASE = `http://localhost:${PORT}`;
 // Named once so a palette change is one edit here rather than a scavenger hunt;
 // assertions that are genuinely ABOUT colour compare swatches to marks instead.
 const PALETTE_HEAD = '#50aeb7';
+
+// `--json` runs every check below against charts built from JSON: each example is
+// recorded as a JSON spec and compiled back (`?spec=json`, see ExampleLive in the
+// docs). The gestures and the data they must produce are the same, so a check
+// that passes without the flag and fails with it is a gap in the JSON grammar.
+const JSON_SPECS = process.argv.includes('--json');
+/** @param {string} route */
+const specRoute = (route) => {
+    if (!JSON_SPECS) return route;
+    const [pathAndQuery, hash] = route.split('#');
+    return `${pathAndQuery}${pathAndQuery.includes('?') ? '&' : '?'}spec=json${hash ? `#${hash}` : ''}`;
+};
 
 let passed = 0;
 const failures = [];
@@ -97,7 +110,7 @@ async function main() {
                     // 'load' rather than 'networkidle': Next's HMR websocket keeps
                     // the connection open, so networkidle can hang after a long
                     // route tour even when the page is ready.
-                    await page.goto(BASE + route, { waitUntil: 'load', timeout: 60000 });
+                    await page.goto(BASE + specRoute(route), { waitUntil: 'load', timeout: 60000 });
                     if (waitFor) await page.waitForSelector(waitFor, { timeout: 60000, state: 'attached' });
                     await page.waitForTimeout(400);
                     return;
@@ -119,21 +132,6 @@ async function main() {
 
         // ---- Every documented route mounts -------------------------------
         console.log('\nAll routes (elicitjs-docs)');
-        const routes = [
-            '/', '/start', '/api', '/overview', '/concepts', '/concepts/contracts', '/sizing', '/renderers', '/authoring',
-            '/marks/bar', '/marks/rect', '/marks/area', '/marks/tick', '/marks/point',
-            '/marks/ellipse', '/marks/curve',
-            '/marks/symbol', '/marks/face', '/marks/text', '/marks/line', '/marks/composite',
-            '/marks/dotstack', '/marks/waffle', '/marks/needle',
-            '/marks/axis-radial', '/marks/arc', '/marks/geo', '/marks/network', '/marks/trend', '/marks/axes',
-            '/marks/legend', '/marks/sticker', '/marks/shape',
-            '/editing', '/editing/gestures', '/editing/sweep', '/editing/selection', '/editing/lock',
-            '/editing/existence', '/editing/probe', '/editing/stages', '/editing/axis',
-            '/editing/external-controls', '/editing/zoom',
-            '/editing/history', '/widgets', '/scales', '/schema', '/dataset', '/constraints',
-            '/effects', '/guides', '/theming', '/theming/themes', '/playground',
-            '/case-studies/glyphs',
-        ];
         for (const r of routes) await visit(r);
 
         // ---- Playground: Build dashboard (reactive) -------------------------

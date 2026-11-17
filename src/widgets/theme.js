@@ -8,6 +8,7 @@
 import { custom } from '../guides/index.js';
 import { warnUnknownGuideOptions } from '../guides/shared.js';
 import { GUIDE_OPTIONS } from '../vocabulary.js';
+import { resolveFormat } from '../format.js';
 
 /** Stamp the guide's own keyword (not `custom`), since a spec names it. @param {string} type @param {import('../types').Guide} g */
 const typed = (type, g) => Object.assign(g, { type });
@@ -125,11 +126,11 @@ export function cellGrid(options = {}) {
 /**
  * A slider's track: a rule along the plot's centre line with end caps and value
  * labels at the domain ends.
- * @param {{ format?: (v: any) => string }} [options]
+ * @param {{ format?: string | ((v: any) => string) }} [options]
  */
 export function sliderTrack(options = {}) {
     warnUnknownGuideOptions('sliderTrack', options, GUIDE_OPTIONS.sliderTrack);
-    const { format = (/** @type {any} */ v) => String(v) } = options;
+    const format = resolveFormat(options.format);
     return typed('sliderTrack', custom((/** @type {any} */ ctx) => {
         const { scales, width, height } = ctx;
         const tw = tokensOf(ctx);

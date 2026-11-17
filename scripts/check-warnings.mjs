@@ -28,33 +28,26 @@
 // core/dev.js), plus the fact that this gate's first run reported four warnings.
 // Run both; neither alone is sufficient.
 //
+// It visits every route twice: as written, and with `?spec=json`, where every
+// example is recorded as a JSON spec and compiled back (src/json). The second
+// pass is what holds the JSON grammar to the JavaScript API: an example that
+// cannot be written as JSON must be listed, with its reason, in
+// ../elicitjs-docs/lib/json-exceptions.json, and one that compiles to a chart
+// that warns or throws fails here.
+//
 // Exits non-zero on any warning.
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
+import { routes, asJson } from './docs-routes.mjs';
 
 const docsRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../elicitjs-docs');
 
 const PORT = 3123;
 const BASE = `http://localhost:${PORT}`;
-
-const routes = [
-    '/', '/start', '/api', '/overview', '/concepts', '/concepts/contracts', '/sizing', '/renderers', '/authoring',
-    '/marks/bar', '/marks/rect', '/marks/area', '/marks/tick', '/marks/point',
-    '/marks/ellipse', '/marks/curve',
-    '/marks/symbol', '/marks/face', '/marks/text', '/marks/line', '/marks/composite',
-    '/marks/dotstack', '/marks/waffle', '/marks/needle',
-    '/marks/axis-radial', '/marks/arc', '/marks/geo', '/marks/network', '/marks/trend', '/marks/axes',
-    '/marks/legend', '/marks/sticker', '/marks/shape',
-    '/editing', '/editing/gestures', '/editing/sweep', '/editing/selection', '/editing/lock',
-    '/editing/existence', '/editing/probe', '/editing/stages', '/editing/axis',
-    '/editing/external-controls', '/editing/zoom',
-    '/editing/history', '/widgets', '/scales', '/schema', '/dataset', '/constraints',
-    '/effects', '/guides', '/theming', '/theming/themes', '/playground',
-    '/case-studies/glyphs',
-];
 
 async function waitForServer(url, timeoutMs = 120000) {
     const deadline = Date.now() + timeoutMs;
@@ -74,6 +67,11 @@ async function main() {
     const browser = await chromium.launch();
     /** @type {Map<string, Set<string>>} message -> routes it appeared on */
     const seen = new Map();
+    /** Examples the JSON grammar should cover and does not. @type {string[]} */
+    const jsonProblems = [];
+    /** @type {Record<string, Record<string, string>>} route -> example title -> why it has no JSON form */
+    const exceptions = JSON.parse(readFileSync(path.join(docsRoot, 'lib/json-exceptions.json'), 'utf8'));
+    let compiled = 0;
     try {
         await waitForServer(`${BASE}/overview`);
         const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
@@ -90,22 +88,54 @@ async function main() {
             await page.waitForTimeout(400);
             console.log(`  visited ${route}`);
         }
+
+        // The same routes, each example built from its JSON spec.
+        for (const plain of routes) {
+            route = asJson(plain);
+            await page.goto(BASE + route, { waitUntil: 'load', timeout: 60000 });
+            await page.waitForTimeout(400);
+            const cards = await page.evaluate(() => [...document.querySelectorAll('.card[data-spec="json"]')].map((card) => ({
+                title: card.querySelector('h3')?.textContent || '',
+                json: card.getAttribute('data-json'),
+                error: card.querySelector('.live-error')?.textContent || '',
+            })));
+            compiled += cards.filter((c) => c.json === 'compiled').length;
+            for (const c of cards) if (c.error) jsonProblems.push(`${route} "${c.title}" throws when built from its JSON: ${c.error}`);
+            const without = cards.filter((c) => c.json === 'none').map((c) => c.title).sort();
+            const expected = Object.keys(exceptions[plain] || {}).sort();
+            for (const title of without.filter((t) => !expected.includes(t))) {
+                jsonProblems.push(`${route} "${title}" has no JSON form. Either the JSON grammar lost something the ` +
+                    `JavaScript API can say, or the example belongs in elicitjs-docs/lib/json-exceptions.json.`);
+            }
+            for (const title of expected.filter((t) => !without.includes(t))) {
+                jsonProblems.push(`${route} "${title}" is listed in json-exceptions.json but now has a JSON form (or is gone). Remove it.`);
+            }
+            console.log(`  visited ${route}`);
+        }
+        if (compiled === 0) jsonProblems.push('no example was built from JSON: `?spec=json` did nothing.');
     } finally {
         await browser.close();
         stopNext();
     }
 
     console.log('');
-    if (seen.size === 0) {
-        console.log(`✓ PASS — no [elicit] warnings across ${routes.length} documented routes`);
+    if (seen.size === 0 && jsonProblems.length === 0) {
+        console.log(`✓ PASS — no [elicit] warnings across ${routes.length} documented routes, ` +
+            `and ${compiled} examples build from their JSON spec`);
         process.exit(0);
     }
 
-    console.log(`✗ FAIL — ${seen.size} distinct [elicit] warning(s) from the documentation.`);
-    console.log('  Each is either a broken example or a false positive in a guard.\n');
-    for (const [msg, where] of seen) {
-        console.log(`  • ${msg}`);
-        console.log(`      on: ${[...where].join(', ')}\n`);
+    if (seen.size) {
+        console.log(`✗ FAIL — ${seen.size} distinct [elicit] warning(s) from the documentation.`);
+        console.log('  Each is either a broken example or a false positive in a guard.\n');
+        for (const [msg, where] of seen) {
+            console.log(`  • ${msg}`);
+            console.log(`      on: ${[...where].join(', ')}\n`);
+        }
+    }
+    if (jsonProblems.length) {
+        console.log(`✗ FAIL — ${jsonProblems.length} example(s) the JSON spec does not cover.\n`);
+        for (const problem of jsonProblems) console.log(`  • ${problem}\n`);
     }
     process.exit(1);
 }
