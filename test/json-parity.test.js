@@ -30,6 +30,7 @@ const SPY = {
     plot: spies(NAMESPACES.plot, 'plot'),
     elements: spies(NAMESPACES.elements, 'elements'),
     guides: spies(NAMESPACES.guides, 'guides'),
+    looks: spies(NAMESPACES.looks, 'looks'),
     constraints: spies(NAMESPACES.constraints, 'constraints'),
     widgets: spies(NAMESPACES.widgets, 'widgets'),
     // `when` and `format` stay real: a spec holds their results as values.
@@ -75,6 +76,14 @@ const snap = (ctx) => { ctx.event.preventDefault(); };
 const tipText = (d) => [`${d.party}`, `${d.share.toFixed(0)}%`];
 
 const FIXTURES = {
+    'looks: options, a positional fragment and uniforms': ({ plot, looks }) => ({
+        marks: [plot.barY({ channels: { x: { field: 'party' } } })],
+        looks: [
+            looks.rough({ scope: 'frame', roughness: 2, fill: 'solid' }),
+            looks.halftone(),
+            looks.custom('vec4 look(vec2 uv) { return texture2D(u_frame, uv); }', { uniforms: { k: 1, tint: [1, 0, 0] } }),
+        ],
+    }),
     'a bar chart with an edit and a constraint': ({ plot, edit, constraints }) => ({
         width: 400, height: 300,
         data: [{ party: 'A', share: 40 }],

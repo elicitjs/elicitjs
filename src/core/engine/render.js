@@ -51,6 +51,7 @@ function applyGhostStyle(node, ghost) {
  * @property {any} theme
  * @property {any} effects
  * @property {any} renderer
+ * @property {import('../../types').Look[]} looks
  * @property {'fixed' | 'scale' | 'reflow'} mode
  * @property {any} overflow
  * @property {any} focusOutline
@@ -105,7 +106,7 @@ function applyGhostStyle(node, ghost) {
  */
 export function createRender(chart, deps) {
     const {
-        features, featureById, ui, spec, theme, effects, renderer, mode, overflow, focusOutline, designW, authorMargins, dims, liveSpec, schema, schemaSpec, allGuides, datasetConstraints, tracksPointer, hasLegends, hasAxisTitles, featureNodes, hierarchyNodes, boxHosts, tableOf, targetTableOf, primaryRows, isLockedIn, constraintsIn, nodeBoxRule, nodePortsRule, settleOwn, layoutMoved, settledNodes, heldStill, inFlight, activeEdits, getStage, selectionIn, selectionList, selectionPrimary, hoverRow, hoverLink, hoverWide, portAvailable, handleKey, clipNow, visibleAt, motionDuration,
+        features, featureById, ui, spec, theme, effects, looks, renderer, mode, overflow, focusOutline, designW, authorMargins, dims, liveSpec, schema, schemaSpec, allGuides, datasetConstraints, tracksPointer, hasLegends, hasAxisTitles, featureNodes, hierarchyNodes, boxHosts, tableOf, targetTableOf, primaryRows, isLockedIn, constraintsIn, nodeBoxRule, nodePortsRule, settleOwn, layoutMoved, settledNodes, heldStill, inFlight, activeEdits, getStage, selectionIn, selectionList, selectionPrimary, hoverRow, hoverLink, hoverWide, portAvailable, handleKey, clipNow, visibleAt, motionDuration,
     } = deps;
     const handleEvent = (/** @type {any} */ event) => deps.handleEvent(event);
     // Does this feature draw the dataset's rows? Elements draw a scale, and map
@@ -830,6 +831,16 @@ export function createRender(chart, deps) {
         }
     };
 
+    // 2g. Look pass - a geometry look redraws the finished scene. It runs last and
+    // only on what the renderer is handed: `featureNodes`, which picking, guides and
+    // edits read, keep the true geometry.
+    const geometryLooks = looks.filter((look) => look.kind === 'geometry' && typeof look.transform === 'function');
+    const lookPass = () => {
+        for (const look of geometryLooks) {
+            scene.children = /** @type {any} */ (look.transform)(scene.children);
+        }
+    };
+
     // 3. Coordinator - rebuild the scene graph from current state and render.
     const update = () => {
         measure(); // reflow: pick up the container's current width before drawing
@@ -843,6 +854,7 @@ export function createRender(chart, deps) {
         pointerPass();
         guidePass();
         statePass();
+        lookPass();
 
         renderer.render({
             container,
@@ -861,6 +873,7 @@ export function createRender(chart, deps) {
             overflow,
             focusOutline,
             effects,
+            looks,
             theme,
             onEvent: handleEvent
         });

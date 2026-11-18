@@ -15,7 +15,7 @@ export const routes = [
     '/editing/existence', '/editing/probe', '/editing/stages', '/editing/axis',
     '/editing/external-controls', '/editing/zoom',
     '/editing/history', '/widgets', '/scales', '/schema', '/dataset', '/constraints',
-    '/effects', '/guides', '/theming', '/theming/themes', '/playground',
+    '/effects', '/guides', '/theming', '/theming/themes', '/looks', '/playground',
     '/case-studies/glyphs',
 ];
 

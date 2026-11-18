@@ -11,6 +11,7 @@ import * as elements from '../elements/index.js';
 import * as edit from '../edit/index.js';
 import * as constraints from '../constraints/index.js';
 import * as guides from '../guides/index.js';
+import * as looks from '../looks/index.js';
 import * as widgets from '../widgets/index.js';
 import * as format from '../format.js';
 import { D3Renderer } from '../renderers/d3-renderer/index.js';
@@ -22,7 +23,7 @@ export { registerFunction } from './functions.js';
 
 /** The library's own namespaces, which `compile` resolves keywords in. */
 export const NAMESPACES = {
-    plot, elements, edit, constraints, guides, widgets, format,
+    plot, elements, edit, constraints, guides, looks, widgets, format,
     renderers: { svg: D3Renderer, canvas: CanvasRenderer },
 };
 
@@ -35,7 +36,7 @@ export const compile = createCompiler(NAMESPACES);
 
 /**
  * Record a spec written in JavaScript as its JSON spec. The recorder's namespaces
- * (`plot`, `elements`, `edit`, `constraints`, `guides`, `widgets`, `format`) look
+ * (`plot`, `elements`, `edit`, `constraints`, `guides`, `looks`, `widgets`, `format`) look
  * like the library's, and `toJSON(spec)` returns the JSON and the functions it names.
  */
 export const recorder = createRecorder(NAMESPACES);

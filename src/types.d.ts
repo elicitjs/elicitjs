@@ -2160,6 +2160,8 @@ export interface FeatureNode {
   // Escapes the mark clip (`ChartSpec.clip`): stamped by the engine on every node
   // a chart element draws (an axis handle on the plot edge, a legend swatch).
   unclipped?: boolean;
+  // Drawn by `looks.rough()` in place of a shape: inert, and never redrawn again.
+  rough?: boolean;
   // A gradient fill (a mark's `gradient` option), painted by the renderers as a
   // <linearGradient> / createLinearGradient over the node's own box.
   fillGradient?: GradientSpec;
@@ -2801,6 +2803,10 @@ export interface ChartSpec {
   // once, when the gesture commits. `false` draws every change at once. Always off
   // when the reader's system asks for reduced motion.
   motion?: false | MotionSpec;
+  // Experimental. How the finished chart is drawn: a hand-drawn redraw, a shader
+  // (`looks.*`), applied in order. A shader look needs a renderer that supports
+  // `shaders` (canvas). Off unless set.
+  looks?: Look[];
   // Browser focus ring on editable marks (the blue box after a click / Tab).
   // Off by default — keyboard nudge still works (`tabindex` stays); only the
   // native outline is suppressed. Set `true` to show the browser's focus ring
@@ -3041,6 +3047,9 @@ export interface RenderContext {
   // See ChartSpec.focusOutline. Read by a renderer that supports `keyboard`.
   focusOutline?: boolean;
   effects?: any;
+  // The chart's looks. A renderer that supports `shaders` runs the 'shader' ones
+  // over what it painted; 'geometry' ones are already in the scene.
+  looks?: Look[];
   // The chart's resolved theme. A renderer reads it for the font family (emitted on
   // the root svg) and text-size fallback; all mark/chrome colours arrive pre-resolved
   // on the nodes, so a renderer never has to consult the theme for paint.
@@ -3063,6 +3072,80 @@ export interface RendererSupports {
   filter?: boolean;
   // Drawing past the chart's own edge (`overflow: 'visible'`).
   overflow?: boolean;
+  // Running a shader look (`looks.sketch()`, `looks.custom()`) over the painted chart.
+  shaders?: boolean;
+}
+
+// ── Looks (experimental) ─────────────────────────────────────────────────────
+// A look restyles how the finished chart is drawn: `spec.looks`, built by `looks.*`.
+// It changes no data, no scale and no hit geometry. Names and options may change.
+
+// What a look covers: 'marks' is what draws data, so axes, labels, legends and
+// guides stay as drawn; 'frame' is the whole chart.
+export type LookScope = 'marks' | 'frame';
+
+export interface Look {
+  // The keyword that built it ('rough', 'sketch', 'custom', …).
+  type: string;
+  // 'geometry' redraws scene nodes before they reach the renderer, so it works in
+  // any renderer. 'shader' runs over the painted pixels and needs a renderer that
+  // supports `shaders`.
+  kind: 'shader' | 'geometry';
+  scope: LookScope;
+  // A shader look: GLSL ES 1.00 that defines `vec4 look(vec2 uv)`, the numbers it
+  // reads as uniforms, and the `u_seed` it is given. A null fragment is skipped.
+  fragment?: string | null;
+  uniforms?: Record<string, number | number[]>;
+  seed?: number;
+  // A geometry look: the nodes to draw in place of the scene's.
+  transform?: (nodes: FeatureNode[]) => FeatureNode[];
+}
+
+export interface RoughLookOptions {
+  scope?: LookScope;
+  // How far the pen strays: 0 draws true lines, 1 is the default, up to 3.
+  roughness?: number;
+  // How a mark's fill is drawn: hatched with lines (the default) or solid.
+  fill?: 'hachure' | 'solid';
+  // A different number gives a different hand. The same number draws the same chart.
+  seed?: number;
+}
+
+export interface SketchLookOptions {
+  scope?: LookScope;
+  // How far lines wobble, 0 to 2 (default 1.2). Capped so a mark is still drawn
+  // where the pointer hits it.
+  amount?: number;
+  // The pencil grain, 0 to 1 (default 0.25).
+  grain?: number;
+  seed?: number;
+}
+
+export interface CartoonLookOptions {
+  scope?: LookScope;
+  // Steps of colour per channel, 2 to 16 (default 4).
+  levels?: number;
+  // The strength of the ink line, 0 to 1 (default 1).
+  outline?: number;
+  // The ink's colour (default near-black).
+  ink?: string;
+}
+
+export interface HalftoneLookOptions {
+  scope?: LookScope;
+  // The distance between dots in px, 2 to 40 (default 5).
+  size?: number;
+  // The angle of the dot screen in degrees (default 30).
+  angle?: number;
+}
+
+export interface CustomLookOptions {
+  scope?: LookScope;
+  // Numbers the fragment reads by name: a number is a `float`, 2 to 4 numbers a
+  // `vec2` / `vec3` / `vec4`.
+  uniforms?: Record<string, number | number[]>;
+  // Given to the fragment as `u_seed`.
+  seed?: number;
 }
 
 // The drawing-backend contract. `D3Renderer` (SVG) and `CanvasRenderer` (canvas 2D)

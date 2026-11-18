@@ -3,6 +3,7 @@
 //   plot.*         marks        view data (one node per row)
 //   elements.*     elements     view a scale (axis / grid / legend)
 //   guides.*       guides       view state, write nothing
+//   looks.*        looks        restyle how the chart is drawn (experimental)
 //   edit.*         edits        a gesture -> data, through the encoding's scale
 //   constraints.*  invariants   rules over the elicited dataset
 //   widgets.*      instruments  whole specs
@@ -14,6 +15,7 @@ import * as elements from "./elements/index.js";
 import * as edit from "./edit/index.js";
 import * as constraints from "./constraints/index.js";
 import * as guides from "./guides/index.js";
+import * as looks from "./looks/index.js";
 import * as widgets from "./widgets/index.js";
 import * as authoring from "./authoring/index.js";
 import * as format from "./format.js";
@@ -33,6 +35,8 @@ export {
   constraints,
   // Guides view chart state and write nothing.
   guides,
+  // Looks restyle the finished drawing: a hand-drawn redraw, a shader. Experimental.
+  looks,
   widgets,
   // Building blocks for new marks / edits / constraints / widgets.
   authoring,

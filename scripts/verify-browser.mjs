@@ -335,6 +335,81 @@ async function main() {
         check('canvas: click on empty space does not error', errors.length === errsBeforeClick,
             errors.slice(errsBeforeClick).join(' | '));
 
+        // ---- Looks ----------------------------------------------------------
+        // A look restyles the drawing and nothing else. Two things only a browser
+        // shows: the look really drew (paths under SVG, shaded pixels under canvas),
+        // and a drag still lands on the mark it now draws differently.
+        console.log('\nLooks (/looks)');
+        await open('/looks', '#order .chart canvas');
+
+        // rough, under SVG: the bars are drawn as paths, and each true bar stays in
+        // the scene, unseen, as what the pointer hits.
+        const roughPaths = await page.locator('#rough .chart svg path').count();
+        const hiddenBar = await page.$eval('#rough .chart svg rect.mark', (e) => e.getAttribute('fill'));
+        check('looks: rough draws the bars as paths', roughPaths >= 8, `${roughPaths} paths`);
+        check('looks: rough keeps the true bar, unseen', hiddenBar === 'transparent', `fill "${hiddenBar}"`);
+        const roughBefore = await ysOf('#rough');
+        await page.locator('#rough .chart svg').scrollIntoViewIfNeeded();
+        const lastBar = await page.locator('#rough .chart svg rect.mark').nth(3).boundingBox();
+        await page.mouse.move(lastBar.x + lastBar.width / 2, lastBar.y + lastBar.height / 2);
+        await page.mouse.down();
+        for (let k = 1; k <= 10; k++) await page.mouse.move(lastBar.x + lastBar.width / 2, lastBar.y + lastBar.height / 2 - k * 9);
+        await page.mouse.up();
+        await page.waitForTimeout(150);
+        const roughAfter = await ysOf('#rough');
+        check('looks: a drag under rough rewrites the value', roughAfter[3] > roughBefore[3] + 5, `D: ${roughBefore[3]} -> ${roughAfter[3]}`);
+
+        // Shader looks, under canvas. Read a row of pixels inside bar D (opaque and
+        // one flat colour when unshaded).
+        const rowOf = (nth) => page.locator('#shaders .chart canvas').nth(nth).evaluate((c) => {
+            const k = c.width / c.clientWidth;
+            const px = c.getContext('2d').getImageData(Math.round(300 * k), Math.round(215 * k), Math.round(48 * k), 1).data;
+            const colours = new Set();
+            let clear = 0, solid = 0;
+            for (let i = 0; i < px.length; i += 4) {
+                colours.add(`${px[i]},${px[i + 1]},${px[i + 2]}`);
+                if (px[i + 3] === 0) clear++;
+                else if (px[i + 3] === 255) solid++;
+            }
+            return { colours: colours.size, clear, solid };
+        });
+        const sketchRow = await rowOf(0);
+        check('looks: the sketch shader grains the fill', sketchRow.colours > 8, JSON.stringify(sketchRow));
+        const halftoneRow = await rowOf(2);
+        check('looks: the halftone shader breaks the fill into dots', halftoneRow.clear > 0 && halftoneRow.solid > 0, JSON.stringify(halftoneRow));
+
+        const sketchBefore = await ysOf('#shaders');
+        await page.locator('#shaders .chart canvas').first().scrollIntoViewIfNeeded();
+        const skBox = await page.locator('#shaders .chart canvas').first().boundingBox();
+        await page.mouse.move(skBox.x + 324, skBox.y + 150);
+        await page.mouse.down();
+        for (let k = 1; k <= 10; k++) await page.mouse.move(skBox.x + 324, skBox.y + 150 - k * 9);
+        await page.mouse.up();
+        await page.waitForTimeout(150);
+        const sketchAfter = await ysOf('#shaders');
+        check('looks: a drag under a shader rewrites the value', sketchAfter[3] > sketchBefore[3] + 5, `D: ${sketchBefore[3]} -> ${sketchAfter[3]}`);
+
+        // A glyph under rough: every part is redrawn, and a part still takes its own
+        // drag. The plant is the fifth example; its flower moves `energy`. The flower
+        // is the one circle kept as an unseen hit target (the glyph's box is inert).
+        const plant = page.locator('#glyphs .chart').nth(4);
+        const energyOf = async () => {
+            const text = await page.locator('#glyphs .data-body').nth(4).textContent();
+            const m = /energy:\s*(-?\d+(?:\.\d+)?)/.exec(text || '');
+            return m ? Number(m[1]) : NaN;
+        };
+        await plant.scrollIntoViewIfNeeded();
+        const energyBefore = await energyOf();
+        const flower = await plant.locator('svg circle.mark[fill="transparent"]').first().boundingBox();
+        const fx = flower.x + flower.width / 2, fy = flower.y + flower.height / 2;
+        await page.mouse.move(fx, fy);
+        await page.mouse.down();
+        for (let k = 1; k <= 8; k++) await page.mouse.move(fx, fy - k * 5);
+        await page.mouse.up();
+        await page.waitForTimeout(150);
+        const energyAfter = await energyOf();
+        check('looks: a glyph part under rough still takes its drag', energyAfter > energyBefore + 0.05, `energy ${energyBefore} -> ${energyAfter}`);
+
         // ---- Waffle cell-fill consistency ---------------------------------
         console.log('\nWaffle fill consistency (/marks/waffle)');
         const sec = '#shapes-and-click'; // circle cells, unit = 5, edit.waffle.fill

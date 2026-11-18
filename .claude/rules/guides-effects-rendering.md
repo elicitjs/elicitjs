@@ -69,6 +69,17 @@ paths:
 - A gesture's `x`/`y` are the pointer in scene coordinates in every renderer. `_makeDrag` sets `.subject(event => ({ x: event.x, y: event.y }))` — d3.drag's default subject (the bound datum) displaces a rect's drag by its top-left. Never drop it or compensate in a mark.
 - The D3 renderer raises the plane for plane-pick modes and lowers it when the mode flips back.
 
+## Looks (experimental)
+
+- A look restyles the finished drawing (`spec.looks`, `looks.*`, `core/looks.js`). It never changes data, a scale, or what the pointer hits. `scope` is `'marks'` (default: not `background`, `guide` or `effect` nodes) or `'frame'`; `inScope` is the one test.
+- A geometry look (`kind: 'geometry'`) runs in `lookPass`, last, on `scene.children` only. `featureNodes` keep the true geometry, so picking, guides, motion and edits never see a look.
+- A geometry look keeps every interactive node in the scene as an unseen hit target (transparent paint, its effect's `cursor`) and draws beside it. What it draws is stamped `rough` and `pointerEvents: 'none'` and carries no `featureId` or `index`. Its randomness is seeded by mark and row, never by frame, so a drag does not make the drawing shimmer.
+- A shader look (`kind: 'shader'`) is a fragment defining `vec4 look(vec2 uv)` over premultiplied `u_frame`. `shaderSource` builds the full source; every renderer that runs shaders compiles that, so the uniforms and helpers in its prelude are the contract.
+- A built-in shader moves no pixel further than `HIT_TOLERANCE` (4px), so drawn and hittable still agree.
+- The canvas renderer runs shaders through one shared WebGL context (`canvas/gl.js`). Never create one per chart: browsers allow only a few.
+- A renderer that runs shaders declares `supports.shaders`; anywhere else a shader look warns and the chart draws without it. A failed compile, a lost context and a tainted canvas each warn and skip.
+- New look = `LOOK_OPTIONS`, its options interface, the factory (`warnUnknownLookOptions`), and a docs example on `/looks`.
+
 ## Themes and titles
 
 - A theme is data (`core/theme.js`, `resolveTheme`). Named themes live in `core/themes.js` as partials (`theme: 'nyt'` or `{ extends: 'nyt', … }`), transcribed from Flint presets via `fromFlint` — add a preset as a Flint row, not hand-mapped tokens.

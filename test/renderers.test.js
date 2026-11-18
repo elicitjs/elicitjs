@@ -37,7 +37,7 @@ async function warningsOf(spec) {
 
 describe('renderer capabilities', () => {
     it('the built-in renderers declare theirs', () => {
-        expect(new D3Renderer().supports).toEqual({ keyboard: true, textEditor: true, filter: true, overflow: true });
+        expect(new D3Renderer().supports).toEqual({ keyboard: true, textEditor: true, filter: true, overflow: true, shaders: false });
         expect(new CanvasRenderer().supports).toMatchObject({ keyboard: false, textEditor: false, overflow: false });
     });
 

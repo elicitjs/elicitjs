@@ -65,6 +65,7 @@ A spec has a few parts:
 | `constraints.*` | `clamp`, `snap`, `count`, `unique`, `maintainSum`, `ordering`, `monotonic`, `spacing`, `symmetric`, `follow`, `custom`. |
 | `elements.*` | Scale chrome: `axis`, `grid`, `legend` and `axisRadial`, with their `X` / `Y` / `Color` / `Size` / `Symbol` forms. An element with an edit rewrites the schema's domain. |
 | `guides.*` | Read-only annotations: `rule`, `region`, `remaining`, `tip`, `crosshair`, `proximity`, `prompt`, `options`, `cellGrid`, `sliderTrack`, `quadrants`, `custom`. |
+| `looks.*` | Experimental. How the finished chart is drawn: `rough` redraws it by hand in either renderer; `sketch`, `cartoon`, `halftone` and `custom` are shaders for the canvas renderer. |
 | `widgets.*` | Survey instruments, one call each: `likert`, `multipleChoice`, `slider`, `matrix`, `ranking`, `allocation`, `probabilityTokens`, `interval`, `histogram`, `region`, `thermometer`, `labeledValue`, `lineCone`. |
 | `format.*` | Display formatters: `number`, `percent`, `si`, `time`, `prefix`, `suffix`. |
 | `themes`, `setTheme` | Built-in themes (`survey`, `dark`, `nyt`, `economist`, `swiss` and more) and the app-wide default. A chart takes `theme: "name"` or a partial theme. |

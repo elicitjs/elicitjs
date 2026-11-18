@@ -191,6 +191,21 @@ export const CONSTRAINT_OPTIONS = {
     custom: [],
 };
 
+/** Looks (`spec.looks`, experimental): what every look reads, then each one's own.
+ *  @type {string[]} */
+export const LOOK_UNIVERSAL_OPTIONS = ['scope'];
+
+/** @type {Record<string, string[]>} */
+export const LOOK_OPTIONS = {
+    // Geometry (looks/rough.js).
+    rough: ['roughness', 'fill', 'seed'],
+    // Shaders (looks/shaders.js).
+    sketch: ['amount', 'grain', 'seed'],
+    cartoon: ['levels', 'outline', 'ink'],
+    halftone: ['size', 'angle'],
+    custom: ['uniforms', 'seed'],
+};
+
 // ── The JSON spec grammar ────────────────────────────────────────────────────
 // What `compile()` (src/json) needs to know about an option beyond its name. A
 // factory call `ns.keyword(options)` is written `{ "type": "keyword", ...options }`,
@@ -235,6 +250,7 @@ export const SPEC_SLOTS = {
     parts: { ns: ['plot', 'elements'] },
     elements: { ns: ['elements'] },
     guides: { ns: ['guides'] },
+    looks: { ns: ['looks'] },
     constraints: { ns: ['constraints'], fn: 'fn' },
     constrain: { ns: ['constraints'], fn: 'fn' },
     edit: { ns: ['edit'] },
@@ -286,6 +302,7 @@ export const SPEC_POSITIONAL = {
     'constraints.custom': ['fn'],
     'guides.custom': ['fn'],
     'guides.prompt': ['text'],
+    'looks.custom': ['fragment'],
     'when.modifier': ['key'],
     'when.noModifier': ['key'],
     'when.nearWithin': ['threshold'],

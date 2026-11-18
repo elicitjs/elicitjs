@@ -505,7 +505,7 @@ export const CHART_KEYS = [
     // Scales (per channel). No `domain` here — a domain describes the data.
     'scales', 'projection',
     // Presentation
-    'theme', 'effects', 'motion',
+    'theme', 'effects', 'motion', 'looks',
     // Chart chrome that reserves layout space like a legend (core/titles.js)
     'title', 'subtitle', 'caption',
     // Multi-stage elicitation
@@ -571,11 +571,19 @@ export function warnUnknownSpecKeys(spec, where = 'Elicit') {
  * A spec that asks for something its renderer does not declare (`Renderer.supports`)
  * would lose it silently: a focus ring that never shows, an effect that draws nothing.
  * @param {any} renderer
- * @param {{ overflow?: string, focusOutline?: boolean, effects?: any }} asks
+ * @param {{ overflow?: string, focusOutline?: boolean, effects?: any, looks?: any[] }} asks
  * @returns {void}
  */
-export function warnRendererSupport(renderer, { overflow, focusOutline, effects }) {
+export function warnRendererSupport(renderer, { overflow, focusOutline, effects, looks }) {
     const supports = (renderer && renderer.supports) || {};
+    for (const look of looks || []) {
+        if (look.kind !== 'shader' || supports.shaders) continue;
+        warn(
+            `renderer:shaders:${look.type}`,
+            `looks.${look.type}() is a shader, which this renderer cannot run, so the chart draws without it. ` +
+            'Use the canvas renderer (CanvasRenderer), or looks.rough(), which draws in any renderer.'
+        );
+    }
     if (overflow === 'visible' && !supports.overflow) {
         warn(
             'renderer:overflow',

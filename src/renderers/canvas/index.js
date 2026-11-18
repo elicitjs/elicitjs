@@ -3,6 +3,7 @@
 // `context.onEvent`) drawn on a canvas. Each render is a full clear-and-repaint.
 // What it cannot do is declared in `supports`; the engine warns when a spec asks.
 import { paintScene, canFilter } from './draw.js';
+import { shade, canShade } from './gl.js';
 import { bindPointerEvents } from '../pointer.js';
 
 // Longest backing-store side, in device px, however far a 'scale' chart is stretched.
@@ -29,15 +30,18 @@ export class CanvasRenderer {
         // The host page's font, used when the theme names none.
         /** @type {string | null} */
         this._hostFont = null;
+        // A spare canvas the marks are painted on when a look shades them alone.
+        /** @type {HTMLCanvasElement | null} */
+        this._layer = null;
     }
 
     /**
      * No keyboard focus, no inline text editor, and nothing drawn outside the
-     * canvas. `filter` depends on the browser's 2D context.
+     * canvas. `filter` depends on the browser's 2D context, `shaders` on WebGL.
      * @returns {import('../../types').RendererSupports}
      */
     get supports() {
-        return { keyboard: false, textEditor: false, filter: canFilter(), overflow: false };
+        return { keyboard: false, textEditor: false, filter: canFilter(), overflow: false, shaders: canShade() };
     }
 
     /**
@@ -83,6 +87,7 @@ export class CanvasRenderer {
         this._pointer = null;
         this._watchSize(false);
         this._images.clear();
+        this._layer = null;
         this._ctx = null;
     }
 
@@ -148,10 +153,13 @@ export class CanvasRenderer {
         }
 
         // Inner scene space: the pixel ratio, then the margins.
-        ctx.setTransform(bw / width, 0, 0, bh / height, 0, 0);
-        ctx.clearRect(0, 0, width, height);
-        ctx.translate(margins.left, margins.top);
-        paintScene(ctx, scene.children, {
+        /** @param {CanvasRenderingContext2D} c */
+        const enter = (c) => {
+            c.setTransform(bw / width, 0, 0, bh / height, 0, 0);
+            c.clearRect(0, 0, width, height);
+            c.translate(margins.left, margins.top);
+        };
+        const io = {
             images: this._images,
             theme: context.theme,
             fontFamily: this._hostFont,
@@ -159,6 +167,50 @@ export class CanvasRenderer {
             clip: context.clip || null,
             innerWidth: width - margins.left - margins.right,
             innerHeight: height - margins.top - margins.bottom,
-        });
+        };
+        /** Draw a device-px image over the frame. @param {CanvasImageSource} image @param {boolean} [replace] */
+        const stamp = (image, replace = false) => {
+            ctx.save();
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            if (replace) ctx.clearRect(0, 0, bw, bh);
+            ctx.drawImage(image, 0, 0);
+            ctx.restore();
+        };
+
+        enter(ctx);
+        const shaders = (context.looks || []).filter((/** @type {any} */ look) => look.kind === 'shader');
+        const overMarks = shaders.filter((/** @type {any} */ look) => look.scope !== 'frame');
+        const overFrame = shaders.filter((/** @type {any} */ look) => look.scope === 'frame');
+        const frame = { pixelRatio: bw / width };
+
+        const layer = overMarks.length ? this._layerFor(bw, bh) : null;
+        if (layer) {
+            // The marks alone go through their looks, between what sits below and above.
+            paintScene(ctx, scene.children, { ...io, only: 'below' });
+            enter(layer);
+            paintScene(layer, scene.children, { ...io, only: 'marks' });
+            stamp(shade(layer.canvas, overMarks, frame) || layer.canvas);
+            paintScene(ctx, scene.children, { ...io, only: 'above' });
+        } else {
+            paintScene(ctx, scene.children, io);
+        }
+        if (overFrame.length) {
+            const shaded = shade(canvas, overFrame, frame);
+            if (shaded) stamp(shaded, true);
+        }
+    }
+
+    /**
+     * The spare canvas's context, sized to the frame.
+     * @param {number} bw @param {number} bh
+     * @returns {CanvasRenderingContext2D | null}
+     */
+    _layerFor(bw, bh) {
+        if (!this._layer) this._layer = document.createElement('canvas');
+        if (this._layer.width !== bw || this._layer.height !== bh) {
+            this._layer.width = bw;
+            this._layer.height = bh;
+        }
+        return this._layer.getContext('2d');
     }
 }

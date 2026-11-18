@@ -65,6 +65,12 @@ import type {
   LineConeOptions,
   LineOptions,
   LinkOptions,
+  Look,
+  RoughLookOptions,
+  SketchLookOptions,
+  CartoonLookOptions,
+  HalftoneLookOptions,
+  CustomLookOptions,
   MaintainSumOptions,
   Mark,
   HierarchyNestOptions,
@@ -460,6 +466,29 @@ export const format: {
   resolveFormat(format?: string | ((v: any) => any)): (v: any) => string;
 };
 
+/**
+ * LOOKS — how the finished chart is drawn (`spec.looks`). A look changes no data,
+ * no scale and no hit geometry. Experimental: names and options may change.
+ * `scope` is 'marks' (the default) or 'frame'.
+ */
+export const looks: {
+  /** A hand-drawn redraw of the chart's shapes: wobbling, doubled lines and
+   *  hatched fills. Geometry, so it draws in any renderer. */
+  rough(options?: RoughLookOptions): Look;
+  /** A hand-drawn look in pixels: lines wobble and double, fills take a pencil
+   *  grain. A shader: canvas renderer only. */
+  sketch(options?: SketchLookOptions): Look;
+  /** Flat colour and an ink outline. A shader: canvas renderer only. */
+  cartoon(options?: CartoonLookOptions): Look;
+  /** The chart as a screen of dots. A shader: canvas renderer only. */
+  halftone(options?: HalftoneLookOptions): Look;
+  /** Your own shader. `fragment` is GLSL ES 1.00 defining `vec4 look(vec2 uv)`:
+   *  the pixel at `uv`, read from `u_frame` (premultiplied alpha). It can also
+   *  read `u_resolution`, `u_pixelRatio`, `u_seed`, its own `uniforms`, and call
+   *  `chartPx(uv)`, `toUv(px)`, `hash(p)` and `noise(p)`. Canvas renderer only. */
+  custom(fragment: string, options?: CustomLookOptions): Look;
+};
+
 export class D3Renderer implements Renderer {
   render(context: import('./types.js').RenderContext): void;
   readonly supports: import('./types.js').RendererSupports;
@@ -513,6 +542,7 @@ export interface Recorder {
   edit: typeof edit;
   constraints: typeof constraints;
   guides: typeof guides;
+  looks: typeof looks;
   widgets: typeof widgets;
   format: typeof format;
   /** The JSON for a spec built from these namespaces, and the functions it names.

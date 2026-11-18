@@ -287,6 +287,7 @@ export function createRecorder(namespaces) {
             plot: lookalike('plot'),
             elements: lookalike('elements'),
             guides: lookalike('guides'),
+            looks: lookalike('looks'),
             constraints: lookalike('constraints'),
             widgets: lookalike('widgets'),
             edit,

@@ -37,12 +37,12 @@ export class D3Renderer {
   }
 
   /**
-   * SVG does all of it: focusable nodes, the inline editor, CSS filters, and
-   * drawing past its own edge.
+   * Focusable nodes, the inline editor, CSS filters, and drawing past its own
+   * edge. SVG has no pixels to run a shader look over.
    * @returns {import('../../types').RendererSupports}
    */
   get supports() {
-    return { keyboard: true, textEditor: true, filter: true, overflow: true };
+    return { keyboard: true, textEditor: true, filter: true, overflow: true, shaders: false };
   }
 
   /**

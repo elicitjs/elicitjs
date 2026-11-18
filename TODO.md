@@ -180,3 +180,51 @@ Why a separate edit and not an option on `edge`:
 `src/plot/bar.js`, `EDIT_OPTIONS` in `src/vocabulary.js`, options interface in
 `types.d.ts` / `index.d.ts`, a counts example on `/marks/bar` in `../elicitjs-docs`,
 and a `verify:browser` check (drag top segment → total grows, segments above ride).
+
+---
+
+## 6. Interaction shaders — a look tied to an effect state
+
+*Deferred 2026-11-18, when the static looks shipped (`spec.looks`, `looks.*`,
+experimental). Proposed, not yet decided.*
+
+**The ask.** Looks restyle the whole chart at rest. The original idea was shaders on
+the interaction itself: a glow on the mark being dragged, a ripple from the pointer
+on release, ink spreading as a bar grows.
+
+**Proposed shape: a shader look on an effect state.** `effects.<state>` already holds
+what a state looks like (`hovered`, `selected`, `target`, `grabbed`), so a state would
+take a look beside its `filter` and `outline`, and the look would run only over the
+nodes in that state. The option's name is open (`look`?). It is canvas-only, like
+every shader look: `supports.shaders`, and a warning anywhere else.
+
+**What it needs that a static look does not:**
+
+- **A mask.** The fragment must know which pixels belong to the state. The state pass
+  (`statePass` in `core/engine/render.js`) already knows the nodes, but only stamps
+  the merged `effectStyle`. It would stamp the states a node is in, and the canvas
+  renderer would paint those nodes into a second texture (`u_mask`).
+- **The pointer and the time.** `u_pointer` in chart px, and `u_time` since the state
+  began. Both join the fragment contract in `core/looks.js` (`shaderSource`), where
+  every name is one authors will depend on.
+- **A clock.** The engine draws only on an event or while motion is moving. An
+  animated look needs frames with no event. The rule is "add a client, not a second
+  clock" (`core/motion.js`), so time is a motion client: it runs for a bounded time
+  after a state begins or ends, nothing animates at rest, and reduced motion turns it
+  off.
+
+**Decide first: who redraws a frame where only time changed?** Each engine frame
+rebuilds the whole scene. For a time-only frame the canvas renderer could re-run the
+shader pass over the frame it already painted, which is far cheaper, but that is a
+renderer animating on its own, against "renderers never transition". Either accept
+the full rebuild, or give the renderer a narrow "same scene, new time" call.
+
+**Keep:** a built-in moves no pixel further than `HIT_TOLERANCE`, so drawn and
+hittable still agree, and one shared WebGL context (`renderers/canvas/gl.js`).
+
+**Work:** state stamps in `statePass`; the mask pass and the new uniforms in
+`renderers/canvas/index.js` and `gl.js`; the motion client; the option in
+`core/effects.js`, `types.d.ts` and `SPEC_SLOTS` (an effect option that holds a look);
+one or two built-in interaction looks; an example on `/looks` and `/effects`; a
+`verify:browser` check (press a bar: the pixels round it change, and settle after
+release).

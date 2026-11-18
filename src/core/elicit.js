@@ -23,6 +23,7 @@ import {
     assembleFeatures, bindFeatureTables, desugarPorts, desugarContainers, tipGuidesOf, viewerChannelsOf,
 } from './engine/features.js';
 import { warnUnknownSpecKeys, warnRendererSupport } from './guards.js';
+import { resolveLooks } from './looks.js';
 
 /**
  * A dataset and one chart over it, from one spec: `Elicit.dataset(spec).chart(spec)`.
@@ -96,7 +97,9 @@ function createChart(dataset, spec) {
             warn(`effects:neighbours:${state}`, `effects.${state}.neighbours: this dataset links no rows (no "ref" column), so there are no neighbours to show. It applies to network and hierarchy datasets.`);
         }
     }
-    warnRendererSupport(renderer, { overflow, focusOutline, effects });
+    // Looks restyle the finished drawing (core/looks.js).
+    const looks = resolveLooks(spec.looks);
+    warnRendererSupport(renderer, { overflow, focusOutline, effects, looks });
     // Is this chart's hover the dataset's? `true` sends and shows it, 'receive'
     // only shows it. Unset, it links once a second chart draws the dataset.
     /** @returns {true | false | 'receive'} */
@@ -294,7 +297,7 @@ function createChart(dataset, spec) {
     // Rendering (engine/render.js): the container and its size, and `update()`,
     // which rebuilds the scene from current state and hands it to the renderer.
     const { container, measure, applyResize, update, stopMotion, followsPointer } = createRender(chart, {
-        features, featureById, ui, spec, theme, effects, renderer, mode, overflow, focusOutline, designW, authorMargins, dims, liveSpec, schema, schemaSpec, allGuides, datasetConstraints, tracksPointer, hasLegends, hasAxisTitles, featureNodes, hierarchyNodes, boxHosts, tableOf, targetTableOf, primaryRows, isLockedIn, constraintsIn, nodeBoxRule, nodePortsRule, settleOwn, settledNodes, heldStill, inFlight, activeEdits, getStage, selectionIn, selectionList, selectionPrimary, hoverRow: dataset.hoverRow, hoverLink, hoverWide, portAvailable, handleKey, clipNow, visibleAt,
+        features, featureById, ui, spec, theme, effects, looks, renderer, mode, overflow, focusOutline, designW, authorMargins, dims, liveSpec, schema, schemaSpec, allGuides, datasetConstraints, tracksPointer, hasLegends, hasAxisTitles, featureNodes, hierarchyNodes, boxHosts, tableOf, targetTableOf, primaryRows, isLockedIn, constraintsIn, nodeBoxRule, nodePortsRule, settleOwn, settledNodes, heldStill, inFlight, activeEdits, getStage, selectionIn, selectionList, selectionPrimary, hoverRow: dataset.hoverRow, hoverLink, hoverWide, portAvailable, handleKey, clipNow, visibleAt,
         layoutMoved: () => port.layoutMoved(),
         motionDuration: resolveMotion(spec.motion),
         handleEvent: (/** @type {any} */ event) => handleEvent(event),

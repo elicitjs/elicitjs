@@ -178,7 +178,9 @@ ElicitJS is layered for extensibility:
 
 10. **Renderers (`elicit.D3Renderer`, `elicit.CanvasRenderer`)** — draw the scene graph and report gestures back as inner-pixel events. `D3Renderer` (the default) draws SVG via D3; `CanvasRenderer` draws the same scene to a 2-D canvas. Pass one as `spec.renderer`. Any object meeting the `Renderer` contract works: `render(context)`, plus an optional `supports` (what it does beyond drawing and pointer gestures: `keyboard`, `textEditor`, `filter`, `overflow`) and an optional `destroy()`, which `chart.destroy()` calls. The engine warns when a spec asks for something the renderer does not declare. A renderer that draws to one element binds `renderers/pointer.js` for its pointer gestures, as the canvas renderer does.
 
-11. **JSON specs (`compile`, `registerFunction`, `recorder`, `src/json/`)** — a JSON spec is the same grammar written as data. `compile(json)` walks the live namespaces and turns `{ "type": "barY", … }` into `plot.barY({ … })`; a scoped edit takes its dotted path (`{ "type": "line.draw" }`). An option that takes a function takes `{ "expr": "…" }`, one expression over the option's variables, or `{ "fn": "name" }`, supplied through `compile(json, { functions })` or `registerFunction(name, fn)`. `recorder()` goes the other way: it returns the namespaces in recording form, so a spec written with the factories becomes JSON. Because `compile` reads the namespaces, a new factory is a JSON keyword the moment it is exported.
+11. **Looks (`elicit.looks`, `spec.looks`, experimental)** — how the finished chart is drawn. A look changes no data, scale or hit geometry. A **geometry** look (`looks.rough`) redraws the scene's shapes in the engine's last pass, so it works in any renderer: each shape stays in the scene, unseen, as what the pointer hits, and its hand-drawn strokes sit beside it as inert paths. A **shader** look (`looks.sketch`, `cartoon`, `halftone`, `custom`) is a GLSL fragment the canvas renderer runs over its painted pixels through one shared WebGL context. `scope` is `'marks'` or `'frame'`. See `/looks`.
+
+12. **JSON specs (`compile`, `registerFunction`, `recorder`, `src/json/`)** — a JSON spec is the same grammar written as data. `compile(json)` walks the live namespaces and turns `{ "type": "barY", … }` into `plot.barY({ … })`; a scoped edit takes its dotted path (`{ "type": "line.draw" }`). An option that takes a function takes `{ "expr": "…" }`, one expression over the option's variables, or `{ "fn": "name" }`, supplied through `compile(json, { functions })` or `registerFunction(name, fn)`. `recorder()` goes the other way: it returns the namespaces in recording form, so a spec written with the factories becomes JSON. Because `compile` reads the namespaces, a new factory is a JSON keyword the moment it is exported.
 
 ---
 
@@ -278,6 +280,7 @@ elicitjs/
 │   ├── constraints/        # Data-layer invariants (clamp/snap/count/unique/maintainSum/ordering/monotonic/spacing/follow/symmetric; define.js = custom)
 │   ├── widgets/            # Named survey instruments (likert/choice/slider/matrix/lineCone/ranking/allocation/…) + designs.js (the design registry) + parts.js (answer, card, bar) + shared.js (look, layout) + theme.js (guides)
 │   ├── guides/             # rule / region / remaining / tip / crosshair / proximity / custom
+│   ├── looks/              # rough (geometry) / sketch / cartoon / halftone / custom (shaders); experimental
 │   ├── json/               # The JSON spec layer: compile, expressions, registerFunction, recorder
 │   ├── authoring/          # Building blocks for new vocabulary (also `elicitjs/authoring`); index.d.ts is generated
 │   ├── format.js           # Display formatters (number/percent/si/time/prefix/suffix)

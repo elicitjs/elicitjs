@@ -42,7 +42,7 @@ export function ownersOf(ns, type) {
     if (ns === 'elements') return [baseElement(type) || type];
     if (ns === 'edit') return [`edit.${type}`, 'edit'];
     if (ns === 'widgets') return [`widgets.${type}`, 'widget'];
-    if (ns === 'guides' || ns === 'constraints') return [`${ns}.${type}`];
+    if (ns === 'guides' || ns === 'constraints' || ns === 'looks') return [`${ns}.${type}`];
     return [];
 }
 

@@ -443,9 +443,11 @@ function paintEffect(ctx, n) {
 /**
  * Paint the whole scene in z-order: background, guide regions, marks, guide front,
  * effects. Within the mark layer, `scene.children` order is z-order.
+ * `io.only` paints one band of that stack, so a look can shade the marks alone:
+ * 'below' (background, guide regions), 'marks' (marks, chrome), 'above' (the rest).
  * @param {CanvasRenderingContext2D} ctx
  * @param {any[]} children scene nodes
- * @param {{ images: Map<string, any>, requestRepaint: () => void, theme?: any, fontFamily?: string | null, clip?: { x: number, y: number, width: number, height: number } | null, innerWidth?: number, innerHeight?: number }} io
+ * @param {{ images: Map<string, any>, requestRepaint: () => void, only?: 'below' | 'marks' | 'above', theme?: any, fontFamily?: string | null, clip?: { x: number, y: number, width: number, height: number } | null, innerWidth?: number, innerHeight?: number }} io
  */
 export function paintScene(ctx, children, io) {
     const themeFont = (io && io.theme && io.theme.font) || null;
@@ -467,28 +469,36 @@ export function paintScene(ctx, children, io) {
         ctx.restore();
     };
 
-    // Background: tiles (floor), then everything else in scene order, as SVG does.
-    background.filter((n) => n.type === 'image')
-        .forEach((n) => image(ctx, n, io.images, io.requestRepaint));
-    for (const n of background) {
-        if (n.type === 'image') continue;
-        if (n.type === 'rect') rect(ctx, n, { fill: 'none', stroke: 'none', strokeWidth: 1, opacity: 1 });
-        else if (n.type === 'circle') circle(ctx, n, { fill: 'none', stroke: 'none', strokeWidth: 1, opacity: 1 });
-        else if (n.type === 'line') line(ctx, n, { stroke: '#6b7280', strokeWidth: 1, opacity: 1 });
-        else if (n.type === 'text') text(ctx, n, { fill: '#374151', opacity: 1 }, 'middle');
-        else if (n.type === 'path') path(ctx, n, { fill: 'none', stroke: 'black', strokeWidth: 1, opacity: 1 });
+    const only = (io && io.only) || null;
+
+    if (!only || only === 'below') {
+        // Background: tiles (floor), then everything else in scene order, as SVG does.
+        background.filter((n) => n.type === 'image')
+            .forEach((n) => image(ctx, n, io.images, io.requestRepaint));
+        for (const n of background) {
+            if (n.type === 'image') continue;
+            if (n.type === 'rect') rect(ctx, n, { fill: 'none', stroke: 'none', strokeWidth: 1, opacity: 1 });
+            else if (n.type === 'circle') circle(ctx, n, { fill: 'none', stroke: 'none', strokeWidth: 1, opacity: 1 });
+            else if (n.type === 'line') line(ctx, n, { stroke: '#6b7280', strokeWidth: 1, opacity: 1 });
+            else if (n.type === 'text') text(ctx, n, { fill: '#374151', opacity: 1 }, 'middle');
+            else if (n.type === 'path') path(ctx, n, { fill: 'none', stroke: 'black', strokeWidth: 1, opacity: 1 });
+        }
+
+        guideRegions.forEach((n) => rect(ctx, n, { fill: 'none', stroke: 'none', strokeWidth: 1, opacity: 1 }));
     }
 
-    guideRegions.forEach((n) => rect(ctx, n, { fill: 'none', stroke: 'none', strokeWidth: 1, opacity: 1 }));
+    if (!only || only === 'marks') {
+        // Marks (clipped), then unclipped chrome.
+        clipped(() => paintMarks(ctx, marks));
+        paintMarks(ctx, chrome);
+    }
 
-    // Marks (clipped), then unclipped chrome.
-    clipped(() => paintMarks(ctx, marks));
-    paintMarks(ctx, chrome);
+    if (!only || only === 'above') {
+        // Rules, constraint ticks, guide labels — in scene order.
+        guideFront.forEach((n) => paintGuideFront(ctx, n));
 
-    // Rules, constraint ticks, guide labels — in scene order.
-    guideFront.forEach((n) => paintGuideFront(ctx, n));
-
-    // Interaction overlays on top, clipped with their marks.
-    clipped(() => effects.forEach((n) => paintEffect(ctx, n)));
-    effectsChrome.forEach((n) => paintEffect(ctx, n));
+        // Interaction overlays on top, clipped with their marks.
+        clipped(() => effects.forEach((n) => paintEffect(ctx, n)));
+        effectsChrome.forEach((n) => paintEffect(ctx, n));
+    }
 }
