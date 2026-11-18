@@ -1,9 +1,10 @@
 # ElicitJS — Architecture
 
 **This document is a summary of the architecture of the library.** It describes how ElicitJS is
-layered, what each layer owns, and the invariants that hold the design together. For installation,
-a first example, and how to run things, see [README.md](README.md). For the full public API with
-live, editable examples, see the docs site in the sibling repo `../elicitjs-docs`.
+layered, what each layer owns, and the invariants that hold the design together. For installation
+and a first example, see [README.md](README.md). For the full public API with live, editable
+examples, see [elicitjs.github.io](https://elicitjs.github.io/) (source in the sibling repo
+`../elicitjs-docs`).
 
 ElicitJS is decoupled from any single rendering framework. It maintains an internal abstract
 **scene graph** of shapes to draw, which a pluggable renderer (the default is D3/SVG) translates
@@ -64,7 +65,7 @@ kind rather than a discipline the author has to keep.
 The category earns its own namespace because the things a reader needs while
 forming a belief are all of this shape: how many tokens are left
 (`guides.remaining`), where a running sum would land against its target, how far a
-drag may still go (`edit.guide`), what range is acceptable (`guides.region`).
+drag may still go (an edit's `guide`), what range is acceptable (`guides.region`).
 Guides reach the scene from three places, all producing the same shape:
 `spec.guides` (the author declares one), `Constraint.guide` (a rule draws its own
 bound), and `Edit.guide` (an edit draws its own catchment or track).
@@ -85,6 +86,11 @@ as a mark that draws nothing. Keeping the split honest keeps the JS API and the
 grammar the same list. The same reasoning drives one name per thing: an alias is a
 second keyword for one concept, which is free to remove now and permanent later.
 
+Every factory's option list lives in `src/vocabulary.js`, which imports nothing. The JSON
+layer reads its grammar tables there (`SPEC_FUNCTIONS`, `SPEC_SLOTS`, `SPEC_POSITIONAL`,
+`SPEC_OPAQUE`), and `npm run check:exports` holds the runtime exports, `src/index.d.ts` and
+`vocabulary.js` together.
+
 ---
 
 ## Layers
@@ -96,6 +102,8 @@ ElicitJS is layered for extensibility:
    **One schema.** The schema is the contract of the elicited dataset: every field's measurement type and domain. It is what lets a chart resolve its scales and mint rows from *zero* starter data. A scale is one **encoding**: a `(channel, field)` pair. Two marks stating the same encoding share one scale, so a shared colour means a shared value; two marks putting *different* fields on `fill` are two encodings, so they get two scales, two colour families and two legends. **Positional** channels are the exception and union by axis — an error bar's `mean`, `lo` and `hi` share one y axis that spans all three, which is the intent.
 
    **One dataset.** A chart draws exactly one dataset — even a slider elicits a one-row dataset — so `data` lives on the dataset spec, never on a mark. Several charts may draw the same dataset: a commit from any of them redraws the others, and they share the rows, the schema (so domains, and a zoom), constraints, lock, context, undo history, selection and (when linked) hover. Marks, size, theme, guides, effects and stages stay per chart; hover does too unless `effects.hovered.link` is on, which is the default once a second chart draws the dataset. Each mark is a *view* over those rows: it encodes some columns, and where a channel carries an `edit`, it writes them back. Several marks over the same rows is the point, not a special case: a glyph is just marks that encode different columns of one row (see `composite`), and they all re-derive from the committed data on the next render.
+
+   **Structures.** A bare field map is a single-table schema. `structure: "network"` declares a table of nodes and a table of links (`{ type: "ref" }` columns name the nodes), and `data` becomes one array per table name. `structure: "hierarchy"` declares a table of nodes and a `nesting` table with one row per containment. Marks, edits and constraints each see one table. A mark names it with `table:`, or takes the table whose role its factory declares (`link` reads the links table).
 
    **Locked rows (`lock`).** Some rows are *given* rather than elicited — the record so far, the points already measured, last quarter's actuals. `lock: "seed"` fixes the rows the chart was seeded with while leaving every row an edit *adds* free; `lock: (d) => d.year <= 1990` locks rows by what they are. A lock is a property of the data, so it sits on the dataset spec beside `data` and `schema`, and it has two halves, both automatic: a **dataset invariant** run last on every commit (so it outranks every other repair — a gesture that spans locked and free rows keeps its changes to the free ones and snaps the locked ones back; deleting a locked row is rejected), and a **pointer** policy (a locked row's marks aren't grabbable, show no editable cursor, and are skipped by proximity picking — so `nearest` / `sweep` / `draw` never target one). That last part is what makes a you-draw-it chart work: because the seeded line is invisible to picking, a drag beside it doesn't grab a frozen line, it starts drawing. `setData` re-seeds the dataset, so it re-takes a `"seed"` lock. See the Locked rows docs page (`/editing/lock` in elicitjs-docs).
 
@@ -117,7 +125,7 @@ ElicitJS is layered for extensibility:
    - `bar` / `barY` / `barX` → `rect` (band axis = category + thickness, linear axis = value — or an explicit start/end span via x1/x2 or y1/y2; orientation auto-detected). The `stack` channel stacks the bars sharing a band on each other's cumulative total; the band IS the grouping, and the `stack` field names each segment and sets its order (its schema domain, else first appearance). It is `xOffset`'s counterpart along the value axis. Without it, rows sharing a band overlap and the mark warns. A stacked bar takes the `edit.stack.*` family below.
    - `rect` / `rectX` / `rectY` → the generalized bar: each axis independently resolves a **span** (x1/x2, y1/y2), a **band**, or a baseline→value length, so a rectangle can span both axes (heatmap cells, 2-D regions, binned histograms). Carries `angle` like other geometry marks. `brushRect()` adds composable 2-D editing — grab an **edge** to resize a side, a **corner** for two extents, the **body** to move; `resize` (`'both'`/`'x'`/`'y'`/`'none'`) and `move` (bool) make it opt-in.
    - `tick` / `tickX` / `tickY` → `line` (a bar's zero-thickness sibling); optional `angle` rotates about the segment midpoint.
-   - `text` / `textX` / `textY` → a per-datum `text` label (string at x/y; `text`/`fontSize`/`textAnchor`/`lineAnchor`/`dx`/`dy` raw, `angle` in math degrees, `format` a d3-format string or function for display). Editable like any mark: `drag` to reposition, a value channel sharing the label's field for a draggable numeric readout, `cycle`/`rotate`, or `editText()` to double-click-and-retype (an inline input; the renderer owns the keyboard lifecycle and emits a `commit` gesture).
+   - `text` / `textX` / `textY` → a per-datum `text` label (string at x/y; `text`/`fontSize`/`textAnchor`/`lineAnchor`/`dx`/`dy` raw, `angle` in math degrees, `format` a d3-format string or function for display). Editable like any mark: `move` to reposition, a value channel sharing the label's field for a draggable numeric readout, `cycle`/`rotate`, or `editText()` to double-click-and-retype (an inline input; the renderer owns the keyboard lifecycle and emits a `commit` gesture).
    - `line` / `lineY` / `lineX` / `path` → a connecting `path` per series plus one `circle` handle per datum; grouped by `series`, ordered by `order`.
    - `area` / `areaY` / `areaX` → a filled path per series (the distributional sibling of `line`), sharing its `series` / `order` / `curve` / handle machinery. Fills to the value axis's baseline — or, given an endpoint **pair** on that axis (`y1` + `y2`, or `x1` + `x2`), **between** them: the uncertainty band, a confidence interval or fan chart. That is the same span-vs-baseline split `bar` and `rect` make, spelled the same way, rather than a separate band mark forking this one. The pair shares the value axis's scale (so it resolves exactly like `y`), declaring one picks the value axis on its own, and **both** edges get handles — so the interval is elicited by dragging its ends. Pair with `ordering({ lower, upper })` so it can't be turned inside-out.
    - `rule` / `ruleX` / `ruleY` → a straight reference line at a data value (`y: { datum: 50 }`), or a **span** segment (a stem / whisker) between `y1`/`y2` (or `x1`/`x2`) at a category. An ordinary editable mark: put an `edit` on an endpoint and the cap becomes a handle.
@@ -128,7 +136,9 @@ ElicitJS is layered for extensibility:
    - `needle` → a pivoted gauge/dial pointer (tapered path + hub). Encodes a value on `angle` (degrees via the channel scale; default range `[180, 0]` = left→right through the top). `orient: 'top'|'right'|'bottom'|'left'` (or `arc`/`start`/`end`) picks the semicircle — keep `scale.range` in sync. Optional `x`/`y` place the pivot on categorical or linear axes. Pair with `axisRadial` for chrome and `text` for a center readout.
    - `arc` / `donut` → stacked angular slices (part-to-whole). Magnitudes on the `theta` channel's field normalize to a full or partial circle; `innerRadius` makes a donut. (The magnitude channel is `theta`, the polar POSITION, read raw and normalized by the mark; `angle` means a rotation in place. There is no `pie`: a full pie IS `arc()`.) Pass `edits: [edit.stack.cut(), edit.stack.edge(), edit.stack.merge()]` to cut a slice in two, drag a boundary, or merge two back together (see `edit.stack.*` below) — a pie divides a total the same way a stacked bar does.
    - `geoBasemap` / `geoTile` / `geoPoint` / `geoPolygon` / `geoLine` / `geoText` / `geoRect` → geographic marks for map elicitation. Chart-level `projection` (`"mercator"`, `{ type, domain, … }`, or a live d3.geo* instance) builds a shared `{ apply, invert, path }` context (not a 1D scale). **Basemap topology is a mark option** — `geoBasemap({ geojson: featureCollection })` (FeatureCollection draws one path per feature). Load your own GeoJSON (`fetch` / `import`) and pass it in; fit with `projection: { type: "mercator", domain: geojson }`. Editable lon/lat, GeoJSON geometries, coordinate lists, and geographic AABBs live on the **dataset**. Pair with `edit.geo.*`. `geoLine` reads its shape from its channels: `coordinates`/`geometry` → **one line per row** (a vertex list each, reshaped with `edit.geo.dragVertex`); `lon`/`lat` → **one path across the rows** in `order` (default `'sequence'`), grouped by `series` — the geographic connected scatter, the geo sibling of `path`. Put the dots on a sibling `geoPoint` and the trail re-derives as they're dragged. `geoTile({ url })` is a **raster** basemap — the Leaflet model, a pyramid of `{z}/{x}/{y}` images (OSM by default, or any tile server) laid behind the marks, keyed so on-screen tiles survive a re-render without re-fetching. It **requires `projection: "mercator"`**: a tile is a picture pre-baked in Web Mercator, so under any other projection it cannot register with the data — the mark verifies the projection by *behaviour* (probing that lon/lat land where the Mercator formula says, which rejects an equirectangular that agrees on the equator, and an oblique rotation) and warns instead of drawing a misaligned map. Attribution is a licence condition of every tile service and is drawn by default; public OSM tiles are rate-limited, so point `url` at your own server for production. `geoText` is the `text` mark with the projection doing the placement: position is the only thing a projection changes about a label, so it shares `text.js`'s node builder (`textNodeAt`) and inherits the whole text surface unchanged — `editText()` to retype content, `cycle()` for a categorical label, `rotate()` on `angle`, `dx`/`dy` to nudge the glyph off its anchor. Pair it with a sibling `geoPoint` over the same rows and dragging the dot carries the label. GeoJSON must use RFC 7946 ring winding: a reversed exterior ring reads to d3 as the polygon's *complement* (it "covers the globe"), which silently fits the projection to the whole world — `createProjection` dev-warns and names the offending features. `geoBasemap` / `geoTile` are **map chrome** (not ChartElements, not create targets): they stay pointer-transparent unless they encode dataset rows.
-   - `trend` → an intercept-then-slope line: `{ intercept, slope }` with an intercept handle (translate) and a slope handle (rotate about the anchor), stageable via the edits.
+   - `shape` → one path per row centred at x/y: a d3 symbol name or an SVG path, from the `symbol` channel or the `path` option. `size` is the radius of the box it fits; `angle` rotates it.
+   - `node` / `link` / `sticker` → network marks. `node` is a dot with a label (a preset over `composite`); `sticker` is a rounded note box whose size follows its text. `link` draws one row of the links table between the two nodes it names (`curve`, `arrow`, `inset`). A `ports` channel on a node mark says where links may meet it. Pair with `edit.network.*`. Any node-shaped mark can be a hierarchy container through a `contains` channel; `fit: true` on a size channel sizes it to its contents.
+   - `trend` / `trendBand` → an intercept-then-slope line: `{ intercept, slope }` with an intercept handle (translate) and a slope handle (rotate about the anchor), stageable via the edits. `trendBand` adds a spread around the line. Pair with `edit.trend.*`.
    - Correlation fan / cone beliefs are composed as `widgets.lineCone` (a recipe over `trend` + stages), not a standalone mark.
 3b. **Chart elements (`elicit.elements.*`)** — scale chrome, not data marks. They view a SCALE (`views: 'scale'`), take a singular `channel`, paint CHROME (not desugared channels), and their edits target the schema DOMAIN (`edit.axis.*`). See the `ChartElement` interface in `src/types.d.ts`.
    - `axis` / `axisX` / `axisY` / `grid` / `gridX` / `gridY` → composable axis & gridline chrome (or use the global `axes` convenience). Pass an `edit` to make an axis **interactive** — see `edit.axis.*` below.
@@ -140,30 +150,35 @@ ElicitJS is layered for extensibility:
    - `axisRadial` → circular / semicircular axis chrome (arc spine, ticks, labels, optional colored categorical bands). Sibling of `axisX`/`axisY`; reads the global `angle` scale. Optional x/y **placement** channels draw one ring per row (small-multiple needles) — a documented exception to “element has no channel map.”
 
 4. **Edits (`elicit.edit.*`)** — a gesture that writes a channel back to the data. An edit is a small descriptor `{ gesture, channels, when, pick, scope, constrain, guide, apply }`, declared **co-located** on a channel (`channels.y.edit = move()`) or at **mark level** (`edits: [...]`).
-   - **Universal** edits (any mark): `move`, `moveSpan` / `brushSpan` (move / edge-resize a 1-D span), `brushRect` (composable 2-D edge/corner/body editing of a rect's four extents), `resize`, `rotate` (pointer angle about the plot centre — or `pivot: 'mark'` — → a channel value; `fold: false` for full-circle dials; `pick: 'direct'` for a needle handle), `cycle`, `create`, `toggle` (click a slot to pick or un-pick it), `remove`, `editText` (retype a text mark's content), `rank` (drag to reorder a ranked slot), `select`, `set`, `custom`.
+   - **Universal** edits (any mark): `move`, `moveSpan` / `brushSpan` (move / edge-resize a 1-D span), `brushRect` (composable 2-D edge/corner/body editing of a rect's four extents), `resize`, `rotate` (pointer angle about the plot centre — or `pivot: 'mark'` — → a channel value; `fold: false` for full-circle dials; `pick: 'direct'` for a needle handle), `slide` (a drag along one axis changes a value that is not a position: a curvature, a radius, a tilt), `cycle`, `create`, `toggle` (click a slot to pick or un-pick it), `remove`, `editText` (retype a text mark's content), `rank` (drag to reorder a ranked slot), `select`, `set`, `custom`.
    - **Line-scoped** edits, namespaced as `edit.line.*` so their scope is visible: `anchor` (add one point), `newSeries` (seed a whole line), `draw` (author a line by dragging), `sweep` (you-draw-it repaint), `removeSeries` (delete a whole line).
-   - **Scale- and axis-scoped** edits — the one family that writes the **schema's domain**, not a datum (they carry `target: 'domain'`). `edit.axis.scale()` drags a numeric/temporal axis's end-handle to grow/shrink its range (`mode: 'grow'` resizes the chart instead of rescaling in place); it is axis-scoped because a positional RANGE is an axis's alone. `edit.scale.categories()` adds / renames / removes categories on any element drawing a discrete scale — an axis or a legend, since the domain belongs to the scale rather than to the chrome (reusing the `editText` inline-typing lifecycle; rename relabels matching rows and remove deletes them, across every column on the scale and every table it spans; `mode: 'grow'` grows the chart by one band-step per category instead of re-dividing it — e.g. extending a 5-point Likert scale to 7). The domain lives on the schema and scales re-resolve every render, so the grid, guides and marks reflow for free. Read the reshaped domain with `ds.getSchema()`.
+   - **Scale- and axis-scoped** edits — the one family that writes the **schema's domain**, not a datum (they carry `target: 'domain'`). `edit.axis.scale()` drags a numeric/temporal axis's end-handle to grow/shrink its range (`mode: 'grow'` resizes the chart instead of rescaling in place); it is axis-scoped because a positional RANGE is an axis's alone. `edit.axis.zoom()` (the wheel) and `edit.axis.pan()` (a drag) move a continuous domain as a window. `edit.scale.categories()` adds / renames / removes categories on any element drawing a discrete scale — an axis or a legend, since the domain belongs to the scale rather than to the chrome (reusing the `editText` inline-typing lifecycle; rename relabels matching rows and remove deletes them, across every column on the scale and every table it spans; `mode: 'grow'` grows the chart by one band-step per category instead of re-dividing it — e.g. extending a 5-point Likert scale to 7). The domain lives on the schema and scales re-resolve every render, so the grid, guides and marks reflow for free. Read the reshaped domain with `ds.getSchema()`.
    - **Waffle-scoped** edit, namespaced as `edit.waffle.*`: `edit.waffle.fill()` fills a `waffle` up to (and including) the exact cell under the pointer — it reads the grid geometry the mark stamps on each cell, so it resolves row *and* column instead of rounding a 1-D value.
    - **Stack-scoped** edits, namespaced as `edit.stack.*`, for any mark that divides one total among a group of rows — a `bar` with a `stack` channel, or an `arc`/`donut` (which always stacks; there `stack` only orders the slices). Those are the same structure (a group partitioning a total along a 1-D parameter: data units up an axis, degrees around a ring), so one family serves both: `cut()` clicks inside a segment to divide it there, `edge()` drags a boundary to move value across it, `merge()` double-clicks one to fuse the two back together. All three preserve the group's total by construction — no `maintainSum` is involved, and none would help, since its modes sum over the whole dataset rather than the group a gesture landed in. Each interior boundary gets a grab handle (*n* segments → *n* − 1 handles; a pie's seam is the layout's fixed anchor); `handles: 'hit'` keeps them grabbable but invisible. The mark stamps `node.stack` — the group's members plus a pure-data geometry descriptor — and the edits invert through it, the same arrangement as a composite's `node.frame`.
      - A `cut` mints a row, and takes its category from the schema's **domain** rather than the keyboard: a closed domain hands out the values that group doesn't yet use and refuses the cut once they run out; `open: true` on the field makes the domain a starting set instead, so each cut appends a new category (and the seed-data out-of-domain check is skipped). That makes `cut` the one non-axis edit carrying `target: 'domain'` — it writes the schema and the rows together, and the engine commits both or neither.
-   - **Geo-scoped** edits, namespaced as `edit.geo.*`: `drag` / `create` (lon/lat via `projection.invert`), `draw` / `dragVertex` / `removeVertex` (coordinate-list lines: author, reshape, simplify), `brush` / `createRect` (geographic west/south/east/north boxes). `brush` runs on the `geoBrush` driver — edge/corner/body, with the grabbed zone latched at **dragstart** and held for the gesture (re-deciding it per tick turns a move into a resize mid-drag), a body move translating by the geographic delta, and a dragend pass that un-inverts a crossed pair. They require chart `projection` and a `geo*` mark.
-   - **Scope goes in the name.** A namespaced edit (`edit.line.*`, `edit.stack.*`, `edit.waffle.*`, `edit.geo.*`, `edit.axis.*`, `edit.scale.*`, `edit.legend.*`, `edit.trend.*`, `edit.network.*`) needs the matching mark family, and each declares a `scope` naming the mark capability it requires. Attach one to a mark that lacks the capability and the engine dev-warns rather than leaving you with a gesture that silently does nothing.
+   - **Legend-scoped** edits, namespaced as `edit.legend.*`, use a legend as an input: `category()` picks a category from a discrete legend, `value()` picks a value from a colour ramp.
+   - **Trend-scoped** edits, namespaced as `edit.trend.*`: `intercept`, `slope`, `interceptSpread`, `slopeSpread`. Each inverts the pointer through the x/y scales and solves for one line parameter.
+   - **Network-scoped** edits, namespaced as `edit.network.*`: `connect()` drags from a node's port to another node and adds a link row, `rewire()` drags a link's end onto another node (or into empty space to remove it), `reverse()` swaps a link's ends. **Hierarchy** has one: `edit.hierarchy.nest()` drops a node into a container or out of one, writing the `nesting` table.
+   - **Geo-scoped** edits, namespaced as `edit.geo.*`: `move` / `create` (lon/lat via `projection.invert`), `draw` / `dragVertex` / `removeVertex` (coordinate-list lines: author, reshape, simplify), `brush` / `createRect` (geographic west/south/east/north boxes). `brush` runs on the `geoBrush` driver — edge/corner/body, with the grabbed zone latched at **dragstart** and held for the gesture (re-deciding it per tick turns a move into a resize mid-drag), a body move translating by the geographic delta, and a dragend pass that un-inverts a crossed pair. They require chart `projection` and a `geo*` mark.
+   - **Scope goes in the name.** A namespaced edit (`edit.line.*`, `edit.stack.*`, `edit.waffle.*`, `edit.geo.*`, `edit.axis.*`, `edit.scale.*`, `edit.legend.*`, `edit.trend.*`, `edit.network.*`, `edit.hierarchy.*`) needs the matching mark family, and each declares a `scope` naming the mark capability it requires. Attach one to a mark that lacks the capability and the engine dev-warns rather than leaving you with a gesture that silently does nothing.
    - `pick` selects the target: `direct` (the mark hit), `nearest` (closest within a threshold), `plane` (no target — create), or a driver lifecycle (`sweep` / `draw` / `brush` / `probe`). Multi-event lifecycles live in **self-describing drivers** (`src/edit/drivers/`) — adding an interaction mode is a new driver file, not an engine change. A driver usually serves plane-pick edits, but it may also claim a **direct**-pick edit by capability (a relative `slide` needs a dragstart anchor, not a target search): then `ctx.index` already names the datum and the plane stays down, so a lifecycle edit can sit on a glyph part beside other direct edits.
    - `pick: 'probe'` is the **probe / settle** flow: the pointer probes a value and the proposal follows the cursor as an inert **ghost** (the committed mark stays put — so nothing flickers, even on a matrix), and a **commit** settles it. Two gestures commit, so both natural expectations work — **move-then-click**, and **grab-and-drag** (press on the mark, drag, release). Any edit works this way. Preview and commit run the same `apply` + the same invariants through one code path, so the ghost cannot drift from what a commit writes — and a preview never reaches `onChange` or `getData`. The ghost is drawn by the engine's ghost pass (only the rows a proposal would change, styled by `theme.ghost`).
    - `when` arbitrates when several edits share a gesture (`edit.when.alt`, `noAlt`, `shift`, `near`, `far`, …): e.g. plain click recolours, Alt-click deletes.
    - `stage` gates an edit to one step of a multi-stage elicitation ("first X, then Y"). It is a uniform filter applied to every edit — not a new mode. A `probe` click on a staged edit commits that stage's field and advances automatically (freezing it); you can also drive stages yourself with `setStage` / `nextStage`. See `trend` and `widgets.lineCone`.
 
-5. **Constraints (`elicit.constraints.*`)** — **data-layer invariants**: pure rules over the dataset, run on every edit commit (never see pixels). They both *gate* a proposal (return `false` to reject) and *repair* it (return the corrected rows) — and since the rows are shared, a repair propagates to every mark on the next render. Declared once on the dataset spec (`constraints: [...]`, which `Elicit(spec)` also takes) — the only place, because the rule is about the data and holds for **every** edit from **every** mark, so writing it inside one mark would claim a scope it does not have. Per-edit sugar is `edit.constrain`. Built-ins fall into three kinds — **bounds**: `clamp({ min, max, field })`, `snap({ field, step, origin })`; **cardinality**: `count({ max, strategy })`, `unique({ field, max })`, `maintainSum({ total, field })`; and **shape**: `ordering({ field: [...] })` keeps fields of a row in order (`lo <= mean <= hi`, so an interval glyph can't be dragged inside-out), `monotonic({ field, along, dir })` stops a curve reversing along an axis (a CDF that dips means negative probability mass), `spacing({ field, min })` keeps adjacent values a minimum distance apart. The shape rules **repair by pushing the neighbours aside**, holding the field you actually dragged — they know which one that is by diffing against the previous rows — so a crossed handle reads as the interval moving rather than as the handle sticking (`ordering`'s `strategy: 'block'` rejects instead). A constraint is a DESCRIPTOR — `{ type, field?, options, apply }`, the parallel of an edit's — and its `field` defaults to the column the dispatching edit writes, so `clamp({ min: 0 })` on a one-column instrument names nothing twice. Author your own with `constraints.custom(apply, meta?)` — write just the rule against a clean data context (`{ data, oldData, activeIndex, active, field, value, domain, table, tables }`) and return a number (set the field), object (merge), array (replace dataset), or `false` (reject).
+5. **Constraints (`elicit.constraints.*`)** — **data-layer invariants**: pure rules over the dataset, run on every edit commit (never see pixels). They both *gate* a proposal (return `false` to reject) and *repair* it (return the corrected rows) — and since the rows are shared, a repair propagates to every mark on the next render. Declared once on the dataset spec (`constraints: [...]`, which `Elicit(spec)` also takes) — the only place, because the rule is about the data and holds for **every** edit from **every** mark, so writing it inside one mark would claim a scope it does not have. Per-edit sugar is `edit.constrain`. Built-ins fall into three kinds — **bounds**: `clamp({ min, max, field })`, `snap({ field, step, origin })`; **cardinality**: `count({ max, strategy })`, `unique({ field, max })`, `maintainSum({ total, field })`; and **shape**: `ordering({ field: [...] })` keeps fields of a row in order (`lo <= mean <= hi`, so an interval glyph can't be dragged inside-out), `monotonic({ field, along, dir })` stops a curve reversing along an axis (a CDF that dips means negative probability mass), `spacing({ field, min })` keeps adjacent values a minimum distance apart; and **linkage**: `follow({ field, lead })` moves the `field` columns by the same delta when `lead` moves, `symmetric` sets the other of a pair to its mirror about a centre column when one moves. The shape rules **repair by pushing the neighbours aside**, holding the field you actually dragged — they know which one that is by diffing against the previous rows — so a crossed handle reads as the interval moving rather than as the handle sticking (`ordering`'s `strategy: 'block'` rejects instead). A constraint is a DESCRIPTOR — `{ type, field?, options, apply }`, the parallel of an edit's — and its `field` defaults to the column the dispatching edit writes, so `clamp({ min: 0 })` on a one-column instrument names nothing twice. Author your own with `constraints.custom(apply, meta?)` — write just the rule against a clean data context (`{ data, oldData, activeIndex, active, field, value, domain, table, tables }`) and return a number (set the field), object (merge), array (replace dataset), or `false` (reject).
 
-6. **Guides (`elicit.guides.*`)** — non-interactive annotations, rebuilt every render so they track live data. `guides.rule` (reference line), `guides.region` (shaded band), `guides.proximity` (nearest-pick selection), `guides.custom(fn)` (draw arbitrary nodes from the render context). An edit's own constraint bounds + snap ring draw automatically when it declares `guide: true`. Guide nodes never capture the pointer, which is why the survey widgets' affordances live here.
+6. **Guides (`elicit.guides.*`)** — non-interactive annotations, rebuilt every render so they track live data. `guides.rule` (reference line), `guides.region` (shaded band), `guides.remaining` (what is left to allocate), `guides.tip` / `guides.crosshair` (pointer readouts), `guides.proximity` (nearest-pick selection), the widget chrome (`prompt`, `options`, `cellGrid`, `sliderTrack`, `quadrants`), and `guides.custom(fn)` (draw arbitrary nodes from the render context). An edit's own constraint bounds + snap ring draw automatically when it declares `guide: true`. Guide nodes never capture the pointer, which is why the survey widgets' affordances live here.
 
 7. **Format (`elicit.format.*`)** — display formatters for text marks (and anywhere a value is shown as a string). A mark's `format` option takes a d3-format string or `(v) => string`; helpers mint common ones (`format.number('.1f')`, `format.percent()`, `format.si()`, `format.time('%b %Y')`, `format.prefix('$')`, `format.suffix(' kg')`). Display-only — the underlying field stays the raw value.
 
 8. **Widgets (`elicit.widgets.*`)** — higher-level named elicitations, each a pure recipe over the core API (no new interaction surface): `likert`, `multipleChoice`, `slider`, `matrix`, `lineCone`, `ranking`, `allocation`, `probabilityTokens`, `interval`, `histogram`, `region`, `thermometer`, `labeledValue`. Each returns an **ElicitSpec** you pass straight to `Elicit(widgets.likert({…}))`. They share one option contract — `question`, `value`/`values`, `onChange`, `width`/`height`, `stage`, and `theme` — and look like survey instruments rather than charts, but each has a plain-chart twin built from the same mark, edit and constraint. How they look is a **design** (`src/widgets/designs.js`): a set of small drawers, one per part (an option, the answer in it, a slider's track, a ranking card, a bar), named by `theme.widget.design`. Four ship: `ring` (the default), `box` (`theme: 'survey'`), `block` (`'surveyBlocks'`) and `line` (`'surveyLines'`). A widget asks the design for its parts and never branches on a design's name, so `authoring.registerDesign(name, design)` restyles all thirteen at once. The chrome is the guide layer (`prompt`, `options`, `cellGrid`, `sliderTrack`, `quadrants`); the answer is always a mark.
 
-9. **Theme (`elicit.themes`, `setTheme`, `spec.theme`)** — the **style layer**: one data object of default colours, fonts, a `background`, and affordance tokens, deep-merged over the built-in `DEFAULT_THEME`. It supplies the *defaults* marks/chrome/renderers draw with (a per-datum paint channel still wins, and per-mark `theme.marks[name]` overrides sit in between). Resolved once per chart the way `effects` is (`spec.theme → resolveTheme → ctx.theme`, threaded to marks on the scale map), so it never adds a second style path. Built-ins: `themes.survey` (a professional survey look) and `themes.dark` (a self-contained dark mode — its `background` token paints the chart's own surface). `setTheme(partial)` sets an app-wide default. See `/theming`.
+9. **Theme (`elicit.themes`, `setTheme`, `spec.theme`)** — the **style layer**: one data object of default colours, fonts, a `background`, and affordance tokens, deep-merged over the built-in `DEFAULT_THEME`. It supplies the *defaults* marks/chrome/renderers draw with (a per-datum paint channel still wins, and per-mark `theme.marks[name]` overrides sit in between). Resolved once per chart the way `effects` is (`spec.theme → resolveTheme → ctx.theme`, threaded to marks on the scale map), so it never adds a second style path. Built-ins include `survey`, `surveyBlocks` and `surveyLines` (the widget designs), `dark` (a self-contained dark mode — its `background` token paints the chart's own surface), and publication styles such as `nyt`, `economist`, `swiss`, `nature` and `bbc`; `themes` lists them all. `setTheme(partial)` sets an app-wide default. See `/theming`.
 
-10. **Renderer (`elicit.D3Renderer`)** — draws the scene graph to SVG via D3, binding drag/click. Swappable for Canvas/WebGL/etc.
+10. **Renderers (`elicit.D3Renderer`, `elicit.CanvasRenderer`)** — draw the scene graph and report gestures back as inner-pixel events. `D3Renderer` (the default) draws SVG via D3; `CanvasRenderer` draws the same scene to a 2-D canvas. Pass one as `spec.renderer`. Any object meeting the `Renderer` contract works.
+
+11. **JSON specs (`compile`, `registerFunction`, `recorder`, `src/json/`)** — a JSON spec is the same grammar written as data. `compile(json)` walks the live namespaces and turns `{ "type": "barY", … }` into `plot.barY({ … })`; a scoped edit takes its dotted path (`{ "type": "line.draw" }`). An option that takes a function takes `{ "expr": "…" }`, one expression over the option's variables, or `{ "fn": "name" }`, supplied through `compile(json, { functions })` or `registerFunction(name, fn)`. `recorder()` goes the other way: it returns the namespaces in recording form, so a spec written with the factories becomes JSON. Because `compile` reads the namespaces, a new factory is a JSON keyword the moment it is exported.
 
 ---
 
@@ -172,6 +187,8 @@ ElicitJS is layered for extensibility:
 **Pointer state.** A tooltip (`guides.tip`, or a mark's `tip:` shorthand) and a crosshair (`guides.crosshair`) are guides that read `ui.pointer` / `ui.hit`, which the engine records from the renderers' root `pointermove` (one report per frame, only when a guide asks). Nothing is dispatched and no node becomes pointer-active, so a tip can never block a gesture.
 
 **Chart titles.** `spec.title` / `subtitle` / `caption` reserve bands of layout space outside the legend bands (`core/titles.js`), the way legends do, so the chart keeps its declared size.
+
+---
 
 ## Chart API surface
 
@@ -212,8 +229,16 @@ elicitjs/
 │   │   │   ├── compute.js   # An edit from gesture to commit: context, invariants, commit, preview, trial commits
 │   │   │   ├── dispatch.js  # Event routing: direct / plane / driver dispatch
 │   │   │   ├── api.js       # The public Chart object: dom(), control, emit, stages, destroy, the dataset's methods
+│   │   │   ├── hover.js     # Linked hover across the charts on one dataset
+│   │   │   ├── carry.js     # Eases a mark's nodes after build() (`motion: true`)
 │   │   │   └── render.js    # Container, sizing, and update(): layout, scales, build, ghost, guides, state pass
+│   │   ├── schema.js       # Schema normalisation: structures, tables, roles, field types and domains
+│   │   ├── hierarchy.js    # The nesting table of a hierarchy
 │   │   ├── lock.js         # Read-only rows (spec.lock): the invariant + the pointer policy
+│   │   ├── guards.js       # Closed spec keys: unknown keys warn
+│   │   ├── dev.js          # warn(key, message) and setWarnings
+│   │   ├── legends.js      # Implicit legends and their layout bands
+│   │   ├── titles.js       # title / subtitle / caption bands
 │   │   ├── axes.js         # Resolve the global `axes` convenience into axis/grid marks
 │   │   ├── resolve.js      # Global per-channel scale resolution
 │   │   ├── scales.js       # Scale wrappers (encode / invertValue) over d3-scale
@@ -224,39 +249,49 @@ elicitjs/
 │   │   ├── effects.js      # Interaction-feedback layer (grab / select)
 │   │   ├── motion.js       # Eased drawing: tracks of keyed pixel values, stepped once per frame (spec.motion); easeRows, easeNodes
 │   │   ├── theme.js        # Style layer: DEFAULT_THEME, resolveTheme, setTheme, per-mark defaults
-│   │   ├── themes.js       # Built-in themes (default, survey)
+│   │   ├── themes.js       # Built-in themes (survey, dark, nyt, economist, …)
 │   │   └── scene.js        # Abstract scene graph
 │   ├── plot/               # Data marks (mark.js = shared channel/style foundation)
-│   │   ├── point.js · ellipse.js · curve.js · face.js · bar.js · rect.js · tick.js · text.js · line.js · rule.js
+│   │   ├── point.js · ellipse.js · curve.js · face.js · bar.js · rect.js · tick.js · text.js · line.js · area.js · rule.js · shape.js
 │   │   ├── composite.js             # glyphs: a group of marks, optionally a local box
-│   │   ├── geo.js · needle.js · arc.js · polar.js
+│   │   ├── geo.js · needle.js · arc.js · polar.js · stack.js
 │   │   ├── dotStack.js · waffle.js · trend.js · trendBand.js · trendGeometry.js
+│   │   ├── node.js · nodeBox.js · link.js · linkGeometry.js · linkRouter.js · port.js · sticker.js  # networks
 │   │   └── axis.js · legend.js · axisRadial.js  # implementations (prefer elements.*)
 │   ├── elements/           # Chart-element public barrel (axis / grid / legend / axisRadial)
 │   ├── edit/               # The edit model
-│   │   ├── basic.js        # Universal edits (drag/dragSpan/brushSpan/brushRect/resize/rotate/cycle/create/toggle/remove/editText/custom)
+│   │   ├── basic.js        # Universal edits (move/moveSpan/brushSpan/brushRect/resize/rotate/slide/cycle/create/toggle/remove/rank/select/set/editText/custom)
 │   │   ├── line.js         # Line-scoped edits (anchor/newSeries/draw/sweep/removeSeries)
-│   │   ├── axis.js         # Axis-scoped edits (scale/categories) — write the schema DOMAIN, not the dataset
-│   │   ├── geo.js          # Geo-scoped edits (drag/create/draw/dragVertex/brush/createRect)
+│   │   ├── axis.js · scale.js  # edit.axis.* (scale/zoom/pan) and edit.scale.categories — write the schema DOMAIN
+│   │   ├── stack.js · waffle.js · trend.js · legend.js  # edit.stack.* · edit.waffle.fill · edit.trend.* · edit.legend.*
+│   │   ├── network.js · hierarchy.js  # edit.network.* (connect/rewire/reverse) · edit.hierarchy.nest
+│   │   ├── geo.js          # Geo-scoped edits (move/create/draw/dragVertex/removeVertex/brush/createRect)
 │   │   ├── when.js         # Arbitration predicates
 │   │   ├── pick.js         # Target selection (nearest / proximity)
 │   │   ├── route.js        # collectEdits / resolveChannels
 │   │   ├── cursor.js       # Default cursor read from a mark's edits
 │   │   ├── guide.js        # An edit's self-drawn guide (bounds + snap ring)
 │   │   ├── shared.js       # makeEdit + datum/series helpers
-│   │   └── drivers/        # Self-describing interaction modes (plane/nearest/sweep/draw/brush/brushRect/geoBrush/probe/axisDrag/slide)
-│   ├── constraints/        # Data-layer invariants (define/clamp/maintainSum/count/unique/snap)
+│   │   └── drivers/        # Self-describing interaction modes (plane/move/nearest/sweep/draw/brush/brushRect/geoBrush/probe/axisDrag/pan/slide/connect/nest)
+│   ├── constraints/        # Data-layer invariants (clamp/snap/count/unique/maintainSum/ordering/monotonic/spacing/follow/symmetric; define.js = custom)
 │   ├── widgets/            # Named survey instruments (likert/choice/slider/matrix/lineCone/ranking/allocation/…) + designs.js (the design registry) + parts.js (answer, card, bar) + shared.js (look, layout) + theme.js (guides)
-│   ├── guides/             # rule / region / proximity / custom annotations
+│   ├── guides/             # rule / region / remaining / tip / crosshair / proximity / custom
+│   ├── json/               # The JSON spec layer: compile, expressions, registerFunction, recorder
+│   ├── authoring/          # Building blocks for new vocabulary (also `elicitjs/authoring`); index.d.ts is generated
 │   ├── format.js           # Display formatters (number/percent/si/time/prefix/suffix)
 │   ├── renderers/
 │   │   ├── d3-renderer/    # The default SVG renderer
 │   │   └── canvas/         # The canvas-2D renderer (same Renderer contract)
+│   ├── vocabulary.js       # Every factory's option list and the JSON grammar tables
 │   ├── types.d.ts          # Type contracts for the whole API
+│   ├── index.d.ts          # Public type entry
 │   └── index.js            # Public API aggregator
 ├── scripts/
 │   ├── verify-browser.mjs  # Regression gate: Chromium over sibling elicitjs-docs
-│   └── check-warnings.mjs  # Regression gate: zero [elicit] warnings on docs routes
+│   ├── check-warnings.mjs  # Regression gate: zero [elicit] warnings on docs routes
+│   ├── check-exports.mjs   # Gate: exports ↔ index.d.ts ↔ vocabulary.js ↔ JSON grammar
+│   ├── check-bundle.mjs    # Gate: the bundle keeps its diagnostics and ships in the tarball
+│   └── gen-authoring-types.mjs  # Generates src/authoring/index.d.ts
 ├── vite.lib.config.js      # Library build → dist/elicit.js
 └── package.json
 ```
@@ -264,8 +299,10 @@ elicitjs/
 Docs live in the sibling repo `../elicitjs-docs` (aliases `@elicit` → this package's `src/`).
 
 Public packaging:
-- `elicit.plot.*` — data marks. Every name is a keyword: the `…X`/`…Y` pairs are the bare mark with `orientation` pinned
-- `elicit.elements.*` — chart elements (axis / grid / legend / axisRadial); also `ElicitSpec.elements`
+- `elicitjs` — the source as ESM (`src/index.js`), with types from `src/index.d.ts`.
+- `elicitjs/authoring` — the authoring kit.
+- `elicitjs/dist` — a prebuilt single-file bundle (`dist/elicit.js`).
+- `d3` v7 is a peer dependency.
 
 ---
 
@@ -276,7 +313,7 @@ Three visual statements, three homes (do not collapse them):
 | Kind | Meaning | Home |
 |------|---------|------|
 | **Style** | what the data is | channels |
-| **Guide** | what the RULE is | `edit.guide` — `bounds` / `catchment` / `track` |
+| **Guide** | what the RULE is | an edit's `guide` — `bounds` / `catchment` / `track` |
 | **Effect** | what is HAPPENING | `spec.effects` — `hovered` / `selected` / `grabbed` |
 
 An effect has two layers. The **state** is what is happening to a row (`hovered`, `selected`, `target`, `grabbed`). The **treatment** is how rows look because of it: a state's own style is the *highlight* (rows in the state), its `others` is the *mute* (rows in no state while it has one), and `neighbours` extends the highlight to linked rows on network and hierarchy data. Add a treatment, not a state, when the question is how something looks.
@@ -318,15 +355,9 @@ Two rules worth knowing before editing the docs UI:
 - **Section ids are load-bearing.** `verify:browser` roots assertions at them with descendant selectors (`#band .chart > div`), so the id must stay on an element that *contains* the examples. That's why `<Section>` exists and why the MDX pipeline runs with **no remark/rehype plugins** — `rehype-slug` would move ids onto the `<h2>` and silently break ~20 checks.
 - **Prose is JSX, not HTML strings.** `dangerouslySetInnerHTML` appears exactly once (the `getData()` panel, which formats its own HTML). Don't reintroduce it: rendering markup from a string is what made a whole class of "tags printed on screen" bugs invisible.
 
-The docs are also the **test suite**: `npm run verify:browser` boots this site, evaluates every example, and drives real gestures against them.
+The docs are also the **test suite**: `npm run verify:browser` boots this site, evaluates every example, and drives real gestures against them. `npm run check:warnings` visits every route twice, once with each example built from its JSON spec (`?spec=json`), and fails on any `[elicit]` warning.
 
-**Reuse in another Next app** (e.g. a lab site): copy components from `elicitjs-docs/`, or (when published) import from a docs-ui export:
-
-```javascript
-import { DocShell, ExampleLive, Section, SITE, createElicitScope } from "elicitjs/docs-ui";
-```
-
-Chart surfaces are client components (`'use client'`); the lab page that embeds them must be a client boundary too.
+Chart surfaces are client components (`'use client'`); a Next page that embeds one must be a client boundary too.
 
 ---
 
