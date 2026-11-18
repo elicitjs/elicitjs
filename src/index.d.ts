@@ -462,10 +462,14 @@ export const format: {
 
 export class D3Renderer implements Renderer {
   render(context: import('./types.js').RenderContext): void;
+  readonly supports: import('./types.js').RendererSupports;
+  destroy(): void;
 }
 
 export class CanvasRenderer implements Renderer {
   render(context: import('./types.js').RenderContext): void;
+  readonly supports: import('./types.js').RendererSupports;
+  destroy(): void;
 }
 
 /** The built-in named themes. `default`, `survey` and `dark` are ElicitJS's own;

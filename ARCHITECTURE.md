@@ -176,7 +176,7 @@ ElicitJS is layered for extensibility:
 
 9. **Theme (`elicit.themes`, `setTheme`, `spec.theme`)** — the **style layer**: one data object of default colours, fonts, a `background`, and affordance tokens, deep-merged over the built-in `DEFAULT_THEME`. It supplies the *defaults* marks/chrome/renderers draw with (a per-datum paint channel still wins, and per-mark `theme.marks[name]` overrides sit in between). Resolved once per chart the way `effects` is (`spec.theme → resolveTheme → ctx.theme`, threaded to marks on the scale map), so it never adds a second style path. Built-ins include `survey`, `surveyBlocks` and `surveyLines` (the widget designs), `dark` (a self-contained dark mode — its `background` token paints the chart's own surface), and publication styles such as `nyt`, `economist`, `swiss`, `nature` and `bbc`; `themes` lists them all. `setTheme(partial)` sets an app-wide default. See `/theming`.
 
-10. **Renderers (`elicit.D3Renderer`, `elicit.CanvasRenderer`)** — draw the scene graph and report gestures back as inner-pixel events. `D3Renderer` (the default) draws SVG via D3; `CanvasRenderer` draws the same scene to a 2-D canvas. Pass one as `spec.renderer`. Any object meeting the `Renderer` contract works.
+10. **Renderers (`elicit.D3Renderer`, `elicit.CanvasRenderer`)** — draw the scene graph and report gestures back as inner-pixel events. `D3Renderer` (the default) draws SVG via D3; `CanvasRenderer` draws the same scene to a 2-D canvas. Pass one as `spec.renderer`. Any object meeting the `Renderer` contract works: `render(context)`, plus an optional `supports` (what it does beyond drawing and pointer gestures: `keyboard`, `textEditor`, `filter`, `overflow`) and an optional `destroy()`, which `chart.destroy()` calls. The engine warns when a spec asks for something the renderer does not declare. A renderer that draws to one element binds `renderers/pointer.js` for its pointer gestures, as the canvas renderer does.
 
 11. **JSON specs (`compile`, `registerFunction`, `recorder`, `src/json/`)** — a JSON spec is the same grammar written as data. `compile(json)` walks the live namespaces and turns `{ "type": "barY", … }` into `plot.barY({ … })`; a scoped edit takes its dotted path (`{ "type": "line.draw" }`). An option that takes a function takes `{ "expr": "…" }`, one expression over the option's variables, or `{ "fn": "name" }`, supplied through `compile(json, { functions })` or `registerFunction(name, fn)`. `recorder()` goes the other way: it returns the namespaces in recording form, so a spec written with the factories becomes JSON. Because `compile` reads the namespaces, a new factory is a JSON keyword the moment it is exported.
 
@@ -283,7 +283,9 @@ elicitjs/
 │   ├── format.js           # Display formatters (number/percent/si/time/prefix/suffix)
 │   ├── renderers/
 │   │   ├── d3-renderer/    # The default SVG renderer
-│   │   └── canvas/         # The canvas-2D renderer (same Renderer contract)
+│   │   ├── canvas/         # The canvas-2D renderer (same Renderer contract)
+│   │   ├── pointer.js      # Pointer gestures for a single-element renderer (geometric hit test)
+│   │   └── shared.js       # Paint layers, style fields, gesture thresholds
 │   ├── vocabulary.js       # Every factory's option list and the JSON grammar tables
 │   ├── types.d.ts          # Type contracts for the whole API
 │   ├── index.d.ts          # Public type entry

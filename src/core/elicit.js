@@ -22,7 +22,7 @@ import { createChartApi } from './engine/api.js';
 import {
     assembleFeatures, bindFeatureTables, desugarPorts, desugarContainers, tipGuidesOf, viewerChannelsOf,
 } from './engine/features.js';
-import { warnUnknownSpecKeys } from './guards.js';
+import { warnUnknownSpecKeys, warnRendererSupport } from './guards.js';
 
 /**
  * A dataset and one chart over it, from one spec: `Elicit.dataset(spec).chart(spec)`.
@@ -75,8 +75,8 @@ function createChart(dataset, spec) {
         // viewBox the browser scales; 'reflow' re-renders at the parent's width on
         // resize. `responsive: true` means 'reflow'.
         responsive,
-        // SVG overflow. 'visible' shows content in the margin band (radial/gauge
-        // axis labels).
+        // 'visible' shows content in the margin band (radial/gauge axis labels).
+        // `overflow` and `focusOutline` need a renderer that supports them.
         overflow = 'hidden',
         // Browser focus ring on editable marks; off by default (keyboard still works).
         focusOutline = false,
@@ -96,6 +96,7 @@ function createChart(dataset, spec) {
             warn(`effects:neighbours:${state}`, `effects.${state}.neighbours: this dataset links no rows (no "ref" column), so there are no neighbours to show. It applies to network and hierarchy datasets.`);
         }
     }
+    warnRendererSupport(renderer, { overflow, focusOutline, effects });
     // Is this chart's hover the dataset's? `true` sends and shows it, 'receive'
     // only shows it. Unset, it links once a second chart draws the dataset.
     /** @returns {true | false | 'receive'} */
@@ -346,7 +347,7 @@ function createChart(dataset, spec) {
     // The public Chart (engine/api.js). Observation only: edits stay the one
     // path that mutates data.
     const api = createChartApi(chart, {
-        dataset: dataset.api, detach: port.detach, features, listeners, featureNodes, schemaSpec, mode,
+        dataset: dataset.api, detach: port.detach, renderer, features, listeners, featureNodes, schemaSpec, mode,
         container: /** @type {HTMLDivElement} */ (container),
         stages, tableOf, rowIndexOf, frameScalesFor, rowTargeted, measure, stopMotion,
         handleEvent: (/** @type {any} */ event) => handleEvent(event),

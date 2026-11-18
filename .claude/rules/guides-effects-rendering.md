@@ -60,6 +60,12 @@ paths:
 
 ## Renderers
 
+- The contract is `render(context)`, optional `supports` and optional `destroy()` (`Renderer` in `types.d.ts`). The engine calls nothing else and never branches on which renderer it has.
+- A renderer declares what it does beyond drawing and pointer gestures in `supports` (`keyboard`, `textEditor`, `filter`, `overflow`). A spec that asks for an undeclared one warns (`warnRendererSupport`, `warnNoTextEditor` in `core/guards.js`). A new renderer-only feature is a new flag there, never a silent skip in a renderer.
+- `chart.destroy()` calls `renderer.destroy()`. Anything a renderer holds outside one frame (window listeners, observers, caches) is released there.
+- A renderer with no per-node DOM binds `renderers/pointer.js` (`bindPointerEvents`): geometric hit test, the gesture state machine, the cursor. Gesture thresholds and the wheel delta are in `renderers/shared.js`; no renderer keeps its own.
+- The two renderers draw one look. A default one of them applies (text anchor, line step, corner radius, font fallback) is the other's too.
+- On canvas an effect's `filter` goes through `throughFilter` (`canvas/draw.js`): the nodes are drawn on a spare canvas and filtered as one image, so a fill and its stroke are one shape.
 - A gesture's `x`/`y` are the pointer in scene coordinates in every renderer. `_makeDrag` sets `.subject(event => ({ x: event.x, y: event.y }))` — d3.drag's default subject (the bound datum) displaces a rect's drag by its top-left. Never drop it or compensate in a mark.
 - The D3 renderer raises the plane for plane-pick modes and lowers it when the mode flips back.
 

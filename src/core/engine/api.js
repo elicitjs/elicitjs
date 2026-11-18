@@ -10,6 +10,7 @@ import { warn } from '../dev.js';
  * @typedef {object} ApiDeps
  * @property {import('../../types').Dataset} dataset  the public dataset this chart draws
  * @property {() => void} detach  detach the chart from its dataset
+ * @property {import('../../types').Renderer} renderer
  * @property {any[]} features
  * @property {{ stage: Set<Function> }} listeners
  * @property {Record<string, any[]>} featureNodes
@@ -37,7 +38,7 @@ import { warn } from '../dev.js';
  */
 export function createChartApi(chart, deps) {
     const {
-        dataset, detach, features, listeners, featureNodes, schemaSpec, mode, container, stages, tableOf, rowIndexOf, frameScalesFor, rowTargeted, measure, stopMotion,
+        dataset, detach, renderer, features, listeners, featureNodes, schemaSpec, mode, container, stages, tableOf, rowIndexOf, frameScalesFor, rowTargeted, measure, stopMotion,
     } = deps;
     const handleEvent = (/** @type {any} */ event) => deps.handleEvent(event);
     const update = () => deps.update();
@@ -261,11 +262,13 @@ export function createChartApi(chart, deps) {
         nextStage: stages.api.nextStage,
         emit,
         control,
-        // Detaches from the dataset and disconnects the reflow observer.
+        // Detaches from the dataset, disconnects the reflow observer and releases
+        // the renderer.
         destroy() {
             detach();
             if (ro) { ro.disconnect(); ro = null; }
             stopMotion();
+            if (typeof renderer.destroy === 'function') renderer.destroy();
         },
     };
 }

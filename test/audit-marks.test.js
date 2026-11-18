@@ -6,7 +6,7 @@ import { hitTest } from '../src/edit/pick.js';
 import { normalizeSchema } from '../src/core/schema.js';
 import { resolveTheme } from '../src/core/theme.js';
 import { paintScene } from '../src/renderers/canvas/draw.js';
-import { bindCanvasEvents } from '../src/renderers/canvas/events.js';
+import { bindPointerEvents } from '../src/renderers/pointer.js';
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 setWarnings(false);
@@ -235,7 +235,7 @@ describe('canvas renderer', () => {
         const node = { type: 'circle', cx: 50, cy: 50, r: 10, featureId: 'f', index: 0, hoverable: true };
         const events = [];
         const ctx = { scene: { children: [node] }, width: 200, height: 200, margins: { left: 0, top: 0 }, planeOnTop: false, onEvent: (e) => events.push(e) };
-        bindCanvasEvents(canvas, () => ctx);
+        bindPointerEvents(canvas, () => ctx);
         const move = (x, y) => canvas.dispatchEvent(new MouseEvent('pointermove', { clientX: x, clientY: y }));
         move(50, 50);
         expect(events.map((e) => e.type)).toEqual(['pointerover']);

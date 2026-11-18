@@ -2791,9 +2791,9 @@ export interface ChartSpec {
   // at native pixels on resize — crisp text, width tracks the container, height
   // stays the given value. Reflow charts expose `destroy()` to detach the observer.
   responsive?: 'fixed' | 'scale' | 'reflow' | boolean;
-  // SVG overflow. 'hidden' (default) clips marks to the viewport; 'visible' lets
-  // content in the margin band show — needed for radial/gauge axis labels that
-  // sit just outside the plot area.
+  // 'hidden' (default) clips marks to the viewport; 'visible' lets content in the
+  // margin band show — needed for radial/gauge axis labels that sit just outside
+  // the plot area. Needs a renderer that supports `overflow` (SVG does).
   overflow?: 'hidden' | 'visible';
   // Eased drawing: what the chart draws glides to where it belongs instead of
   // jumping. Today a hierarchy's layout eases (nodes making room, containers
@@ -2804,7 +2804,8 @@ export interface ChartSpec {
   // Browser focus ring on editable marks (the blue box after a click / Tab).
   // Off by default — keyboard nudge still works (`tabindex` stays); only the
   // native outline is suppressed. Set `true` to show the browser's focus ring
-  // (useful when teaching Tab / arrow-key editing). SVG/D3 renderer only.
+  // (useful when teaching Tab / arrow-key editing). Needs a renderer that supports
+  // `keyboard` (SVG does).
   focusOutline?: boolean;
   // The drawing backend. Defaults to a new `D3Renderer` (SVG). Any object satisfying
   // the `Renderer` contract works — `CanvasRenderer` is a second, canvas-2D
@@ -2995,8 +2996,9 @@ export interface Chart extends Omit<Dataset, 'chart' | 'on'> {
   // forward-encoded through the channel's scale for positional edits, or carried
   // whole for a `set()`/`editText()` value edit.
   control(name: string, index?: number): EditControl;
-  // Detach the chart from its dataset and stop its observers (the ResizeObserver
-  // of `responsive: 'reflow'`). Call it when unmounting a chart.
+  // Detach the chart from its dataset, stop its observers (the ResizeObserver of
+  // `responsive: 'reflow'`) and release its renderer (`Renderer.destroy`). Call it
+  // when unmounting a chart.
   destroy(): void;
 }
 
@@ -3036,8 +3038,7 @@ export interface RenderContext {
   tracksPointer?: boolean;
   responsive?: 'fixed' | 'scale' | 'reflow';
   overflow?: 'hidden' | 'visible';
-  // See ChartSpec.focusOutline. Renderers that focus mark nodes honour this;
-  // CanvasRenderer has no keyboard focus path today, so it ignores it.
+  // See ChartSpec.focusOutline. Read by a renderer that supports `keyboard`.
   focusOutline?: boolean;
   effects?: any;
   // The chart's resolved theme. A renderer reads it for the font family (emitted on
@@ -3050,12 +3051,31 @@ export interface RenderContext {
   [key: string]: any;
 }
 
+// What a renderer can do beyond drawing the scene and reporting pointer gestures.
+// A renderer declares these; the engine warns when a spec asks for one that is
+// not declared, so nothing a renderer lacks goes missing silently.
+export interface RendererSupports {
+  // Editable nodes take keyboard focus: arrow keys `nudge`, `focusOutline` shows the ring.
+  keyboard?: boolean;
+  // The inline editor a typed edit (`edit.editText`) commits from.
+  textEditor?: boolean;
+  // The `filter` property of an effect (`effects.grabbed.filter`).
+  filter?: boolean;
+  // Drawing past the chart's own edge (`overflow: 'visible'`).
+  overflow?: boolean;
+}
+
 // The drawing-backend contract. `D3Renderer` (SVG) and `CanvasRenderer` (canvas 2D)
-// both satisfy it. One method: draw the scene and wire the events for one frame.
+// both satisfy it. `render` draws the scene and wires the events for one frame.
 // State an implementation keeps between frames (idempotent scaffolding, gesture
-// state, image caches) is its own business — the engine only ever calls `render`.
+// state, image caches) is its own business.
 export interface Renderer {
   render(context: RenderContext): void;
+  // What it can do beyond that. Unset declares nothing.
+  supports?: RendererSupports;
+  // Called by `chart.destroy()`: release what outlives a frame (window listeners,
+  // observers, caches). The drawing may stay in the container.
+  destroy?(): void;
 }
 
 // A renderer-shaped gesture event, the one shape every input source (pointer,

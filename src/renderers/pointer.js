@@ -1,30 +1,51 @@
 // @ts-check
-// Canvas interaction: one pointer state machine that hit-tests nodes (pick.js)
-// and emits the same renderer events as the D3 renderer:
+// Pointer input for a renderer that draws to one element (a canvas): one state
+// machine that hit-tests scene nodes (pick.js) and emits the same renderer
+// events as the D3 renderer:
 //   click / dblclick           — plane (no node) or a mark (with node, on a still press)
 //   dragstart / drag / dragend — with node for a direct-pick drag, without for plane
 //   hover / hoverout           — plane, plane-on-top only
-// Keyboard nudge and the text-edit `commit` are not wired yet.
-import { hitTest, clipVisible } from '../../edit/pick.js';
-import { frameThrottle, MODIFIER_KEYS } from '../shared.js';
-
-// Movement (px) before a press becomes a drag, matching the D3 renderer.
-const DIRECT_CLICK_DISTANCE = 4;
-const PLANE_DRAG_THRESHOLD = 3;
+// Nothing here is canvas-specific, so another single-element renderer can bind it.
+// Keyboard nudge and the text-edit `commit` are not wired here.
+import { hitTest, clipVisible } from '../edit/pick.js';
+import { frameThrottle, MODIFIER_KEYS, CLICK_DISTANCE, PLANE_DRAG_THRESHOLD, wheelDelta } from './shared.js';
 
 /**
- * Attach the pointer state machine to a canvas, once. Per-render inputs are read
- * live from `getCtx()`, so listeners survive re-renders without rebinding.
- * @param {HTMLCanvasElement} canvas
- * @param {() => any} getCtx returns the latest render context stashed by the renderer
+ * The cursor a node asks for: an effect's, else its own when editable.
+ * @param {any} node
+ * @returns {string}
  */
-export function bindCanvasEvents(canvas, getCtx) {
+function cursorOf(node) {
+    if (node.effectStyle && node.effectStyle.cursor != null) return node.effectStyle.cursor;
+    return node.editable ? (node.cursor || 'move') : 'default';
+}
+
+/**
+ * Attach the pointer state machine to a surface, once. Per-render inputs are read
+ * live from `getCtx()`, so listeners survive re-renders without rebinding.
+ * @param {HTMLElement} surface the element the renderer draws to
+ * @param {() => any} getCtx returns the latest render context stashed by the renderer
+ * @returns {{ refresh: () => void, unbind: () => void }} `refresh` re-reads the
+ *   cursor after a render; `unbind` removes every listener.
+ */
+export function bindPointerEvents(surface, getCtx) {
     /** @type {any} */
     let gesture = null;      // { mode, node?, sx, sy, dragging, moved }
     // The hovered mark as `featureId:index`; pointerover/out fire only when it changes.
     /** @type {string | null} */
     let hoverKey = null;
     let suppressClick = false; // swallow the native click that trails a drag / mark-click
+    // Where the pointer last was over the surface, in inner scene space.
+    /** @type {{ x: number, y: number } | null} */
+    let at = null;
+
+    /** @type {[string, any, any][]} */
+    const bound = [];
+    /** @param {string} type @param {(e: any) => void} fn @param {any} [opts] */
+    const on = (type, fn, opts) => {
+        surface.addEventListener(type, fn, opts);
+        bound.push([type, fn, opts]);
+    };
 
     // Re-report the plane hover when a modifier key changes under a still pointer,
     // so `when`-gated edits re-arbitrate. Bound only while the pointer is over the plane.
@@ -56,13 +77,13 @@ export function bindCanvasEvents(canvas, getCtx) {
     /** @param {any} ctx @param {number} x @param {number} y @param {boolean} [hover] also a `hoverable` node */
     const pick = (ctx, x, y, hover = false) => hitTest(clipVisible(ctx.scene.children, x, y, ctx.clip || null), x, y, hover);
 
-    canvas.style.touchAction = 'none';
-    canvas.style.userSelect = 'none';
+    surface.style.touchAction = 'none';
+    surface.style.userSelect = 'none';
 
     /** @param {MouseEvent} e @returns {[number, number]} pointer in inner scene space */
     const toInner = (e) => {
         const ctx = getCtx();
-        const rect = canvas.getBoundingClientRect();
+        const rect = surface.getBoundingClientRect();
         // Undo CSS stretching in 'scale' mode.
         const sx = rect.width ? ctx.width / rect.width : 1;
         const sy = rect.height ? ctx.height / rect.height : 1;
@@ -70,6 +91,25 @@ export function bindCanvasEvents(canvas, getCtx) {
             (e.clientX - rect.left) * sx - ctx.margins.left,
             (e.clientY - rect.top) * sy - ctx.margins.top
         ];
+    };
+
+    // The cursor for the frame just drawn. An effect's cursor only exists on the
+    // nodes of that frame, so the renderer calls this after every render.
+    const refresh = () => {
+        const ctx = getCtx();
+        if (!ctx) return;
+        if (ctx.planeOnTop) { surface.style.cursor = ctx.planeCursor || 'pointer'; return; }
+        if (gesture && gesture.mode === 'direct') {
+            // The grabbed node as this frame drew it.
+            const grabbed = gesture.node;
+            const live = (ctx.scene.children || []).find((/** @type {any} */ n) =>
+                n && n.editable && n.featureId === grabbed.featureId && n.index === grabbed.index);
+            if (live) surface.style.cursor = cursorOf(live);
+            return;
+        }
+        if (!at) return;
+        const node = pick(ctx, at.x, at.y, true);
+        surface.style.cursor = node ? cursorOf(node) : 'default';
     };
 
     /**
@@ -92,16 +132,17 @@ export function bindCanvasEvents(canvas, getCtx) {
             // A plane tap that never dragged falls through to the native plane click.
         }
         gesture = null;
-        // Released off the canvas: `pointerleave` doesn't fire while captured, so end hover here.
-        const r = canvas.getBoundingClientRect();
+        // Released off the surface: `pointerleave` doesn't fire while captured, so end hover here.
+        const r = surface.getBoundingClientRect();
         const outside = e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
         if (outside) {
+            at = null;
             if (ctx.planeOnTop) ctx.onEvent({ type: 'hoverout', rawEvent: e });
             else if (hoverKey !== null) { hoverKey = null; ctx.onEvent({ type: 'pointerout', rawEvent: e }); }
         }
     };
 
-    canvas.addEventListener('pointerdown', (e) => {
+    on('pointerdown', (e) => {
         const ctx = getCtx();
         const [x, y] = toInner(e);
 
@@ -121,7 +162,7 @@ export function bindCanvasEvents(canvas, getCtx) {
             }
         }
         e.preventDefault();
-        try { canvas.setPointerCapture(e.pointerId); } catch { /* not fatal */ }
+        try { surface.setPointerCapture(e.pointerId); } catch { /* not fatal */ }
     });
 
     // Pointer position for `tracksPointer` guides, once per frame.
@@ -129,9 +170,10 @@ export function bindCanvasEvents(canvas, getCtx) {
         getCtx().onEvent({ type: 'pointermove', x, y, rawEvent: e });
     });
 
-    canvas.addEventListener('pointermove', (e) => {
+    on('pointermove', (e) => {
         const ctx = getCtx();
         const [x, y] = toInner(e);
+        at = { x, y };
         if (ctx.tracksPointer) track(e, x, y);
 
         // No button held with a gesture open: the release was lost, so end the gesture.
@@ -142,7 +184,6 @@ export function bindCanvasEvents(canvas, getCtx) {
                 // The plane owns the pointer; `hover` feeds proximity / probe drivers.
                 watchModifiers(x, y);
                 ctx.onEvent({ type: 'hover', x, y, rawEvent: e });
-                canvas.style.cursor = ctx.planeCursor || 'pointer';
             } else {
                 // Report the hovered mark as state (pointerover/out), never to an edit.
                 const node = pick(ctx, x, y, true);
@@ -153,13 +194,13 @@ export function bindCanvasEvents(canvas, getCtx) {
                         ? { type: 'pointerover', node, rawEvent: e }
                         : { type: 'pointerout', rawEvent: e });
                 }
-                canvas.style.cursor = node && node.editable ? (node.cursor || 'move') : 'default';
             }
+            refresh();
             return;
         }
 
         if (gesture.mode === 'direct') {
-            if (Math.hypot(x - gesture.sx, y - gesture.sy) > DIRECT_CLICK_DISTANCE) gesture.moved = true;
+            if (Math.hypot(x - gesture.sx, y - gesture.sy) > CLICK_DISTANCE) gesture.moved = true;
             ctx.onEvent({ type: 'drag', x, y, node: gesture.node, rawEvent: e });
         } else {
             if (!gesture.dragging && Math.hypot(x - gesture.sx, y - gesture.sy) > PLANE_DRAG_THRESHOLD) {
@@ -170,52 +211,59 @@ export function bindCanvasEvents(canvas, getCtx) {
         }
     });
 
-    canvas.addEventListener('pointerup', (e) => {
+    on('pointerup', (e) => {
         const [x, y] = toInner(e);
         endGesture(e, x, y);
     });
 
     // A cancelled pointer never delivers pointerup; end the stroke.
-    canvas.addEventListener('pointercancel', (e) => {
+    on('pointercancel', (e) => {
         const [x, y] = toInner(e);
         endGesture(e, x, y, false);
     });
 
-    canvas.addEventListener('pointerleave', (e) => {
+    on('pointerleave', (e) => {
         unwatchModifiers();
-        {
-            const ctx = getCtx();
-            if (ctx.tracksPointer) ctx.onEvent({ type: 'pointerleave', rawEvent: e });
-        }
+        const ctx = getCtx();
+        if (ctx.tracksPointer) ctx.onEvent({ type: 'pointerleave', rawEvent: e });
         if (!gesture) {
-            const ctx = getCtx();
+            at = null;
             if (ctx.planeOnTop) ctx.onEvent({ type: 'hoverout', rawEvent: e });
             else if (hoverKey !== null) { hoverKey = null; ctx.onEvent({ type: 'pointerout', rawEvent: e }); }
         }
     });
 
     // The wheel gesture, only when an active edit listens (then page scroll is prevented).
-    canvas.addEventListener('wheel', (e) => {
+    on('wheel', (e) => {
         const ctx = getCtx();
         if (!ctx.hasWheel) return;
         e.preventDefault();
         const [x, y] = toInner(e);
-        const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
-        ctx.onEvent({ type: 'wheel', x, y, deltaX: (e.deltaX || 0) * unit, deltaY: (e.deltaY || 0) * unit, rawEvent: e });
+        ctx.onEvent({ type: 'wheel', x, y, ...wheelDelta(e), rawEvent: e });
     }, { passive: false });
 
-    canvas.addEventListener('click', (e) => {
+    on('click', (e) => {
         if (suppressClick) { suppressClick = false; return; }
         const ctx = getCtx();
         const [x, y] = toInner(e);
         ctx.onEvent({ type: 'click', x, y, rawEvent: e });
     });
 
-    canvas.addEventListener('dblclick', (e) => {
+    on('dblclick', (e) => {
         const ctx = getCtx();
         const [x, y] = toInner(e);
         // Carry the mark under the pointer, if any; dblclick edits can sit on a node.
         const node = ctx.planeOnTop ? null : pick(ctx, x, y);
         ctx.onEvent({ type: 'dblclick', x, y, ...(node ? { node } : {}), rawEvent: e });
     });
+
+    const unbind = () => {
+        for (const [type, fn, opts] of bound) surface.removeEventListener(type, fn, opts);
+        bound.length = 0;
+        unwatchModifiers();
+        gesture = null;
+        at = null;
+    };
+
+    return { refresh, unbind };
 }

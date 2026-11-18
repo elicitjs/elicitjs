@@ -273,6 +273,39 @@ async function main() {
             barsAfter[0] === barsBefore[0] && barsAfter[1] === barsBefore[1] && barsAfter[2] === barsBefore[2],
             `${barsBefore} -> ${barsAfter}`);
 
+        // The cursor and the grab feedback are the engine's, but a canvas has no
+        // element to style, so the renderer must apply both itself. Read the cursor
+        // off the canvas and the feedback off its pixels (inside bar D, near the base).
+        const directCanvas = '#direct .chart canvas';
+        const pixelAt = (x, y) => page.$eval(directCanvas, (c, [px, py]) => {
+            const k = c.width / c.clientWidth;
+            return Array.from(c.getContext('2d').getImageData(Math.round(px * k), Math.round(py * k), 1, 1).data);
+        }, [x, y]);
+        const restPx = await pixelAt(324, 220);
+        await page.mouse.move(colX, dcBox.y + 150);
+        await page.waitForTimeout(100);
+        const barCursor = await page.$eval(directCanvas, (c) => c.style.cursor);
+        check('canvas: an editable bar shows its drag cursor', barCursor === 'ns-resize', `cursor "${barCursor}"`);
+        await page.mouse.down();
+        await page.mouse.move(colX, dcBox.y + 145);
+        await page.mouse.move(colX, dcBox.y + 140);
+        await page.waitForTimeout(100);
+        const grabPx = await pixelAt(324, 220);
+        await page.mouse.up();
+        await page.waitForTimeout(100);
+        const releasedPx = await pixelAt(324, 220);
+        check('canvas: the grabbed bar darkens (the default `grabbed` filter)',
+            restPx[3] === 255 && grabPx[3] === 255 && grabPx[0] < restPx[0] - 5, `${restPx} -> ${grabPx}`);
+        check('canvas: the bar returns to its own colour on release', releasedPx.join() === restPx.join(),
+            `${restPx} -> ${releasedPx}`);
+        await page.mouse.move(dcBox.x + 4, dcBox.y + 4);
+        await page.waitForTimeout(100);
+        const offCursor = await page.$eval(directCanvas, (c) => c.style.cursor);
+        check('canvas: the cursor resets off the bar', offCursor === 'default', `cursor "${offCursor}"`);
+        const backing = await page.$eval(directCanvas, (c) => [c.width, c.clientWidth, window.devicePixelRatio]);
+        check('canvas: backed at the size it is shown, in device pixels',
+            Math.abs(backing[0] - backing[1] * backing[2]) <= 1, `${backing[0]}px for ${backing[1]}css @${backing[2]}x`);
+
         // Plane gesture: a you-draw-it sweep (planeOnTop). No node identity — the
         // driver picks each target from the pointer coordinates the canvas reports.
         const demandOf = () => page.$eval('#plane .data-body', (el) => {

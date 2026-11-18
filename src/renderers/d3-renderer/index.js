@@ -3,7 +3,10 @@ import * as d3 from "d3";
 import { DEFAULT_EFFECTS, ELEMENT_EFFECT_PROPS } from "../../core/effects.js";
 import { markCenter } from "../../edit/shared.js";
 import { rectHitBox, MIN_GRAB } from "../../edit/pick.js";
-import { lineGenerator, STYLE_FIELDS, partitionScene, frameThrottle, MODIFIER_KEYS } from "../shared.js";
+import {
+  lineGenerator, STYLE_FIELDS, partitionScene, frameThrottle, MODIFIER_KEYS,
+  CLICK_DISTANCE, PLANE_DRAG_THRESHOLD, wheelDelta,
+} from "../shared.js";
 
 // camelCase effect property -> CSS property name. Effects are CSS properties,
 // not SVG attributes, so removing one restores the mark's own paint.
@@ -31,6 +34,30 @@ export class D3Renderer {
     this._planeNode = null;
     // Is a direct-pick (d3.drag) stroke open? See _endMarkDrag.
     this._markDragLive = false;
+  }
+
+  /**
+   * SVG does all of it: focusable nodes, the inline editor, CSS filters, and
+   * drawing past its own edge.
+   * @returns {import('../../types').RendererSupports}
+   */
+  get supports() {
+    return { keyboard: true, textEditor: true, filter: true, overflow: true };
+  }
+
+  /**
+   * Release what outlives a frame: the window listeners of an open gesture and
+   * the wheel listener. The last frame stays in the container.
+   */
+  destroy() {
+    this._abortPlaneGesture();
+    this._unwatchModifiers();
+    if (this._wheelHandler && this._wheelNode) {
+      this._wheelNode.removeEventListener("wheel", this._wheelHandler);
+    }
+    this._wheelHandler = null;
+    this._wheelNode = null;
+    this._onEvent = null;
   }
 
   /** The theme's default text size (fallback for a text node with no fontSize). */
@@ -552,13 +579,10 @@ export class D3Renderer {
     this._wheelHandler = (/** @type {any} */ event) => {
       event.preventDefault();
       const [px, py] = pointer(event);
-      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 400 : 1;
-      onEvent({
-        type: "wheel", x: px, y: py,
-        deltaX: (event.deltaX || 0) * unit, deltaY: (event.deltaY || 0) * unit,
-        rawEvent: event,
-      });
+      onEvent({ type: "wheel", x: px, y: py, ...wheelDelta(event), rawEvent: event });
     };
+    // Kept for destroy().
+    this._wheelNode = node;
     node.addEventListener("wheel", this._wheelHandler, { passive: false });
   }
 
@@ -604,7 +628,7 @@ export class D3Renderer {
     const [px, py] = this._planePointer(event);
     if (
       !gesture.dragging &&
-      Math.hypot(px - gesture.startX, py - gesture.startY) > 3
+      Math.hypot(px - gesture.startX, py - gesture.startY) > PLANE_DRAG_THRESHOLD
     ) {
       gesture.dragging = true;
       this._onEvent({
@@ -725,7 +749,7 @@ export class D3Renderer {
   _makeDrag(onEvent) {
     return d3
       .drag()
-      .clickDistance(4)
+      .clickDistance(CLICK_DISTANCE)
       // Subject is the pointer, not the datum: the default subject offsets a rect
       // drag by its top-left. `event.x/y` is the pointer in scene coordinates.
       .subject((/** @type {any} */ event) => ({ x: event.x, y: event.y }))

@@ -566,3 +566,58 @@ export function warnUnknownSpecKeys(spec, where = 'Elicit') {
         );
     }
 }
+
+/**
+ * A spec that asks for something its renderer does not declare (`Renderer.supports`)
+ * would lose it silently: a focus ring that never shows, an effect that draws nothing.
+ * @param {any} renderer
+ * @param {{ overflow?: string, focusOutline?: boolean, effects?: any }} asks
+ * @returns {void}
+ */
+export function warnRendererSupport(renderer, { overflow, focusOutline, effects }) {
+    const supports = (renderer && renderer.supports) || {};
+    if (overflow === 'visible' && !supports.overflow) {
+        warn(
+            'renderer:overflow',
+            'overflow: "visible": this renderer draws nothing past its own edge, so content ' +
+            'in the margin band is cut off. Widen `margins`, or use the SVG renderer (D3Renderer).'
+        );
+    }
+    if (focusOutline && !supports.keyboard) {
+        warn(
+            'renderer:focusOutline',
+            'focusOutline: this renderer gives marks no keyboard focus, so there is no focus ' +
+            'ring to show and the arrow keys do not edit. Use the SVG renderer (D3Renderer).'
+        );
+    }
+    if (supports.filter) return;
+    for (const state of Object.keys(effects || {})) {
+        const s = effects[state];
+        if (!s || s.enabled === false) continue;
+        const asked = s.filter != null ? `effects.${state}.filter`
+            : (s.others && s.others.filter != null) ? `effects.${state}.others.filter` : null;
+        if (!asked) continue;
+        warn(
+            `renderer:filter:${state}`,
+            `${asked}: this renderer cannot apply a filter, so the effect draws nothing. ` +
+            `Give effects.${state} an opacity, a fill, a stroke or an outline, or use the SVG renderer (D3Renderer).`
+        );
+    }
+}
+
+/**
+ * A typed edit opens the renderer's inline editor. Without one a double-click
+ * does nothing, so say so once per mark.
+ * @param {any} feature
+ * @param {import('../types').Edit} edit the mark's `inline` edit
+ * @param {any} renderer
+ * @returns {void}
+ */
+export function warnNoTextEditor(feature, edit, renderer) {
+    if (renderer && renderer.supports && renderer.supports.textEditor) return;
+    warn(
+        `${markLabel(feature)}:renderer:textEditor`,
+        `${edit.type}() on ${markLabel(feature)} is typed into the renderer's inline editor, ` +
+        `which this renderer does not have, so a double-click does nothing. Use the SVG renderer (D3Renderer).`
+    );
+}

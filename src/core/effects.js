@@ -1,6 +1,6 @@
 // @ts-check
 import { color as d3color } from 'd3';
-import { measureText } from './measure.js';
+import { textBox } from './measure.js';
 import { warn } from './dev.js';
 // effects.js — interaction effects: transient feedback for an interaction's state
 // (hovered, selected, target, grabbed), separate from style channels and guides.
@@ -341,16 +341,8 @@ const TEXT_OUTLINE_GAP = 2;
  * @returns {any}
  */
 function textOutline(mark, pad, paint) {
-    const fontSize = +mark.fontSize || 12;
-    const font = { fontSize, fontWeight: mark.fontWeight, fontFamily: mark.fontFamily };
-    const lines = Array.isArray(mark.lines) && mark.lines.length ? mark.lines : [mark.text];
-    const step = mark.lineHeight != null ? mark.lineHeight : Math.round(fontSize * 1.35);
-    const w = Math.max(0, ...lines.map((/** @type {string} */ l) => measureText(l, font)));
-    const h = lines.length * step;
-    const anchor = mark.textAnchor || 'middle';
-    const left = anchor === 'start' ? mark.x : anchor === 'end' ? mark.x - w : mark.x - w / 2;
-    const top = mark.lineAnchor === 'top' ? mark.y : mark.lineAnchor === 'bottom' ? mark.y - h : mark.y - h / 2;
-    const box = { x: left - pad, y: top - pad, width: w + pad * 2, height: h + pad * 2 };
+    const glyphs = textBox(mark);
+    const box = { x: glyphs.x - pad, y: glyphs.y - pad, width: glyphs.width + pad * 2, height: glyphs.height + pad * 2 };
 
     const { angle, ...rest } = paint;
     if (!angle) return { type: 'rect', ...box, ...paint };

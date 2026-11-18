@@ -110,3 +110,19 @@ export function frameThrottle(fn) {
  * so the engine re-arbitrates without a pointer move.
  */
 export const MODIFIER_KEYS = new Set(['Shift', 'Alt', 'Control', 'Meta']);
+
+// Gesture thresholds in px, the same in every renderer.
+// A press on a mark that moves no further than this is still a click.
+export const CLICK_DISTANCE = 4;
+// A press on the plane becomes a drag once it has moved further than this.
+export const PLANE_DRAG_THRESHOLD = 3;
+
+/**
+ * A wheel event's deltas in px, whatever unit the browser reports them in.
+ * @param {any} event
+ * @returns {{ deltaX: number, deltaY: number }}
+ */
+export function wheelDelta(event) {
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 400 : 1;
+    return { deltaX: (event.deltaX || 0) * unit, deltaY: (event.deltaY || 0) * unit };
+}

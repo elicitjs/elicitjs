@@ -181,6 +181,29 @@ export function noteBox(text, opts = {}) {
 }
 
 /**
+ * The box a text node's glyphs occupy, placed the way the renderers anchor it:
+ * `textAnchor` across (middle when unset), `lineAnchor` down. Unrotated; the
+ * node turns about its anchor (`x`, `y`).
+ * @param {any} node a text scene node
+ * @returns {{ x: number, y: number, width: number, height: number }}
+ */
+export function textBox(node) {
+    const fontSize = +node.fontSize || 12;
+    const font = { fontSize, fontWeight: node.fontWeight, fontFamily: node.fontFamily };
+    const lines = Array.isArray(node.lines) && node.lines.length ? node.lines : [node.text];
+    const step = node.lineHeight != null ? node.lineHeight : Math.round(fontSize * 1.35);
+    const width = Math.max(0, ...lines.map((/** @type {string} */ l) => measureText(l, font)));
+    const height = lines.length * step;
+    const anchor = node.textAnchor || 'middle';
+    return {
+        x: anchor === 'start' ? node.x : anchor === 'end' ? node.x - width : node.x - width / 2,
+        y: node.lineAnchor === 'top' ? node.y : node.lineAnchor === 'bottom' ? node.y - height : node.y - height / 2,
+        width,
+        height,
+    };
+}
+
+/**
  * Drop every memoized width. Exported for a theme change and for tests; nothing in
  * the render path calls it, since the cache key already carries the font.
  * @returns {void}

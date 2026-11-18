@@ -5,6 +5,7 @@
 // Geometry tests run in the mark's unrotated frame (`unrotate` about `markCenter`).
 
 import { markCenter } from './shared.js';
+import { textBox } from '../core/measure.js';
 
 /**
  * Distance from pointer to a mark, per mark type:
@@ -353,8 +354,11 @@ function containsPoint(mark, px, py) {
         return distanceToMark(mark, px, py) <= half + HIT_TOLERANCE;
     }
     if (mark.type === 'text') {
-        // No text box is known here; use a radius about the anchor.
-        return Math.hypot(px - mark.x, py - mark.y) <= (mark.fontSize || 10) + HIT_TOLERANCE;
+        // The measured box of its lines, in the unrotated frame (it turns about its anchor).
+        const box = textBox(mark);
+        const p = unrotate(mark, px, py);
+        return p.x >= box.x - HIT_TOLERANCE && p.x <= box.x + box.width + HIT_TOLERANCE
+            && p.y >= box.y - HIT_TOLERANCE && p.y <= box.y + box.height + HIT_TOLERANCE;
     }
     return false;
 }

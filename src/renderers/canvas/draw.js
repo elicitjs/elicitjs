@@ -4,7 +4,8 @@
 import { markCenter } from '../../edit/shared.js';
 import { STYLE_FIELDS, lineGenerator, partitionScene } from '../shared.js';
 
-// The theme's font tokens for the current paint pass, set by paintScene and read by text().
+// The font for the current paint pass (the theme's, else the host page's), set by
+// paintScene and read by text().
 /** @type {{ family: string | null, size: number } | null} */
 let activeFont = null;
 
@@ -19,10 +20,24 @@ const BASELINE = {
     alphabetic: 'alphabetic', ideographic: 'ideographic'
 };
 
+/** @type {boolean | undefined} */
+let filters;
+
+/**
+ * Does this browser's 2D context take a CSS `filter`? Asked once.
+ * @returns {boolean}
+ */
+export function canFilter() {
+    if (filters === undefined) {
+        filters = typeof CanvasRenderingContext2D !== 'undefined' && 'filter' in CanvasRenderingContext2D.prototype;
+    }
+    return filters;
+}
+
 /**
  * Resolve a node's style: `node.effectStyle` wins, then the node's own value, then
- * the caller's default, then the shared base. `filter` and `cursor` have no canvas
- * equivalent and are skipped.
+ * the caller's default, then the shared base. An effect's `filter` is applied by
+ * `paintMarks`, and its `cursor` by renderers/pointer.js.
  * @param {any} node
  * @param {Record<string, any>} defaults
  * @returns {Record<string, any>}
@@ -63,7 +78,8 @@ function paint(ctx, s, path) {
         ctx.fillStyle = s.fill;
         path ? ctx.fill(path) : ctx.fill();
     }
-    if (s.stroke && s.stroke !== 'none') {
+    // A zero width draws nothing; the context would ignore it and keep the last width.
+    if (s.stroke && s.stroke !== 'none' && s.strokeWidth !== 0) {
         ctx.globalAlpha = op * (s.strokeOpacity != null ? s.strokeOpacity : 1);
         ctx.strokeStyle = s.stroke;
         ctx.lineWidth = s.strokeWidth != null ? s.strokeWidth : 1;
@@ -146,19 +162,36 @@ function pointsBox(node) {
     return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
 }
 
+/**
+ * Trace a rect with elliptical corners, as SVG's `rx`/`ry` do: each radius is
+ * capped at half its side, and one given alone sets both.
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {number} x @param {number} y @param {number} w @param {number} h
+ * @param {number | null | undefined} rx @param {number | null | undefined} ry
+ */
+function roundedRect(ctx, x, y, w, h, rx, ry) {
+    const cx = Math.min(Math.max(0, rx != null ? rx : (ry || 0)), w / 2);
+    const cy = Math.min(Math.max(0, ry != null ? ry : (rx || 0)), h / 2);
+    if (!(cx > 0 && cy > 0)) { ctx.rect(x, y, w, h); return; }
+    const q = Math.PI / 2;
+    ctx.moveTo(x + cx, y);
+    ctx.lineTo(x + w - cx, y);
+    ctx.ellipse(x + w - cx, y + cy, cx, cy, 0, -q, 0);
+    ctx.lineTo(x + w, y + h - cy);
+    ctx.ellipse(x + w - cx, y + h - cy, cx, cy, 0, 0, q);
+    ctx.lineTo(x + cx, y + h);
+    ctx.ellipse(x + cx, y + h - cy, cx, cy, 0, q, 2 * q);
+    ctx.lineTo(x, y + cy);
+    ctx.ellipse(x + cx, y + cy, cx, cy, 0, 2 * q, 3 * q);
+    ctx.closePath();
+}
+
 /** @param {CanvasRenderingContext2D} ctx @param {any} node @param {Record<string,any>} defaults */
 function rect(ctx, node, defaults) {
     withAngle(ctx, node, () => {
         const h = Math.max(0, node.height);
         ctx.beginPath();
-        // Rounded corners where `roundRect` exists; square otherwise.
-        if (node.rx != null && typeof (/** @type {any} */ (ctx).roundRect) === 'function') {
-            const rx = Math.max(0, node.rx);
-            const ry = node.ry != null ? Math.max(0, node.ry) : rx;
-            /** @type {any} */ (ctx).roundRect(node.x, node.y, node.width, h, [rx, ry]);
-        } else {
-            ctx.rect(node.x, node.y, node.width, h);
-        }
+        roundedRect(ctx, node.x, node.y, node.width, h, node.rx, node.ry);
         const s = styleOf(node, defaults);
         const g = gradientOf(ctx, node, { x: node.x, y: node.y, width: node.width, height: h });
         if (g && !(node.effectStyle && node.effectStyle.fill != null)) s.fill = g;
@@ -201,6 +234,7 @@ function text(ctx, node, defaults, anchorDefault) {
     if (node.text == null) return;
     withAngle(ctx, node, () => {
         const s = styleOf(node, defaults);
+        // The node's family, the theme's, the host page's, then the browser's.
         const family = node.fontFamily || (activeFont && activeFont.family) || 'sans-serif';
         const size = node.fontSize != null ? node.fontSize : ((activeFont && activeFont.size) || 10);
         ctx.font = `${node.fontStyle ? node.fontStyle + ' ' : ''}${node.fontWeight != null ? node.fontWeight + ' ' : ''}${size}px ${family}`;
@@ -209,7 +243,10 @@ function text(ctx, node, defaults, anchorDefault) {
 
         // A wrapped label paints its `lines`; otherwise one line of `text`.
         const lines = Array.isArray(node.lines) ? node.lines : [String(node.text)];
-        const step = node.lineHeight != null ? node.lineHeight : Math.round(size * 1.35);
+        // An unset size steps as 12px, the size text is measured at (core/measure.js).
+        const step = node.lineHeight != null
+            ? node.lineHeight
+            : Math.round((node.fontSize != null ? node.fontSize : 12) * 1.35);
         // `lineAnchor` places the block about y: top hangs, bottom stacks, else centred.
         const first = node.lineAnchor === 'top' ? node.y
             : node.lineAnchor === 'bottom' ? node.y - (lines.length - 1) * step
@@ -217,7 +254,7 @@ function text(ctx, node, defaults, anchorDefault) {
 
         const op = s.opacity != null ? s.opacity : 1;
         // Stroke first: a stroke on text is a halo behind the glyphs.
-        if (s.stroke && s.stroke !== 'none') {
+        if (s.stroke && s.stroke !== 'none' && s.strokeWidth !== 0) {
             ctx.globalAlpha = op * (s.strokeOpacity != null ? s.strokeOpacity : 1);
             ctx.strokeStyle = s.stroke;
             ctx.lineWidth = s.strokeWidth != null ? s.strokeWidth : 1;
@@ -282,14 +319,68 @@ function paintMark(ctx, n) {
             line(ctx, n, { stroke: 'black', strokeWidth: 1, opacity: 1 });
             break;
         case 'text':
-            // Editable text marks default to a middle anchor, others to start.
-            text(ctx, n, { fill: 'black', opacity: 1 }, n.editable ? 'middle' : 'start');
+            text(ctx, n, { fill: 'black', opacity: 1 }, 'middle');
             break;
         case 'image':
             // Only background images are painted.
             break;
         default:
             break;
+    }
+}
+
+/** @type {HTMLCanvasElement | null} */
+let scratch = null;
+
+/**
+ * Draw through a CSS filter. The nodes are painted on a spare canvas and that
+ * image is drawn back filtered, so a fill and its stroke are filtered as one
+ * shape, as an SVG element is.
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {string} filter
+ * @param {(c: CanvasRenderingContext2D) => void} draw
+ */
+function throughFilter(ctx, filter, draw) {
+    const target = ctx.canvas;
+    if (!scratch) scratch = document.createElement('canvas');
+    if (scratch.width !== target.width || scratch.height !== target.height) {
+        scratch.width = target.width;
+        scratch.height = target.height;
+    }
+    const layer = scratch.getContext('2d');
+    if (!layer) { draw(ctx); return; }
+    const m = ctx.getTransform();
+    layer.setTransform(1, 0, 0, 1, 0, 0);
+    layer.clearRect(0, 0, scratch.width, scratch.height);
+    layer.setTransform(m);
+    draw(layer);
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    // The image is in backing-store px, so scale the filter's px lengths to match.
+    ctx.filter = filter.replace(/(-?\d*\.?\d+)px/g, (_, n) => `${n * m.a}px`);
+    ctx.drawImage(scratch, 0, 0);
+    ctx.restore();
+}
+
+/** @param {any} n @returns {string | null} an effect's filter, where the context takes one */
+function filterOf(n) {
+    return (canFilter() && n.effectStyle && n.effectStyle.filter) || null;
+}
+
+/**
+ * Paint mark nodes in scene order. A run of neighbours under one effect filter
+ * goes through it together.
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {any[]} nodes
+ */
+function paintMarks(ctx, nodes) {
+    for (let i = 0; i < nodes.length;) {
+        const filter = filterOf(nodes[i]);
+        let j = i + 1;
+        while (j < nodes.length && filterOf(nodes[j]) === filter) j++;
+        if (filter) throughFilter(ctx, filter, (c) => { for (let k = i; k < j; k++) paintMark(c, nodes[k]); });
+        else for (let k = i; k < j; k++) paintMark(ctx, nodes[k]);
+        i = j;
     }
 }
 
@@ -354,10 +445,14 @@ function paintEffect(ctx, n) {
  * effects. Within the mark layer, `scene.children` order is z-order.
  * @param {CanvasRenderingContext2D} ctx
  * @param {any[]} children scene nodes
- * @param {{ images: Map<string, any>, requestRepaint: () => void, theme?: any, clip?: { x: number, y: number, width: number, height: number } | null, innerWidth?: number, innerHeight?: number }} io
+ * @param {{ images: Map<string, any>, requestRepaint: () => void, theme?: any, fontFamily?: string | null, clip?: { x: number, y: number, width: number, height: number } | null, innerWidth?: number, innerHeight?: number }} io
  */
 export function paintScene(ctx, children, io) {
-    activeFont = (io && io.theme && io.theme.font) || null;
+    const themeFont = (io && io.theme && io.theme.font) || null;
+    activeFont = {
+        family: (themeFont && themeFont.family) || (io && io.fontFamily) || null,
+        size: (themeFont && themeFont.size) || 10,
+    };
     const { background, guideRegions, marks, chrome, guideFront, effects, effectsChrome } =
         partitionScene(children, { clip: !!(io && io.clip) });
     // The clip rect confines marks and effects.
@@ -387,8 +482,8 @@ export function paintScene(ctx, children, io) {
     guideRegions.forEach((n) => rect(ctx, n, { fill: 'none', stroke: 'none', strokeWidth: 1, opacity: 1 }));
 
     // Marks (clipped), then unclipped chrome.
-    clipped(() => marks.forEach((n) => paintMark(ctx, n)));
-    chrome.forEach((n) => paintMark(ctx, n));
+    clipped(() => paintMarks(ctx, marks));
+    paintMarks(ctx, chrome);
 
     // Rules, constraint ticks, guide labels — in scene order.
     guideFront.forEach((n) => paintGuideFront(ctx, n));

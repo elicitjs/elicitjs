@@ -24,7 +24,7 @@ import {
     warnScaleRequirements, warnScopeMismatch, warnProjectionCartesianMix,
     warnDuplicatePlaneEdits, warnUnreachableLegendRow, warnConnectConflict, warnNestAlone,
     warnCreateOnNonMark, warnCreateEmptyExtent, warnDeadEditChannels, warnMissingEditChannels, warnHiddenHandles,
-    warnUnclaimedPick, warnUnknownEditOptions,
+    warnUnclaimedPick, warnUnknownEditOptions, warnNoTextEditor,
 } from '../guards.js';
 
 /**
@@ -398,6 +398,7 @@ export function createRender(chart, deps) {
 
             // An `inline` (typed) edit flags nodes `editText` for the renderer's editor.
             const inlineEdit = activeEdits(feature).find(e => e.inline);
+            if (inlineEdit) warnNoTextEditor(feature, inlineEdit, renderer);
 
             // The edited column's current value, so the editor opens with it even
             // on a node that paints no text (a sticker's box).
