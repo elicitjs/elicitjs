@@ -144,6 +144,23 @@ const FIXTURES = {
             ],
         })],
     }),
+    'a hierarchy that arranges its contents': ({ plot, edit }) => ({
+        schema: {
+            structure: 'hierarchy',
+            tables: {
+                nodes: { id: { type: 'categorical', key: true }, w: { type: 'quantitative', default: 120 } },
+                nesting: { child: { type: 'ref' }, parent: { type: 'ref' } },
+            },
+        },
+        marks: [plot.rect({
+            channels: {
+                width: { field: 'w', scale: null, fit: true },
+                contains: { fn: (d) => d.kind === 'lane', padding: { top: 24 }, arrange: 'grid', gap: 6, columns: 2 },
+                dodge: false,
+            },
+            edits: [edit.move({ mode: 'relative' }), edit.hierarchy.nest()],
+        })],
+    }),
     'a widget with chart keys beside it': ({ widgets }) => ({
         ...widgets.slider({ question: 'How much?', domain: [0, 10], format: (v) => v + ' pts' }),
         responsive: 'reflow',

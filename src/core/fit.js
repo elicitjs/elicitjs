@@ -4,12 +4,17 @@
 // and `getData()` reports the fitted geometry. Steps, in order:
 //   PLACE  a nested row with no position gets one inside its container
 //   CARRY  a container the commit moved takes its subtree by the same pixel delta
-//   SPACE  bottom-up, an unfitted container keeps its contents inside its padding,
-//          and `dodge` rows are pushed apart
-//   FIT    in the same walk, a fitted container takes its children's union, padded
+//   SPACE  bottom-up, an unfitted container keeps its contents inside its padding.
+//          Its `arrange` decides the rest: `dodge` rows are pushed apart, `free`
+//          rows stay put, a row, column or grid puts its children in slots in
+//          order, and a pack draws them together where they are (core/arrange.js)
+//   FIT    in the same walk, a fitted container takes its children's union, padded.
+//          One that just lost its last child takes its columns' schema `default`
 
 import { scaleFor } from './scales.js';
 import { treeOf, nestingOf } from './hierarchy.js';
+import { SLOTTED, slotsOf, nearestSlot, readingOrder } from './arrange.js';
+import { warn } from './dev.js';
 
 /** Padding between a container's edge and its contents, when `contains` states none. */
 const DEFAULT_PADDING = 10;
@@ -108,6 +113,21 @@ function paddingOf(contains) {
     }
     const all = side(p);
     return { top: all, right: all, bottom: all, left: all };
+}
+
+/**
+ * How a container arranges its contents: `contains: { arrange, gap, columns }`.
+ * The engine has already checked `arrange` (engine/features.js).
+ * @param {any} contains the mark's `contains` channel
+ * @returns {{ arrange: string, gap: number, columns: number | null }}
+ */
+function arrangeOf(contains) {
+    const c = contains || {};
+    return {
+        arrange: typeof c.arrange === 'string' ? c.arrange : 'dodge',
+        gap: typeof c.gap === 'number' && Number.isFinite(c.gap) ? Math.max(0, c.gap) : DEFAULT_GAP,
+        columns: typeof c.columns === 'number' && c.columns >= 1 ? Math.floor(c.columns) : null,
+    };
 }
 
 /**
@@ -216,8 +236,11 @@ export function layoutIO(scales, hosts) {
  *   (the ancestors of a row in mid-drag — see the nest driver)
  * @property {((row: any, i: number) => boolean) | null} [locked]  read-only rows
  * @property {((row: any, i: number, rows: any[]) => number | null) | null} [dodges]
- *   the gap a row keeps from its siblings, or null for none. Omit to push nothing
- *   apart (mid-stroke, rows must not scatter under a carried node)
+ *   the gap a row keeps from its siblings, or null for none
+ * @property {boolean} [spacing]  push rows apart and put slotted contents in their
+ *   slots. Off mid-stroke: rows must not scatter under a carried node
+ * @property {Set<number> | null} [emptied]  containers that just lost their last
+ *   child: their fitted size returns to the schema `default`
  * @property {import('../types').Datum[] | null} [since]  the node rows before the
  *   gesture that is now settling; a row whose box differs holds its place and its
  *   siblings make room for it
@@ -242,7 +265,7 @@ export function layoutIO(scales, hosts) {
  * @param {SettleOptions} options
  * @returns {import('../types').Datum[]}
  */
-export function settleHierarchy({ spec, tables, hosts, scales, width, height, before = null, frozen = null, locked = null, dodges = null, since = null, anchors = null, extents = null, keepSize = null, yields = null, passing = false, holds = null }) {
+export function settleHierarchy({ spec, tables, hosts, scales, width, height, before = null, frozen = null, locked = null, dodges = null, spacing = false, emptied = null, since = null, anchors = null, extents = null, keepSize = null, yields = null, passing = false, holds = null }) {
     const nesting = nestingOf(spec);
     const rows = nesting ? tables[nesting.nodes] : null;
     if (!nesting || !rows || !rows.length || !hosts || !hosts.length) return rows || [];
@@ -310,6 +333,14 @@ export function settleHierarchy({ spec, tables, hosts, scales, width, height, be
         const into = drawn(parent);
         if (!into) continue;
         const k = tree.childrenOf(parent).indexOf(i);
+        // In a slotted container, past its far corner, so it reads as the last slot.
+        if (SLOTTED.includes(arrangeOf(into.host.contains).arrange)) {
+            write(i, {
+                [xs.field]: xs.invert(into.box.cx + into.box.hw + k * PLACE_STEP),
+                [ys.field]: ys.invert(into.box.cy + into.box.hh + k * PLACE_STEP),
+            });
+            continue;
+        }
         write(i, {
             [xs.field]: xs.invert(into.box.cx + (k % 4) * PLACE_STEP),
             [ys.field]: ys.invert(into.box.cy + Math.floor(k / 4) * PLACE_STEP),
@@ -343,15 +374,20 @@ export function settleHierarchy({ spec, tables, hosts, scales, width, height, be
     // siblings make room). Everything else gives way; two of a kind split it.
     /** @type {Set<number>} */
     const held = new Set(anchors || []);
-    if (dodges && since && since.length <= rows.length) {
+    // The rows put somewhere new: a slotted container gives each the slot nearest
+    // where it was put. Unlike `held`, a row that only changed size keeps its slot.
+    /** @type {Set<number>} */
+    const relocated = new Set([...(anchors || []), ...(yields || [])]);
+    if (spacing && since && since.length <= rows.length) {
         rows.forEach((row, i) => {
-            if (i >= since.length) { held.add(i); return; }
+            if (i >= since.length) { held.add(i); relocated.add(i); return; }
             if (row === since[i]) return;
             const was = drawn(i, since);
             const now = drawn(i, rows);
             if (!was || !now) return;
             const b = now.box, a = was.box;
             if ([b.cx - a.cx, b.cy - a.cy, b.hw - a.hw, b.hh - a.hh].some((d) => Math.abs(d) >= EPSILON)) held.add(i);
+            if (Math.abs((b.cx - b.hw) - (a.cx - a.hw)) >= EPSILON || Math.abs((b.cy - b.hh) - (a.cy - a.hh)) >= EPSILON) relocated.add(i);
         });
     }
     for (const i of [...held]) for (const a of tree.ancestorsOf(i)) held.add(a);
@@ -367,9 +403,10 @@ export function settleHierarchy({ spec, tables, hosts, scales, width, height, be
      * place. Bounded; with no room, rows end as close to clear as the walls allow.
      * @param {number[]} kids
      * @param {{ x: boolean, y: boolean, x0: number, x1: number, y0: number, y1: number } | null} bounds
+     * @param {boolean} [dodging] false for a `free` container: walls only
      */
-    const space = (kids, bounds) => {
-        if (!bounds && !dodges) return;
+    const space = (kids, bounds, dodging = !!dodges) => {
+        if (!bounds && !dodging) return;
         /** @type {(Spaced & { k: number })[]} */
         const live = [];
         for (const k of kids) {
@@ -378,7 +415,7 @@ export function settleHierarchy({ spec, tables, hosts, scales, width, height, be
             const fixed = !!(locked && locked(rows[k], k));
             live.push({
                 k, cx: box.cx, cy: box.cy, hw: box.hw, hh: box.hh, x0: box.cx, y0: box.cy,
-                gap: dodges ? dodges(work[k], k, work) : null,
+                gap: dodging && dodges ? dodges(work[k], k, work) : null,
                 rank: fixed ? 2 : held.has(k) ? 1 : 0,
                 round: !!box.round && Math.abs(box.hw - box.hh) < EPSILON,
                 guest: !!(yields && yields.has(k)),
@@ -473,16 +510,102 @@ export function settleHierarchy({ spec, tables, hosts, scales, width, height, be
         }
     };
 
+    /**
+     * Put a slotted container's children in their slots, in order. Children that
+     * stayed keep their order; one put somewhere new takes the slot nearest it.
+     * Mid-drag the row in flight stays under the pointer and its slot stays open.
+     * @param {number[]} kids
+     * @param {{ cx: number, cy: number, hw: number, hh: number }} box the container
+     * @param {Sides} pad
+     * @param {{ x: boolean, y: boolean }} grows the axes along which it fits
+     * @param {{ arrange: string, gap: number, columns: number | null }} arr
+     */
+    const slot = (kids, box, pad, grows, arr) => {
+        /** @type {{ k: number, cx: number, cy: number, hw: number, hh: number, round: boolean, moved: boolean }[]} */
+        const live = [];
+        for (const k of kids) {
+            const b = extentOf(k);
+            if (b) live.push({ k, cx: b.cx, cy: b.cy, hw: b.hw, hh: b.hh, round: !!b.round && Math.abs(b.hw - b.hh) < EPSILON, moved: relocated.has(k) });
+        }
+        const origin = { x: box.cx - box.hw + pad.left, y: box.cy - box.hh + pad.top };
+        const limit = {
+            x: grows.x ? null : 2 * box.hw - pad.left - pad.right,
+            y: grows.y ? null : 2 * box.hh - pad.top - pad.bottom,
+        };
+        const options = { arrange: arr.arrange, gap: arr.gap, columns: arr.columns, origin, limit };
+        /** @type {typeof live} */
+        let order = live;
+        if (arr.arrange !== 'pack') {
+            const wraps = arr.arrange === 'row' ? limit.x != null : arr.arrange === 'column' ? limit.y != null : true;
+            order = live.filter((m) => !m.moved).sort(readingOrder(arr.arrange, wraps));
+            for (const m of live) if (m.moved) order.splice(nearestSlot(order, m, options), 0, m);
+        }
+        slotsOf(order, options).forEach((at, n) => {
+            const m = order[n];
+            if (passing && yields && yields.has(m.k)) {
+                inSlot.set(m.k, { cx: at.x, cy: at.y, hw: m.hw, hh: m.hh });
+                return;
+            }
+            const dx = at.x - m.cx, dy = at.y - m.cy;
+            if (Math.abs(dx) >= EPSILON || Math.abs(dy) >= EPSILON) shiftTree(m.k, dx, dy);
+        });
+    };
+    /** Mid-drag, where the row in flight will land: a fitted container is fitted round its slot.
+     *  @type {Map<number, { cx: number, cy: number, hw: number, hh: number }>} */
+    const inSlot = new Map();
+
+    /**
+     * A fitted container that just lost its last child takes its size columns'
+     * schema `default`, keeping its top-left. With no default it shrinks to its padding.
+     * @param {number} i
+     */
+    const restore = (i) => {
+        const at = drawn(i);
+        if (!at) return;
+        const fields = (spec.tables[nesting.nodes] || {}).fields || {};
+        const pad = paddingOf(at.host.contains);
+        /** @type {Record<string, any>} */
+        const patch = {};
+        for (const name of fitChannelsOf(at.host.channels)) {
+            if (!(name in EXTENT_AXIS)) continue;
+            const io = channelIO(scales, at.host.channels, name);
+            if (!io) continue;
+            const declared = fields[io.field] && fields[io.field].default;
+            if (declared !== undefined && declared !== null) {
+                patch[io.field] = declared;
+                continue;
+            }
+            warn(
+                `fit:${io.field}:default`,
+                `column "${io.field}" is fitted (\`fit: true\`) but declares no \`default\`, so a ` +
+                'container that loses its last child has no size to return to; it shrinks to its ' +
+                `padding. Declare one in the schema: ${io.field}: { type: "quantitative", default: … }.`
+            );
+            patch[io.field] = io.invert(FIT_OF[name]({ cx: at.box.cx, cy: at.box.cy, hw: 0, hh: 0 }, pad));
+        }
+        if (!Object.keys(patch).length) return;
+        write(i, patch);
+        // A round shape keeps its centre; a box keeps its top-left.
+        const now = drawn(i);
+        if (!now || at.box.round) return;
+        shift(i, (at.box.cx - at.box.hw) - (now.box.cx - now.box.hw), (at.box.cy - at.box.hh) - (now.box.cy - now.box.hh));
+    };
+
     // ── SPACE + FIT ──────────────────────────────────────────────────────────
     // Children before parents, each reading the rows as settled so far: a
     // container's contents are spaced, then it is fitted round them, and only then
     // is it spaced against its own siblings one level up.
     for (const i of tree.bottomUp) {
-        if (!tree.hasChildren(i) || (frozen && frozen.has(i))) continue;
+        if (frozen && frozen.has(i)) continue;
+        if (!tree.hasChildren(i)) {
+            if (emptied && emptied.has(i)) restore(i);
+            continue;
+        }
         const at = drawn(i);
         const host = at ? at.host : hosts[0];
         const names = fitChannelsOf(host.channels);
         const pad = paddingOf(host.contains);
+        const arr = arrangeOf(host.contains);
         const fits = {
             x: FITS_AXIS.x.some((n) => names.includes(n)),
             y: FITS_AXIS.y.some((n) => names.includes(n)),
@@ -491,16 +614,24 @@ export function settleHierarchy({ spec, tables, hosts, scales, width, height, be
         // keeps its contents inside its padding, along each axis it does not fit.
         const still = !!(keepSize && keepSize.has(i));
         const walled = at && host.contains && (still || !(fits.x && fits.y));
-        space(tree.childrenOf(i), walled ? {
-            x: still || !fits.x, y: still || !fits.y,
-            x0: at.box.cx - at.box.hw + pad.left, x1: at.box.cx + at.box.hw - pad.right,
-            y0: at.box.cy - at.box.hh + pad.top, y1: at.box.cy + at.box.hh - pad.bottom,
-        } : null);
+        // A pack waits for the release: mid-drag nothing in it moves, and a pack
+        // the row in flight is over keeps its size, so it holds still under the pointer.
+        if (passing && arr.arrange === 'pack' && host.contains) {
+            if (yields && tree.childrenOf(i).some((c) => yields.has(c))) continue;
+        } else if (spacing && at && host.contains && SLOTTED.includes(arr.arrange)) {
+            slot(tree.childrenOf(i), at.box, pad, { x: fits.x && !still, y: fits.y && !still }, arr);
+        } else {
+            space(tree.childrenOf(i), walled ? {
+                x: still || !fits.x, y: still || !fits.y,
+                x0: at.box.cx - at.box.hw + pad.left, x1: at.box.cx + at.box.hw - pad.right,
+                y0: at.box.cy - at.box.hh + pad.top, y1: at.box.cy + at.box.hh - pad.bottom,
+            } : null, arr.arrange === 'dodge');
+        }
         if (!names.length || still) continue;
 
         let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
         for (const c of tree.childrenOf(i)) {
-            const kid = extentOf(c);
+            const kid = inSlot.get(c) || extentOf(c);
             if (!kid) continue;
             x0 = Math.min(x0, kid.cx - kid.hw);
             x1 = Math.max(x1, kid.cx + kid.hw);
@@ -526,7 +657,7 @@ export function settleHierarchy({ spec, tables, hosts, scales, width, height, be
     // The top level last: every root is at its settled size by now. Its wall is the
     // plot itself — a row pushed aside must not leave the chart (and with it, its
     // column's domain).
-    if (dodges) {
+    if (spacing && dodges) {
         /** @type {number[]} */
         const roots = [];
         work.forEach((_, i) => { if (tree.parentOf(i) === null) roots.push(i); });

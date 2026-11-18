@@ -2,7 +2,7 @@
 import { rawChannel } from '../../plot/mark.js';
 import { portRolesOf } from '../../plot/port.js';
 import { isDirected } from '../schema.js';
-import { treeOf } from '../hierarchy.js';
+import { treeOf, nestingOf } from '../hierarchy.js';
 import { settleHierarchy, DEFAULT_GAP } from '../fit.js';
 import { warn } from '../dev.js';
 import { markLabel } from '../guards.js';
@@ -11,7 +11,7 @@ import { markLabel } from '../guards.js';
  * The node table's rules, and the hierarchy's settling.
  *
  * Reads, once, the per-row rules the node marks declare: box (`Mark.nodeBox`),
- * `ports`, `contains` and `dodge`. Links, ports and network/nest edits all
+ * `ports`, `contains` and `dodge` (on by default). Links, ports and network/nest edits all
  * share them, so they agree.
  *
  * @param {import('./state.js').ChartState} chart
@@ -93,12 +93,15 @@ export function createNodes(chart, deps) {
         ? (row, i, rows) => boxHosts.some((f) => f.contains
             && !!rawChannel({ contains: f.contains }, 'contains', row, false, i, rows))
         : null;
-    // Which rows keep clear of their siblings, and the gap: any node mark's `dodge`.
+    // Which rows keep clear of their siblings, and the gap. Every node does under a
+    // hierarchy; once a node mark states `dodge`, those marks decide.
+    const dodgers = boxHosts.filter((f) => f.dodge);
     /** @type {((row: any, i: number, rows: any[]) => number | null) | null} */
-    const dodgeRule = hierarchyNodes && boxHosts.some((f) => f.dodge)
+    const dodgeRule = hierarchyNodes && boxHosts.length
         ? (row, i, rows) => {
-            for (const f of boxHosts) {
-                if (!f.dodge || !rawChannel({ dodge: f.dodge }, 'dodge', row, false, i, rows)) continue;
+            if (!dodgers.length) return DEFAULT_GAP;
+            for (const f of dodgers) {
+                if (!rawChannel({ dodge: f.dodge }, 'dodge', row, false, i, rows)) continue;
                 return typeof f.dodge.gap === 'number' ? Math.max(0, f.dodge.gap) : DEFAULT_GAP;
             }
             return null;
@@ -138,6 +141,24 @@ export function createNodes(chart, deps) {
             return { ...box, round: !!own.round && same };
         }
         : null;
+    // The keys of the nodes that held others at the last settle. A container
+    // missing from the new tables' holders just lost its last child.
+    const nesting = nestingOf(schemaSpec);
+    /** @param {Record<string, any[]>} tables @returns {Set<any>} */
+    const holdersOf = (tables) => new Set(nesting && tables ? (tables[nesting.table] || []).map((r) => r && r[nesting.parent]) : []);
+    /** @type {Set<any>} */
+    let holders = holdersOf(chart.tables);
+    /** @param {Record<string, any[]>} tables @returns {Set<number> | null} */
+    const emptiedIn = (tables) => {
+        if (!nesting || !holders.size) return null;
+        const now = holdersOf(tables);
+        /** @type {Set<number>} */
+        const out = new Set();
+        (tables[nesting.nodes] || []).forEach((row, i) => {
+            if (row && holders.has(row[nesting.key]) && !now.has(row[nesting.key])) out.add(i);
+        });
+        return out.size ? out : null;
+    };
     // Nothing is pushed apart mid-stroke; the release spaces rows once, around
     // what the stroke moved from where it began.
     chart.stroking = false;
@@ -156,6 +177,7 @@ export function createNodes(chart, deps) {
     const settleNodes = (before = null, frozen = heldStill(), dodge = null) => {
         if (!hierarchyNodes || !boxHosts.length) return;
         chart.tables[hierarchyNodes] = settledNodes(chart.tables, before, frozen, dodge);
+        holders = holdersOf(chart.tables);
     };
     /**
      * Settle outside a commit (a render, or the chart's first settle), only when
@@ -165,7 +187,7 @@ export function createNodes(chart, deps) {
     const settleOwn = () => {
         if (!hierarchyNodes || !boxHosts.length) return false;
         const turn = deps.settleTurn(chart.stroking);
-        if (!turn) return false;
+        if (!turn) { holders = holdersOf(chart.tables); return false; }
         const was = chart.tables[hierarchyNodes];
         // Rows are pushed apart only for data that just arrived from outside; a
         // hover or resize never pushes an answer aside.
@@ -179,20 +201,25 @@ export function createNodes(chart, deps) {
      * @param {{ since?: any[] | null, anchors?: number[] | null, preview?: boolean, keepSize?: Set<number> | null, yields?: Set<number> | null } | null} [dodge]
      * @returns {any[]}
      */
-    const settledNodes = (from, before, frozen, dodge = null) => settleHierarchy({
-        spec: schemaSpec, tables: from, hosts: boxHosts, scales: chart.scales,
-        width: chart.innerWidth, height: chart.innerHeight,
-        before, frozen, locked: isLockedIn(/** @type {string} */ (hierarchyNodes)),
-        dodges: dodge && (!chart.stroking || dodge.preview) ? dodgeRule : null,
-        since: dodge ? dodge.since : null,
-        anchors: dodge ? dodge.anchors : null,
-        keepSize: dodge ? dodge.keepSize : null,
-        yields: dodge ? dodge.yields : null,
-        // A preview is drawn mid-drag: the row in flight passes over containers.
-        passing: !!(dodge && dodge.preview),
-        holds: containsRule,
-        extents: extentRule,
-    });
+    const settledNodes = (from, before, frozen, dodge = null) => {
+        const spacing = !!dodge && (!chart.stroking || !!dodge.preview);
+        return settleHierarchy({
+            spec: schemaSpec, tables: from, hosts: boxHosts, scales: chart.scales,
+            width: chart.innerWidth, height: chart.innerHeight,
+            before, frozen, locked: isLockedIn(/** @type {string} */ (hierarchyNodes)),
+            dodges: spacing ? dodgeRule : null,
+            spacing,
+            emptied: emptiedIn(from),
+            since: dodge ? dodge.since : null,
+            anchors: dodge ? dodge.anchors : null,
+            keepSize: dodge ? dodge.keepSize : null,
+            yields: dodge ? dodge.yields : null,
+            // A preview is drawn mid-drag: the row in flight passes over containers.
+            passing: !!(dodge && dodge.preview),
+            holds: containsRule,
+            extents: extentRule,
+        });
+    };
     /**
      * The node rows a nest drag is carrying (`session.nestFrom`), or null.
      * @returns {number[] | null}

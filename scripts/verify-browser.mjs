@@ -4881,6 +4881,91 @@ async function main() {
         check('hierarchy: dragging out of a group shows it shrinking before the release',
             gWMid < gW0 - 2 && gDMid === gD0 && gDEnd < gD0, `drawn ${gW0} -> ${gWMid}; data ${gD0} -> ${gDMid} -> ${gDEnd}`);
 
+        // ---- A board that grows (/marks/hierarchy #arrange) --------------------
+        // Lanes stack their cards (`arrange: "column"`). A drag inside a lane
+        // reorders it and opens the slot mid-drag; a drop in another lane takes the
+        // nearest slot, and an emptied lane returns to its schema default.
+        console.log('\nHierarchy: arranged lanes (/marks/hierarchy #arrange)');
+        await open('/marks/hierarchy', '#arrange .chart svg rect.mark');
+        const kSvg = '#arrange .chart svg';
+        const kChart = '#arrange .chart > div';
+        const kLabel = async (label) => {
+            const t = page.locator(`${kSvg} text`, { hasText: label }).first();
+            await t.scrollIntoViewIfNeeded();
+            const b = await t.boundingBox();
+            return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+        };
+        const kDrag = async (from, to, mid) => {
+            await page.mouse.move(from.x, from.y);
+            await page.mouse.down();
+            for (let i = 1; i <= 12; i++) { await page.mouse.move(from.x + (to.x - from.x) * i / 12, from.y + (to.y - from.y) * i / 12); await page.waitForTimeout(6); }
+            const seen = mid ? await mid() : null;
+            await page.mouse.up();
+            await page.waitForTimeout(100);
+            return seen;
+        };
+        const kRows = () => page.$eval(kChart, (el) => el.__chart.getData());
+        // the cards of a lane, top first (data y runs up)
+        const kLane = (data, lane) => data.nesting.filter((r) => r.parent === lane)
+            .map((r) => data.nodes.find((d) => d.id === r.child)).sort((p, q) => q.y - p.y).map((d) => d.label);
+        const kTidy = (data) => {
+            const px = (d) => ({ x0: d.x * 5.28 - d.w / 2, x1: d.x * 5.28 + d.w / 2, y0: -d.y * 3.28 - d.h / 2, y1: -d.y * 3.28 + d.h / 2 });
+            const cards = data.nodes.filter((d) => d.kind === 'card').map(px);
+            const overlap = cards.some((a, i) => cards.slice(i + 1).some((b) => a.x0 < b.x1 - 0.5 && b.x0 < a.x1 - 0.5 && a.y0 < b.y1 - 0.5 && b.y0 < a.y1 - 0.5));
+            const outside = data.nesting.some((r) => {
+                const c = px(data.nodes.find((d) => d.id === r.child)), l = px(data.nodes.find((d) => d.id === r.parent));
+                return c.x0 < l.x0 - 0.5 || c.x1 > l.x1 + 0.5 || c.y0 < l.y0 - 0.5 || c.y1 > l.y1 + 0.5;
+            });
+            return !overlap && !outside;
+        };
+        const kSurvey0 = await kLabel('Write survey');
+        const kPilot = await kLabel('Pilot study');
+        const kMid = await kDrag(kPilot, { x: kSurvey0.x, y: kSurvey0.y - 14 }, () => kLabel('Write survey'));
+        const kAfter = await kRows();
+        check('hierarchy arrange: dragging a card above another reorders the lane',
+            JSON.stringify(kLane(kAfter, 'todo')) === JSON.stringify(['Pilot study', 'Write survey', 'Recruit']), JSON.stringify(kLane(kAfter, 'todo')));
+        check('hierarchy arrange: mid-drag, the cards below open a slot',
+            kMid.y > kSurvey0.y + 10, `Write survey drawn at ${kSurvey0.y} -> ${kMid.y}`);
+        check('hierarchy arrange: no cards overlap, and each sits inside its lane', kTidy(kAfter), 'overlap or outside');
+        const kLit = await kLabel('Literature');
+        // Below Literature's centre and inside Done: a fitted lane ends 10px under its last card.
+        await kDrag(await kLabel('Ethics form'), { x: kLit.x, y: kLit.y + 20 });
+        const kMoved = await kRows();
+        const kDoing = kMoved.nodes.find((d) => d.id === 'doing');
+        check('hierarchy arrange: a card dropped in another lane takes the nearest slot',
+            JSON.stringify(kLane(kMoved, 'done')) === JSON.stringify(['Literature', 'Ethics form']) && kTidy(kMoved), JSON.stringify(kLane(kMoved, 'done')));
+        check('hierarchy arrange: an emptied lane returns to its schema default',
+            kDoing.w === 140 && kDoing.h === 70, `doing ${kDoing.w} x ${kDoing.h}`);
+
+        // The pack example: nothing in a pack moves until the release, and a dropped
+        // circle lands beside the one it was dropped on, which stays put.
+        const pChart = page.locator('#arrange .chart > div', { hasText: 'Unlikely' }).first();
+        const pLabel = async (label) => {
+            const t = pChart.locator('svg text', { hasText: label }).first();
+            await t.scrollIntoViewIfNeeded();
+            const b = await t.boundingBox();
+            return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+        };
+        const pRows = () => pChart.evaluate((el) => el.__chart.getData());
+        const pSnow0 = await pLabel('Snow');
+        const pHail0 = await pLabel('Hail');
+        const pBefore = await pRows();
+        const pMid = await kDrag(await pLabel('Rain'), { x: pSnow0.x + 4, y: pSnow0.y + 4 }, async () => [await pLabel('Snow'), await pLabel('Hail')]);
+        const pAfter = await pRows();
+        const pById = (data, id) => data.nodes.find((d) => d.id === id);
+        const pStill = (a, b) => Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5;
+        check('hierarchy pack: mid-drag, the circles in the set aimed at hold still',
+            pStill(pMid[0], pSnow0) && pStill(pMid[1], pHail0), `Snow ${JSON.stringify(pSnow0)} -> ${JSON.stringify(pMid[0])}`);
+        const pItems = pAfter.nesting.filter((r) => r.parent === 'unlikely').map((r) => pById(pAfter, r.child));
+        const pPx = (d) => ({ x: d.x * 5.28, y: -d.y * 3, r: d.r });
+        const pApart = pItems.every((a, i) => pItems.slice(i + 1).every((b) => {
+            const p = pPx(a), q = pPx(b);
+            return Math.hypot(p.x - q.x, p.y - q.y) >= p.r + q.r - 0.5;
+        }));
+        check('hierarchy pack: the dropped circle joins the set, beside the one it was dropped on',
+            pItems.some((d) => d.id === 'a') && pApart && pStill(pById(pAfter, 'e'), pById(pBefore, 'e')),
+            JSON.stringify(pItems.map((d) => [d.id, d.x, d.y])));
+
         // With motion on, the group eases to its new size: it is seen at widths in
         // between, never in one jump, and ends where the data says.
         console.log('\nHierarchy: eased layout (/marks/hierarchy #schema)');

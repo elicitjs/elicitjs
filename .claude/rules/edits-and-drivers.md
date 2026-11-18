@@ -52,6 +52,8 @@ paths:
 - A proposal is about a table: `ui.preview[featureId]` holds `{ table, rows }`, and with exactly one in flight the ghost pass rebuilds every feature over that table (`sole`). Don't narrow it to the owning feature — `connect` fires on a node mark but the link mark draws the rubber band.
 - A hierarchy drag previews in place (`liveTables` in `engine/render.js`), never as a ghost: a nest proposal is `live` and its settled node rows are drawn instead of the committed ones; with no proposal, the committed rows are drawn settled around the stroke, the container being dragged in keeping its size (`keepSize`). The rows in flight stay committed. The data still changes only on release.
 - The row a gesture moved never pushes a container aside (`yields` in `settleHierarchy`): mid-drag it passes over containers, on release it gives way to them. Leaves still make room for it.
+- In a slotted container (`contains: { arrange: 'row' | 'column' | 'grid' }`) a drop only picks a slot (`nearestSlot` in `core/arrange.js`). Order is read from x/y, so nothing writes an order column. Mid-drag the slot stays open and the row stays under the pointer.
+- A `pack` has no order: a circle stays put while it touches the group and overlaps nothing, and a dropped one takes the nearest free spot touching it. It must stay a fixed point (packing its own output moves nothing), or every settle reshuffles it. Mid-drag a pack does not move, and one the row is over keeps its size.
 - Dispatch records where a grab took hold and where its pointer is (`ui.grab`). What is drawn from that is the motion client's business (`engine/carry.js`); never position a node from a driver or an edit.
 
 ## Pointer modes

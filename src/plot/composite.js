@@ -260,12 +260,14 @@ export function composite(options = {}) {
         if (GLYPH_KEYS.includes(key)) continue;
         trickle[key] = spec;
     }
-    if (!boxed && GLYPH_KEYS.some((key) => groupChannels[key])) {
+    // A key that is present counts, even when false (`dodge: false`).
+    const stated = (/** @type {string} */ key) => groupChannels[key] != null;
+    if (!boxed && GLYPH_KEYS.some(stated)) {
         // The glyph's shape, not its label: a `node()`'s dot, not its name.
         const shaped = parts.filter((/** @type {any} */ p) => typeof p.nodeBox === 'function');
         const host = shaped.find((/** @type {any} */ p) => !p.labelBox) || shaped[0] || parts[0];
         for (const key of GLYPH_KEYS) {
-            if (host && groupChannels[key]) (host.channels || (host.channels = {}))[key] = groupChannels[key];
+            if (host && stated(key)) (host.channels || (host.channels = {}))[key] = groupChannels[key];
         }
     }
 
@@ -370,7 +372,7 @@ export function composite(options = {}) {
         if (!spec || frameSpecOf(spec)) continue;
         boxChannels[key] = spec;
     }
-    for (const key of GLYPH_KEYS) if (groupChannels[key]) boxChannels[key] = groupChannels[key];
+    for (const key of GLYPH_KEYS) if (groupChannels[key] != null) boxChannels[key] = groupChannels[key];
 
     // Set `pointerEvents` only when grabbable; otherwise the engine makes the box
     // inert, so an immovable glyph doesn't swallow plane gestures.

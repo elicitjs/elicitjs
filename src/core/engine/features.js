@@ -5,6 +5,7 @@ import { portFeature } from '../../plot/port.js';
 import { tip as tipGuide } from '../../guides/tip.js';
 import { warn } from '../dev.js';
 import { markLabel } from '../guards.js';
+import { ARRANGEMENTS } from '../arrange.js';
 
 /**
  * Flattens the spec's marks, elements and implicit layers into one ordered
@@ -115,11 +116,12 @@ export function desugarContainers(features, hierarchyNodes) {
     for (const f of features) {
         if (!f || f.views === 'scale' || f.portHost || !f.channels) continue;
         const contains = f.channels.contains;
-        const dodge = f.channels.dodge;
+        // `dodge: false` is a statement too: these rows keep no distance.
+        const dodge = f.channels.dodge === false ? { value: false } : f.channels.dodge;
         const fitted = Object.keys(f.channels).filter((ch) => f.channels[ch] && f.channels[ch].fit === true);
         if (!contains && !dodge && !fitted.length) continue;
         if (contains) delete f.channels.contains;
-        if (dodge) delete f.channels.dodge;
+        if ('dodge' in f.channels) delete f.channels.dodge;
         if (!hierarchyNodes || f.table !== hierarchyNodes) {
             warn(
                 `${markLabel(f)}:contains:table`,
@@ -140,7 +142,7 @@ export function desugarContainers(features, hierarchyNodes) {
             );
             continue;
         }
-        if (contains) f.contains = contains === true ? { value: true } : contains;
+        if (contains) f.contains = checkArrange(f, contains === true ? { value: true } : contains);
         if (dodge) f.dodge = dodge === true ? { value: true } : dodge;
         for (const ch of fitted) {
             if (f.channels[ch].field != null) continue;
@@ -153,6 +155,34 @@ export function desugarContainers(features, hierarchyNodes) {
             delete f.channels[ch].fit;
         }
     }
+}
+
+/**
+ * Check a `contains` channel's `arrange` and `columns`. An unknown arrangement
+ * warns and falls back to `dodge`.
+ * @param {any} f the mark
+ * @param {any} contains
+ * @returns {any}
+ */
+function checkArrange(f, contains) {
+    const { arrange, columns } = contains;
+    if (arrange !== undefined && !ARRANGEMENTS.includes(arrange)) {
+        warn(
+            `${markLabel(f)}:contains:arrange`,
+            `mark ${markLabel(f)} states \`contains: { arrange: ${JSON.stringify(arrange)} }\`, ` +
+            `which is not an arrangement. Use one of ${ARRANGEMENTS.map((a) => `"${a}"`).join(', ')}. ` +
+            'Arranging its contents as "dodge".'
+        );
+        contains = { ...contains, arrange: 'dodge' };
+    }
+    if (columns !== undefined && contains.arrange !== 'grid') {
+        warn(
+            `${markLabel(f)}:contains:columns`,
+            `mark ${markLabel(f)} states \`contains: { columns }\`, which only a grid reads. ` +
+            'Add `arrange: "grid"`, or leave `columns` out.'
+        );
+    }
+    return contains;
 }
 
 /**

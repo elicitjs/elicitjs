@@ -2,7 +2,7 @@
 // The `hierarchy` structure: nodes, a nesting table (one row = "child is inside
 // parent") and an optional links table. Tree-ness is the schema's statement, so the
 // engine holds it for seeds, for setData and for every edit that writes nesting.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { normalizeSchema } from '../src/core/schema.js';
 import { nestingOf, treeOf, treeProblems, enforceTree } from '../src/core/hierarchy.js';
 import { Elicit, plot, edit, setWarnings } from '../src/index.js';
@@ -617,7 +617,7 @@ describe('dodge', () => {
         expect(el.getData()).toEqual(once);
     });
 
-    it('is off unless a mark asks, and honours `gap` and a per-row fn', () => {
+    it('turns off with `dodge: false`, and honours `gap` and a per-row fn', () => {
         const data = () => ({ nodes: [box('a', 100, 100), box('b', 110, 100), box('c', 104, 100)], nesting: [] });
         expect(chart(data(), mark([], false)).getData().nodes).toEqual(data().nodes);
         const wide = byId(chart(data(), mark([], { value: true, gap: 30 })));
@@ -791,6 +791,295 @@ describe('dodge', () => {
         });
         const d = byId(el);
         expect(allClear([d.a, d.n1, d.n2, d.n3], 8)).toBe(true);
+    });
+});
+
+describe('dodge by default', () => {
+    it('keeps every node clear of its siblings when no mark states `dodge`', () => {
+        const el = boxChart({
+            nodes: [box('g', 0, 0), box('a', 100, 100), box('b', 110, 104), box('c', 300, 200), box('d', 305, 205)],
+            nesting: [nest('a', 'g'), nest('b', 'g')],
+        });
+        const d = byId(el);
+        const clear = (a, b) => Math.abs(a.x - b.x) >= (a.w + b.w) / 2 + 8 - 0.02 || Math.abs(a.y - b.y) >= (a.h + b.h) / 2 + 8 - 0.02;
+        expect(clear(d.a, d.b)).toBe(true);
+        expect(clear(d.c, d.d)).toBe(true);
+    });
+});
+
+describe('an emptied container', () => {
+    const withDefaults = {
+        ...boxSchema,
+        tables: {
+            ...boxSchema.tables,
+            nodes: {
+                ...boxSchema.tables.nodes,
+                w: { type: 'quantitative', domain: [0, 400], default: 80 },
+                h: { type: 'quantitative', domain: [0, 300], default: 50 },
+            },
+        },
+    };
+    const chart = (schemaSpec) => {
+        const el = Elicit({
+            width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false, motion: false,
+            schema: schemaSpec,
+            data: { nodes: [box('g', 0, 0), box('a', 100, 200, 120, 60), box('n', 300, 60, 120, 60)], nesting: [nest('a', 'g')] },
+            marks: [plot.rect({
+                id: 'boxes',
+                channels: {
+                    x: { field: 'x' }, y: { field: 'y' },
+                    width: { field: 'w', scale: null, fit: true }, height: { field: 'h', scale: null, fit: true },
+                    contains: { fn: (d) => d.id === 'g', padding: 10 },
+                },
+                edits: [edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()],
+            })],
+        });
+        document.body.appendChild(el.dom());
+        return el;
+    };
+    const dragOut = (el) => {
+        const node = { index: 1, featureId: 'boxes' };
+        el.emit({ type: 'dragstart', node, x: 100, y: 100 });
+        el.emit({ type: 'drag', node, x: 300, y: 120 });
+        el.emit({ type: 'dragend', node, x: 300, y: 120 });
+    };
+
+    it('returns to its columns\' schema default, keeping its top-left', () => {
+        const el = chart(withDefaults);
+        const before = byId(el).g;
+        expect(before.w).toBeCloseTo(140, 5);
+        dragOut(el);
+        const g = byId(el).g;
+        expect(el.getData().nesting).toEqual([]);
+        expect(g.w).toBe(80);
+        expect(g.h).toBe(50);
+        expect(g.x - g.w / 2).toBeCloseTo(before.x - before.w / 2, 5);
+        expect(g.y + g.h / 2).toBeCloseTo(before.y + before.h / 2, 5); // data y runs up
+    });
+
+    it('shrinks to its padding and warns when the column declares no default', () => {
+        const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        setWarnings(true);
+        try {
+            const el = chart(boxSchema);
+            dragOut(el);
+            const g = byId(el).g;
+            expect(g.w).toBeCloseTo(20, 5);
+            expect(g.h).toBeCloseTo(20, 5);
+            expect(spy.mock.calls.some(([m]) => /declares no `default`/.test(m))).toBe(true);
+        } finally {
+            setWarnings(false);
+            spy.mockRestore();
+        }
+    });
+
+    it('leaves a leaf that could hold others at its own size', () => {
+        const el = boxChart({ nodes: [box('a', 100, 100, 90, 30), box('b', 300, 100)], nesting: [] });
+        expect(byId(el).a.w).toBe(90);
+    });
+});
+
+describe('arranged contents', () => {
+    const lanes = (arrange = 'column', extra = {}) => plot.rect({
+        id: 'boxes',
+        channels: {
+            x: { field: 'x' }, y: { field: 'y' },
+            width: { field: 'w', scale: null, fit: true }, height: { field: 'h', scale: null, fit: true },
+            contains: { fn: (d) => d.id.startsWith('L'), padding: 10, arrange, gap: 6, ...extra },
+        },
+        edits: [edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()],
+    });
+    const chart = (data, m) => {
+        const el = Elicit({
+            width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false, motion: false,
+            schema: boxSchema, data, marks: [m],
+        });
+        document.body.appendChild(el.dom());
+        return el;
+    };
+    // pixel y of each card, top first
+    const order = (el, ids) => ids.map((id) => [id, byId(el)[id]]).sort((p, q) => q[1].y - p[1].y).map(([id]) => id);
+    const drag = (el, index, to, steps = 4) => {
+        const d = el.getData().nodes[index];
+        const from = { x: d.x, y: 300 - d.y };
+        const node = { index, featureId: 'boxes' };
+        el.emit({ type: 'dragstart', node, ...from });
+        for (let k = 1; k <= steps; k++) {
+            el.emit({ type: 'drag', node, x: from.x + (to.x - from.x) * k / steps, y: from.y + (to.y - from.y) * k / steps });
+        }
+        el.emit({ type: 'dragend', node, ...to });
+    };
+    const seed = () => ({
+        nodes: [box('L1', 80, 200), box('c1', 80, 250), box('c2', 90, 200), box('c3', 70, 150), box('L2', 300, 200), box('d1', 300, 200)],
+        nesting: [nest('c1', 'L1'), nest('c2', 'L1'), nest('c3', 'L1'), nest('d1', 'L2')],
+    });
+
+    it('stacks a column\'s cards from its top-left, in the order they sit', () => {
+        const el = chart(seed(), lanes());
+        const d = byId(el);
+        expect(order(el, ['c1', 'c2', 'c3'])).toEqual(['c1', 'c2', 'c3']);
+        expect(d.c1.x).toBe(d.c2.x);
+        expect(d.c2.x).toBe(d.c3.x);
+        expect(d.c1.y - d.c2.y).toBeCloseTo(20 + 6, 5);
+        // the lane is fitted round them
+        expect(d.L1.h).toBeCloseTo(3 * 20 + 2 * 6 + 20, 5);
+        expect(d.L1.x - d.L1.w / 2).toBeCloseTo(d.c1.x - 20 - 10, 5);
+    });
+
+    it('reorders when a card is dropped between others, and leaves no gap', () => {
+        const el = chart(seed(), lanes());
+        const top = byId(el).c1;
+        drag(el, 3, { x: top.x, y: 300 - top.y - 12 }); // c3 to above c1
+        expect(order(el, ['c1', 'c2', 'c3'])).toEqual(['c3', 'c1', 'c2']);
+        const d = byId(el);
+        expect(d.c3.y).toBeCloseTo(top.y, 5);
+        expect(d.c1.y - d.c2.y).toBeCloseTo(26, 5);
+        expect(el.getData().nesting).toHaveLength(4);
+    });
+
+    it('opens the slot while a card is dragged, and keeps the card under the pointer', () => {
+        const el = chart(seed(), lanes());
+        const before = byId(el);
+        const node = { index: 3, featureId: 'boxes' };
+        const from = { x: before.c3.x, y: 300 - before.c3.y };
+        const to = { x: before.c1.x, y: 300 - before.c1.y - 12 };
+        el.emit({ type: 'dragstart', node, ...from });
+        el.emit({ type: 'drag', node, ...to });
+        const drawn = [...el.dom().querySelectorAll('rect')].filter((r) => +r.getAttribute('width') === 40)
+            .map((r) => +r.getAttribute('y') + 10).sort((p, q) => p - q);
+        // c1 and c2 drawn one slot down; c3 under the pointer
+        expect(drawn.some((y) => Math.abs(y - (300 - before.c2.y)) < 0.5)).toBe(true);
+        expect(drawn.some((y) => Math.abs(y - (300 - before.c3.y)) < 0.5)).toBe(true);
+        expect(drawn.some((y) => Math.abs(y - to.y) < 0.5)).toBe(true);
+        expect(byId(el).c1.y).toBe(before.c1.y); // the data waits for the release
+        el.emit({ type: 'dragend', node, ...to });
+    });
+
+    it('puts a card from another lane in the slot nearest the drop', () => {
+        const el = chart(seed(), lanes());
+        const d0 = byId(el);
+        // just below halfway between c1 and c2
+        drag(el, 5, { x: d0.c1.x, y: 300 - (d0.c1.y + d0.c2.y) / 2 + 4 });
+        expect(el.getData().nesting).toContainEqual(nest('d1', 'L1'));
+        expect(order(el, ['c1', 'c2', 'c3', 'd1'])).toEqual(['c1', 'd1', 'c2', 'c3']);
+        const d = byId(el);
+        expect(d.L1.h).toBeCloseTo(4 * 20 + 3 * 6 + 20, 5);
+    });
+
+    it('lines a row up left to right, and wraps a fixed one at its width', () => {
+        const kids = ['a', 'b', 'c', 'd'];
+        const data = () => ({
+            nodes: [{ id: 'L', x: 200, y: 150, w: 130, h: 100 }, ...kids.map((id, k) => box(id, 150 + k * 10, 150))],
+            nesting: kids.map((id) => nest(id, 'L')),
+        });
+        const grown = byId(chart(data(), lanes('row')));
+        expect(kids.map((id) => grown[id].x)).toEqual([90, 136, 182, 228].map((x) => x + grown.a.x - 90));
+        expect(new Set(kids.map((id) => grown[id].y)).size).toBe(1);
+        const fixed = plot.rect({
+            id: 'boxes',
+            channels: {
+                x: { field: 'x' }, y: { field: 'y' },
+                width: { field: 'w', scale: null }, height: { field: 'h', scale: null },
+                contains: { fn: (d) => d.id === 'L', padding: 10, arrange: 'row', gap: 6 },
+            },
+        });
+        const wrapped = byId(chart(data(), fixed));
+        expect(wrapped.L.w).toBe(130);
+        // 110px inside: two 40px cards to a line
+        expect(wrapped.a.y).toBe(wrapped.b.y);
+        expect(wrapped.c.y).toBeCloseTo(wrapped.a.y - 26, 5);
+        expect(wrapped.c.x).toBe(wrapped.a.x);
+    });
+
+    it('puts a card sent with no position in the last slot', () => {
+        const el = chart(seed(), lanes());
+        const data = el.getData();
+        el.setData({
+            nodes: [...data.nodes, { id: 'c4', w: 40, h: 20 }],
+            nesting: [...data.nesting, nest('c4', 'L1')],
+        });
+        expect(order(el, ['c1', 'c2', 'c3', 'c4'])).toEqual(['c1', 'c2', 'c3', 'c4']);
+        const d = byId(el);
+        expect(d.c3.y - d.c4.y).toBeCloseTo(26, 5);
+        expect(d.c4.x).toBe(d.c1.x);
+    });
+
+    it('lays a grid out `columns` to a row', () => {
+        const kids = ['a', 'b', 'c', 'd', 'e'];
+        const el = chart({
+            nodes: [box('L', 200, 150), ...kids.map((id, k) => box(id, 150 + k * 10, 150 - k))],
+            nesting: kids.map((id) => nest(id, 'L')),
+        }, lanes('grid', { columns: 2 }));
+        const d = byId(el);
+        expect(new Set(kids.map((id) => d[id].x)).size).toBe(2);
+        expect(new Set(kids.map((id) => d[id].y)).size).toBe(3);
+    });
+
+    const packChart = () => {
+        const el = Elicit({
+            width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false, motion: false,
+            schema: { ...boxSchema, tables: { ...boxSchema.tables, nodes: { ...boxSchema.tables.nodes, r: { type: 'quantitative', domain: [0, 200] } } } },
+            data: {
+                nodes: [{ id: 'S', x: 200, y: 150, r: 10 }, ...[12, 20, 8, 15, 10].map((r, k) => ({ id: `p${k}`, x: 200 + k, y: 150, r }))],
+                nesting: [0, 1, 2, 3, 4].map((k) => nest(`p${k}`, 'S')),
+            },
+            marks: [plot.point({ id: 'dots', edits: [edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()], channels: {
+                x: { field: 'x' }, y: { field: 'y' }, size: { field: 'r', scale: null, fit: true },
+                contains: { fn: (d) => d.id === 'S', padding: 6, arrange: 'pack', gap: 4 },
+            } })],
+        });
+        document.body.appendChild(el.dom());
+        return el;
+    };
+    const packedApart = (kids, gap) => kids.every((a, i) => kids.slice(i + 1).every((b) =>
+        Math.hypot(a.x - b.x, a.y - b.y) - a.r - b.r > gap - 0.05));
+
+    it('packs round nodes in the set, their gap apart', () => {
+        const el = packChart();
+        const n = el.getData().nodes;
+        const kids = n.slice(1);
+        expect(packedApart(kids, 4)).toBe(true);
+        for (const k of kids) {
+            // inside the fitted set
+            expect(Math.hypot(k.x - n[0].x, k.y - n[0].y) + k.r).toBeLessThanOrEqual(n[0].r + 0.05);
+        }
+    });
+
+    it('holds a pack still while a node is dragged in it, and packs it on release', () => {
+        const el = packChart();
+        const before = el.getData().nodes;
+        const drawn = () => [...el.dom().querySelectorAll('circle')].map((c) => [+c.getAttribute('cx'), +c.getAttribute('cy'), +c.getAttribute('r')].join());
+        const node = { index: 1, featureId: 'dots' };
+        const p0 = before[1];
+        const from = { x: p0.x, y: 300 - p0.y };
+        // onto another node
+        const other = before[2];
+        const to = { x: other.x + 3, y: 300 - other.y + 3 };
+        el.emit({ type: 'dragstart', node, ...from });
+        const still = drawn();
+        for (let k = 1; k <= 4; k++) el.emit({ type: 'drag', node, x: from.x + (to.x - from.x) * k / 4, y: from.y + (to.y - from.y) * k / 4 });
+        // only the dragged node moved: the others and the set are drawn as they were
+        const mid = drawn();
+        expect(mid.filter((c) => still.includes(c)).length).toBe(still.length - 1);
+        el.emit({ type: 'dragend', node, ...to });
+        const after = el.getData().nodes;
+        expect(packedApart(after.slice(1), 4)).toBe(true);
+        // the node it was dropped on stays; the dropped one lands beside it
+        expect(after[2].x).toBeCloseTo(other.x, 5);
+        expect(after[2].y).toBeCloseTo(other.y, 5);
+        expect(Math.hypot(after[1].x - other.x, after[1].y - other.y)).toBeCloseTo(other.r + p0.r + 4, 3);
+    });
+
+    it('warns on an arrangement it does not know, and dodges instead', () => {
+        const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        setWarnings(true);
+        try {
+            chart(seed(), lanes('stack'));
+            expect(spy.mock.calls.some(([m]) => /not an arrangement/.test(m))).toBe(true);
+        } finally {
+            setWarnings(false);
+            spy.mockRestore();
+        }
     });
 });
 

@@ -801,15 +801,27 @@ export interface ChannelSpec {
   // others, this column is DERIVED from them — the union of its contents plus the
   // `contains` padding — and the engine writes it (core/fit.js), so the drawing,
   // the links and `getData()` agree. Needs a `field`. No gesture may write a
-  // fitted column on a row with contents; a leaf's stays editable.
+  // fitted column on a row with contents; a leaf's stays editable. A container
+  // that loses its last child returns to the column's schema `default`.
   fit?: boolean;
   // On the `contains` channel only: the room in px a container keeps between its
   // edge and its contents (default 10) — one number, or a side each (a side left
   // out takes the default). A fitted container is sized to leave it; one with a
   // size of its own keeps its contents inside it.
   padding?: number | { top?: number; right?: number; bottom?: number; left?: number };
-  // On the `dodge` channel only: the space in px a row keeps from its siblings
-  // (default 8).
+  // On the `contains` channel only: how a container places its contents.
+  // 'dodge' (default): where they are dropped, pushed apart when they overlap.
+  // 'free': where they are dropped. 'row' / 'column': in order from the inner
+  // top-left, wrapping at a size the container does not fit. 'grid': equal cells,
+  // `columns` to a row. 'pack': circles drawn together where they are dropped,
+  // touching. In a row, column or grid, a drag reorders and a drop takes the
+  // nearest slot.
+  arrange?: 'dodge' | 'free' | 'row' | 'column' | 'grid' | 'pack';
+  // On the `contains` channel, with `arrange: 'grid'`: cells to a row (default:
+  // as many as fit a fixed width, else a square).
+  columns?: number;
+  // On the `dodge` channel: the space in px a row keeps from its siblings. On the
+  // `contains` channel: the space between slots. Default 8.
   gap?: number;
   value?: any;
   datum?: any;
@@ -1806,9 +1818,10 @@ export interface Mark {
   contains?: ChannelSpec;
   /**
    * Set by the ENGINE from the mark's `dodge` channel (under a hierarchy): which
-   * of its rows keep clear of their siblings, and the `gap` they keep. Overlapping
-   * rows are pushed apart when a gesture ends and when data arrives from outside,
-   * never while a drag is in progress.
+   * of its rows keep clear of their siblings, and the `gap` they keep. With no
+   * mark stating `dodge`, every node keeps 8px; `dodge: false` turns it off.
+   * Overlapping rows are pushed apart when a gesture ends and when data arrives
+   * from outside, never while a drag is in progress.
    */
   dodge?: ChannelSpec;
   nodeBox?(
