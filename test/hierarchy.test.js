@@ -1070,6 +1070,48 @@ describe('arranged contents', () => {
         expect(Math.hypot(after[1].x - other.x, after[1].y - other.y)).toBeCloseTo(other.r + p0.r + 4, 3);
     });
 
+    it('packs boxes in a fixed board along their angle from the middle one', () => {
+        const kids = [['c0', 200, 150], ['c1', 300, 160], ['c2', 120, 220], ['c3', 210, 40]];
+        const el = chart({
+            nodes: [box('L', 200, 150, 380, 280), ...kids.map(([id, x, y]) => box(id, x, y))],
+            nesting: kids.map(([id]) => nest(id, 'L')),
+        }, plot.rect({
+            id: 'boxes',
+            channels: {
+                x: { field: 'x' }, y: { field: 'y' }, width: { field: 'w', scale: null }, height: { field: 'h', scale: null },
+                contains: { fn: (d) => d.id === 'L', arrange: 'pack', keep: 'angle', gap: 4 },
+            },
+        }));
+        const d = byId(el);
+        for (const [id, x, y] of kids.slice(1)) {
+            expect(Math.atan2(d[id].y - 150, d[id].x - 200)).toBeCloseTo(Math.atan2(y - 150, x - 200), 6);
+            // drawn in to touch: closer to the middle than it was put
+            expect(Math.hypot(d[id].x - 200, d[id].y - 150)).toBeLessThan(Math.hypot(x - 200, y - 150));
+        }
+        const ids = kids.map(([id]) => id);
+        for (const a of ids) {
+            for (const b of ids) {
+                if (a === b) continue;
+                const gap = Math.max(Math.abs(d[a].x - d[b].x) - 40, Math.abs(d[a].y - d[b].y) - 20);
+                expect(gap).toBeGreaterThan(4 - 1e-6);
+            }
+        }
+    });
+
+    it('warns on a keep it does not know, or one outside a pack', () => {
+        const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        setWarnings(true);
+        try {
+            chart(seed(), lanes('pack', { keep: 'size' }));
+            expect(spy.mock.calls.some(([m]) => /keep: "size"/.test(m))).toBe(true);
+            chart(seed(), lanes('row', { keep: 'angle' }));
+            expect(spy.mock.calls.some(([m]) => /only a pack reads/.test(m))).toBe(true);
+        } finally {
+            setWarnings(false);
+            spy.mockRestore();
+        }
+    });
+
     it('warns on an arrangement it does not know, and dodges instead', () => {
         const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
         setWarnings(true);

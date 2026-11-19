@@ -116,10 +116,10 @@ function paddingOf(contains) {
 }
 
 /**
- * How a container arranges its contents: `contains: { arrange, gap, columns }`.
- * The engine has already checked `arrange` (engine/features.js).
+ * How a container arranges its contents: `contains: { arrange, gap, columns, keep }`.
+ * The engine has already checked `arrange` and `keep` (engine/features.js).
  * @param {any} contains the mark's `contains` channel
- * @returns {{ arrange: string, gap: number, columns: number | null }}
+ * @returns {{ arrange: string, gap: number, columns: number | null, keep: 'angle' | 'distance' }}
  */
 function arrangeOf(contains) {
     const c = contains || {};
@@ -127,6 +127,7 @@ function arrangeOf(contains) {
         arrange: typeof c.arrange === 'string' ? c.arrange : 'dodge',
         gap: typeof c.gap === 'number' && Number.isFinite(c.gap) ? Math.max(0, c.gap) : DEFAULT_GAP,
         columns: typeof c.columns === 'number' && c.columns >= 1 ? Math.floor(c.columns) : null,
+        keep: c.keep === 'angle' ? 'angle' : 'distance',
     };
 }
 
@@ -518,7 +519,7 @@ export function settleHierarchy({ spec, tables, hosts, scales, width, height, be
      * @param {{ cx: number, cy: number, hw: number, hh: number }} box the container
      * @param {Sides} pad
      * @param {{ x: boolean, y: boolean }} grows the axes along which it fits
-     * @param {{ arrange: string, gap: number, columns: number | null }} arr
+     * @param {{ arrange: string, gap: number, columns: number | null, keep: 'angle' | 'distance' }} arr
      */
     const slot = (kids, box, pad, grows, arr) => {
         /** @type {{ k: number, cx: number, cy: number, hw: number, hh: number, round: boolean, moved: boolean }[]} */
@@ -532,7 +533,7 @@ export function settleHierarchy({ spec, tables, hosts, scales, width, height, be
             x: grows.x ? null : 2 * box.hw - pad.left - pad.right,
             y: grows.y ? null : 2 * box.hh - pad.top - pad.bottom,
         };
-        const options = { arrange: arr.arrange, gap: arr.gap, columns: arr.columns, origin, limit };
+        const options = { arrange: arr.arrange, gap: arr.gap, columns: arr.columns, keep: arr.keep, origin, limit };
         /** @type {typeof live} */
         let order = live;
         if (arr.arrange !== 'pack') {

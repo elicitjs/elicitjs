@@ -5,7 +5,7 @@ import { portFeature } from '../../plot/port.js';
 import { tip as tipGuide } from '../../guides/tip.js';
 import { warn } from '../dev.js';
 import { markLabel } from '../guards.js';
-import { ARRANGEMENTS } from '../arrange.js';
+import { ARRANGEMENTS, KEEPS } from '../arrange.js';
 
 /**
  * Flattens the spec's marks, elements and implicit layers into one ordered
@@ -158,14 +158,14 @@ export function desugarContainers(features, hierarchyNodes) {
 }
 
 /**
- * Check a `contains` channel's `arrange` and `columns`. An unknown arrangement
- * warns and falls back to `dodge`.
+ * Check a `contains` channel's `arrange`, `columns` and `keep`. An unknown
+ * arrangement warns and falls back to `dodge`; an unknown `keep`, to `distance`.
  * @param {any} f the mark
  * @param {any} contains
  * @returns {any}
  */
 function checkArrange(f, contains) {
-    const { arrange, columns } = contains;
+    const { arrange, columns, keep } = contains;
     if (arrange !== undefined && !ARRANGEMENTS.includes(arrange)) {
         warn(
             `${markLabel(f)}:contains:arrange`,
@@ -180,6 +180,20 @@ function checkArrange(f, contains) {
             `${markLabel(f)}:contains:columns`,
             `mark ${markLabel(f)} states \`contains: { columns }\`, which only a grid reads. ` +
             'Add `arrange: "grid"`, or leave `columns` out.'
+        );
+    }
+    if (keep !== undefined && !KEEPS.includes(keep)) {
+        warn(
+            `${markLabel(f)}:contains:keep`,
+            `mark ${markLabel(f)} states \`contains: { keep: ${JSON.stringify(keep)} }\`. ` +
+            `Use one of ${KEEPS.map((k) => `"${k}"`).join(', ')}. Packing by "distance".`
+        );
+        contains = { ...contains, keep: 'distance' };
+    } else if (keep !== undefined && contains.arrange !== 'pack') {
+        warn(
+            `${markLabel(f)}:contains:keep:pack`,
+            `mark ${markLabel(f)} states \`contains: { keep }\`, which only a pack reads. ` +
+            'Add `arrange: "pack"`, or leave `keep` out.'
         );
     }
     return contains;

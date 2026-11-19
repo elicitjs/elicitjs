@@ -5074,6 +5074,32 @@ async function main() {
             pItems.some((d) => d.id === 'a') && pApart && pStill(pById(pAfter, 'e'), pById(pBefore, 'e')),
             JSON.stringify(pItems.map((d) => [d.id, d.x, d.y])));
 
+        // The packed-boxes example: a card dropped to one side of Price slides in
+        // along that direction until it touches, edge to edge, and nothing overlaps.
+        const bChart = page.locator('#arrange .chart > div', { hasText: 'What drives the price?' }).first();
+        const bLabel = async (label) => {
+            // exact: the board's title also holds "price"
+            const t = bChart.locator('svg text', { hasText: new RegExp(`^${label}$`) }).first();
+            await t.scrollIntoViewIfNeeded();
+            const b = await t.boundingBox();
+            return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+        };
+        const bRows = () => bChart.evaluate((el) => el.__chart.getData());
+        const bPrice = await bLabel('Price');
+        await kDrag(await bLabel('Fuel'), { x: bPrice.x + 200, y: bPrice.y });
+        const bAfter = await bRows();
+        // in px, y down: x 0..100 over 528, y 0..100 over 308
+        const bPx = (d) => ({ id: d.id, x: d.x * 5.28, y: (100 - d.y) * 3.08, hw: d.w / 2, hh: d.h / 2 });
+        const bCards = bAfter.nodes.filter((d) => d.kind !== 'board').map(bPx);
+        const bGap = (a, b) => Math.max(Math.abs(a.x - b.x) - a.hw - b.hw, Math.abs(a.y - b.y) - a.hh - b.hh);
+        const bFuel = bCards.find((d) => d.id === 'c'), bMid = bCards.find((d) => d.id === 'price');
+        check('hierarchy pack by angle: a card dropped right of Price lands beside it, at the same height',
+            bFuel.x > bMid.x && Math.abs(bFuel.y - bMid.y) < 2 && Math.abs(bGap(bFuel, bMid) - 6) < 1,
+            `Fuel ${JSON.stringify(bFuel)} Price ${JSON.stringify(bMid)}`);
+        check('hierarchy pack by angle: no cards overlap',
+            bCards.every((a, i) => bCards.slice(i + 1).every((b) => bGap(a, b) > 6 - 0.5)),
+            JSON.stringify(bCards.map((d) => [d.id, Math.round(d.x), Math.round(d.y)])));
+
         // With motion on, the group eases to its new size: it is seen at widths in
         // between, never in one jump, and ends where the data says.
         console.log('\nHierarchy: eased layout (/marks/hierarchy #schema)');

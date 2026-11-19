@@ -105,6 +105,68 @@ describe('pack', () => {
     });
 });
 
+describe('pack of boxes', () => {
+    const at = (w, h, cx, cy, moved = false) => ({ ...item(w, h), cx, cy, moved });
+    // the gap from each box to its nearest neighbour, as boxes
+    const gaps = (items, s) => s.map((p, i) => Math.min(...s.map((q, j) => (i === j ? Infinity : Math.max(
+        Math.abs(p.x - q.x) - items[i].hw - items[j].hw, Math.abs(p.y - q.y) - items[i].hh - items[j].hh)))));
+
+    it('packs boxes that start on one spot as boxes, each touching a neighbour', () => {
+        const items = [[40, 20], [30, 30], [60, 20], [20, 40], [50, 25], [30, 15]].map(([w, h]) => at(w, h, 100, 100));
+        for (const keep of ['distance', 'angle']) {
+            for (const g of gaps(items, slotsOf(items, opts('pack', { gap: 4, keep })))) expect(g).toBeCloseTo(4, 6);
+        }
+    });
+
+    it('packs a row of boxes edge to edge, not as the circles round them', () => {
+        const items = [at(40, 10, 0, 0), at(40, 10, 60, 0, true)];
+        expect(slotsOf(items, opts('pack', { gap: 0 }))[1]).toEqual({ x: 40, y: 0 });
+    });
+
+    it('by distance, moves a box to the free spot nearest it', () => {
+        // a box dropped off the middle one's corner lands on that corner
+        const items = [at(40, 20, 0, 0), at(20, 20, 50, 40, true)];
+        const s = slotsOf(items, opts('pack', { gap: 0, keep: 'distance' }));
+        expect(s[1]).toEqual({ x: 30, y: 20 });
+    });
+
+    it('by angle, slides a box along its line from the middle one', () => {
+        const items = [at(40, 20, 0, 0), at(20, 20, 50, 40, true)];
+        const s = slotsOf(items, opts('pack', { gap: 0, keep: 'angle' }));
+        expect(Math.atan2(s[1].y, s[1].x)).toBeCloseTo(Math.atan2(40, 50), 9);
+        // it meets the middle one's top edge (y = 20) first
+        expect(s[1].x).toBeCloseTo(25, 9);
+        expect(s[1].y).toBeCloseTo(20, 9);
+    });
+
+    it('by angle, keeps every direction from the middle one', () => {
+        const items = [at(40, 30, 0, 0), at(30, 20, 120, 10), at(30, 20, -90, 60), at(20, 40, 10, -150), at(50, 20, -100, -100)];
+        const s = slotsOf(items, opts('pack', { gap: 4, keep: 'angle' }));
+        expect(s[0]).toEqual({ x: 0, y: 0 });
+        items.slice(1).forEach((m, k) => expect(Math.atan2(s[k + 1].y, s[k + 1].x)).toBeCloseTo(Math.atan2(m.cy, m.cx), 9));
+        for (const g of gaps(items, s)) expect(g).toBeGreaterThan(4 - 1e-6);
+    });
+
+    it('leaves a packed group where it is, either way', () => {
+        const items = [at(40, 30, 0, 0), at(30, 20, 120, 10), at(30, 20, -90, 60), at(20, 40, 10, -150)];
+        for (const keep of ['distance', 'angle']) {
+            const s = slotsOf(items, opts('pack', { gap: 4, keep }));
+            const again = slotsOf(items.map((m, k) => ({ ...m, cx: s[k].x, cy: s[k].y })), opts('pack', { gap: 4, keep }));
+            again.forEach((p, k) => {
+                expect(p.x).toBeCloseTo(s[k].x, 6);
+                expect(p.y).toBeCloseTo(s[k].y, 6);
+            });
+        }
+    });
+
+    it('keeps every box touching when many start on one spot', () => {
+        const items = Array.from({ length: 40 }, (_, k) => at(20 + (k * 7) % 30, 15 + (k * 11) % 25, 0, 0));
+        for (const keep of ['distance', 'angle']) {
+            for (const g of gaps(items, slotsOf(items, opts('pack', { gap: 4, keep })))) expect(g).toBeCloseTo(4, 6);
+        }
+    });
+});
+
 describe('nearestSlot', () => {
     it('gives a moved child the slot nearest where it was put', () => {
         const others = [item(40, 20), item(40, 20), item(40, 20)];

@@ -170,6 +170,22 @@ const FIXTURES = {
             edits: [edit.move({ mode: 'relative' }), edit.hierarchy.nest()],
         })],
     }),
+    'a hierarchy that packs its contents by angle': ({ plot, edit }) => ({
+        schema: {
+            structure: 'hierarchy',
+            tables: {
+                nodes: { id: { type: 'categorical', key: true }, w: { type: 'quantitative', default: 120 } },
+                nesting: { child: { type: 'ref' }, parent: { type: 'ref' } },
+            },
+        },
+        marks: [plot.rect({
+            channels: {
+                width: { field: 'w', scale: null, fit: true },
+                contains: { fn: (d) => d.kind === 'zone', arrange: 'pack', keep: 'angle', gap: 4 },
+            },
+            edits: [edit.move({ mode: 'relative' }), edit.hierarchy.nest()],
+        })],
+    }),
     'a widget with chart keys beside it': ({ widgets }) => ({
         ...widgets.slider({ question: 'How much?', domain: [0, 10], format: (v) => v + ' pts' }),
         responsive: 'reflow',

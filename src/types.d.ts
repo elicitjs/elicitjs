@@ -813,13 +813,18 @@ export interface ChannelSpec {
   // 'dodge' (default): where they are dropped, pushed apart when they overlap.
   // 'free': where they are dropped. 'row' / 'column': in order from the inner
   // top-left, wrapping at a size the container does not fit. 'grid': equal cells,
-  // `columns` to a row. 'pack': circles drawn together where they are dropped,
-  // touching. In a row, column or grid, a drag reorders and a drop takes the
-  // nearest slot.
+  // `columns` to a row. 'pack': drawn together where they are dropped, touching
+  // (boxes as boxes; when every child is round, as circles). In a row, column or
+  // grid, a drag reorders and a drop takes the nearest slot.
   arrange?: 'dodge' | 'free' | 'row' | 'column' | 'grid' | 'pack';
   // On the `contains` channel, with `arrange: 'grid'`: cells to a row (default:
   // as many as fit a fixed width, else a square).
   columns?: number;
+  // On the `contains` channel, with `arrange: 'pack'`: how a child moves in to
+  // touch the others. 'distance' (default): to the free spot nearest it.
+  // 'angle': along the line from the middle child through it, so its direction
+  // from the middle stays the same.
+  keep?: 'distance' | 'angle';
   // On the `dodge` channel: the space in px a row keeps from its siblings. On the
   // `contains` channel: the space between slots. Default 8.
   gap?: number;
