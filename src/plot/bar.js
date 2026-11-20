@@ -1,6 +1,6 @@
 // @ts-check
 import { baselineOf } from '../core/scales.js';
-import { encodeChannel, encodeValue, categorySlot, resolveStyle, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, resolveHandles, handlePaint, markCommon, resolveValueAxis, orientationOf, missingValue } from './mark.js';
+import { encodeChannel, encodeValue, categorySlot, resolveStyle, resolveImage, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, resolveHandles, handlePaint, markCommon, resolveValueAxis, orientationOf, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 import { warn } from '../core/dev.js';
 import { groupByPosition, stackLayout, stackDescriptor, stackFieldOf, stackFieldSchema, stackOrder, orderMembers, checkStackChannel } from './stack.js';
@@ -124,7 +124,7 @@ export function bar(options = {}) {
         type: 'bar',
         channels,
         // The stack key is read off the datum, never scaled.
-        rawChannels: ['stack'],
+        rawChannels: ['stack', 'image'],
         edits: markEdits,
         // Capability for edit.stack.*: only a stacked bar partitions a total.
         supportsStack: doStack,
@@ -212,6 +212,7 @@ export function bar(options = {}) {
                     type: 'rect',
                     ...(gradient ? { fillGradient: gradient } : {}),
                     ...(rx ? { rx } : {}),
+                    ...resolveImage(channels, 'image', d, i, currentData),
                     ...(horizontal
                         ? { x: lo, y: bandStart, width: hi - lo, height: thickness }
                         : { x: bandStart, y: lo, width: thickness, height: hi - lo }),

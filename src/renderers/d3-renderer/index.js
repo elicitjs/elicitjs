@@ -5,8 +5,9 @@ import { markCenter } from "../../edit/shared.js";
 import { rectHitBox, MIN_GRAB } from "../../edit/pick.js";
 import {
   lineGenerator, STYLE_FIELDS, partitionScene, frameThrottle, MODIFIER_KEYS,
-  CLICK_DISTANCE, PLANE_DRAG_THRESHOLD, wheelDelta,
+  CLICK_DISTANCE, PLANE_DRAG_THRESHOLD, wheelDelta, fillBox, imageLayout,
 } from "../shared.js";
+import { warn } from "../../core/dev.js";
 
 // camelCase effect property -> CSS property name. Effects are CSS properties,
 // not SVG attributes, so removing one restores the mark's own paint.
@@ -145,6 +146,9 @@ export class D3Renderer {
       list.filter((/** @type {any} */ n) => n.type === t);
 
     const layers = this._sceneLayers(g);
+    // Picture fills claim pattern slots as they are styled; written after the draw.
+    /** @type {any[]} */
+    this._imageFills = [];
 
     this._drawBackground(layers.bg, background);
 
@@ -174,6 +178,7 @@ export class D3Renderer {
     // groups in the one topmost effects layer.
     this._drawEffects(this._subLayer(layers.effects, "effects-data"), effectNodes);
     this._drawEffects(this._subLayer(layers.effects, "effects-chrome"), effectsChrome);
+    this._writeImageFills();
 
     // Plane-on-top (proximity) mode: the plane sits above the marks and owns
     // every pointer event.
@@ -235,6 +240,93 @@ export class D3Renderer {
       }
     }
     return id;
+  }
+
+  /**
+   * The fill for a node's `fillImage`: `url(#…)` of the pattern slot it claims
+   * this frame, or "none" when it has no box. Slots are claimed in draw order,
+   * so a node keeps its slot (and its loaded <image>) from frame to frame.
+   * @param {any} d
+   * @returns {string}
+   */
+  _imageFillPaint(d) {
+    const box = fillBox(d);
+    if (!box || !(box.width > 0 && box.height > 0)) return "none";
+    if (!this._imagePrefix) this._imagePrefix = `ei${Math.random().toString(36).slice(2, 8)}`;
+    const fills = this._imageFills || (this._imageFills = []);
+    const id = `${this._imagePrefix}-${fills.length}`;
+    fills.push({ id, box, image: d.fillImage });
+    return `url(#${id})`;
+  }
+
+  /**
+   * A picture's own size in px, or null until it loads. A miss starts the load
+   * and writes the patterns again when it arrives; a failed load warns once.
+   * @param {string} href
+   * @returns {{ w: number, h: number } | null}
+   */
+  _imageSize(href) {
+    if (!this._imageSizes) this._imageSizes = new Map();
+    const known = this._imageSizes.get(href);
+    if (known !== undefined) return known;
+    this._imageSizes.set(href, null);
+    if (typeof Image === "undefined") return null;
+    const img = new Image();
+    img.onload = () => {
+      /** @type {Map<string, any>} */ (this._imageSizes).set(href, { w: img.naturalWidth, h: img.naturalHeight });
+      this._writeImageFills();
+    };
+    img.onerror = () => warn("image:load", `could not load the image "${href}" (later failures are not reported).`);
+    img.src = href;
+    return null;
+  }
+
+  /**
+   * Write this frame's picture fills as <pattern>s in <defs>. A pattern tile is
+   * one picture (repeating) or the picture plus the box (not), so only the
+   * tiles CSS would draw show.
+   */
+  _writeImageFills() {
+    const fills = this._imageFills || [];
+    const svg = this._sceneG ? d3.select(this._sceneG.node().ownerSVGElement) : null;
+    if (!svg) return;
+    /** @type {any} */
+    let defs = svg.select("defs");
+    if (defs.empty()) {
+      if (!fills.length) return;
+      defs = /** @type {any} */ (svg).insert("defs", ":first-child");
+    }
+    const self = this;
+    defs.selectAll("pattern.image-fill")
+      .data(fills, (/** @type {any} */ f) => f.id)
+      .join((/** @type {any} */ enter) => {
+        const p = enter.append("pattern").attr("class", "image-fill").attr("patternUnits", "userSpaceOnUse");
+        p.append("image").attr("preserveAspectRatio", "none");
+        return p;
+      })
+      .attr("id", (/** @type {any} */ f) => f.id)
+      .each(/** @this {any} */ function (/** @type {any} */ f) {
+        const { box, image } = f;
+        const size = image.fit === "fill" ? { w: 0, h: 0 } : self._imageSize(image.href);
+        const pattern = d3.select(this);
+        pattern.select("image").attr("href", image.href);
+        // Not loaded yet: a zero-size pattern paints nothing.
+        if (!size) {
+          pattern.attr("width", 0).attr("height", 0);
+          return;
+        }
+        const at = imageLayout(image, box, size.w, size.h);
+        pattern
+          .attr("x", at.x)
+          .attr("y", at.y)
+          .attr("width", at.repeatX ? at.width : box.width + at.width)
+          .attr("height", at.repeatY ? at.height : box.height + at.height)
+          .select("image")
+          .attr("x", 0)
+          .attr("y", 0)
+          .attr("width", at.width)
+          .attr("height", at.height);
+      });
   }
 
   // -- setup ---------------------------------------------------------------
@@ -822,6 +914,9 @@ export class D3Renderer {
     // Gradient fill via url(); an effect restyle still wins.
     sel.filter((/** @type {any} */ d) => !!(d && d.fillGradient))
       .attr("fill", (/** @type {any} */ d) => `url(#${this._gradientId(d.fillGradient)})`);
+    // A picture fill, the same way: a <pattern> over the node's box.
+    sel.filter((/** @type {any} */ d) => !!(d && d.fillImage))
+      .attr("fill", (/** @type {any} */ d) => this._imageFillPaint(d));
     // DOM tags for tests and stylesheets: ghost preview, hit-only node, handle channel.
     sel.attr("data-ghost", (/** @type {any} */ d) => (d.ghost ? "" : null));
     sel.attr("data-hit", (/** @type {any} */ d) => (d.hit ? "" : null));

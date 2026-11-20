@@ -1,7 +1,7 @@
 // @ts-check
 import { baselineOf } from '../core/scales.js';
 import { claimEdge } from '../edit/shared.js';
-import { encodeChannel, resolveStyle, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, handlePaint, handlesAreAffordance, markCommon, rawChannel, resolveValueAxis, orderSeries, seriesKeyOf, hasAnyEdit, inkOf, missingValue } from './mark.js';
+import { encodeChannel, resolveStyle, resolveImage, normalizeMarkOptions, seriesFieldOf, themeOf, markDefaults, positionalKeys, resolveHandles, handlePaint, handlesAreAffordance, markCommon, rawChannel, resolveValueAxis, orderSeries, seriesKeyOf, hasAnyEdit, inkOf, missingValue } from './mark.js';
 import { areaGenerator } from '../core/curves.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
@@ -75,7 +75,7 @@ export function area(options = {}) {
         handles: handlesOpt,
         channels,
         // Read raw (no scale), like `line`'s and `link`'s.
-        rawChannels: ['curve', 'series', 'order'],
+        rawChannels: ['curve', 'series', 'order', 'image'],
         discreteScale: 'point',
         xKey,
         yKey,
@@ -134,6 +134,8 @@ export function area(options = {}) {
                 // Style and curve resolve once per series, from its first row.
                 const style = resolveStyle(scales, channels, sorted[0] ? sorted[0].d : {}, bandDefaults,
                     sorted[0] ? sorted[0].i : undefined, currentData);
+                const image = resolveImage(channels, 'image', sorted[0] ? sorted[0].d : {},
+                    sorted[0] ? sorted[0].i : undefined, currentData);
                 const seriesCurve = String(rawChannel(channels, 'curve',
                     sorted[0] ? sorted[0].d : {}, curve,
                     sorted[0] ? sorted[0].i : undefined, currentData));
@@ -183,6 +185,7 @@ export function area(options = {}) {
                     nodes.push({
                         type: 'path',
                         ...(gradient ? { fillGradient: gradient } : {}),
+                        ...image,
                         d,
                         points,
                         // Each vertex's row (top edge, then bottom reversed), for tips.

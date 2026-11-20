@@ -23,6 +23,7 @@ paths:
 - `views: 'state'`: no `table`, no channel map, no `edits`, no row. Options may be literals or functions of the chart context. Read-only by kind, not by discipline.
 - Guides come from `spec.guides`, `Constraint.guide` and `Edit.guide`, all drawn by `buildEditGuide` in `edit/guide.js`. No second drawer.
 - Validate options with `warnUnknownGuideOptions(name, options, ALLOW)`. Styles resolve through `resolveGuide`; no literal dash/width/opacity.
+- A guide node stamped `background` (`guides.image`) is spliced in at the floor by `guidePass`: after the panel, before gridlines and marks.
 - The pointer is state: renderers report `pointermove`/`pointerleave` from the root, once per frame, only when a guide declares `tracksPointer`. The engine records `ui.pointer`, resolves `ui.hit` with `hitTestAny` over every datum-bearing node (editable or not), and re-renders. Nothing is dispatched; no node's `pointerEvents` changes. `guides.tip` and `guides.crosshair` read it; a mark's `tip:` shorthand desugars to `tip({ mark })`. `guides.quadrants` is the centre-frame guide. Never bind hover listeners to inert nodes.
 
 ## Effects
@@ -89,3 +90,4 @@ paths:
 - `spec.title`/`subtitle`/`caption` go through `core/titles.js`: bands outside the legend bands, added to `effectiveMargins` in `update()`. The chart keeps its declared size; the plot shrinks. An axis title reserves its room via `Axis.measureTitle`. Never draw a title as a text mark.
 - `strokeDash` (a constant, or a field via an ordinal scale onto `DEFAULT_DASHES`) is swept by `resolveStyle` onto `strokeDasharray`. No author-facing `strokeDasharray`.
 - `gradient: { stops, direction }` on area/bar/rect → `node.fillGradient`, painted by both renderers; an effect restyle still wins.
+- `node.fillImage` (`{ href, fit, position, repeat }`) paints a picture in the node's box (`fillBox`). `imageLayout` and `imageTiles` (`renderers/shared.js`) lay it out as CSS does, so both renderers agree; every fit but `fill` needs the picture's own size. SVG gives each fill a `<pattern>` slot claimed in draw order, so a node keeps its `<image>` across frames, and rewrites the patterns when a size arrives (zero-size until then). Canvas clips to the shape and draws from the shared image cache, repainting on load. A failed load warns once (`image:load`).

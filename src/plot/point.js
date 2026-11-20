@@ -4,7 +4,7 @@
 // A `symbol` channel draws a text glyph instead. A missing positional channel
 // puts the dot at the centre of that dimension.
 
-import { encodeChannel, encodeAngle, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, missingValue } from './mark.js';
+import { encodeChannel, encodeAngle, resolveStyle, resolveImage, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 import { warn } from '../core/dev.js';
 
@@ -20,6 +20,7 @@ export function point(options = {}) {
         ...markCommon(opts),
         type: 'point',
         channels,
+        rawChannels: ['image'],
         // A dot's categorical axis wants a point per category (a tick, no width).
         discreteScale: 'point',
         // Field keys the interaction/constraint layer reads, derived from channels.
@@ -84,6 +85,7 @@ export function point(options = {}) {
                     const side = Math.max(0, size * 2);
                     return {
                         type: 'rect',
+                        ...resolveImage(channels, 'image', d, i, currentData),
                         x: cx - side / 2,
                         y: cy - side / 2,
                         width: side,
@@ -96,6 +98,7 @@ export function point(options = {}) {
                 }
                 return {
                     type: 'circle',
+                    ...resolveImage(channels, 'image', d, i, currentData),
                     cx,
                     cy,
                     r: size,

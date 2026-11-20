@@ -11,7 +11,7 @@
 // The stack axis is a count: each token takes 2r + gap px. `dotStackY` stacks
 // upward (category on x), `dotStackX` rightward (category on y).
 
-import { encodeChannel, categoryOf, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, resolveValueAxis, missingValue } from './mark.js';
+import { encodeChannel, categoryOf, resolveStyle, resolveImage, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, resolveValueAxis, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 import { offsetScaleOf } from '../core/scales.js';
 
@@ -60,6 +60,7 @@ export function dotStack(options = {}) {
         ...markCommon(opts),
         type: 'dotStack',
         channels,
+        rawChannels: ['image'],
         // A count axis with no `count` channel: one row is one token.
         countAxis: stackAxis,
         countPitch: 2 * tokenRadius + gap,
@@ -160,6 +161,7 @@ export function dotStack(options = {}) {
                         ...pos,
                         r,
                         ...style,
+                        ...resolveImage(channels, 'image', d, i, currentData),
                         data: d,
                         index: i
                     });

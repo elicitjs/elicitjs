@@ -6,6 +6,8 @@
 // Reference geometry: a line or a band, positioned in data space.
 export { rule } from './rule.js';
 export { region } from './region.js';
+// A picture behind the marks: the whole plot, or a box in data space.
+export { image } from './image.js';
 // What is left to do under a rule: the unallocated remainder of a budget.
 export { remaining } from './remaining.js';
 // The catchment of a proximity pick.

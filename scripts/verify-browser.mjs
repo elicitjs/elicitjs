@@ -4815,6 +4815,70 @@ async function main() {
         const shAfter = await page.$eval(shEl, (e) => JSON.stringify(e.__chart.getData()));
         check('shape: dragging a shape by its body moves its row', shAfter !== shBefore);
 
+        // Pictures: plot.image is a mark like any other, and a picture fill keeps
+        // its <pattern> across a drag (no re-fetch, no flicker).
+        console.log('\nImages (/marks/image, /guides)');
+        await open('/marks/image', '#per-row svg rect.mark');
+        const imEl = '#per-row .chart > div';
+        const imFill = await page.locator('#per-row svg rect.mark').first().getAttribute('fill');
+        check('image: a picture is filled with a pattern', /^url\(#/.test(imFill || ''), `fill=${imFill}`);
+        const imBefore = await page.$eval(imEl, (e) => JSON.stringify(e.__chart.getData()));
+        const im = await boxCentre(page.locator('#per-row svg rect.mark').first());
+        await dragPage(im.x, im.y, im.x + 40, im.y + 30);
+        const imAfter = await page.$eval(imEl, (e) => JSON.stringify(e.__chart.getData()));
+        check('image: dragging a picture moves its row', imAfter !== imBefore);
+
+        await page.locator('#inside .chart svg').first().scrollIntoViewIfNeeded();
+        const ibSel = '#inside svg';
+        const ibMark = await page.$$eval(ibSel, (svgs) => {
+            const img = svgs[0].querySelector('pattern.image-fill image');
+            if (img) img.setAttribute('data-probe', '1');
+            return { href: img && img.getAttribute('href'), n: svgs[0].querySelectorAll('pattern.image-fill').length };
+        });
+        check('image: a bar paints its picture through a pattern', ibMark.href === '/images/person.svg' && ibMark.n === 3, JSON.stringify(ibMark));
+        // contain + repeat-y: once the icon's size is known, each tile is a square as wide as the bar.
+        await page.waitForFunction(() => {
+            const p = document.querySelector('#inside svg pattern.image-fill');
+            return p && +p.getAttribute('width') > 0;
+        }, null, { timeout: 5000 }).catch(() => {});
+        const ibTile = await page.$eval('#inside svg', (svg) => {
+            const bar = svg.querySelector('rect.mark');
+            const id = /url\(#(.+)\)/.exec(bar.getAttribute('fill') || '');
+            const p = id && svg.querySelector(`pattern#${id[1]}`);
+            const img = p && p.querySelector('image');
+            // The picture is the tile; the pattern repeats every tile on y only.
+            return img ? { bar: +bar.getAttribute('width'), w: +img.getAttribute('width'), h: +img.getAttribute('height'), step: +p.getAttribute('height') } : null;
+        });
+        check('image: contain + repeat-y tiles squares as wide as the bar',
+            !!ibTile && ibTile.w > 0 && Math.abs(ibTile.w - ibTile.bar) < 0.5 && Math.abs(ibTile.h - ibTile.bar) < 0.5
+            && Math.abs(ibTile.step - ibTile.h) < 0.5, JSON.stringify(ibTile));
+        const ibEl = '#inside .chart > div';
+        const ibBefore = await page.$eval(ibEl, (e) => e.__chart.getData()[0].people);
+        const ibBar = await boxCentre(page.locator("#inside svg rect.mark").first());
+        await dragPage(ibBar.x, ibBar.y, ibBar.x, ibBar.y - 40);
+        const ibAfter = await page.$eval(ibEl, (e) => e.__chart.getData()[0].people);
+        const ibKept = await page.$$eval(ibSel, (svgs) => ({
+            probe: !!svgs[0].querySelector('pattern.image-fill image[data-probe]'),
+            n: svgs[0].querySelectorAll('pattern.image-fill').length,
+        }));
+        check('image: dragging an image bar writes its row', ibAfter !== ibBefore, `${ibBefore} -> ${ibAfter}`);
+        check('image: the bar keeps its pattern through the drag', ibKept.probe && ibKept.n === 3, JSON.stringify(ibKept));
+
+        await open('/guides', '#image svg circle.mark');
+        const giOrder = await page.$eval('#image svg', (svg) => {
+            const bg = [...svg.querySelectorAll('rect.bg-rect, line')];
+            const pic = bg.findIndex((n) => /^url\(#/.test(n.getAttribute('fill') || ''));
+            const grid = bg.findIndex((n) => n.tagName === 'line');
+            return { pic, grid };
+        });
+        check('guides.image: the picture sits beneath the gridlines', giOrder.pic >= 0 && (giOrder.grid < 0 || giOrder.pic < giOrder.grid), JSON.stringify(giOrder));
+        const giEl = '#image .chart > div';
+        const giBefore = await page.$eval(giEl, (e) => JSON.stringify(e.__chart.getData()));
+        const gi = await boxCentre(page.locator('#image svg circle.mark').first());
+        await dragPage(gi.x, gi.y, gi.x + 50, gi.y + 20);
+        const giAfter = await page.$eval(giEl, (e) => JSON.stringify(e.__chart.getData()));
+        check('guides.image: a point on the picture still drags', giAfter !== giBefore);
+
         // Titles reserve space: the chart keeps its declared size.
         console.log('\nTitles (/theming)');
         await open('/theming', '#titles svg');

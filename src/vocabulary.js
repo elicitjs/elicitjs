@@ -16,7 +16,7 @@ export const MARK_SHORTHANDS = [
     'fill', 'stroke', 'strokeWidth', 'strokeDash', 'opacity', 'fillOpacity', 'strokeOpacity',
     'size', 'symbol', 'text', 'fontSize', 'fontWeight', 'fontStyle', 'fontFamily',
     'textAnchor', 'lineAnchor', 'dx', 'dy',
-    'angle',
+    'angle', 'image', 'src',
 ];
 
 /** Options every chart element accepts. `field` and `table` name what its edits write.
@@ -45,6 +45,7 @@ export const MARK_OPTIONS = {
     geoLine: ['curve', 'handles', 'handleSize', 'handleColor', 'connect', 'showVertices'],
     geoText: ['format'],
     geoRect: [],
+    image: [],
     line: ['orientation', 'curve', 'handles', 'handleSize', 'handleColor', 'connect'],
     link: [
         'curve', 'curvature', 'spread', 'arrow', 'arrowSize',
@@ -96,6 +97,7 @@ export const ELEMENT_OPTIONS = {
 export const GUIDE_OPTIONS = {
     rule: ['x', 'y', 'stroke', 'strokeDash', 'strokeWidth', 'opacity', 'label'],
     region: ['x', 'y', 'fill', 'opacity', 'stroke', 'label'],
+    image: ['src', 'x', 'y', 'fit', 'position', 'repeat', 'opacity'],
     remaining: ['field', 'total', 'unit', 'format', 'anchor', 'label', 'fill', 'fontSize'],
     proximity: ['target', 'stroke', 'strokeDash', 'strokeWidth', 'opacity'],
     // Survey-instrument guides (widgets/theme.js).
@@ -281,6 +283,7 @@ export const SPEC_FUNCTIONS = {
     outline: { color: ['color', 'node'] },
     'guides.rule': { x: 'ctx', y: 'ctx', stroke: 'ctx', strokeDash: 'ctx', strokeWidth: 'ctx', opacity: 'ctx', label: 'ctx' },
     'guides.region': { x: 'ctx', y: 'ctx', fill: 'ctx', opacity: 'ctx', stroke: 'ctx', label: 'ctx' },
+    'guides.image': { src: 'ctx', x: 'ctx', y: 'ctx', opacity: 'ctx' },
     'guides.remaining': {
         field: 'ctx', total: 'ctx', unit: 'ctx', anchor: 'ctx', fill: 'ctx', fontSize: 'ctx',
         label: ['remaining', 'used', 'total'],

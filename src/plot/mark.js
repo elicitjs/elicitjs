@@ -570,6 +570,103 @@ export function resolveStyle(scales, channels, datum, defaults = {}, index, data
     return style;
 }
 
+// Pictures follow CSS. `src` is an <img>'s source (`plot.image`); `image` is a
+// shape's background-image. Either channel takes its settings as params:
+//   fit       object-fit / background-size: cover | contain | fill | none | scale-down
+//   position  object-position / background-position: 'center', 'bottom', '25% 75%', …
+//   repeat    background-repeat (`image` only): no-repeat | repeat | repeat-x | repeat-y
+
+/** @type {string[]} */
+export const IMAGE_FITS = ['cover', 'contain', 'fill', 'none', 'scale-down'];
+/** @type {string[]} */
+export const IMAGE_REPEATS = ['no-repeat', 'repeat', 'repeat-x', 'repeat-y'];
+
+/** Each picture channel's default fit. @type {Record<string, 'cover' | 'contain' | 'fill'>} */
+const DEFAULT_FIT = { image: 'cover', src: 'contain' };
+
+/** @type {Record<string, number>} */
+const POSITION_WORD = { left: 0, top: 0, center: 0.5, right: 1, bottom: 1 };
+
+/**
+ * A CSS position ('center', 'bottom left', '25% 75%') as [x, y] fractions of the
+ * room left over in the box. Null when it cannot be read.
+ * @param {any} value
+ * @returns {[number, number] | null}
+ */
+export function parsePosition(value) {
+    const parts = String(value).trim().toLowerCase().split(/\s+/);
+    if (!parts.length || parts.length > 2) return null;
+    /** @param {string} t */
+    const amount = (t) => {
+        if (t in POSITION_WORD) return POSITION_WORD[t];
+        const m = /^(-?\d*\.?\d+)%$/.exec(t);
+        return m ? +m[1] / 100 : null;
+    };
+    const vals = parts.map(amount);
+    if (vals.some((v) => v == null)) return null;
+    if (parts.length === 1) {
+        const [t] = parts;
+        if (t === 'top' || t === 'bottom') return [0.5, /** @type {number} */ (vals[0])];
+        return [/** @type {number} */ (vals[0]), 0.5];
+    }
+    // 'top left' reads as 'left top'.
+    const swap = parts[0] === 'top' || parts[0] === 'bottom' || parts[1] === 'left' || parts[1] === 'right';
+    const [a, b] = /** @type {number[]} */ (vals);
+    return swap ? [b, a] : [a, b];
+}
+
+/**
+ * Read a picture's settings, warning on a value CSS would not take.
+ * @param {any} spec the channel spec (or a guide's options)
+ * @param {string} owner who it belongs to, for the message
+ * @param {'cover' | 'contain' | 'fill'} defaultFit
+ * @param {boolean} repeats whether `repeat` applies
+ * @returns {{ fit: string, position: [number, number], repeat: string }}
+ */
+export function imageSettings(spec, owner, defaultFit, repeats) {
+    let fit = spec.fit == null || spec.fit === true ? defaultFit : spec.fit;
+    if (!IMAGE_FITS.includes(fit)) {
+        warn(`fit:${owner}:${fit}`, `${owner}: fit is one of ${IMAGE_FITS.join(', ')}, not ` +
+            `${JSON.stringify(fit)}. Using "${defaultFit}".`);
+        fit = defaultFit;
+    }
+    let position = /** @type {[number, number]} */ ([0.5, 0.5]);
+    if (spec.position != null) {
+        const read = parsePosition(spec.position);
+        if (read) position = read;
+        else warn(`position:${owner}:${spec.position}`, `${owner}: position takes CSS keywords and ` +
+            `percentages ('center', 'bottom left', '25% 75%'), not ${JSON.stringify(spec.position)}. Using "center".`);
+    }
+    let repeat = 'no-repeat';
+    if (spec.repeat != null) {
+        if (!repeats) warn(`repeat:${owner}`, `${owner}: repeat applies to a background image; ignored.`);
+        else if (IMAGE_REPEATS.includes(spec.repeat)) repeat = spec.repeat;
+        else warn(`repeat:${owner}:${spec.repeat}`, `${owner}: repeat is one of ${IMAGE_REPEATS.join(', ')}, ` +
+            `not ${JSON.stringify(spec.repeat)}. Using "no-repeat".`);
+    }
+    return { fit, position, repeat };
+}
+
+/**
+ * A picture channel for one row (`image` or `src`), as the node's `fillImage`:
+ * the picture painted in the node's box in place of its fill. Both are raw
+ * channels (a URL), so a mark that reads one lists it in `Mark.rawChannels`.
+ * @param {Record<string, any>} channels
+ * @param {'image' | 'src'} name
+ * @param {import('../types').Datum} datum
+ * @param {number} [index]
+ * @param {import('../types').Datum[]} [data]
+ * @returns {{ fillImage?: import('../types').FillImage }}
+ */
+export function resolveImage(channels, name, datum, index, data) {
+    const spec = channels[name];
+    if (!spec) return {};
+    const href = rawChannel(channels, name, datum, undefined, index, data);
+    if (href == null || href === '') return {};
+    const settings = imageSettings(spec, `channel "${name}"`, DEFAULT_FIT[name], name === 'image');
+    return { fillImage: /** @type {import('../types').FillImage} */ ({ href: String(href), ...settings }) };
+}
+
 /**
  * The field that groups rows into series (a line, an area, a stack segment): the
  * `series` channel, else the field behind fill, stroke, then strokeDash. `series`

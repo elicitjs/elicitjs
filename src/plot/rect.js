@@ -1,6 +1,6 @@
 // @ts-check
 import { isBand, baselineOf, rangeExtent } from '../core/scales.js';
-import { encodeChannel, categorySlot, encodeAngle, resolveStyle, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, missingValue } from './mark.js';
+import { encodeChannel, categorySlot, encodeAngle, resolveStyle, resolveImage, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
 // rect: a rectangle whose extent on each axis is resolved independently (heatmap
@@ -90,6 +90,7 @@ export function rect(options = {}) {
         ...markCommon(opts),
         type: 'rect',
         channels,
+        rawChannels: ['image'],
         // A rect wants the band interval on any categorical axis (like a bar).
         discreteScale: 'band',
         xKey,
@@ -149,6 +150,7 @@ export function rect(options = {}) {
                 return {
                     type: 'rect',
                     ...(gradient ? { fillGradient: gradient } : {}),
+                    ...resolveImage(channels, 'image', d, i, currentData),
                     x: xExt.lo,
                     y: yExt.lo,
                     width: xExt.hi - xExt.lo,

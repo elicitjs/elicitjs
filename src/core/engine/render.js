@@ -21,7 +21,7 @@ import { fieldsOf } from '../schema.js';
 import { cursorFor, planeCursorFor } from '../../edit/cursor.js';
 import {
     markLabel,
-    warnScaleRequirements, warnScopeMismatch, warnProjectionCartesianMix,
+    warnScaleRequirements, warnScopeMismatch, warnProjectionCartesianMix, warnImageSupport,
     warnDuplicatePlaneEdits, warnUnreachableLegendRow, warnConnectConflict, warnNestAlone,
     warnCreateOnNonMark, warnCreateEmptyExtent, warnDeadEditChannels, warnMissingEditChannels, warnHiddenHandles,
     warnUnclaimedPick, warnUnknownEditOptions, warnNoTextEditor,
@@ -375,6 +375,7 @@ export function createRender(chart, deps) {
 
             const declaredEdits = collectEdits(feature);
             warnScaleRequirements(feature, chart.scales);
+            warnImageSupport(feature);
             warnScopeMismatch(feature, declaredEdits);
             warnMisplacedEdits(feature, markLabel);
             warnCreateOnNonMark(feature, declaredEdits, chart.scales);
@@ -590,13 +591,18 @@ export function createRender(chart, deps) {
             // So an edit's guide can hide while its edit is inactive.
             stage: getStage()
         };
+        // A guide's `background` node (guides.image) is the floor: after the
+        // panel, before gridlines and marks.
+        let floor = scene.children.findIndex((/** @type {any} */ n) => !n.panel);
+        if (floor < 0) floor = scene.children.length;
         allGuides.forEach(guide => {
             const nodes = guide.build(
                 guideCtx.data, chart.scales, chart.innerWidth, chart.innerHeight, guideCtx,
             ) || [];
             nodes.forEach((/** @type {any} */ node) => {
                 node.guide = true;
-                scene.add(node);
+                if (node.background) scene.children.splice(floor++, 0, node);
+                else scene.add(node);
             });
         });
     };

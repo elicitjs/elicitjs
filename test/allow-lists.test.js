@@ -10,7 +10,7 @@ import { MARK_OPTIONS, MARK_UNIVERSAL_OPTIONS, MARK_SHORTHANDS, GUIDE_OPTIONS, G
 
 const FILE = {
     arc: 'arc', area: 'area', bar: 'bar', composite: 'composite', curve: 'curve', dotStack: 'dotStack',
-    ellipse: 'ellipse', face: 'face', geoBasemap: 'geo', geoTile: 'geo', geoPoint: 'geo', geoPolygon: 'geo',
+    ellipse: 'ellipse', face: 'face', image: 'image', geoBasemap: 'geo', geoTile: 'geo', geoPoint: 'geo', geoPolygon: 'geo',
     geoLine: 'geo', geoText: 'geo', geoRect: 'geo', line: 'line', link: 'link', needle: 'needle', node: 'node',
     point: 'point', port: 'port', rect: 'rect', rule: 'rule', shape: 'shape', sticker: 'sticker', text: 'text', tick: 'tick', trend: 'trend',
     trendBand: 'trendBand', waffle: 'waffle',
@@ -62,7 +62,7 @@ describe('mark option vocabularies match the factory bodies', () => {
 // Guides: the same two-way check against each guide factory's body.
 const GUIDE_FILE = {
     rule: 'guides/rule', region: 'guides/region', remaining: 'guides/remaining', proximity: 'guides/proximity',
-    tip: 'guides/tip', crosshair: 'guides/crosshair', custom: 'guides/custom',
+    tip: 'guides/tip', crosshair: 'guides/crosshair', custom: 'guides/custom', image: 'guides/image',
     prompt: 'widgets/theme', options: 'widgets/theme', cellGrid: 'widgets/theme',
     sliderTrack: 'widgets/theme', quadrants: 'widgets/theme',
 };

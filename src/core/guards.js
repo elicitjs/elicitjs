@@ -93,6 +93,31 @@ export function warnScaleRequirements(feature, scales) {
 }
 
 /**
+ * A picture channel (`image`, `src`) on a mark that does not read it would be
+ * dropped. A mark that draws one lists it in `rawChannels`.
+ * @param {any} feature
+ */
+export function warnImageSupport(feature) {
+    if (!feature || !feature.channels) return;
+    const reads = new Set(feature.rawChannels || []);
+    if (feature.channels.image && !reads.has('image')) {
+        warn(
+            `image:${markLabel(feature)}`,
+            `mark ${markLabel(feature)} does not draw an \`image\` channel, so it is ignored. ` +
+            `Marks that paint one inside their shape: bar, rect, area, point, ellipse, shape, ` +
+            `waffle, dotStack. For a picture per row, use plot.image({ src }).`
+        );
+    }
+    if (feature.channels.src && !reads.has('src')) {
+        warn(
+            `src:${markLabel(feature)}`,
+            `mark ${markLabel(feature)} does not draw a \`src\` channel, so it is ignored. ` +
+            `\`src\` is plot.image()'s picture; to paint one inside a shape, use the \`image\` channel.`
+        );
+    }
+}
+
+/**
  * @param {any} feature
  * @param {import('../types').Edit[]} edits
  */

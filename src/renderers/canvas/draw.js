@@ -2,12 +2,62 @@
 // Paints FeatureNodes with canvas 2D calls: same node types, layers and style
 // defaults as the D3 renderer. No interaction here.
 import { markCenter } from '../../edit/shared.js';
-import { STYLE_FIELDS, lineGenerator, partitionScene } from '../shared.js';
+import { STYLE_FIELDS, lineGenerator, partitionScene, fillBox, imageLayout, imageTiles } from '../shared.js';
+import { warn } from '../../core/dev.js';
 
 // The font for the current paint pass (the theme's, else the host page's), set by
 // paintScene and read by text().
 /** @type {{ family: string | null, size: number } | null} */
 let activeFont = null;
+// The renderer's image cache and repaint hook for the current paint pass, set by
+// paintScene and read wherever a picture is drawn.
+/** @type {{ cache: Map<string, any>, requestRepaint: () => void } | null} */
+let activeImages = null;
+
+/**
+ * A loaded picture, or null while it loads. A miss starts the load and repaints
+ * when it arrives; a failed load warns once.
+ * @param {string} href
+ * @returns {HTMLImageElement | null}
+ */
+function loadImage(href) {
+    if (!activeImages || typeof Image === 'undefined') return null;
+    const { cache, requestRepaint } = activeImages;
+    let entry = cache.get(href);
+    if (!entry) {
+        const img = new Image();
+        entry = { img, ready: false };
+        const e = entry;
+        img.onload = () => { e.ready = true; requestRepaint(); };
+        img.onerror = () => warn('image:load', `could not load the image "${href}" (later failures are not reported).`);
+        img.src = href;
+        cache.set(href, entry);
+    }
+    return entry.ready ? entry.img : null;
+}
+
+/**
+ * Paint a node's `fillImage` inside its shape (the current path, or `shape`), in
+ * place of its fill: clears `s.fill` so only the stroke paints after. An effect's
+ * fill wins over the picture.
+ * @param {CanvasRenderingContext2D} ctx @param {any} node
+ * @param {Record<string, any>} s resolved style @param {Path2D} [shape]
+ */
+function paintFillImage(ctx, node, s, shape) {
+    const pic = node.fillImage;
+    if (!pic || (node.effectStyle && node.effectStyle.fill != null)) return;
+    s.fill = 'none';
+    const box = fillBox(node);
+    if (!box || !(box.width > 0 && box.height > 0)) return;
+    const img = loadImage(pic.href);
+    if (!img) return;
+    ctx.save();
+    shape ? ctx.clip(shape) : ctx.clip();
+    ctx.globalAlpha = (s.opacity != null ? s.opacity : 1) * (s.fillOpacity != null ? s.fillOpacity : 1);
+    const at = imageLayout(pic, box, img.naturalWidth, img.naturalHeight);
+    for (const t of imageTiles(at, box)) ctx.drawImage(img, t.x, t.y, at.width, at.height);
+    ctx.restore();
+}
 
 // SVG text-anchor -> canvas textAlign. `middle` is the only rename.
 /** @type {Record<string, CanvasTextAlign>} */
@@ -121,7 +171,9 @@ function circle(ctx, node, defaults) {
         const r = Math.max(0, node.r != null ? node.r : 5);
         ctx.beginPath();
         ctx.arc(node.cx, node.cy, r, 0, 2 * Math.PI);
-        paint(ctx, styleOf(node, defaults));
+        const s = styleOf(node, defaults);
+        paintFillImage(ctx, node, s);
+        paint(ctx, s);
     });
 }
 
@@ -132,7 +184,9 @@ function ellipse(ctx, node, defaults) {
         const ry = Math.max(0, node.ry != null ? node.ry : 5);
         ctx.beginPath();
         ctx.ellipse(node.cx, node.cy, rx, ry, 0, 0, 2 * Math.PI);
-        paint(ctx, styleOf(node, defaults));
+        const s = styleOf(node, defaults);
+        paintFillImage(ctx, node, s);
+        paint(ctx, s);
     });
 }
 
@@ -151,15 +205,6 @@ function gradientOf(ctx, node, box) {
         : ctx.createLinearGradient(box.x, box.y + box.height, box.x, box.y);
     for (const [offset, color] of spec.stops) g.addColorStop(Math.max(0, Math.min(1, offset)), color);
     return g;
-}
-
-/** The bounding box of a path node's outline points. @param {any} node */
-function pointsBox(node) {
-    const pts = (node.points || []).filter((/** @type {any} */ p) => p && Number.isFinite(p[0]) && Number.isFinite(p[1]));
-    if (!pts.length) return null;
-    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    for (const [px, py] of pts) { x0 = Math.min(x0, px); y0 = Math.min(y0, py); x1 = Math.max(x1, px); y1 = Math.max(y1, py); }
-    return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
 }
 
 /**
@@ -195,6 +240,7 @@ function rect(ctx, node, defaults) {
         const s = styleOf(node, defaults);
         const g = gradientOf(ctx, node, { x: node.x, y: node.y, width: node.width, height: h });
         if (g && !(node.effectStyle && node.effectStyle.fill != null)) s.fill = g;
+        paintFillImage(ctx, node, s);
         paint(ctx, s);
     });
 }
@@ -220,9 +266,10 @@ function path(ctx, node, defaults) {
         lineGenerator(node.curve).context(/** @type {any} */(p))(node.points || []);
     }
     const s = styleOf(node, defaults);
-    const box = node.fillGradient ? pointsBox(node) : null;
+    const box = node.fillGradient ? fillBox(node) : null;
     const g = box ? gradientOf(ctx, node, box) : null;
     if (g && !(node.effectStyle && node.effectStyle.fill != null)) s.fill = g;
+    paintFillImage(ctx, node, s, p);
     paint(ctx, s, p);
 }
 
@@ -272,26 +319,17 @@ function text(ctx, node, defaults, anchorDefault) {
 }
 
 /**
- * Draw a background raster tile. A cache miss starts a load and repaints when it
- * arrives; until then the tile is skipped.
+ * Draw a background raster tile, skipped until it has loaded.
  * @param {CanvasRenderingContext2D} ctx @param {any} node
- * @param {Map<string, any>} cache @param {() => void} requestRepaint
  */
-function image(ctx, node, cache, requestRepaint) {
+function image(ctx, node) {
     if (!node.href) return;
-    let entry = cache.get(node.href);
-    if (!entry) {
-        const img = new Image();
-        entry = { img, ready: false };
-        img.onload = () => { entry.ready = true; requestRepaint(); };
-        img.src = node.href;
-        cache.set(node.href, entry);
-    }
-    if (!entry.ready) return;
+    const img = loadImage(node.href);
+    if (!img) return;
     withAngle(ctx, node, () => {
         const prev = ctx.globalAlpha;
         if (node.opacity != null) ctx.globalAlpha = node.opacity;
-        ctx.drawImage(entry.img, node.x, node.y, node.width, node.height);
+        ctx.drawImage(img, node.x, node.y, node.width, node.height);
         ctx.globalAlpha = prev;
     });
 }
@@ -455,6 +493,7 @@ export function paintScene(ctx, children, io) {
         family: (themeFont && themeFont.family) || (io && io.fontFamily) || null,
         size: (themeFont && themeFont.size) || 10,
     };
+    activeImages = io && io.images ? { cache: io.images, requestRepaint: io.requestRepaint } : null;
     const { background, guideRegions, marks, chrome, guideFront, effects, effectsChrome } =
         partitionScene(children, { clip: !!(io && io.clip) });
     // The clip rect confines marks and effects.
@@ -474,7 +513,7 @@ export function paintScene(ctx, children, io) {
     if (!only || only === 'below') {
         // Background: tiles (floor), then everything else in scene order, as SVG does.
         background.filter((n) => n.type === 'image')
-            .forEach((n) => image(ctx, n, io.images, io.requestRepaint));
+            .forEach((n) => image(ctx, n));
         for (const n of background) {
             if (n.type === 'image') continue;
             if (n.type === 'rect') rect(ctx, n, { fill: 'none', stroke: 'none', strokeWidth: 1, opacity: 1 });

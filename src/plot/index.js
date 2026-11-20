@@ -18,6 +18,8 @@ export { point } from './point.js';
 // x/y mark's behaviour (edits, node box, ports).
 export { shape } from './shape.js';
 export { ellipse } from './ellipse.js';
+// One picture per row at (x, y).
+export { image } from './image.js';
 export { dotStack, dotStackX, dotStackY } from './dotStack.js';
 
 // ── Connected sequences ─────────────────────────────────────────────────────

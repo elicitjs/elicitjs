@@ -385,7 +385,7 @@ function redraw(node, how, seen) {
     const stroke = eff.stroke != null ? eff.stroke : (node.stroke != null ? node.stroke : (base.stroke || 'none'));
     const strokeWidth = eff.strokeWidth != null ? eff.strokeWidth : (node.strokeWidth != null ? node.strokeWidth : 1);
     const opacity = eff.opacity != null ? eff.opacity : (node.opacity != null ? node.opacity : 1);
-    const filled = node.type !== 'line' && (visible(fill) || !!node.fillGradient);
+    const filled = node.type !== 'line' && (visible(fill) || !!node.fillGradient || !!node.fillImage);
     const stroked = visible(stroke) && strokeWidth !== 0;
     if ((!filled && !stroked) || opacity === 0) return [node];
 
@@ -402,7 +402,7 @@ function redraw(node, how, seen) {
     const seed = hashOf(`${how.seed}|${name}|${nth}`);
 
     // Only what draws data is hatched: a hatched panel or tip box would bury its text.
-    const hachure = how.hachure && layer === 'marks' && !node.fillGradient;
+    const hachure = how.hachure && layer === 'marks' && !node.fillGradient && !node.fillImage;
     const made = drawn(node, outlines, { roughness: how.roughness, hachure }, seed);
 
     // What every redrawn part shares: its layer, and no part in picking.
@@ -425,6 +425,7 @@ function redraw(node, how, seen) {
         parts.push({
             ...part, d: made.fill, fill: visible(fill) ? fill : 'none', stroke: 'none', opacity, fillOpacity,
             ...(node.fillGradient && eff.fill == null ? { fillGradient: node.fillGradient, points: made.points } : {}),
+            ...(node.fillImage && eff.fill == null ? { fillImage: node.fillImage, points: made.points } : {}),
         });
     }
     if (stroked) {
@@ -450,6 +451,7 @@ function redraw(node, how, seen) {
         effectStyle: eff.cursor != null ? { cursor: eff.cursor } : null,
     };
     delete target.fillGradient;
+    delete target.fillImage;
     return [target, ...parts];
 }
 

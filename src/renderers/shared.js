@@ -18,6 +18,84 @@ export const STYLE_FIELDS = [
 ];
 
 /**
+ * The box a node's `fillImage` is placed in: its own box, unrotated. A path
+ * uses its outline `points`; one without them has no box (null).
+ * @param {any} node
+ * @returns {{ x: number, y: number, width: number, height: number } | null}
+ */
+export function fillBox(node) {
+    if (node.type === 'rect') return { x: node.x, y: node.y, width: Math.max(0, node.width), height: Math.max(0, node.height) };
+    if (node.type === 'circle') {
+        const r = Math.max(0, node.r != null ? node.r : 5);
+        return { x: node.cx - r, y: node.cy - r, width: 2 * r, height: 2 * r };
+    }
+    if (node.type === 'ellipse') {
+        const rx = Math.max(0, node.rx != null ? node.rx : 5);
+        const ry = Math.max(0, node.ry != null ? node.ry : 5);
+        return { x: node.cx - rx, y: node.cy - ry, width: 2 * rx, height: 2 * ry };
+    }
+    if (node.type === 'path') {
+        const pts = (node.points || []).filter((/** @type {any} */ p) => p && Number.isFinite(p[0]) && Number.isFinite(p[1]));
+        if (!pts.length) return null;
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+        for (const [px, py] of pts) { x0 = Math.min(x0, px); y0 = Math.min(y0, py); x1 = Math.max(x1, px); y1 = Math.max(y1, py); }
+        return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+    }
+    return null;
+}
+
+/**
+ * Where a picture of `iw × ih` px lands in `box`, as CSS lays out an <img> or a
+ * background image: one tile sized by `fit`, placed by `position`, and whether it
+ * repeats on each axis. Every fit but 'fill' needs the picture's own size.
+ * @param {import('../types').FillImage} pic
+ * @param {{ x: number, y: number, width: number, height: number }} box
+ * @param {number} iw @param {number} ih
+ * @returns {{ x: number, y: number, width: number, height: number, repeatX: boolean, repeatY: boolean }}
+ */
+export function imageLayout(pic, box, iw, ih) {
+    let width = box.width, height = box.height;
+    if (pic.fit !== 'fill' && iw > 0 && ih > 0) {
+        const contain = Math.min(box.width / iw, box.height / ih);
+        const k = pic.fit === 'cover' ? Math.max(box.width / iw, box.height / ih)
+            : pic.fit === 'none' ? 1
+                : pic.fit === 'scale-down' ? Math.min(1, contain)
+                    : contain;
+        width = iw * k;
+        height = ih * k;
+    }
+    const [fx, fy] = pic.position || [0.5, 0.5];
+    return {
+        x: box.x + (box.width - width) * fx,
+        y: box.y + (box.height - height) * fy,
+        width,
+        height,
+        repeatX: pic.repeat === 'repeat' || pic.repeat === 'repeat-x',
+        repeatY: pic.repeat === 'repeat' || pic.repeat === 'repeat-y',
+    };
+}
+
+/**
+ * Every tile of a layout that meets the box: the one tile, or its repeats.
+ * A tile under 1px repeats nowhere.
+ * @param {ReturnType<typeof imageLayout>} at
+ * @param {{ x: number, y: number, width: number, height: number }} box
+ * @returns {{ x: number, y: number }[]}
+ */
+export function imageTiles(at, box) {
+    /** @param {boolean} repeat @param {number} start @param {number} step @param {number} lo @param {number} hi */
+    const along = (repeat, start, step, lo, hi) => {
+        if (!repeat || !(step >= 1)) return [start];
+        const out = [];
+        for (let v = start - Math.ceil((start - lo) / step) * step; v < hi; v += step) out.push(v);
+        return out;
+    };
+    const xs = along(at.repeatX, at.x, at.width, box.x, box.x + box.width);
+    const ys = along(at.repeatY, at.y, at.height, box.y, box.y + box.height);
+    return ys.flatMap((y) => xs.map((x) => ({ x, y })));
+}
+
+/**
  * Partition scene nodes into paint layers. Within a layer, array order is
  * z-order; the engine has already settled it (`paintOrder` in core/scene.js).
  *

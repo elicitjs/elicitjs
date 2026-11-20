@@ -6,7 +6,7 @@
 // `angle` to paths.
 
 import {
-    encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions,
+    encodeChannel, encodeAngle, resolveStyle, resolveImage, normalizeMarkOptions,
     themeOf, markDefaults, positionalKeys, markCommon, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
@@ -22,6 +22,7 @@ export function ellipse(options = {}) {
         ...markCommon(opts),
         type: 'ellipse',
         channels,
+        rawChannels: ['image'],
         // A tick per category, like a dot.
         discreteScale: 'point',
         ...positionalKeys(channels),
@@ -66,6 +67,7 @@ export function ellipse(options = {}) {
                 const angle = encodeAngle(scales, channels, 'angle', d, 0, i, currentData);
                 return {
                     type: 'ellipse',
+                    ...resolveImage(channels, 'image', d, i, currentData),
                     cx,
                     cy,
                     rx,

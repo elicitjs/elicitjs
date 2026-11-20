@@ -75,6 +75,13 @@ Decide by the data model, not the look. A new mark when the data model changes; 
 - `clip` and `motion` on a composite are stamped on every part that states none, so a preset must forward both.
 - Presets (`node`, `sticker`, `face`) only compose ordinary marks; they offer nothing plain marks can't and read no schema. There is no `edit.face.*`.
 
+## Images
+
+- Pictures follow CSS. The `image` channel is a shape's background-image; `src` is `plot.image`'s <img>. Both are raw URLs (`rawChannel`), never scaled. Their settings are channel params, not mark options: `fit` (object-fit values; default `cover` on `image`, `contain` on `src`), `position` (CSS keywords and percentages), and on `image` only, `repeat`. `imageSettings` reads and checks them; `resolveImage(channels, name, …)` stamps `node.fillImage`.
+- A mark that draws a picture channel lists it in `rawChannels`; that is the declaration `warnImageSupport` (`core/guards.js`) reads. No separate flag.
+- `fillImage` replaces the fill, like `fillGradient`; an effect's fill still wins. The box is the node's own (`fillBox` in `renderers/shared.js`): a path needs outline `points`, which is why `arc` has no image.
+- `plot.image` is a rect node with `fillImage`, so it picks, outlines and eases as a rect.
+
 ## Typable surfaces
 
 - `editText` declares `inline: true`; the engine flags nodes of a feature carrying it as `node.editText`, and renderers route dblclick by that flag. Never let a mark decide (`hasEditText`) or branch on `e.type === 'editText'`.

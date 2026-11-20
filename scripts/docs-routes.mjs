@@ -9,7 +9,7 @@ export const routes = [
     '/marks/symbol', '/marks/face', '/marks/text', '/marks/line', '/marks/composite',
     '/marks/dotstack', '/marks/waffle', '/marks/needle',
     '/marks/axis-radial', '/marks/arc', '/marks/geo', '/marks/network', '/marks/hierarchy',
-    '/marks/trend', '/marks/axes', '/marks/legend', '/marks/sticker', '/marks/shape',
+    '/marks/trend', '/marks/axes', '/marks/legend', '/marks/sticker', '/marks/shape', '/marks/image',
     '/editing', '/editing/gestures', '/editing/sweep', '/editing/selection', '/editing/lock',
     '/editing/handles', '/editing/legend',
     '/editing/existence', '/editing/probe', '/editing/stages', '/editing/axis',

@@ -142,6 +142,18 @@ const FIXTURES = {
         theme: { marks: { bar: { rx: 2 } }, extends: 'nyt' },
         stageLabels: ['one', null],
     }),
+    'pictures in marks and behind them': ({ plot, guides }) => ({
+        marks: [
+            plot.barY({ channels: { x: { field: 'k' }, y: { field: 'v' }, image: { value: 'icon.png', fit: 'contain', position: 'bottom', repeat: 'repeat-y' } } }),
+            plot.image({ size: 20, channels: { x: { field: 'x' }, y: { field: 'y' }, src: { field: 'pic', fit: 'cover', position: 'top' } } }),
+            plot.point({ image: (d) => d.pic }),
+            plot.image({ src: 'a.png' }),
+        ],
+        guides: [
+            guides.image({ src: 'room.png' }),
+            guides.image({ src: 'logo.png', x: [0, 5], y: ({ height }) => [0, height], fit: 'contain', position: 'left top', repeat: 'repeat', opacity: 0.5 }),
+        ],
+    }),
     'a glyph that eases': ({ plot, edit }) => ({
         schema: { item: { type: 'categorical' }, rank: { type: 'ordinal', domain: [1, 2, 3] } },
         scales: { y: { type: 'band', range: [0, 120] } },

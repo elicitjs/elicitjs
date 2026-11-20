@@ -81,6 +81,14 @@ N/A = use a different edit family (documented).
 <td><code>discreteScale: point</code></td>
 </tr>
 <tr>
+<td><code>image</code></td>
+<td>data</td>
+<td>x, y, <b>src</b> (a URL, raw; params <code>fit</code> default <code>'contain'</code>, <code>position</code>), size (half the square's side, default 16), angle</td>
+<td>natural</td>
+<td>whole picture (a rect node with <code>fillImage</code>); a row with no URL draws nothing</td>
+<td><code>discreteScale: point</code></td>
+</tr>
+<tr>
 <td><code>curve</code> / <code>curveX</code> / <code>curveY</code></td>
 <td>data</td>
 <td>chord (x1/x2 or <code>length</code>) + position; <b><code>curvature</code></b> (half-chord fractions), angle</td>
@@ -383,3 +391,7 @@ N/A = use a different edit family (documented).
 7. A mark that draws ONE row as MANY nodes states the row's whole shape as
    `node.effectShape` (a plain geometry node), or a hover/selection outline rings whichever
    node the effects pass finds first — a waffle's cell 0 rather than its block.
+8. Pictures follow CSS. `image` is a shape's background image and `src` is `plot.image`'s
+   <img>; both are raw URLs whose settings (`fit`, `position`, and on `image`, `repeat`)
+   are params of the channel. A mark that draws one lists it in `rawChannels` and stamps
+   `node.fillImage` through `resolveImage` (`plot/mark.js`). Any other mark given one warns.

@@ -5,7 +5,7 @@
 // 'circle'). `size` is the radius of the box it fits; `angle` rotates it.
 // Size, angle and position are baked into `d` (a path node carries no `angle`),
 // plus an outline `points` polygon and `cx`/`cy` for picking.
-import { encodeChannel, resolveStyle, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, encodeAngle, resolveSymbol, missingValue } from './mark.js';
+import { encodeChannel, resolveStyle, resolveImage, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, encodeAngle, resolveSymbol, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 import { warn } from '../core/dev.js';
 import { unitShape, placeShape, DEFAULT_SHAPES } from './shapes.js';
@@ -42,6 +42,7 @@ export function shape(options = {}) {
         ...markCommon(opts),
         type: 'shape',
         channels,
+        rawChannels: ['image'],
         discreteScale: 'point',
         ...positionalKeys(channels),
 
@@ -93,6 +94,7 @@ export function shape(options = {}) {
                     // shape somewhere else (eased drawing, core/motion.js).
                     placed: { unit, r: size, angle: angle || 0 },
                     ...style,
+                    ...resolveImage(channels, 'image', d, i, currentData),
                     data: d,
                     index: i,
                 };

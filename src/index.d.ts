@@ -89,6 +89,8 @@ import type {
   SymmetricOptions,
   PointOptions,
   ShapeOptions,
+  ImageOptions,
+  ImageGuideOptions,
   ProbabilityTokensOptions,
   PromptGuideOptions,
   ProximityGuideOptions,
@@ -168,6 +170,8 @@ export const plot: {
   ellipse(options?: EllipseOptions): Mark;
   /** One path per row: a pictogram, a d3 symbol, any SVG path, with every x/y mark's behaviour. */
   shape(options?: ShapeOptions): Mark;
+  /** One picture per row at (x, y), from the `src` channel, like an <img>. */
+  image(options?: ImageOptions): Mark;
   dotStack(options?: DotStackOptions): Mark;
   dotStackX(options?: DotStackOptions): Mark;
   dotStackY(options?: DotStackOptions): Mark;
@@ -388,6 +392,8 @@ export const guides: {
   rule(options?: RuleGuideOptions): Guide;
   /** A shaded band between two values — an acceptable range, a target zone. */
   region(options?: RegionGuideOptions): Guide;
+  /** A picture behind the marks: the whole plot, or a box placed in data space. */
+  image(options?: ImageGuideOptions): Guide;
   /** What is left to allocate under a rule. Reads its target from a
    *  `maintainSum` constraint when you don't pass one, so the number the reader
    *  is held to and the number they are shown cannot drift. */

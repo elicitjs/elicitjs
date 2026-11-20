@@ -20,7 +20,7 @@
 
 import { baselineOf } from '../core/scales.js';
 import { warn } from '../core/dev.js';
-import { encodeChannel, categorySlot, resolveStyle, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, resolveValueAxis, orientationOf, missingValue } from './mark.js';
+import { encodeChannel, categorySlot, resolveStyle, resolveImage, resolveSymbol, symbolNode, normalizeMarkOptions, themeOf, markDefaults, positionalKeys, markCommon, resolveValueAxis, orientationOf, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 
 /**
@@ -93,6 +93,7 @@ export function waffle(options = {}) {
         ...markCommon(opts),
         type: 'waffle',
         channels,
+        rawChannels: ['image'],
         // The screen direction of the count axis, for its scale's range (channelRange).
         countAxis: vertical ? 'y' : 'x',
         // The resolver ranges the count scale to the grid's drawn length (a
@@ -136,6 +137,8 @@ export function waffle(options = {}) {
                 if (missingValue(channels, vertical ? 'x' : 'y', d)) return;
                 if (missingValue(channels, vertical ? 'xOffset' : 'yOffset', d)) return;
                 const style = resolveStyle(scales, channels, d, waffleDefaults, i, currentData);
+                // Only filled cells show the row's image; empty ones stay the track.
+                const image = resolveImage(channels, 'image', d, i, currentData);
                 // Glyph cells from a `symbol` channel or shape: 'symbol'.
                 const glyph = shape === 'symbol' ? (resolveSymbol(scales, channels, d, i, currentData) || '·')
                     : resolveSymbol(scales, channels, d, i, currentData);
@@ -214,7 +217,7 @@ export function waffle(options = {}) {
                     // Empty cells are the drag track, so `showEmpty: false` makes
                     // them transparent rather than removing them.
                     const cellStyle = isFilled
-                        ? style
+                        ? { ...style, ...image }
                         : { ...style, fill: showEmpty ? emptyFill : 'transparent' };
 
                     // Cell origin: centred across the band, stepped from the baseline.

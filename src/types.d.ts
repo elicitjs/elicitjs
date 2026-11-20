@@ -803,7 +803,17 @@ export interface ChannelSpec {
   // the links and `getData()` agree. Needs a `field`. No gesture may write a
   // fitted column on a row with contents; a leaf's stays editable. A container
   // that loses its last child returns to the column's schema `default`.
-  fit?: boolean;
+  //
+  // On a picture channel (`image`, `src`): how the picture is sized in its box,
+  // as CSS object-fit / background-size.
+  fit?: boolean | ImageFit;
+  // On a picture channel: where the picture sits in its box, as CSS
+  // object-position / background-position — keywords and percentages
+  // ('center', 'bottom', 'left top', '25% 75%'). Default 'center'.
+  position?: string;
+  // On the `image` channel: whether the picture repeats, as CSS
+  // background-repeat. Default 'no-repeat'.
+  repeat?: ImageRepeat;
   // On the `contains` channel only: the room in px a container keeps between its
   // edge and its contents (default 10) — one number, or a side each (a side left
   // out takes the default). A fitted container is sized to leave it; one with a
@@ -970,6 +980,15 @@ export interface Channels extends StyleChannels {
   // NOT a position: it has no axis and no legend. A rotation is a property of the
   // glyph, not a place on a scale — cf. `theta`.
   angle?: ChannelSpec;
+  // A shape's background image, as in CSS: a URL read raw — a column of URLs
+  // (`{ field }`), one URL (`{ value }`, or the `image` shorthand), or `{ fn }`.
+  // Painted inside the shape in place of the fill. Takes `fit`, `position` and
+  // `repeat` as params (default fit 'cover'). A mark that draws it lists it in
+  // `rawChannels`.
+  image?: ChannelSpec;
+  // `plot.image`'s picture, as an <img src>: a URL read raw. Takes `fit` and
+  // `position` as params (default fit 'contain').
+  src?: ChannelSpec;
   // The POLAR ANGULAR POSITION, in math degrees (default range [180, 0] =
   // left→right through the top). Positional (see AXIS_OF): `axisRadial` is its
   // axis and a legend draws it as a fan of spokes at their bearings. It carries a
@@ -1085,6 +1104,10 @@ export interface MarkOptions {
   // `theta` shorthand: theta is POSITIONAL, and positional channels (x, y) are not
   // shorthands either.
   angle?: number | ChannelFn;
+  // A shape's background image URL (desugars to channels.image).
+  image?: string | ChannelFn;
+  // plot.image's picture URL (desugars to channels.src).
+  src?: string | ChannelFn;
   id?: string;
   edits?: Edit[];
   // Which TABLE this mark is a view over, by NAME (see Mark.table).
@@ -2170,6 +2193,9 @@ export interface FeatureNode {
   // A gradient fill (a mark's `gradient` option), painted by the renderers as a
   // <linearGradient> / createLinearGradient over the node's own box.
   fillGradient?: GradientSpec;
+  // A picture painted inside the node's shape in place of its fill (the `image`
+  // channel, `guides.image`). An effect's fill still wins.
+  fillImage?: FillImage;
   [key: string]: any;
 }
 
@@ -3256,6 +3282,22 @@ export interface ArcOptions extends MarkOptions, HandleOptions {
   start?: number;
   end?: number;
 }
+/**
+ * How a picture is sized in its box, as CSS object-fit: 'cover' fills it and
+ * crops, 'contain' shows all of it, 'fill' stretches to it, 'none' keeps its own
+ * size, 'scale-down' is the smaller of 'none' and 'contain'.
+ */
+export type ImageFit = 'cover' | 'contain' | 'fill' | 'none' | 'scale-down';
+/** Whether a background image repeats, as CSS background-repeat. */
+export type ImageRepeat = 'no-repeat' | 'repeat' | 'repeat-x' | 'repeat-y';
+/** A picture painted in a node's box (`FeatureNode.fillImage`). */
+export interface FillImage {
+  href: string;
+  fit: ImageFit;
+  /** Where it sits: fractions of the room left over on x and y (0.5 = centred). */
+  position: [number, number];
+  repeat: ImageRepeat;
+}
 export interface AreaOptions extends MarkOptions, HandleOptions {
   orientation?: Orientation;
   /** A gradient fill: stops as [offset 0–1, colour], along the vertical (default) or horizontal. */
@@ -3286,6 +3328,8 @@ export interface DotStackOptions extends MarkOptions {
   label?: boolean;
 }
 export type EllipseOptions = MarkOptions;
+/** `plot.image`: one picture per row (the `src` channel), in a square of side `2 * size` centred at (x, y). */
+export type ImageOptions = MarkOptions;
 export interface GeoBasemapOptions extends MarkOptions {
   /** A GeoJSON Feature / FeatureCollection / Geometry to draw. */
   geojson?: any;
@@ -3533,6 +3577,21 @@ export interface RegionGuideOptions {
   opacity?: GuideOption<number>;
   stroke?: GuideOption<string>;
   label?: GuideOption<string>;
+}
+export interface ImageGuideOptions {
+  id?: string;
+  /** The picture's URL. */
+  src?: GuideOption<string>;
+  /** A [lo, hi] pair in data units on either axis. Unset, the image spans the plot. */
+  x?: GuideOption<[any, any]>;
+  y?: GuideOption<[any, any]>;
+  /** As CSS object-fit. Default 'fill', so data positions line up with the picture. */
+  fit?: ImageFit;
+  /** As CSS background-position. Default 'center'. */
+  position?: string;
+  /** As CSS background-repeat. Default 'no-repeat'. */
+  repeat?: ImageRepeat;
+  opacity?: GuideOption<number>;
 }
 export interface RemainingGuideOptions {
   id?: string;
