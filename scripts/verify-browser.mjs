@@ -76,7 +76,7 @@ async function main() {
 
     const browser = await chromium.launch();
     try {
-        await waitForServer(`${BASE}/overview`);
+        await waitForServer(`${BASE}/start`);
         const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
         const errors = [];
         page.on('pageerror', (e) => errors.push(String(e)));
@@ -1112,8 +1112,8 @@ async function main() {
         // half proves out under real pointer events: a locked mark must be
         // ungrabbable AND invisible to proximity picking, so a drag beside a locked
         // line draws instead of grabbing it. Drive the actual gestures.
-        console.log('\nLocked rows (/editing/lock)');
-        await open('/editing/lock', '#seed .chart svg');
+        console.log('\nLocked rows (/editing/existence)');
+        await open('/editing/existence', '#seed .chart svg');
 
         const rowsOf = (id) => page.$eval(`#${id} .chart > div`, (el) => el.__chart.getData());
         // Aim in DATA space: scroll the plot in, then map a value pair to page px.
@@ -1191,12 +1191,12 @@ async function main() {
         check('lock: the free years in that same stroke were repainted',
             repainted.length > 0 && repainted.every((d) => Math.abs(d.deaths - 55000) < 3000));
 
-        // ---- A gesture ends where it ends (/editing/lock, reusing both charts) ---
+        // ---- A gesture ends where it ends (/editing/existence, reusing both charts) ---
         // The stuck-gesture class of bug: a stroke that is never retired stays live,
         // and the next pointermove over the chart resumes editing with no button
         // held. Two ways in, one per pick mode — both invisible to typecheck and to
         // check:warnings, because the page renders perfectly either way.
-        console.log('\nA gesture ends where it ends (/editing/lock)');
+        console.log('\nA gesture ends where it ends (/editing/existence)');
 
         // PLANE (sweep): release outside the chart. The plane's pointer capture was
         // dropped by the first commit's re-render — `plane.raise()` is an
@@ -4726,8 +4726,8 @@ async function main() {
         check('rose: dragging a slice outward raises its value', roseAfter > roseBefore, `${roseBefore} -> ${roseAfter}`);
 
         // The wheel zooms the DOMAIN about the pointer, without scrolling the page.
-        console.log('\nWheel zoom (/editing/zoom)');
-        await open('/editing/zoom', '#wheel svg circle.mark');
+        console.log('\nWheel zoom (/editing/axis)');
+        await open('/editing/axis', '#wheel svg circle.mark');
         const zEl = '#wheel .chart > div';
         const zBefore = await page.$eval(zEl, (e) => e.__chart.getSchema());
         const zc = await boxCentre(page.locator('#wheel svg rect.plane').first());
@@ -4742,8 +4742,8 @@ async function main() {
 
         // Pan: a drag on empty plot slides the zoomed domain; a press on a point
         // still edits the point; the buttons zoom from outside; the marks clip.
-        console.log('\nPan (/editing/zoom)');
-        await open('/editing/zoom', '#pan svg circle.mark');
+        console.log('\nPan (/editing/axis)');
+        await open('/editing/axis', '#pan svg circle.mark');
         const pEl = '#pan .chart > div';
         const pDom = async () => (await page.$eval(pEl, (e) => e.__chart.getSchema())).week.domain.map(Number);
         check('pan: the marks clip to the plot by default',
@@ -4777,8 +4777,8 @@ async function main() {
 
         // clip: { pad } grows the clip rect; clip: false on a mark paints it in
         // the margin, where it still follows its row.
-        console.log('\nClip pad + per-mark opt-out (/editing/zoom#clip)');
-        await open('/editing/zoom', '#clip svg circle.mark');
+        console.log('\nClip pad + per-mark opt-out (/editing/axis#clip)');
+        await open('/editing/axis', '#clip svg circle.mark');
         const cEl = '#clip .chart > div';
         check('clip: pad grows the clip rect past the plot',
             (await page.locator('#clip svg clipPath rect').first().getAttribute('x')) === '-6');

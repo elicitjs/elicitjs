@@ -73,7 +73,7 @@ async function main() {
     const exceptions = JSON.parse(readFileSync(path.join(docsRoot, 'lib/json-exceptions.json'), 'utf8'));
     let compiled = 0;
     try {
-        await waitForServer(`${BASE}/overview`);
+        await waitForServer(`${BASE}/start`);
         const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
         let route = '';
         page.on('console', (m) => {

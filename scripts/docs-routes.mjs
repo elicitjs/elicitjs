@@ -2,7 +2,7 @@
 // One list for `check:warnings` and `verify:browser`, so a new page is added once.
 
 export const routes = [
-    '/', '/start', '/api', '/overview', '/concepts', '/concepts/contracts', '/sizing', '/renderers', '/authoring',
+    '/', '/start', '/api', '/concepts', '/concepts/contracts', '/sizing', '/renderers', '/authoring',
     '/json',
     '/marks/bar', '/marks/rect', '/marks/area', '/marks/tick', '/marks/point',
     '/marks/ellipse', '/marks/curve',
@@ -10,10 +10,10 @@ export const routes = [
     '/marks/dotstack', '/marks/waffle', '/marks/needle',
     '/marks/axis-radial', '/marks/arc', '/marks/geo', '/marks/network', '/marks/hierarchy',
     '/marks/trend', '/marks/axes', '/marks/legend', '/marks/sticker', '/marks/shape', '/marks/image',
-    '/editing', '/editing/gestures', '/editing/sweep', '/editing/selection', '/editing/lock',
+    '/editing', '/editing/gestures', '/editing/sweep', '/editing/selection',
     '/editing/handles', '/editing/legend',
-    '/editing/existence', '/editing/probe', '/editing/stages', '/editing/axis',
-    '/editing/external-controls', '/editing/zoom',
+    '/editing/existence', '/editing/probe', '/editing/axis',
+    '/editing/external-controls',
     '/editing/history', '/widgets', '/scales', '/schema', '/dataset', '/constraints',
     '/effects', '/guides', '/theming', '/theming/themes', '/looks', '/playground',
     '/case-studies/glyphs',

@@ -6,14 +6,16 @@ are the place to start.
 
 ## Repository layout
 
-ElicitJS is three sibling repositories that expect to sit in one parent directory:
+ElicitJS is two sibling repositories that expect to sit in one parent directory:
 
 ```
 elicitJS/
-├── elicitjs/              this repo — the library
-├── elicitjs-docs/         the documentation SOURCE (Next.js), and the regression surface
-└── elicitjs.github.io/    the BUILT documentation, published to GitHub Pages
+├── elicitjs/        this repo — the library
+└── elicitjs-docs/   the documentation site (Next.js), and the regression surface
 ```
+
+The docs live on GitHub as `elicitjs/elicitjs.github.io`, but clone them into a
+folder named `elicitjs-docs`: that is the path this repo's scripts look for.
 
 The siblings are not optional. The docs site imports the library through a
 `@elicit` → `../elicitjs/src` alias, so it reads your working tree directly — an
@@ -23,7 +25,7 @@ installed.
 
 ```bash
 git clone https://github.com/elicitjs/elicitjs.git
-git clone https://github.com/elicitjs/elicitjs-docs.git
+git clone https://github.com/elicitjs/elicitjs.github.io.git elicitjs-docs
 cd elicitjs && npm install
 cd ../elicitjs-docs && npm install
 ```
@@ -99,15 +101,17 @@ Two things that shipped as real mistakes and are worth guarding against:
 
 ## Publishing the documentation
 
-The docs site is deployed from the **docs** repo, not this one:
+The docs repo publishes itself: every push to its `main` builds the site with
+GitHub Actions and deploys it to GitHub Pages. Nothing built is committed, and
+there is no deploy command to run.
 
 ```bash
 cd ../elicitjs-docs
-npm run deploy:pages                 # build → sync → commit → push
-npm run deploy:pages -- --dry-run    # stop before committing, and preview locally
+npm run build:site && npx serve out    # preview exactly what would ship
 ```
 
-`elicitjs.github.io` is generated output. Never edit it by hand — the next deploy
-overwrites it. `DEPLOY.json` there records which docs commit produced the live
-build, and the script refuses to deploy from an uncommitted tree so that stamp
-stays honest (`--allow-dirty` overrides and records the fact).
+The build reads this library from its `main` branch, but a push here does **not**
+rebuild the site. To publish a library change, run the "Deploy site to GitHub
+Pages" workflow by hand from the docs repo's Actions tab, or push to the docs.
+`https://elicitjs.github.io/DEPLOY.json` names the docs and library commits the
+live build came from.
