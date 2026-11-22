@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { Elicit, plot, edit, setWarnings } from '../src/index.js';
+import { Elicit, plot, edit, layout, setWarnings } from '../src/index.js';
 import { createMotion, easeRows, easeNodes, resolveMotion } from '../src/core/motion.js';
 
 beforeEach(() => {
@@ -128,10 +128,11 @@ describe('a hierarchy drag with motion', () => {
                 channels: {
                     x: { field: 'x' }, y: { field: 'y' },
                     width: { field: 'w', scale: null }, height: { field: 'h', scale: null },
-                    contains: { fn: (d) => d.id === 'g' }, dodge: true,
                 },
+                contains: (d) => d.id === 'g',
                 edits: [edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()],
             })],
+            layout: [layout.dodge()],
         });
         document.body.appendChild(el.dom());
         vi.advanceTimersByTime(1); // the first render

@@ -13,7 +13,7 @@ import { neighboursOf } from '../neighbours.js';
 import { panelNodes } from '../panel.js';
 import { reserveLegends } from '../legends.js';
 import { reserveTitles, titleNodes } from '../titles.js';
-import { treeOf, nestingOf } from '../hierarchy.js';
+import { treeOf } from '../hierarchy.js';
 import { layoutIO } from '../fit.js';
 import { createMotion, easeRows } from '../motion.js';
 import { createNodeMotion } from './carry.js';
@@ -68,7 +68,10 @@ function applyGhostStyle(node, ghost) {
  * @property {boolean} hasAxisTitles
  * @property {Record<string, any[]>} featureNodes
  * @property {string | null} hierarchyNodes
+ * @property {boolean} hasLayout
+ * @property {string[]} layoutTables
  * @property {any[]} boxHosts
+ * @property {(table: string) => any[]} boxHostsOf
  * @property {(feature: any) => any[]} tableOf
  * @property {(feature: any, edit: import('../../types').Edit) => string} targetTableOf
  * @property {() => any[]} primaryRows
@@ -78,7 +81,7 @@ function applyGhostStyle(node, ghost) {
  * @property {((row: any, i: number, rows: any[]) => Record<string, string> | null) | null} nodePortsRule
  * @property {() => boolean} settleOwn  settle at render time when this chart may (engine/nodes.js)
  * @property {() => void} layoutMoved  that settle changed the rows: redraw the other charts
- * @property {(from: Record<string, any[]>, before: any[] | null, frozen: Set<number> | null, dodge?: any) => any[]} settledNodes
+ * @property {(from: Record<string, any[]>, before: any[] | null, frozen: Set<number> | null, dodge?: any, table?: string | null) => any[]} settledNodes
  * @property {() => Set<number> | null} heldStill
  * @property {() => number[] | null} inFlight
  * @property {(feature: any) => import('../../types').Edit[]} activeEdits
@@ -106,7 +109,7 @@ function applyGhostStyle(node, ghost) {
  */
 export function createRender(chart, deps) {
     const {
-        features, featureById, ui, spec, theme, effects, looks, renderer, mode, overflow, focusOutline, designW, authorMargins, dims, liveSpec, schema, schemaSpec, allGuides, datasetConstraints, tracksPointer, hasLegends, hasAxisTitles, featureNodes, hierarchyNodes, boxHosts, tableOf, targetTableOf, primaryRows, isLockedIn, constraintsIn, nodeBoxRule, nodePortsRule, settleOwn, layoutMoved, settledNodes, heldStill, inFlight, activeEdits, getStage, selectionIn, selectionList, selectionPrimary, hoverRow, hoverLink, hoverWide, portAvailable, handleKey, clipNow, visibleAt, motionDuration,
+        features, featureById, ui, spec, theme, effects, looks, renderer, mode, overflow, focusOutline, designW, authorMargins, dims, liveSpec, schema, schemaSpec, allGuides, datasetConstraints, tracksPointer, hasLegends, hasAxisTitles, featureNodes, hierarchyNodes, hasLayout, layoutTables, boxHosts, boxHostsOf, tableOf, targetTableOf, primaryRows, isLockedIn, constraintsIn, nodeBoxRule, nodePortsRule, settleOwn, layoutMoved, settledNodes, heldStill, inFlight, activeEdits, getStage, selectionIn, selectionList, selectionPrimary, hoverRow, hoverLink, hoverWide, portAvailable, handleKey, clipNow, visibleAt, motionDuration,
     } = deps;
     const handleEvent = (/** @type {any} */ event) => deps.handleEvent(event);
     // Does this feature draw the dataset's rows? Elements draw a scale, and map
@@ -250,14 +253,19 @@ export function createRender(chart, deps) {
     // Motion (core/motion.js): what is drawn eases to where it belongs. Each client
     // opens a track; `update()` starts the frame and keeps rendering until all arrive.
     const motion = motionDuration > 0 ? createMotion(motionDuration) : null;
-    // The hierarchy's layout is one client: its node rows ease to where they settle.
-    const layoutTrack = motion && hierarchyNodes && boxHosts.length ? motion.track('layout') : null;
-    const nodeKey = (nestingOf(schemaSpec) || { key: null }).key;
+    // Spatial layouts are one client: each layout table's rows ease to where they settle.
+    /** @type {Map<string, any>} */
+    const layoutTracks = new Map();
+    if (motion && hasLayout) {
+        for (const t of layoutTables) layoutTracks.set(t, motion.track(`layout:${t}`));
+    }
     /** A container that is changing size takes this much longer, so its contents are seen to move first. */
     const CONTAINER_LAG = 1.4;
-    let layoutSig = '';
-    /** Changes when a scale or the plot size does: pixels before and after are not comparable. */
-    const layoutSignature = () => layoutIO(chart.scales, boxHosts)
+    /** @type {Map<string, string>} */
+    const layoutSigs = new Map();
+    /** Changes when a scale or the plot size does: pixels before and after are not comparable.
+     *  @param {string} table */
+    const layoutSignature = (table) => layoutIO(chart.scales, boxHostsOf(table))
         .map((io) => `${io.field}:${io.invert(0)}:${io.invert(100)}`).join('|')
         + `|${chart.innerWidth}|${chart.innerHeight}`;
     // The other client: a mark with `motion: true` eases its built nodes (engine/carry.js).
@@ -265,19 +273,23 @@ export function createRender(chart, deps) {
         motion, features, featureById, ui, featureNodes, activeEdits, handleKey, schemaSpec,
     });
     /**
-     * The node rows to draw this frame, on their way to `rows`.
+     * The rows of `table` to draw this frame, on their way to `rows`.
+     * @param {string} table
      * @param {any[]} rows @param {Set<number>} flying rows the pointer carries
      * @param {(i: number) => boolean} isContainer
      * @param {boolean} snapAll data arrived from outside: draw at once
      */
-    const easedLayout = (rows, flying, isContainer, snapAll) => {
-        const columns = layoutIO(chart.scales, boxHosts);
-        const sig = `${layoutSignature()}|${rows.length}`;
-        const snap = sig !== layoutSig || snapAll;
-        layoutSig = sig;
+    const easedLayout = (table, rows, flying, isContainer, snapAll) => {
+        const track = layoutTracks.get(table);
+        const hosts = boxHostsOf(table);
+        const columns = layoutIO(chart.scales, hosts);
+        const sig = `${layoutSignature(table)}|${rows.length}`;
+        const snap = sig !== (layoutSigs.get(table) || '') || snapAll;
+        layoutSigs.set(table, sig);
         const sizes = columns.filter((c) => c.extent).map((c) => c.field);
-        return easeRows(/** @type {any} */ (layoutTrack), rows, columns, {
-            keyOf: (row, i) => (nodeKey && row[nodeKey] != null ? row[nodeKey] : `#${i}`),
+        const keyCol = schemaSpec.tables[table] && schemaSpec.tables[table].key;
+        return easeRows(track, rows, columns, {
+            keyOf: (row, i) => (keyCol && row[keyCol] != null ? row[keyCol] : `#${i}`),
             snap,
             fixed: (i) => flying.has(i),
             slow: (i, was, goal) => (isContainer(i) && sizes.some((f) => Math.abs(was[f] - goal[f]) > 0.25) ? CONTAINER_LAG : 1),
@@ -292,56 +304,68 @@ export function createRender(chart, deps) {
         if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame); else clearTimeout(frame);
         frame = 0;
     };
-    /** The stroke's settled rows, kept between frames while nothing they read changed. */
-    /** @type {{ key: any[], rows: any[] } | null} */
-    let strokeMemo = null;
-    const strokeRows = () => {
-        const held = heldStill();
+    /** The stroke's settled rows per table, kept between frames while nothing they read changed. */
+    /** @type {Map<string, { key: any[], rows: any[] }>} */
+    const strokeMemos = new Map();
+    /** @param {string} table */
+    const strokeRows = (table) => {
+        const isHierarchy = table === hierarchyNodes;
+        const held = isHierarchy ? heldStill() : null;
         const settle = () => settledNodes(chart.tables, null, null, {
             since: chart.strokeNodes, preview: true, keepSize: held,
             yields: chart.strokeRow != null ? new Set([chart.strokeRow]) : null,
-        });
-        if (!layoutTrack) return settle();
-        const nesting = schemaSpec.byRole.nesting;
-        const key = [chart.tables[/** @type {string} */ (hierarchyNodes)], nesting ? chart.tables[nesting] : null,
-            chart.strokeNodes, chart.strokeRow, held ? [...held].join() : '', layoutSignature()];
-        if (!strokeMemo || key.some((k, i) => k !== /** @type {any} */ (strokeMemo).key[i])) strokeMemo = { key, rows: settle() };
-        return strokeMemo.rows;
+        }, table);
+        if (!layoutTracks.has(table)) return settle();
+        const nesting = isHierarchy ? schemaSpec.byRole.nesting : null;
+        const key = [chart.tables[table], nesting ? chart.tables[nesting] : null,
+            chart.strokeNodes, chart.strokeRow, held ? [...held].join() : '', layoutSignature(table)];
+        const memo = strokeMemos.get(table);
+        if (!memo || key.some((k, i) => k !== memo.key[i])) {
+            const next = { key, rows: settle() };
+            strokeMemos.set(table, next);
+            return next.rows;
+        }
+        return memo.rows;
     };
 
-    // The tables as drawn. While a node of a hierarchy is dragged, its node rows are
-    // drawn as a release would leave them: a nest proposal's layout (`live`) when the
-    // node would change container, else the committed rows settled around the stroke.
-    // So the drag shows containers growing or shrinking and nodes making room. The
-    // rows in flight stay committed, so the node under the pointer keeps following it.
+    // The tables as drawn. While a row of a layout table is dragged, its rows are
+    // drawn as a release would leave them: a nest proposal's layout (`live`) when a
+    // hierarchy node would change container, else the committed rows settled around
+    // the stroke. So the drag shows containers growing/shrinking and siblings making
+    // room. Rows in flight stay committed, so the dragged mark follows the pointer.
     /** @param {boolean} snapAll */
     const liveTables = (snapAll) => {
-        if (!hierarchyNodes) return chart.tables;
-        const committed = chart.tables[hierarchyNodes] || [];
-        const live = Object.values(ui.preview || {}).find((p) => p && p.live);
-        /** @type {any[] | null} */
-        let rows = live && live.rows.length === committed.length ? live.rows : null;
-        if (!rows && chart.stroking && chart.strokeNodes && boxHosts.length) {
-            // The container a node is dragged inside keeps its size, so its edge is
-            // where the drag leaves it. The dragged row passes over containers.
-            rows = strokeRows();
-        }
-        if (!layoutTrack && (!rows || rows === committed)) return chart.tables;
-        const tree = treeOf(schemaSpec, chart.tables);
-        const roots = [...(inFlight() || [])];
+        if (!hasLayout) return chart.tables;
+        /** @type {Record<string, any[]> | null} */
+        let overrides = null;
         const grabbed = ui.grab ? featureById.get(ui.grab.featureId) : null;
-        if (grabbed && grabbed.table === hierarchyNodes && ui.grab.index != null) roots.push(ui.grab.index);
-        const flying = new Set(roots.flatMap((i) => [i, ...tree.descendantsOf(i)]));
-        // Any other row the stroke itself is writing follows the pointer too.
-        const before = chart.stroking ? chart.strokeNodes : null;
-        if (before && before.length === committed.length) {
-            committed.forEach((row, i) => { if (row !== before[i]) flying.add(i); });
+        for (const table of layoutTables) {
+            const committed = chart.tables[table] || [];
+            const isHierarchy = table === hierarchyNodes;
+            const live = isHierarchy ? Object.values(ui.preview || {}).find((p) => p && p.live && p.table === table) : null;
+            /** @type {any[] | null} */
+            let rows = live && live.rows.length === committed.length ? live.rows : null;
+            if (!rows && chart.stroking && chart.strokeTable === table && chart.strokeNodes) {
+                rows = strokeRows(table);
+            }
+            const hasTrack = layoutTracks.has(table);
+            if (!hasTrack && (!rows || rows === committed)) continue;
+            const tree = isHierarchy ? treeOf(schemaSpec, chart.tables) : null;
+            const roots = isHierarchy ? [...(inFlight() || [])] : [];
+            if (grabbed && grabbed.table === table && ui.grab.index != null) roots.push(ui.grab.index);
+            const flying = new Set(tree ? roots.flatMap((i) => [i, ...tree.descendantsOf(i)]) : roots);
+            // Any other row the stroke itself is writing follows the pointer too.
+            const before = chart.stroking && chart.strokeTable === table ? chart.strokeNodes : null;
+            if (before && before.length === committed.length) {
+                committed.forEach((row, i) => { if (row !== before[i]) flying.add(i); });
+            }
+            let drawn = rows && rows !== committed
+                ? rows.map((row, i) => (flying.has(i) ? committed[i] : row))
+                : committed;
+            if (hasTrack) drawn = easedLayout(table, drawn, flying, (i) => (tree ? tree.hasChildren(i) : false), snapAll);
+            if (drawn !== committed) (overrides || (overrides = {}))[table] = drawn;
         }
-        let drawn = rows && rows !== committed
-            ? rows.map((row, i) => (flying.has(i) ? committed[i] : row))
-            : committed;
-        if (layoutTrack) drawn = easedLayout(drawn, flying, (i) => tree.hasChildren(i), snapAll);
-        return drawn === committed ? chart.tables : { ...chart.tables, [hierarchyNodes]: drawn };
+        return overrides ? { ...chart.tables, ...overrides } : chart.tables;
     };
 
     // BUILD: build every feature from its committed rows, tag its nodes for dispatch, and

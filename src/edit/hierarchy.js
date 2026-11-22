@@ -30,7 +30,7 @@ export function nest(options = {}) {
         apply: (/** @type {import('../types').EditContext} */ ctx) => {
             const c = /** @type {any} */ (ctx);
             const nesting = nestingOf(c.schemaSpec);
-            if (!nesting || ctx.index == null || !c.nodeBox || !c.contains) return undefined;
+            if (!nesting || ctx.index == null || !c.nodeBox) return undefined;
             const rows = (c.tables || {})[nesting.nodes] || [];
             const child = rows[ctx.index];
             const childId = child ? child[nesting.key] : null;
@@ -39,7 +39,7 @@ export function nest(options = {}) {
             const tree = treeOf(c.schemaSpec, c.tables);
             const off = new Set([ctx.index, ...tree.descendantsOf(ctx.index)]);
             const into = boxAt(ctx.pointer, rows, c.nodeBox, {
-                accepts: (/** @type {number} */ i) => !off.has(i) && c.contains(rows[i], i, rows),
+                accepts: (/** @type {number} */ i) => !off.has(i) && (!c.contains || c.contains(rows[i], i, rows)),
                 // Innermost first: the deepest container the pointer is inside.
                 rank: (/** @type {number} */ i) => tree.depthOf(i),
             });

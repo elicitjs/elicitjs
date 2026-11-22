@@ -431,6 +431,8 @@ export interface ConstraintContext {
   // column's measure: snap keeps a temporal value a Date, a coercing rule knows
   // a quantitative column takes a number.
   schema?: Record<string, FieldSchema>;
+  // The canonical dataset schema (structure, roles, tables), for cross-table rules like `contain`.
+  schemaSpec?: SchemaSpec;
   // Which rows are read-only under `spec.lock` (null when none are). A rule that
   // pushes neighbours pivots around a locked row rather than writing it only to
   // have the lock revert it.
@@ -796,17 +798,9 @@ export type ChannelFn = (d: Datum, i?: number, data?: Datum[]) => any;
 // stays an opaque constant, never invoked.
 export interface ChannelSpec {
   field?: string;
-  // On a SIZE channel of a mark drawing a hierarchy's nodes (`width`, `height`,
-  // `size`, `rx`, `ry`, or a span's `x1`/`x2`/`y1`/`y2`): for a row that holds
-  // others, this column is DERIVED from them — the union of its contents plus the
-  // `contains` padding — and the engine writes it (core/fit.js), so the drawing,
-  // the links and `getData()` agree. Needs a `field`. No gesture may write a
-  // fitted column on a row with contents; a leaf's stays editable. A container
-  // that loses its last child returns to the column's schema `default`.
-  //
   // On a picture channel (`image`, `src`): how the picture is sized in its box,
   // as CSS object-fit / background-size.
-  fit?: boolean | ImageFit;
+  fit?: ImageFit;
   // On a picture channel: where the picture sits in its box, as CSS
   // object-position / background-position — keywords and percentages
   // ('center', 'bottom', 'left top', '25% 75%'). Default 'center'.
@@ -814,30 +808,6 @@ export interface ChannelSpec {
   // On the `image` channel: whether the picture repeats, as CSS
   // background-repeat. Default 'no-repeat'.
   repeat?: ImageRepeat;
-  // On the `contains` channel only: the room in px a container keeps between its
-  // edge and its contents (default 10) — one number, or a side each (a side left
-  // out takes the default). A fitted container is sized to leave it; one with a
-  // size of its own keeps its contents inside it.
-  padding?: number | { top?: number; right?: number; bottom?: number; left?: number };
-  // On the `contains` channel only: how a container places its contents.
-  // 'dodge' (default): where they are dropped, pushed apart when they overlap.
-  // 'free': where they are dropped. 'row' / 'column': in order from the inner
-  // top-left, wrapping at a size the container does not fit. 'grid': equal cells,
-  // `columns` to a row. 'pack': drawn together where they are dropped, touching
-  // (boxes as boxes; when every child is round, as circles). In a row, column or
-  // grid, a drag reorders and a drop takes the nearest slot.
-  arrange?: 'dodge' | 'free' | 'row' | 'column' | 'grid' | 'pack';
-  // On the `contains` channel, with `arrange: 'grid'`: cells to a row (default:
-  // as many as fit a fixed width, else a square).
-  columns?: number;
-  // On the `contains` channel, with `arrange: 'pack'`: how a child moves in to
-  // touch the others. 'distance' (default): to the free spot nearest it.
-  // 'angle': along the line from the middle child through it, so its direction
-  // from the middle stays the same.
-  keep?: 'distance' | 'angle';
-  // On the `dodge` channel: the space in px a row keeps from its siblings. On the
-  // `contains` channel: the space between slots. Default 8.
-  gap?: number;
   value?: any;
   datum?: any;
   // Derived channel: computed per datum in VISUAL space (result used as-is, never
@@ -1127,6 +1097,12 @@ export interface MarkOptions {
    * reduced motion. A mark that draws a path per row cannot be eased and warns.
    */
   motion?: boolean;
+  /**
+   * Sugar on a mark drawing a hierarchy's nodes: marks rows boxed by this mark as
+   * containers (`true`, a predicate `(d, i, rows) => boolean`, or `{ where?, padding?, fit? }`).
+   * Desugars at chart assembly into container eligibility + `layout.contain(...)`.
+   */
+  contains?: MarkContainsOption;
   // No `constraints` here on purpose: a constraint is a DATASET invariant and gates
   // every edit from every mark, so one written inside a mark reads as scoped to that
   // mark and is not. `DatasetSpec.constraints` is the only home.
@@ -1134,6 +1110,13 @@ export interface MarkOptions {
   // CLOSED: a mark's own options are typed on its interface (BarOptions, …), and
   // `src/vocabulary.js` is the runtime twin `check:exports` holds them to.
 }
+
+export interface MarkContainsOptions {
+  where?: (d: Datum, i: number, data: Datum[]) => boolean;
+  padding?: number | { top?: number; right?: number; bottom?: number; left?: number };
+  fit?: boolean | 'x' | 'y';
+}
+export type MarkContainsOption = boolean | ((d: Datum, i: number, data: Datum[]) => boolean) | MarkContainsOptions;
 
 /** The handle contract: drawn+grabbable / neither / invisible-but-grabbable. */
 export type Handles = boolean | 'hit';
@@ -1415,6 +1398,8 @@ export interface CompositeOptions {
   // `true` eases the whole glyph (see MarkOptions.motion); stamped onto its box
   // and every part that doesn't state its own.
   motion?: boolean;
+  // Sugar for hierarchy containers on the glyph's box/host (see MarkOptions.contains).
+  contains?: MarkContainsOption;
 }
 
 /**
@@ -1839,19 +1824,10 @@ export interface Mark {
    */
   labelBox?: boolean;
   /**
-   * Set by the ENGINE from the mark's `contains` channel (under a hierarchy): which
-   * of its rows may hold others, and the padding a fitted one keeps. A mark never
-   * reads it — like `ports`, it is a statement about the node the engine acts on.
+   * Optional sugar option forwarded from `MarkOptions.contains`, consumed once at
+   * chart assembly (`desugarContains`) and deleted from the feature.
    */
-  contains?: ChannelSpec;
-  /**
-   * Set by the ENGINE from the mark's `dodge` channel (under a hierarchy): which
-   * of its rows keep clear of their siblings, and the `gap` they keep. With no
-   * mark stating `dodge`, every node keeps 8px; `dodge: false` turns it off.
-   * Overlapping rows are pushed apart when a gesture ends and when data arrives
-   * from outside, never while a drag is in progress.
-   */
-  dodge?: ChannelSpec;
+  contains?: MarkContainsOption;
   nodeBox?(
     row: Datum,
     index: number,
@@ -2838,6 +2814,11 @@ export interface ChartSpec {
   // (`looks.*`), applied in order. A shader look needs a renderer that supports
   // `shaders` (canvas). Off unless set.
   looks?: Look[];
+  // Spatial layout settling processes (`layout.*`): contain, dodge, row, column,
+  // grid, pack, custom. Read rendered boxes (`nodeBox`) and write settled positions
+  // and sizes back through the channels' scales on commit / release (with live drag
+  // previews and `motion` easing).
+  layout?: LayoutSpec[];
   // Browser focus ring on editable marks (the blue box after a click / Tab).
   // Off by default — keyboard nudge still works (`tabindex` stays); only the
   // native outline is suppressed. Set `true` to show the browser's focus ring
@@ -3556,6 +3537,85 @@ export interface SpacingOptions extends FieldConstraintOptions {
   min?: number;
   series?: string | null;
 }
+/** `constraints.contain`: pure-data hierarchy nesting rules over the `nesting` table. */
+export interface ContainConstraintOptions {
+  /** Predicate gating which node rows may hold children. */
+  parent?: (d: Datum, i: number, data: Datum[]) => boolean;
+  /** Predicate gating which node rows may be nested inside a parent. */
+  child?: (d: Datum, i: number, data: Datum[]) => boolean;
+  /** Maximum nesting depth allowed (root = 0). */
+  maxDepth?: number;
+  /** Maximum number of direct children per container. */
+  maxChildren?: number;
+}
+
+// ── Spatial layouts (`spec.layout`, `layout.*`) ──────────────────────────────
+export interface LayoutContext {
+  rows: Datum[];
+  tables: Record<string, Datum[]>;
+  tree: any;
+  nodeBox: (index: number) => NodeBox | null;
+  extentOf: (index: number) => NodeBox | null;
+  scales: ScaleMap;
+  width: number;
+  height: number;
+  locked: ((row: Datum, i: number) => boolean) | null;
+  anchors: Set<number>;
+  yields: Set<number> | null;
+  preview: boolean;
+  shift: (index: number, dx: number, dy: number) => void;
+  shiftTree: (index: number, dx: number, dy: number) => void;
+  write: (index: number, patch: Record<string, any>) => void;
+}
+export interface LayoutSpec {
+  type: string;
+  options?: Record<string, any>;
+  table?: string;
+  apply?: (ctx: LayoutContext) => Datum[] | void;
+}
+export interface LayoutUniversalOptions {
+  /** Target table by name or role (defaults to hierarchy `nodes` or primary table). */
+  table?: string;
+}
+export interface ContainLayoutOptions extends LayoutUniversalOptions {
+  /** Which rows this container geometry applies to (default: all containers). */
+  where?: (d: Datum, i: number, data: Datum[]) => boolean;
+  /** Room in px kept between a container's edge and its contents (default 10). */
+  padding?: number | { top?: number; right?: number; bottom?: number; left?: number };
+  /** Auto-fit container size to its contents: `true` (both axes), `'x'`, `'y'`, or `false`. */
+  fit?: boolean | 'x' | 'y';
+}
+export interface DodgeLayoutOptions extends LayoutUniversalOptions {
+  /** Space in px kept between neighbouring boxes (default 8). */
+  gap?: number;
+  /** Which rows dodge (default: all rows in the group). */
+  where?: (d: Datum, i: number, data: Datum[]) => boolean;
+  /** Which sibling groups dodge: `'all'` (default), `'roots'`, `'containers'`, or a container predicate. */
+  in?: 'all' | 'roots' | 'containers' | ((d: Datum, i: number, data: Datum[]) => boolean);
+}
+export interface FlowLayoutOptions extends LayoutUniversalOptions {
+  /** Space in px between neighbouring slots (default 8). */
+  gap?: number;
+  /** In a hierarchy: `'containers'` (default), `'roots'`, or a container predicate. */
+  in?: 'roots' | 'containers' | ((d: Datum, i: number, data: Datum[]) => boolean);
+}
+export interface GridLayoutOptions extends LayoutUniversalOptions {
+  /** Cells to a row (default: as many as fit a fixed width, else a square). */
+  columns?: number;
+  /** Space in px between cells (default 8). */
+  gap?: number;
+  /** In a hierarchy: `'containers'` (default), `'roots'`, or a container predicate. */
+  in?: 'roots' | 'containers' | ((d: Datum, i: number, data: Datum[]) => boolean);
+}
+export interface PackLayoutOptions extends LayoutUniversalOptions {
+  /** Space in px between packed neighbours (default 8). */
+  gap?: number;
+  /** How a moved item moves in to touch the group: `'distance'` (default) or `'angle'`. */
+  keep?: 'distance' | 'angle';
+  /** In a hierarchy: `'containers'` (default), `'roots'`, or a container predicate. */
+  in?: 'roots' | 'containers' | ((d: Datum, i: number, data: Datum[]) => boolean);
+}
+export interface CustomLayoutOptions extends LayoutUniversalOptions {}
 
 // ── Guides (every option may be a literal or a function of the chart context) ─
 export interface RuleGuideOptions {

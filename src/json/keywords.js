@@ -3,7 +3,7 @@
 // keyword the moment it is exported; nothing is listed by hand.
 
 /**
- * @typedef {{ plot: any, elements: any, guides: any, looks: any, constraints: any, edit: any,
+ * @typedef {{ plot: any, elements: any, guides: any, looks: any, layout: any, constraints: any, edit: any,
  *   widgets: any, format: any, renderers: Record<string, new () => any> }} Namespaces
  * @typedef {Record<string, Map<string, Function>>} KeywordTables
  */
@@ -54,6 +54,7 @@ export function keywordTables(ns) {
         elements: flat(ns.elements),
         guides: flat(ns.guides),
         looks: flat(ns.looks),
+        layout: flat(ns.layout),
         constraints: flat(ns.constraints),
         widgets: flat(ns.widgets),
         edit: edits(ns.edit),

@@ -6,7 +6,7 @@
 
 /** Options every mark accepts. (`constraints` belongs on the spec, not a mark.)
  *  @type {string[]} */
-export const MARK_UNIVERSAL_OPTIONS = ['channels', 'id', 'edits', 'table', 'tip', 'clip', 'motion'];
+export const MARK_UNIVERSAL_OPTIONS = ['channels', 'id', 'edits', 'table', 'tip', 'clip', 'motion', 'contains'];
 
 /** Top-level constant shorthands every mark desugars into channels
  *  (`fill: 'red'` -> `channels.fill = { value: 'red' }`). `size` and the text
@@ -190,6 +190,22 @@ export const CONSTRAINT_OPTIONS = {
     spacing: ['field', 'min', 'series'],
     follow: ['field', 'lead'],
     symmetric: ['field', 'about'],
+    contain: ['parent', 'child', 'maxDepth', 'maxChildren'],
+    custom: [],
+};
+
+/** Spatial layout processes (`spec.layout`): what every layout reads, then each one's own.
+ *  @type {string[]} */
+export const LAYOUT_UNIVERSAL_OPTIONS = ['table'];
+
+/** @type {Record<string, string[]>} */
+export const LAYOUT_OPTIONS = {
+    contain: ['where', 'padding', 'fit'],
+    dodge: ['gap', 'where', 'in'],
+    row: ['gap', 'in'],
+    column: ['gap', 'in'],
+    grid: ['columns', 'gap', 'in'],
+    pack: ['gap', 'keep', 'in'],
     custom: [],
 };
 
@@ -253,6 +269,7 @@ export const SPEC_SLOTS = {
     elements: { ns: ['elements'] },
     guides: { ns: ['guides'] },
     looks: { ns: ['looks'] },
+    layout: { ns: ['layout'] },
     constraints: { ns: ['constraints'], fn: 'fn' },
     constrain: { ns: ['constraints'], fn: 'fn' },
     edit: { ns: ['edit'] },
@@ -271,12 +288,13 @@ export const SPEC_FUNCTIONS = {
     spec: { lock: ROW_IN_TABLE, context: ROW_IN_TABLE, onChange: 'fn', projection: 'fn' },
     scales: { '*': 'fn' },
     channel: { fn: ROW, scale: 'fn' },
-    mark: { ...Object.fromEntries(MARK_SHORTHANDS.map((k) => [k, ROW])), tip: TIP },
+    mark: { ...Object.fromEntries(MARK_SHORTHANDS.map((k) => [k, ROW])), tip: TIP, contains: ROW },
     'plot.rect': { width: ROW, height: ROW },
     'plot.shape': { path: ROW },
     'plot.text': { wrap: ROW },
     'plot.geoTile': { url: ['tile'] },
     tip: { text: TIP },
+    contains: { where: ROW },
     axis: { transform: 'ctx', tickSize: TICK, stroke: TICK, fill: TICK, fontWeight: TICK },
     grid: { stroke: TICK, strokeWidth: TICK, strokeDash: TICK },
     legend: { row: ['data', 'state'] },
@@ -292,7 +310,15 @@ export const SPEC_FUNCTIONS = {
     'guides.custom': { fn: 'ctx' },
     'edit.custom': { fn: 'ctx' },
     'edit.stack.cut': { label: ['n'] },
+    'constraints.contain': { parent: ROW, child: ROW },
     'constraints.custom': { fn: 'ctx', guide: 'fn' },
+    'layout.contain': { where: ROW },
+    'layout.dodge': { where: ROW, in: ROW },
+    'layout.row': { in: ROW },
+    'layout.column': { in: ROW },
+    'layout.grid': { in: ROW },
+    'layout.pack': { in: ROW },
+    'layout.custom': { fn: 'ctx' },
     widget: { onChange: 'fn' },
 };
 
@@ -306,6 +332,7 @@ export const SPEC_POSITIONAL = {
     'guides.custom': ['fn'],
     'guides.prompt': ['text'],
     'looks.custom': ['fragment'],
+    'layout.custom': ['fn'],
     'when.modifier': ['key'],
     'when.noModifier': ['key'],
     'when.nearWithin': ['threshold'],

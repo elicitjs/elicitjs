@@ -26,7 +26,7 @@ const dtsPath = path.join(root, 'src/index.d.ts');
 // A namespace object is the grammar's vocabulary, so a missing member is a missing
 // word — exactly the drift worth failing on.
 const NAMESPACES = [
-    'plot', 'elements', 'edit', 'constraints', 'guides', 'looks', 'widgets', 'format',
+    'plot', 'elements', 'edit', 'constraints', 'guides', 'looks', 'layout', 'widgets', 'format',
     'authoring',
 ];
 
@@ -160,6 +160,7 @@ const VOCAB = {
     elements: { universal: vocab.ELEMENT_UNIVERSAL_OPTIONS, of: (m) => { const b = baseElement(m); return b ? vocab.ELEMENT_OPTIONS[b] : null; } },
     guides: { universal: vocab.GUIDE_UNIVERSAL_OPTIONS, of: (m) => vocab.GUIDE_OPTIONS[m] || null },
     looks: { universal: vocab.LOOK_UNIVERSAL_OPTIONS, of: (m) => vocab.LOOK_OPTIONS[m] || null },
+    layout: { universal: vocab.LAYOUT_UNIVERSAL_OPTIONS, of: (m) => vocab.LAYOUT_OPTIONS[m] || null },
     constraints: { universal: [], of: (m) => vocab.CONSTRAINT_OPTIONS[m] || null },
     edit: { universal: vocab.EDIT_UNIVERSAL_OPTIONS, of: (m) => vocab.EDIT_OPTIONS[m === 'scale.categories' ? 'scale.addCategory' : m] || null },
 };
@@ -266,7 +267,7 @@ for (const [ns, family] of EDIT_FAMILIES) {
 //   an option that holds a factory  SPEC_SLOTS
 // So read them off the declarations and hold the tables to them.
 const { ownersOf, signatureOf } = await import(path.join(root, 'src/json/compile.js'));
-const FACTORY_RESULTS = new Set(['Mark', 'Edit', 'ConstraintSpec', 'Guide', 'ChartElement', 'Look']);
+const FACTORY_RESULTS = new Set(['Mark', 'Edit', 'ConstraintSpec', 'Guide', 'ChartElement', 'Look', 'LayoutSpec']);
 
 /** The types a declared type is made of: union members and array elements. */
 function partsOf(type) {
@@ -300,7 +301,7 @@ function checkOptionGrammar(label, optionsType, owners) {
 }
 
 let grammarChecked = 0;
-for (const ns of ['plot', 'elements', 'guides', 'looks', 'constraints', 'edit', 'widgets', 'format']) {
+for (const ns of ['plot', 'elements', 'guides', 'looks', 'layout', 'constraints', 'edit', 'widgets', 'format']) {
     const nsSymbol = checker.getExportsOfModule(moduleSymbol).find((sym) => sym.getName() === ns);
     if (!nsSymbol) continue;
     for (const [member, symbol] of members(nsSymbol)) {

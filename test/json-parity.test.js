@@ -31,6 +31,7 @@ const SPY = {
     elements: spies(NAMESPACES.elements, 'elements'),
     guides: spies(NAMESPACES.guides, 'guides'),
     looks: spies(NAMESPACES.looks, 'looks'),
+    layout: spies(NAMESPACES.layout, 'layout'),
     constraints: spies(NAMESPACES.constraints, 'constraints'),
     widgets: spies(NAMESPACES.widgets, 'widgets'),
     // `when` and `format` stay real: a spec holds their results as values.
@@ -165,7 +166,7 @@ const FIXTURES = {
             ],
         })],
     }),
-    'a hierarchy that arranges its contents': ({ plot, edit }) => ({
+    'a hierarchy that arranges its contents': ({ plot, edit, constraints, layout }) => ({
         schema: {
             structure: 'hierarchy',
             tables: {
@@ -173,16 +174,19 @@ const FIXTURES = {
                 nesting: { child: { type: 'ref' }, parent: { type: 'ref' } },
             },
         },
+        constraints: [constraints.contain({ parent: (d) => d.kind === 'lane', maxDepth: 1 })],
         marks: [plot.rect({
-            channels: {
-                width: { field: 'w', scale: null, fit: true },
-                contains: { fn: (d) => d.kind === 'lane', padding: { top: 24 }, arrange: 'grid', gap: 6, columns: 2 },
-                dodge: false,
-            },
+            channels: { width: { field: 'w', scale: null } },
+            contains: { where: (d) => d.kind === 'lane', padding: { top: 24 }, fit: 'y' },
             edits: [edit.move({ mode: 'relative' }), edit.hierarchy.nest()],
         })],
+        layout: [
+            layout.contain({ where: (d) => d.kind === 'lane', padding: { top: 24 }, fit: true }),
+            layout.grid({ in: (d) => d.kind === 'lane', gap: 6, columns: 2 }),
+            layout.dodge({ gap: 8, in: 'roots' }),
+        ],
     }),
-    'a hierarchy that packs its contents by angle': ({ plot, edit }) => ({
+    'a hierarchy that packs its contents by angle': ({ plot, edit, layout }) => ({
         schema: {
             structure: 'hierarchy',
             tables: {
@@ -191,12 +195,15 @@ const FIXTURES = {
             },
         },
         marks: [plot.rect({
-            channels: {
-                width: { field: 'w', scale: null, fit: true },
-                contains: { fn: (d) => d.kind === 'zone', arrange: 'pack', keep: 'angle', gap: 4 },
-            },
+            channels: { width: { field: 'w', scale: null } },
+            contains: (d) => d.kind === 'zone',
             edits: [edit.move({ mode: 'relative' }), edit.hierarchy.nest()],
         })],
+        layout: [
+            layout.contain({ fit: true }),
+            layout.pack({ keep: 'angle', gap: 4 }),
+            layout.custom(({ rows }) => rows),
+        ],
     }),
     'a widget with chart keys beside it': ({ widgets }) => ({
         ...widgets.slider({ question: 'How much?', domain: [0, 10], format: (v) => v + ' pts' }),
@@ -219,7 +226,7 @@ describe('recorded JSON compiles to the calls the JavaScript made', () => {
         const positional = (SPEC_POSITIONAL[`${space}.${type}`] || []).map((p) => (p === 'fn' ? snap : p));
         return member(...positional, { id: `${space}.${type}` });
     };
-    for (const [space, slot] of [['plot', 'marks'], ['elements', 'elements'], ['guides', 'guides'], ['constraints', 'constraints']]) {
+    for (const [space, slot] of [['plot', 'marks'], ['elements', 'elements'], ['guides', 'guides'], ['layout', 'layout'], ['constraints', 'constraints']]) {
         it(`every ${space} keyword`, () => {
             const { direct, compiled } = bothWays((ns) => ({ [slot]: [...tables[space].keys()].map((type) => call(ns, space, type)) }));
             expect(compiled).toEqual(direct);

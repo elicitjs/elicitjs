@@ -4,6 +4,7 @@
 //   elements.*     elements     view a scale (axis / grid / legend)
 //   guides.*       guides       view state, write nothing
 //   looks.*        looks        restyle how the chart is drawn (experimental)
+//   layout.*       layout       spatial settling processes over mark boxes
 //   edit.*         edits        a gesture -> data, through the encoding's scale
 //   constraints.*  invariants   rules over the elicited dataset
 //   widgets.*      instruments  whole specs
@@ -16,6 +17,7 @@ import * as edit from "./edit/index.js";
 import * as constraints from "./constraints/index.js";
 import * as guides from "./guides/index.js";
 import * as looks from "./looks/index.js";
+import * as layout from "./layout/index.js";
 import * as widgets from "./widgets/index.js";
 import * as authoring from "./authoring/index.js";
 import * as format from "./format.js";
@@ -37,6 +39,8 @@ export {
   guides,
   // Looks restyle the finished drawing: a hand-drawn redraw, a shader. Experimental.
   looks,
+  // Spatial layout processes: contain, dodge, row, column, grid, pack, custom.
+  layout,
   widgets,
   // Building blocks for new marks / edits / constraints / widgets.
   authoring,

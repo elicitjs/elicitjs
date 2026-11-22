@@ -188,6 +188,7 @@ export function applyConstraint(constraint, newData, oldData, context) {
     table: context.table,
     tables: context.tables,
     schema: context.schema,
+    schemaSpec: context.schemaSpec,
     locked: context.locked || null,
   };
 

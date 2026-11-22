@@ -1,22 +1,24 @@
-// fit.js — settles a hierarchy's geometry after every commit and for outside data.
-// A container's box follows from its children (`contains`, `fit: true`). Results
-// are written into the data through the channels' own scales, so no mark changes
-// and `getData()` reports the fitted geometry. Steps, in order:
-//   PLACE  a nested row with no position gets one inside its container
-//   CARRY  a container the commit moved takes its subtree by the same pixel delta
-//   SPACE  bottom-up, an unfitted container keeps its contents inside its padding.
-//          Its `arrange` decides the rest: `dodge` rows are pushed apart, `free`
-//          rows stay put, a row, column or grid puts its children in slots in
-//          order, and a pack draws them together where they are (core/arrange.js)
-//   FIT    in the same walk, a fitted container takes its children's union, padded.
-//          One that just lost its last child takes its columns' schema `default`
+// @ts-check
+// fit.js — settles spatial layout geometry after every commit and for outside data.
+// Works across tables, networks and hierarchies (`spec.layout` + `mark.contains`).
+// Results are written into the data through the channels' own scales, so no mark
+// changes and `getData()` reports the settled geometry. Steps, in order:
+//   PLACE   (hierarchy) a nested row with no position gets one inside its container
+//   CARRY   (hierarchy) a container the commit moved takes its subtree by the same pixel delta
+//   SPACE   bottom-up per container (and then top-level roots / flat table rows):
+//           unfitted containers keep contents inside padding; `row`, `column`,
+//           `grid` and `pack` place items in slots (core/arrange.js); `dodge`
+//           pushes overlapping siblings apart
+//   FIT     in the same walk, a fitted container takes its children's union, padded.
+//           One that just lost its last child takes its columns' schema `default`
+//   CUSTOM  any `layout.custom` passes run in declared order
 
 import { scaleFor } from './scales.js';
 import { treeOf, nestingOf } from './hierarchy.js';
 import { SLOTTED, slotsOf, nearestSlot, readingOrder } from './arrange.js';
 import { warn } from './dev.js';
 
-/** Padding between a container's edge and its contents, when `contains` states none. */
+/** Padding between a container's edge and its contents, when none is stated. */
 const DEFAULT_PADDING = 10;
 
 /** How far apart PLACE staggers siblings that arrive with no position, in px. */
@@ -25,7 +27,7 @@ const PLACE_STEP = 18;
 /** Below this many pixels a fitted value is the one already there (no write). */
 const EPSILON = 0.01;
 
-/** The gap `dodge` keeps between two rows when it states none, in px. */
+/** The gap `dodge` and slot arrangements keep when none is stated, in px. */
 export const DEFAULT_GAP = 8;
 
 /** How many rounds of pushing apart one group gets before it is left as it stands. */
@@ -37,6 +39,8 @@ const PACK_LIMIT = 80;
 /**
  * @typedef {{ cx: number, cy: number, hw: number, hh: number, x0: number, y0: number, gap: number | null, rank: number, round: boolean, guest?: boolean, holds?: boolean }} Spaced
  * @typedef {{ x: boolean, y: boolean, x0: number, x1: number, y0: number, y1: number } | null} Bounds
+ * @typedef {{ top: number, right: number, bottom: number, left: number }} Sides
+ * @typedef {{ x: boolean, y: boolean }} FitAxes
  */
 
 /** Would two dodging rows at these centres sit closer than their gap?
@@ -100,13 +104,12 @@ function pack(movers, bounds, order, cost, passes) {
 }
 
 /**
- * A container's padding as four sides: `contains: { padding }` is a number or
- * `{ top, right, bottom, left }` (a missing side takes the default).
- * @param {any} contains the mark's `contains` channel
- * @returns {{ top: number, right: number, bottom: number, left: number }}
+ * A container's padding as four sides: a number or `{ top, right, bottom, left }`
+ * (a missing side takes the default).
+ * @param {any} p
+ * @returns {Sides}
  */
-function paddingOf(contains) {
-    const p = contains ? contains.padding : undefined;
+export function paddingOf(p) {
     const side = (/** @type {any} */ v) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(0, v) : DEFAULT_PADDING);
     if (p && typeof p === 'object') {
         return { top: side(p.top), right: side(p.right), bottom: side(p.bottom), left: side(p.left) };
@@ -116,19 +119,16 @@ function paddingOf(contains) {
 }
 
 /**
- * How a container arranges its contents: `contains: { arrange, gap, columns, keep }`.
- * The engine has already checked `arrange` and `keep` (engine/features.js).
- * @param {any} contains the mark's `contains` channel
- * @returns {{ arrange: string, gap: number, columns: number | null, keep: 'angle' | 'distance' }}
+ * Normalize a container's `fit` (`true | false | 'x' | 'y'`) to per-axis flags.
+ * @param {any} fit
+ * @returns {FitAxes}
  */
-function arrangeOf(contains) {
-    const c = contains || {};
-    return {
-        arrange: typeof c.arrange === 'string' ? c.arrange : 'dodge',
-        gap: typeof c.gap === 'number' && Number.isFinite(c.gap) ? Math.max(0, c.gap) : DEFAULT_GAP,
-        columns: typeof c.columns === 'number' && c.columns >= 1 ? Math.floor(c.columns) : null,
-        keep: c.keep === 'angle' ? 'angle' : 'distance',
-    };
+export function fitAxesOf(fit) {
+    if (fit === true) return { x: true, y: true };
+    if (fit === 'x') return { x: true, y: false };
+    if (fit === 'y') return { x: false, y: true };
+    if (fit && typeof fit === 'object') return { x: !!fit.x, y: !!fit.y };
+    return { x: false, y: false };
 }
 
 /**
@@ -136,7 +136,6 @@ function arrangeOf(contains) {
  * of the children's boxes, `pad` the padding by side in px. A mark gains a fittable
  * channel by a row here. A round shape takes the circle/ellipse that encloses the
  * union's rectangle.
- * @typedef {{ top: number, right: number, bottom: number, left: number }} Sides
  * @type {Record<string, (inner: { cx: number, cy: number, hw: number, hh: number }, pad: Sides) => number>}
  */
 const FIT_OF = {
@@ -164,19 +163,39 @@ const FITS_AXIS = { x: ['width', 'size', 'rx', 'x1', 'x2'], y: ['height', 'size'
 const POSITION_CHANNELS = { x: ['x', 'x1', 'x2'], y: ['y', 'y1', 'y2'] };
 
 /**
- * The channels of one mark that the fit writes for a container row: every channel
- * marked `fit: true`, plus the centre (`x`/`y`) along any axis whose extent is
- * fitted — a box sized to its contents but left where it was would not cover them.
+ * The channels of one mark that `fit` writes for a container row: every field-backed
+ * extent channel along the fitted axes (`fit: true | 'x' | 'y'`), plus the centre
+ * (`x`/`y`) along any axis whose extent is fitted — a box sized to its contents
+ * but left where it was would not cover them.
  * @param {Record<string, any>} channels
+ * @param {boolean | 'x' | 'y' | FitAxes} [fit]
  * @returns {string[]}
  */
-export function fitChannelsOf(channels) {
+export function fitChannelsOf(channels, fit) {
+    const axes = fitAxesOf(fit);
+    if (!axes.x && !axes.y) return [];
+    const chs = channels || {};
     const out = new Set();
-    for (const [name, spec] of Object.entries(channels || {})) {
-        if (!spec || spec.fit !== true || !FIT_OF[name]) continue;
-        out.add(name);
-        const axis = /** @type {Record<string, string>} */ (EXTENT_AXIS)[name];
-        if (axis) for (const a of axis) if (channels[a]) out.add(a);
+    for (const axis of /** @type {('x' | 'y')[]} */ (['x', 'y'])) {
+        if (!axes[axis]) continue;
+        let found = false;
+        for (const name of FITS_AXIS[axis]) {
+            const spec = chs[name];
+            if (!spec || spec.field == null || !FIT_OF[name]) continue;
+            found = true;
+            out.add(name);
+            const ext = /** @type {Record<string, string>} */ (EXTENT_AXIS)[name];
+            if (ext) for (const a of ext) if (chs[a] && chs[a].field != null) out.add(a);
+        }
+        if (!found) {
+            warn(
+                `fit:axis:${axis}`,
+                `\`fit\` asked to fit the ${axis} axis, but the container mark binds no ` +
+                `${FITS_AXIS[axis].join('/')} channel to a field. A fitted size is written to a ` +
+                `column so the drawing, links and getData() agree — bind one (e.g. ` +
+                `${axis === 'x' ? "width: { field: 'w', scale: null }" : "height: { field: 'h', scale: null }"}).`
+            );
+        }
     }
     return [...out];
 }
@@ -208,7 +227,7 @@ const LAYOUT_CHANNELS = [...POSITION_CHANNELS.x, ...POSITION_CHANNELS.y, ...Obje
  * The columns that place and size node boxes, each with its way to pixels and
  * back. `extent` marks a size column. One entry per column, first host first.
  * @param {import('../types').ScaleMap} scales
- * @param {any[]} hosts the marks drawing the nodes table
+ * @param {any[]} hosts the marks drawing the table
  * @returns {{ field: string, encode: (v: any) => number, invert: (px: number) => any, extent: boolean }[]}
  */
 export function layoutIO(scales, hosts) {
@@ -226,23 +245,30 @@ export function layoutIO(scales, hosts) {
 /**
  * @typedef {object} SettleOptions
  * @property {import('../types').SchemaSpec} spec
+ * @property {string} table  the table being settled
  * @property {Record<string, import('../types').Datum[]>} tables
- * @property {any[]} hosts  the marks drawing the nodes table that declare `nodeBox`,
+ * @property {any[]} hosts  the marks drawing `table` that declare `nodeBox`,
  *   in preference order; a row's host is the first that yields it a box
  * @property {import('../types').ScaleMap} scales
  * @property {number} width  @property {number} height  the plot's inner size
- * @property {import('../types').Datum[] | null} [before]  the node rows as last
+ * @property {import('../types').Datum[] | null} [before]  the rows as last
  *   committed, for CARRY; omit for data that arrived from outside (nothing moved)
- * @property {Set<number> | null} [frozen]  node indices whose box must hold still
+ * @property {Set<number> | null} [frozen]  row indices whose box must hold still
  *   (the ancestors of a row in mid-drag — see the nest driver)
  * @property {((row: any, i: number) => boolean) | null} [locked]  read-only rows
- * @property {((row: any, i: number, rows: any[]) => number | null) | null} [dodges]
+ * @property {((row: any, i: number, rows: any[]) => { padding: Sides, fit: FitAxes } | null) | null} [containOf]
+ *   container geometry (padding + fitted axes) per row
+ * @property {((parentIndex: number | null, rows: any[]) => { arrange: string, gap: number, columns: number | null, keep: 'angle' | 'distance' } | null) | null} [arrangeOf]
+ *   slot arrangement for a container's children (`parentIndex >= 0`) or roots (`parentIndex === null`)
+ * @property {((row: any, i: number, rows: any[], parentIndex: number | null) => number | null) | null} [dodges]
  *   the gap a row keeps from its siblings, or null for none
+ * @property {((ctx: import('../types').LayoutContext) => any)[] | null} [custom]
+ *   `layout.custom` passes, run after the built-in passes
  * @property {boolean} [spacing]  push rows apart and put slotted contents in their
  *   slots. Off mid-stroke: rows must not scatter under a carried node
  * @property {Set<number> | null} [emptied]  containers that just lost their last
  *   child: their fitted size returns to the schema `default`
- * @property {import('../types').Datum[] | null} [since]  the node rows before the
+ * @property {import('../types').Datum[] | null} [since]  the rows before the
  *   gesture that is now settling; a row whose box differs holds its place and its
  *   siblings make room for it
  * @property {number[] | null} [anchors]  further rows that hold their place
@@ -260,17 +286,24 @@ export function layoutIO(scales, hosts) {
  */
 
 /**
- * Settle a hierarchy's node rows: place, carry, space, fit. Returns the same array
- * when nothing changed; otherwise only changed rows are new objects, so the ghost
- * pass finds them by identity and a locked row stays the same object.
+ * Settle one table's rows: place, carry, space/arrange, fit, custom. Returns the
+ * same array when nothing changed; otherwise only changed rows are new objects, so
+ * the ghost pass finds them by identity and a locked row stays the same object.
  * @param {SettleOptions} options
  * @returns {import('../types').Datum[]}
  */
-export function settleHierarchy({ spec, tables, hosts, scales, width, height, before = null, frozen = null, locked = null, dodges = null, spacing = false, emptied = null, since = null, anchors = null, extents = null, keepSize = null, yields = null, passing = false, holds = null }) {
+export function settleLayout({
+    spec, table, tables, hosts, scales, width, height,
+    before = null, frozen = null, locked = null,
+    containOf = null, arrangeOf = null, dodges = null, custom = null,
+    spacing = false, emptied = null, since = null, anchors = null,
+    extents = null, keepSize = null, yields = null, passing = false, holds = null,
+}) {
     const nesting = nestingOf(spec);
-    const rows = nesting ? tables[nesting.nodes] : null;
-    if (!nesting || !rows || !rows.length || !hosts || !hosts.length) return rows || [];
-    const tree = treeOf(spec, tables);
+    const isHierarchy = !!(nesting && nesting.nodes === table);
+    const rows = tables ? tables[table] : null;
+    if (!rows || !rows.length || !hosts || !hosts.length) return rows || [];
+    const tree = isHierarchy ? treeOf(spec, tables) : treeOf(/** @type {any} */ ({}), {});
 
     let work = rows;
     /** @param {number} i @param {Record<string, any>} patch */
@@ -320,38 +353,41 @@ export function settleHierarchy({ spec, tables, hosts, scales, width, height, be
         if (Object.keys(patch).length) write(i, patch);
     };
 
-    // ── PLACE ────────────────────────────────────────────────────────────────
+    // ── PLACE (hierarchy) ────────────────────────────────────────────────────
     // Top-down, so a container placed here is somewhere before its own children ask.
-    for (const i of [...tree.bottomUp].reverse()) {
-        const parent = tree.parentOf(i);
-        if (parent === null || !work[i]) continue;
-        const host = hosts[0];
-        const xs = channelIO(scales, host.channels, 'x');
-        const ys = channelIO(scales, host.channels, 'y');
-        if (!xs || !ys) continue;
-        const missing = (/** @type {any} */ v) => v === undefined || v === null || (typeof v === 'number' && Number.isNaN(v));
-        if (!missing(work[i][xs.field]) && !missing(work[i][ys.field])) continue;
-        const into = drawn(parent);
-        if (!into) continue;
-        const k = tree.childrenOf(parent).indexOf(i);
-        // In a slotted container, past its far corner, so it reads as the last slot.
-        if (SLOTTED.includes(arrangeOf(into.host.contains).arrange)) {
+    if (isHierarchy) {
+        for (const i of [...tree.bottomUp].reverse()) {
+            const parent = tree.parentOf(i);
+            if (parent === null || !work[i]) continue;
+            const host = hosts[0];
+            const xs = channelIO(scales, host.channels, 'x');
+            const ys = channelIO(scales, host.channels, 'y');
+            if (!xs || !ys) continue;
+            const missing = (/** @type {any} */ v) => v === undefined || v === null || (typeof v === 'number' && Number.isNaN(v));
+            if (!missing(work[i][xs.field]) && !missing(work[i][ys.field])) continue;
+            const into = drawn(parent);
+            if (!into) continue;
+            const k = tree.childrenOf(parent).indexOf(i);
+            const parentArr = arrangeOf ? arrangeOf(parent, work) : null;
+            // In a slotted container, past its far corner, so it reads as the last slot.
+            if (parentArr && SLOTTED.includes(parentArr.arrange)) {
+                write(i, {
+                    [xs.field]: xs.invert(into.box.cx + into.box.hw + k * PLACE_STEP),
+                    [ys.field]: ys.invert(into.box.cy + into.box.hh + k * PLACE_STEP),
+                });
+                continue;
+            }
             write(i, {
-                [xs.field]: xs.invert(into.box.cx + into.box.hw + k * PLACE_STEP),
-                [ys.field]: ys.invert(into.box.cy + into.box.hh + k * PLACE_STEP),
+                [xs.field]: xs.invert(into.box.cx + (k % 4) * PLACE_STEP),
+                [ys.field]: ys.invert(into.box.cy + Math.floor(k / 4) * PLACE_STEP),
             });
-            continue;
         }
-        write(i, {
-            [xs.field]: xs.invert(into.box.cx + (k % 4) * PLACE_STEP),
-            [ys.field]: ys.invert(into.box.cy + Math.floor(k / 4) * PLACE_STEP),
-        });
     }
 
-    // ── CARRY ────────────────────────────────────────────────────────────────
+    // ── CARRY (hierarchy) ────────────────────────────────────────────────────
     // Only a container the commit moved. A mover nested in another mover rides
     // along as a descendant, so it is not carried twice.
-    if (before && before.length === rows.length) {
+    if (isHierarchy && before && before.length === rows.length) {
         /** @type {Map<number, { dx: number, dy: number }>} */
         const movers = new Map();
         rows.forEach((row, i) => {
@@ -391,23 +427,27 @@ export function settleHierarchy({ spec, tables, hosts, scales, width, height, be
             if (Math.abs((b.cx - b.hw) - (a.cx - a.hw)) >= EPSILON || Math.abs((b.cy - b.hh) - (a.cy - a.hh)) >= EPSILON) relocated.add(i);
         });
     }
-    for (const i of [...held]) for (const a of tree.ancestorsOf(i)) held.add(a);
+    if (isHierarchy) {
+        for (const i of [...held]) for (const a of tree.ancestorsOf(i)) held.add(a);
+    }
 
     /** Shift a row and everything inside it. @param {number} i @param {number} dx @param {number} dy */
     const shiftTree = (i, dx, dy) => {
         shift(i, dx, dy);
-        for (const j of tree.descendantsOf(i)) shift(j, dx, dy);
+        if (isHierarchy) for (const j of tree.descendantsOf(i)) shift(j, dx, dy);
     };
+
     /**
      * Space one group of siblings: keep them inside `bounds` and push dodging rows
      * apart along the axis of least overlap, moving whichever does not hold its
      * place. Bounded; with no room, rows end as close to clear as the walls allow.
      * @param {number[]} kids
-     * @param {{ x: boolean, y: boolean, x0: number, x1: number, y0: number, y1: number } | null} bounds
-     * @param {boolean} [dodging] false for a `free` container: walls only
+     * @param {Bounds} bounds
+     * @param {number | null} parentIndex
      */
-    const space = (kids, bounds, dodging = !!dodges) => {
-        if (!bounds && !dodging) return;
+    const space = (kids, bounds, parentIndex) => {
+        const canDodge = !!(spacing && dodges);
+        if (!bounds && !canDodge) return;
         /** @type {(Spaced & { k: number })[]} */
         const live = [];
         for (const k of kids) {
@@ -416,11 +456,11 @@ export function settleHierarchy({ spec, tables, hosts, scales, width, height, be
             const fixed = !!(locked && locked(rows[k], k));
             live.push({
                 k, cx: box.cx, cy: box.cy, hw: box.hw, hh: box.hh, x0: box.cx, y0: box.cy,
-                gap: dodging && dodges ? dodges(work[k], k, work) : null,
+                gap: canDodge && dodges ? dodges(work[k], k, work, parentIndex) : null,
                 rank: fixed ? 2 : held.has(k) ? 1 : 0,
                 round: !!box.round && Math.abs(box.hw - box.hh) < EPSILON,
                 guest: !!(yields && yields.has(k)),
-                holds: tree.hasChildren(k) || !!(holds && holds(work[k], k, work)),
+                holds: isHierarchy && (tree.hasChildren(k) || !!(holds && holds(work[k], k, work))),
             });
         }
         if (!live.length) return;
@@ -454,10 +494,6 @@ export function settleHierarchy({ spec, tables, hosts, scales, width, height, be
                     // the gesture moved.
                     const share = guest && guest.rank < 2 ? (guest === a ? 1 : 0)
                         : a.rank > b.rank ? 0 : a.rank < b.rank ? 1 : 0.5;
-                    // Ways to clear the pair, as a direction b moves (a moves the
-                    // opposite way) and a distance: right, left, down or up of a, and
-                    // for two circles straight apart. The shortest wins, unless it
-                    // would push a row through the container's wall.
                     const sx = a.hw + b.hw + gap, sy = a.hh + b.hh + gap;
                     /** @type {{ ux: number, uy: number, d: number }[]} */
                     const ways = [
@@ -512,11 +548,11 @@ export function settleHierarchy({ spec, tables, hosts, scales, width, height, be
     };
 
     /**
-     * Put a slotted container's children in their slots, in order. Children that
-     * stayed keep their order; one put somewhere new takes the slot nearest it.
-     * Mid-drag the row in flight stays under the pointer and its slot stays open.
+     * Put a slotted group's items in their slots, in order. Items that stayed keep
+     * their order; one put somewhere new takes the slot nearest it. Mid-drag the
+     * row in flight stays under the pointer and its slot stays open.
      * @param {number[]} kids
-     * @param {{ cx: number, cy: number, hw: number, hh: number }} box the container
+     * @param {{ cx: number, cy: number, hw: number, hh: number }} box the enclosing box (or plot)
      * @param {Sides} pad
      * @param {{ x: boolean, y: boolean }} grows the axes along which it fits
      * @param {{ arrange: string, gap: number, columns: number | null, keep: 'angle' | 'distance' }} arr
@@ -528,6 +564,7 @@ export function settleHierarchy({ spec, tables, hosts, scales, width, height, be
             const b = extentOf(k);
             if (b) live.push({ k, cx: b.cx, cy: b.cy, hw: b.hw, hh: b.hh, round: !!b.round && Math.abs(b.hw - b.hh) < EPSILON, moved: relocated.has(k) });
         }
+        if (!live.length) return;
         const origin = { x: box.cx - box.hw + pad.left, y: box.cy - box.hh + pad.top };
         const limit = {
             x: grows.x ? null : 2 * box.hw - pad.left - pad.right,
@@ -563,11 +600,13 @@ export function settleHierarchy({ spec, tables, hosts, scales, width, height, be
     const restore = (i) => {
         const at = drawn(i);
         if (!at) return;
-        const fields = (spec.tables[nesting.nodes] || {}).fields || {};
-        const pad = paddingOf(at.host.contains);
+        const fields = (spec.tables[table] || {}).fields || {};
+        const cSpec = containOf ? containOf(work[i], i, work) : null;
+        const pad = paddingOf(cSpec ? cSpec.padding : undefined);
+        const fitAxes = cSpec ? cSpec.fit : { x: false, y: false };
         /** @type {Record<string, any>} */
         const patch = {};
-        for (const name of fitChannelsOf(at.host.channels)) {
+        for (const name of fitChannelsOf(at.host.channels, fitAxes)) {
             if (!(name in EXTENT_AXIS)) continue;
             const io = channelIO(scales, at.host.channels, name);
             if (!io) continue;
@@ -578,7 +617,7 @@ export function settleHierarchy({ spec, tables, hosts, scales, width, height, be
             }
             warn(
                 `fit:${io.field}:default`,
-                `column "${io.field}" is fitted (\`fit: true\`) but declares no \`default\`, so a ` +
+                `column "${io.field}" is fitted but declares no \`default\`, so a ` +
                 'container that loses its last child has no size to return to; it shrinks to its ' +
                 `padding. Declare one in the schema: ${io.field}: { type: "quantitative", default: … }.`
             );
@@ -592,77 +631,117 @@ export function settleHierarchy({ spec, tables, hosts, scales, width, height, be
         shift(i, (at.box.cx - at.box.hw) - (now.box.cx - now.box.hw), (at.box.cy - at.box.hh) - (now.box.cy - now.box.hh));
     };
 
-    // ── SPACE + FIT ──────────────────────────────────────────────────────────
+    // ── SPACE + FIT (hierarchy containers, bottom-up) ────────────────────────
     // Children before parents, each reading the rows as settled so far: a
     // container's contents are spaced, then it is fitted round them, and only then
     // is it spaced against its own siblings one level up.
-    for (const i of tree.bottomUp) {
-        if (frozen && frozen.has(i)) continue;
-        if (!tree.hasChildren(i)) {
-            if (emptied && emptied.has(i)) restore(i);
-            continue;
-        }
-        const at = drawn(i);
-        const host = at ? at.host : hosts[0];
-        const names = fitChannelsOf(host.channels);
-        const pad = paddingOf(host.contains);
-        const arr = arrangeOf(host.contains);
-        const fits = {
-            x: FITS_AXIS.x.some((n) => names.includes(n)),
-            y: FITS_AXIS.y.some((n) => names.includes(n)),
-        };
-        // A container that sizes itself needs no wall: it grows. One that does not
-        // keeps its contents inside its padding, along each axis it does not fit.
-        const still = !!(keepSize && keepSize.has(i));
-        const walled = at && host.contains && (still || !(fits.x && fits.y));
-        // A pack waits for the release: mid-drag nothing in it moves, and a pack
-        // the row in flight is over keeps its size, so it holds still under the pointer.
-        if (passing && arr.arrange === 'pack' && host.contains) {
-            if (yields && tree.childrenOf(i).some((c) => yields.has(c))) continue;
-        } else if (spacing && at && host.contains && SLOTTED.includes(arr.arrange)) {
-            slot(tree.childrenOf(i), at.box, pad, { x: fits.x && !still, y: fits.y && !still }, arr);
-        } else {
-            space(tree.childrenOf(i), walled ? {
-                x: still || !fits.x, y: still || !fits.y,
-                x0: at.box.cx - at.box.hw + pad.left, x1: at.box.cx + at.box.hw - pad.right,
-                y0: at.box.cy - at.box.hh + pad.top, y1: at.box.cy + at.box.hh - pad.bottom,
-            } : null, arr.arrange === 'dodge');
-        }
-        if (!names.length || still) continue;
+    if (isHierarchy) {
+        for (const i of tree.bottomUp) {
+            if (frozen && frozen.has(i)) continue;
+            if (!tree.hasChildren(i)) {
+                if (emptied && emptied.has(i)) restore(i);
+                continue;
+            }
+            const at = drawn(i);
+            const host = at ? at.host : hosts[0];
+            const cSpec = containOf ? containOf(work[i], i, work) : null;
+            const pad = paddingOf(cSpec ? cSpec.padding : undefined);
+            const fitAxes = cSpec ? cSpec.fit : { x: false, y: false };
+            const names = fitChannelsOf(host.channels, fitAxes);
+            const fits = {
+                x: FITS_AXIS.x.some((n) => names.includes(n)),
+                y: FITS_AXIS.y.some((n) => names.includes(n)),
+            };
+            const arr = arrangeOf ? arrangeOf(i, work) : null;
+            // A container that sizes itself needs no wall: it grows. One that does not
+            // keeps its contents inside its padding, along each axis it does not fit.
+            const still = !!(keepSize && keepSize.has(i));
+            const walled = !!(at && cSpec && (still || !(fits.x && fits.y)));
+            // A pack waits for the release: mid-drag nothing in it moves, and a pack
+            // the row in flight is over keeps its size, so it holds still under the pointer.
+            if (passing && arr && arr.arrange === 'pack') {
+                if (yields && tree.childrenOf(i).some((c) => yields.has(c))) continue;
+            } else if (spacing && at && arr && SLOTTED.includes(arr.arrange)) {
+                slot(tree.childrenOf(i), at.box, pad, { x: fits.x && !still, y: fits.y && !still }, arr);
+            } else {
+                space(tree.childrenOf(i), walled ? {
+                    x: still || !fits.x, y: still || !fits.y,
+                    x0: at.box.cx - at.box.hw + pad.left, x1: at.box.cx + at.box.hw - pad.right,
+                    y0: at.box.cy - at.box.hh + pad.top, y1: at.box.cy + at.box.hh - pad.bottom,
+                } : null, i);
+            }
+            if (!names.length || still) continue;
 
-        let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-        for (const c of tree.childrenOf(i)) {
-            const kid = inSlot.get(c) || extentOf(c);
-            if (!kid) continue;
-            x0 = Math.min(x0, kid.cx - kid.hw);
-            x1 = Math.max(x1, kid.cx + kid.hw);
-            y0 = Math.min(y0, kid.cy - kid.hh);
-            y1 = Math.max(y1, kid.cy + kid.hh);
-        }
-        if (!Number.isFinite(x0) || !Number.isFinite(y0)) continue; // no child draws
-        const inner = { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, hw: (x1 - x0) / 2, hh: (y1 - y0) / 2 };
+            let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+            for (const c of tree.childrenOf(i)) {
+                const kid = inSlot.get(c) || extentOf(c);
+                if (!kid) continue;
+                x0 = Math.min(x0, kid.cx - kid.hw);
+                x1 = Math.max(x1, kid.cx + kid.hw);
+                y0 = Math.min(y0, kid.cy - kid.hh);
+                y1 = Math.max(y1, kid.cy + kid.hh);
+            }
+            if (!Number.isFinite(x0) || !Number.isFinite(y0)) continue; // no child draws
+            const inner = { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, hw: (x1 - x0) / 2, hh: (y1 - y0) / 2 };
 
-        /** @type {Record<string, any>} */
-        const patch = {};
-        for (const name of names) {
-            const io = channelIO(scales, host.channels, name);
-            if (!io) continue;
-            const target = FIT_OF[name](inner, pad);
-            const current = io.encode(work[i][io.field]);
-            if (Number.isFinite(current) && Math.abs(current - target) < EPSILON) continue;
-            patch[io.field] = io.invert(target);
+            /** @type {Record<string, any>} */
+            const patch = {};
+            for (const name of names) {
+                const io = channelIO(scales, host.channels, name);
+                if (!io) continue;
+                const target = FIT_OF[name](inner, pad);
+                const current = io.encode(work[i][io.field]);
+                if (Number.isFinite(current) && Math.abs(current - target) < EPSILON) continue;
+                patch[io.field] = io.invert(target);
+            }
+            if (Object.keys(patch).length) write(i, patch);
         }
-        if (Object.keys(patch).length) write(i, patch);
     }
 
-    // The top level last: every root is at its settled size by now. Its wall is the
-    // plot itself — a row pushed aside must not leave the chart (and with it, its
-    // column's domain).
-    if (spacing && dodges) {
-        /** @type {number[]} */
-        const roots = [];
-        work.forEach((_, i) => { if (tree.parentOf(i) === null) roots.push(i); });
-        space(roots, { x: true, y: true, x0: 0, x1: width, y0: 0, y1: height });
+    // ── TOP LEVEL (hierarchy roots, or every row of a flat table / network) ──
+    /** @type {number[]} */
+    const roots = [];
+    work.forEach((_, i) => { if (!isHierarchy || tree.parentOf(i) === null) roots.push(i); });
+    const rootArr = arrangeOf ? arrangeOf(null, work) : null;
+    if (passing && rootArr && rootArr.arrange === 'pack') {
+        // A root pack waits for release, like a container pack.
+    } else if (spacing && rootArr && SLOTTED.includes(rootArr.arrange)) {
+        slot(
+            roots,
+            { cx: width / 2, cy: height / 2, hw: width / 2, hh: height / 2 },
+            { top: 0, right: 0, bottom: 0, left: 0 },
+            { x: false, y: false },
+            rootArr
+        );
+    } else if (spacing && dodges && roots.some((k) => dodges(work[k], k, work, null) != null)) {
+        space(roots, { x: true, y: true, x0: 0, x1: width, y0: 0, y1: height }, null);
+    }
+
+    // ── CUSTOM LAYOUTS ───────────────────────────────────────────────────────
+    if (custom && custom.length) {
+        const nodeBox = (/** @type {number} */ i) => { const d = drawn(i); return d ? d.box : null; };
+        for (const fn of custom) {
+            const res = fn({
+                rows: work,
+                tables: work === tables[table] ? tables : { ...tables, [table]: work },
+                tree,
+                nodeBox,
+                extentOf,
+                scales,
+                width,
+                height,
+                locked,
+                anchors: held,
+                yields,
+                preview: passing,
+                shift,
+                shiftTree,
+                write,
+            });
+            if (Array.isArray(res) && res !== work) {
+                work = res.map((row, i) => (locked && locked(rows[i], i) ? rows[i] : row));
+            }
+        }
     }
 
     return work;

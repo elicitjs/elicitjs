@@ -5,7 +5,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { normalizeSchema } from '../src/core/schema.js';
 import { nestingOf, treeOf, treeProblems, enforceTree } from '../src/core/hierarchy.js';
-import { Elicit, plot, edit, setWarnings } from '../src/index.js';
+import { Elicit, plot, edit, layout, setWarnings } from '../src/index.js';
 
 setWarnings(false);
 
@@ -166,10 +166,10 @@ const boxes = (edits = []) => plot.rect({
     id: 'boxes',
     channels: {
         x: { field: 'x' }, y: { field: 'y' },
-        width: { field: 'w', scale: null, fit: true },
-        height: { field: 'h', scale: null, fit: true },
-        contains: { value: true, padding: 10 },
+        width: { field: 'w', scale: null },
+        height: { field: 'h', scale: null },
     },
+    contains: { padding: 10, fit: true },
     edits,
 });
 const boxChart = (data, edits) => {
@@ -441,9 +441,9 @@ describe('edit.hierarchy.nest', () => {
                 id: 'boxes',
                 channels: {
                     x: { field: 'x' }, y: { field: 'y' },
-                    width: { field: 'w', scale: null, fit: true }, height: { field: 'h', scale: null, fit: true },
-                    contains: { fn: (d) => d.id === 'group' },
+                    width: { field: 'w', scale: null }, height: { field: 'h', scale: null },
                 },
+                contains: { where: (d) => d.id === 'group', fit: true },
                 edits: [edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()],
             })],
         });
@@ -516,9 +516,9 @@ describe('a nesting table declared like any other table', () => {
                 id: 'b',
                 channels: {
                     x: { field: 'x' }, y: { field: 'y' },
-                    width: { field: 'w', scale: null, fit: true }, height: { field: 'h', scale: null, fit: true },
-                    contains: { value: true },
+                    width: { field: 'w', scale: null }, height: { field: 'h', scale: null },
                 },
+                contains: { fit: true },
                 edits: [edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()],
             })],
         });
@@ -539,19 +539,18 @@ describe('a nesting table declared like any other table', () => {
 
 // ── Padding and spacing ──────────────────────────────────────────────────────
 describe('container padding', () => {
-    const mark = (contains, fit = true, extra = {}) => plot.rect({
-        id: 'boxes',
-        channels: {
-            x: { field: 'x' }, y: { field: 'y' },
-            width: { field: 'w', scale: null, fit }, height: { field: 'h', scale: null, fit },
-            contains, ...extra,
-        },
-        edits: extra.edits || [],
-    });
-    const chart = (data, m) => {
+    const chart = (data, lay = []) => {
         const el = Elicit({
             width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false, motion: false,
-            schema: boxSchema, data, marks: [m],
+            schema: boxSchema, data,
+            marks: [plot.rect({
+                id: 'boxes',
+                channels: {
+                    x: { field: 'x' }, y: { field: 'y' },
+                    width: { field: 'w', scale: null }, height: { field: 'h', scale: null },
+                },
+            })],
+            layout: lay,
         });
         document.body.appendChild(el.dom());
         return el;
@@ -560,7 +559,7 @@ describe('container padding', () => {
     it('takes a side each, so a fitted container leaves room for a title', () => {
         const el = chart(
             { nodes: [box('g', 0, 0), box('a', 100, 100)], nesting: [nest('a', 'g')] },
-            mark({ value: true, padding: { top: 30, left: 4 } })
+            [layout.contain({ padding: { top: 30, left: 4 }, fit: true })]
         );
         const g = byId(el).g;
         expect(g.w).toBeCloseTo(40 + 4 + 10, 5);   // right takes the default
@@ -572,7 +571,7 @@ describe('container padding', () => {
     it('keeps the contents of a fixed-size container inside its padding', () => {
         const el = chart(
             { nodes: [box('g', 200, 150, 200, 100), box('a', 105, 150), box('b', 200, 300)], nesting: [nest('a', 'g'), nest('b', 'g')] },
-            mark({ value: true, padding: 12 }, false)
+            [layout.contain({ padding: 12, fit: false })]
         );
         const d = byId(el);
         expect(d.g.w).toBe(200);
@@ -582,19 +581,21 @@ describe('container padding', () => {
 });
 
 describe('dodge', () => {
-    const mark = (edits = [], dodge = true, fit = true) => plot.rect({
-        id: 'boxes',
-        channels: {
-            x: { field: 'x' }, y: { field: 'y' },
-            width: { field: 'w', scale: null, fit }, height: { field: 'h', scale: null, fit },
-            contains: { fn: (d) => d.id.startsWith('g') }, dodge,
-        },
-        edits,
-    });
-    const chart = (data, m) => {
+    const chart = (data, { edits = [], dodge = layout.dodge(), fit = true } = {}) => {
+        const lay = [layout.contain({ where: (d) => d.id.startsWith('g'), fit })];
+        if (dodge) lay.push(dodge);
         const el = Elicit({
             width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false, motion: false,
-            schema: boxSchema, data, marks: [m],
+            schema: boxSchema, data,
+            marks: [plot.rect({
+                id: 'boxes',
+                channels: {
+                    x: { field: 'x' }, y: { field: 'y' },
+                    width: { field: 'w', scale: null }, height: { field: 'h', scale: null },
+                },
+                edits,
+            })],
+            layout: lay,
         });
         document.body.appendChild(el.dom());
         return el;
@@ -607,7 +608,7 @@ describe('dodge', () => {
         const el = chart({
             nodes: [box('g1', 0, 0), box('a', 100, 100), box('b', 110, 104), box('c', 105, 96), box('g2', 0, 0), box('d', 130, 100)],
             nesting: [nest('a', 'g1'), nest('b', 'g1'), nest('c', 'g1'), nest('d', 'g2')],
-        }, mark());
+        });
         const d = byId(el);
         expect(allClear([d.a, d.b, d.c], 8)).toBe(true);
         expect(allClear([d.g1, d.g2], 8)).toBe(true);
@@ -617,12 +618,12 @@ describe('dodge', () => {
         expect(el.getData()).toEqual(once);
     });
 
-    it('turns off with `dodge: false`, and honours `gap` and a per-row fn', () => {
+    it('is opt-in, and honours `gap` and a per-row `where` predicate', () => {
         const data = () => ({ nodes: [box('a', 100, 100), box('b', 110, 100), box('c', 104, 100)], nesting: [] });
-        expect(chart(data(), mark([], false)).getData().nodes).toEqual(data().nodes);
-        const wide = byId(chart(data(), mark([], { value: true, gap: 30 })));
+        expect(chart(data(), { dodge: null }).getData().nodes).toEqual(data().nodes);
+        const wide = byId(chart(data(), { dodge: layout.dodge({ gap: 30 }) }));
         expect(allClear([wide.a, wide.b, wide.c], 30)).toBe(true);
-        const some = byId(chart(data(), mark([], { fn: (d) => d.id !== 'c' })));
+        const some = byId(chart(data(), { dodge: layout.dodge({ where: (d) => d.id !== 'c' }) }));
         expect(some.c.x).toBe(104);
         expect(clear(some.a, some.b, 8)).toBe(true);
     });
@@ -630,7 +631,7 @@ describe('dodge', () => {
     it('waits for the release, then makes room around the node that was dropped', () => {
         const el = chart(
             { nodes: [box('a', 100, 100), box('b', 300, 100)], nesting: [] },
-            mark([edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()])
+            { edits: [edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()] }
         );
         const node = { index: 0, featureId: 'boxes' };
         el.emit({ type: 'dragstart', node, x: 100, y: 200 });
@@ -649,7 +650,7 @@ describe('dodge', () => {
         const el = chart({
             nodes: [box('g1', 0, 0), box('a', 100, 150), box('g2', 0, 0), box('b', 170, 150), box('c', 100, 40)],
             nesting: [nest('a', 'g1'), nest('b', 'g2')],
-        }, mark([edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()]));
+        }, { edits: [edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()] });
         const before = byId(el);
         const node = { index: 4, featureId: 'boxes' };
         // drop c in g1's right-hand padding, so g1 grows toward g2
@@ -670,7 +671,7 @@ describe('dodge', () => {
         const el = chart({
             nodes: [box('g', 0, 0), box('a', 200, 150), box('b', 200, 200)],
             nesting: [nest('a', 'g'), nest('b', 'g')],
-        }, mark([edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()]));
+        }, { edits: [edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()] });
         const before = byId(el);
         const node = { index: 1, featureId: 'boxes' };
         const drawnYs = () => [...el.dom().querySelectorAll('rect')].filter((r) => +r.getAttribute('width') === 40).map((r) => +r.getAttribute('y'));
@@ -691,7 +692,7 @@ describe('dodge', () => {
         const el = chart({
             nodes: [box('g', 0, 0), box('a', 200, 150), box('c', 60, 150)],
             nesting: [nest('a', 'g')],
-        }, mark([edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()]));
+        }, { edits: [edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()] });
         const before = byId(el);
         const node = { index: 2, featureId: 'boxes' };
         // grabbed by its right end, so the pointer stays outside g while c overlaps it
@@ -712,7 +713,7 @@ describe('dodge', () => {
         const el = chart({
             nodes: [{ id: 'g', x: 200, y: 150, w: 150, h: 210 }, ...['c1', 'c2', 'c3', 'c4', 'c5'].map(card)],
             nesting: [],
-        }, mark([edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()], true, false));
+        }, { edits: [edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()], fit: false });
         // Drops that left two cards overlapping when siblings were only pushed in pairs.
         const drops = [[240, 230], [215, 210], [240, 175], [212, 140], [230, 100]];
         drops.forEach(([x, y], k) => {
@@ -736,7 +737,7 @@ describe('dodge', () => {
         const el = chart({
             nodes: [box('g', 200, 150, 200, 200), box('a', 150, 200, 60, 30), box('b', 250, 100, 60, 30)],
             nesting: [nest('a', 'g'), nest('b', 'g')],
-        }, mark([edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()], true, false));
+        }, { edits: [edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()], fit: false });
         const drawnB = () => [...el.dom().querySelectorAll('rect')].map((r) => ({ x: +r.getAttribute('x') + 30, y: +r.getAttribute('y') + 15, w: +r.getAttribute('width') }))
             .filter((r) => r.w === 60)
             // a is drawn under the pointer at (250, 200); b is the other one
@@ -757,7 +758,8 @@ describe('dodge', () => {
             width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false, motion: false,
             schema: { ...boxSchema, tables: { ...boxSchema.tables, nodes: { ...boxSchema.tables.nodes, r: { type: 'quantitative', domain: [0, 100] } } } },
             data: { nodes: [{ id: 'a', x: 200, y: 150, r: 20 }, { id: 'b', x: 212, y: 160, r: 20 }, { id: 'c', x: 195, y: 140, r: 20 }], nesting: [] },
-            marks: [plot.point({ channels: { x: { field: 'x' }, y: { field: 'y' }, size: { field: 'r', scale: null }, dodge: true } })],
+            marks: [plot.point({ channels: { x: { field: 'x' }, y: { field: 'y' }, size: { field: 'r', scale: null } } })],
+            layout: [layout.dodge()],
         });
         document.body.appendChild(el.dom());
         const n = el.getData().nodes;
@@ -772,10 +774,11 @@ describe('dodge', () => {
             schema: boxSchema,
             data: { nodes: [{ id: 'a', x: 180, y: 150 }, { id: 'b', x: 230, y: 150 }], nesting: [] },
             marks: [plot.composite({
-                channels: { x: { field: 'x' }, y: { field: 'y' }, dodge: true },
+                channels: { x: { field: 'x' }, y: { field: 'y' } },
                 // a small dot with a wide bar under it: the dots are clear, the bars are not
                 parts: [plot.point({ channels: { size: { value: 6 } } }), plot.rect({ channels: { width: { value: 80 }, height: { value: 10 } } })],
             })],
+            layout: [layout.dodge()],
         });
         document.body.appendChild(el.dom());
         const [a, b] = el.getData().nodes;
@@ -783,7 +786,7 @@ describe('dodge', () => {
     });
 
     it('spaces children an outside caller adds with no position', () => {
-        const el = chart({ nodes: [box('g', 200, 150), box('a', 200, 150)], nesting: [nest('a', 'g')] }, mark());
+        const el = chart({ nodes: [box('g', 200, 150), box('a', 200, 150)], nesting: [nest('a', 'g')] });
         const data = el.getData();
         el.setData({
             nodes: [...data.nodes, { id: 'n1', w: 40, h: 20 }, { id: 'n2', w: 40, h: 20 }, { id: 'n3', w: 40, h: 20 }],
@@ -794,16 +797,17 @@ describe('dodge', () => {
     });
 });
 
-describe('dodge by default', () => {
-    it('keeps every node clear of its siblings when no mark states `dodge`', () => {
+describe('dodge is opt-in', () => {
+    it('leaves overlapping siblings where they sit when no `layout.dodge()` is declared', () => {
         const el = boxChart({
             nodes: [box('g', 0, 0), box('a', 100, 100), box('b', 110, 104), box('c', 300, 200), box('d', 305, 205)],
             nesting: [nest('a', 'g'), nest('b', 'g')],
         });
         const d = byId(el);
-        const clear = (a, b) => Math.abs(a.x - b.x) >= (a.w + b.w) / 2 + 8 - 0.02 || Math.abs(a.y - b.y) >= (a.h + b.h) / 2 + 8 - 0.02;
-        expect(clear(d.a, d.b)).toBe(true);
-        expect(clear(d.c, d.d)).toBe(true);
+        expect(d.a.x).toBe(100);
+        expect(d.b.x).toBe(110);
+        expect(d.c.x).toBe(300);
+        expect(d.d.x).toBe(305);
     });
 });
 
@@ -828,9 +832,9 @@ describe('an emptied container', () => {
                 id: 'boxes',
                 channels: {
                     x: { field: 'x' }, y: { field: 'y' },
-                    width: { field: 'w', scale: null, fit: true }, height: { field: 'h', scale: null, fit: true },
-                    contains: { fn: (d) => d.id === 'g', padding: 10 },
+                    width: { field: 'w', scale: null }, height: { field: 'h', scale: null },
                 },
+                contains: { where: (d) => d.id === 'g', padding: 10, fit: true },
                 edits: [edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()],
             })],
         });
@@ -880,19 +884,18 @@ describe('an emptied container', () => {
 });
 
 describe('arranged contents', () => {
-    const lanes = (arrange = 'column', extra = {}) => plot.rect({
+    const laneMark = () => plot.rect({
         id: 'boxes',
         channels: {
             x: { field: 'x' }, y: { field: 'y' },
-            width: { field: 'w', scale: null, fit: true }, height: { field: 'h', scale: null, fit: true },
-            contains: { fn: (d) => d.id.startsWith('L'), padding: 10, arrange, gap: 6, ...extra },
+            width: { field: 'w', scale: null }, height: { field: 'h', scale: null },
         },
         edits: [edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()],
     });
-    const chart = (data, m) => {
+    const chart = (data, lay = [layout.contain({ where: (d) => d.id.startsWith('L'), padding: 10, fit: true }), layout.column({ gap: 6 })]) => {
         const el = Elicit({
             width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false, motion: false,
-            schema: boxSchema, data, marks: [m],
+            schema: boxSchema, data, marks: [laneMark()], layout: lay,
         });
         document.body.appendChild(el.dom());
         return el;
@@ -915,7 +918,7 @@ describe('arranged contents', () => {
     });
 
     it('stacks a column\'s cards from its top-left, in the order they sit', () => {
-        const el = chart(seed(), lanes());
+        const el = chart(seed());
         const d = byId(el);
         expect(order(el, ['c1', 'c2', 'c3'])).toEqual(['c1', 'c2', 'c3']);
         expect(d.c1.x).toBe(d.c2.x);
@@ -927,7 +930,7 @@ describe('arranged contents', () => {
     });
 
     it('reorders when a card is dropped between others, and leaves no gap', () => {
-        const el = chart(seed(), lanes());
+        const el = chart(seed());
         const top = byId(el).c1;
         drag(el, 3, { x: top.x, y: 300 - top.y - 12 }); // c3 to above c1
         expect(order(el, ['c1', 'c2', 'c3'])).toEqual(['c3', 'c1', 'c2']);
@@ -938,7 +941,7 @@ describe('arranged contents', () => {
     });
 
     it('opens the slot while a card is dragged, and keeps the card under the pointer', () => {
-        const el = chart(seed(), lanes());
+        const el = chart(seed());
         const before = byId(el);
         const node = { index: 3, featureId: 'boxes' };
         const from = { x: before.c3.x, y: 300 - before.c3.y };
@@ -956,7 +959,7 @@ describe('arranged contents', () => {
     });
 
     it('puts a card from another lane in the slot nearest the drop', () => {
-        const el = chart(seed(), lanes());
+        const el = chart(seed());
         const d0 = byId(el);
         // just below halfway between c1 and c2
         drag(el, 5, { x: d0.c1.x, y: 300 - (d0.c1.y + d0.c2.y) / 2 + 4 });
@@ -972,18 +975,10 @@ describe('arranged contents', () => {
             nodes: [{ id: 'L', x: 200, y: 150, w: 130, h: 100 }, ...kids.map((id, k) => box(id, 150 + k * 10, 150))],
             nesting: kids.map((id) => nest(id, 'L')),
         });
-        const grown = byId(chart(data(), lanes('row')));
+        const grown = byId(chart(data(), [layout.contain({ where: (d) => d.id === 'L', padding: 10, fit: true }), layout.row({ gap: 6 })]));
         expect(kids.map((id) => grown[id].x)).toEqual([90, 136, 182, 228].map((x) => x + grown.a.x - 90));
         expect(new Set(kids.map((id) => grown[id].y)).size).toBe(1);
-        const fixed = plot.rect({
-            id: 'boxes',
-            channels: {
-                x: { field: 'x' }, y: { field: 'y' },
-                width: { field: 'w', scale: null }, height: { field: 'h', scale: null },
-                contains: { fn: (d) => d.id === 'L', padding: 10, arrange: 'row', gap: 6 },
-            },
-        });
-        const wrapped = byId(chart(data(), fixed));
+        const wrapped = byId(chart(data(), [layout.contain({ where: (d) => d.id === 'L', padding: 10, fit: false }), layout.row({ gap: 6 })]));
         expect(wrapped.L.w).toBe(130);
         // 110px inside: two 40px cards to a line
         expect(wrapped.a.y).toBe(wrapped.b.y);
@@ -992,7 +987,7 @@ describe('arranged contents', () => {
     });
 
     it('puts a card sent with no position in the last slot', () => {
-        const el = chart(seed(), lanes());
+        const el = chart(seed());
         const data = el.getData();
         el.setData({
             nodes: [...data.nodes, { id: 'c4', w: 40, h: 20 }],
@@ -1009,7 +1004,7 @@ describe('arranged contents', () => {
         const el = chart({
             nodes: [box('L', 200, 150), ...kids.map((id, k) => box(id, 150 + k * 10, 150 - k))],
             nesting: kids.map((id) => nest(id, 'L')),
-        }, lanes('grid', { columns: 2 }));
+        }, [layout.contain({ where: (d) => d.id === 'L', padding: 10, fit: true }), layout.grid({ columns: 2, gap: 6 })]);
         const d = byId(el);
         expect(new Set(kids.map((id) => d[id].x)).size).toBe(2);
         expect(new Set(kids.map((id) => d[id].y)).size).toBe(3);
@@ -1023,10 +1018,15 @@ describe('arranged contents', () => {
                 nodes: [{ id: 'S', x: 200, y: 150, r: 10 }, ...[12, 20, 8, 15, 10].map((r, k) => ({ id: `p${k}`, x: 200 + k, y: 150, r }))],
                 nesting: [0, 1, 2, 3, 4].map((k) => nest(`p${k}`, 'S')),
             },
-            marks: [plot.point({ id: 'dots', edits: [edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()], channels: {
-                x: { field: 'x' }, y: { field: 'y' }, size: { field: 'r', scale: null, fit: true },
-                contains: { fn: (d) => d.id === 'S', padding: 6, arrange: 'pack', gap: 4 },
-            } })],
+            marks: [plot.point({
+                id: 'dots',
+                edits: [edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()],
+                channels: { x: { field: 'x' }, y: { field: 'y' }, size: { field: 'r', scale: null } },
+            })],
+            layout: [
+                layout.contain({ where: (d) => d.id === 'S', padding: 6, fit: true }),
+                layout.pack({ gap: 4 }),
+            ],
         });
         document.body.appendChild(el.dom());
         return el;
@@ -1075,13 +1075,7 @@ describe('arranged contents', () => {
         const el = chart({
             nodes: [box('L', 200, 150, 380, 280), ...kids.map(([id, x, y]) => box(id, x, y))],
             nesting: kids.map(([id]) => nest(id, 'L')),
-        }, plot.rect({
-            id: 'boxes',
-            channels: {
-                x: { field: 'x' }, y: { field: 'y' }, width: { field: 'w', scale: null }, height: { field: 'h', scale: null },
-                contains: { fn: (d) => d.id === 'L', arrange: 'pack', keep: 'angle', gap: 4 },
-            },
-        }));
+        }, [layout.contain({ where: (d) => d.id === 'L', fit: false }), layout.pack({ keep: 'angle', gap: 4 })]);
         const d = byId(el);
         for (const [id, x, y] of kids.slice(1)) {
             expect(Math.atan2(d[id].y - 150, d[id].x - 200)).toBeCloseTo(Math.atan2(y - 150, x - 200), 6);
@@ -1102,22 +1096,10 @@ describe('arranged contents', () => {
         const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
         setWarnings(true);
         try {
-            chart(seed(), lanes('pack', { keep: 'size' }));
+            chart(seed(), [layout.pack({ keep: 'size' })]);
             expect(spy.mock.calls.some(([m]) => /keep: "size"/.test(m))).toBe(true);
-            chart(seed(), lanes('row', { keep: 'angle' }));
-            expect(spy.mock.calls.some(([m]) => /only a pack reads/.test(m))).toBe(true);
-        } finally {
-            setWarnings(false);
-            spy.mockRestore();
-        }
-    });
-
-    it('warns on an arrangement it does not know, and dodges instead', () => {
-        const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        setWarnings(true);
-        try {
-            chart(seed(), lanes('stack'));
-            expect(spy.mock.calls.some(([m]) => /not an arrangement/.test(m))).toBe(true);
+            chart(seed(), [layout.row({ keep: 'angle' })]);
+            expect(spy.mock.calls.some(([m]) => /only applies to layout\.pack/.test(m))).toBe(true);
         } finally {
             setWarnings(false);
             spy.mockRestore();

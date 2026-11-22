@@ -5,11 +5,10 @@ import { portFeature } from '../../plot/port.js';
 import { tip as tipGuide } from '../../guides/tip.js';
 import { warn } from '../dev.js';
 import { markLabel } from '../guards.js';
-import { ARRANGEMENTS, KEEPS } from '../arrange.js';
 
 /**
  * Flattens the spec's marks, elements and implicit layers into one ordered
- * feature list, and desugars `ports`, `contains`/`dodge`/`fit` and `tip`.
+ * feature list, and desugars `ports`, `mark.contains` and `tip`.
  * Runs once at Elicit() time; reads no chart state.
  */
 
@@ -104,99 +103,109 @@ export function desugarPorts(features, nodesTableName) {
     }
 }
 
+const MARK_CONTAINS_KEYS = ['where', 'padding', 'fit'];
+const VALID_FIT = [true, false, 'x', 'y'];
+
 /**
- * Desugar a hierarchy node mark's `contains` and `dodge` channels onto the
- * feature (no scale is built for them) and check its `fit: true` size channels
- * (core/fit.js).
+ * Warn on removed channel-level layout keys (`channels.contains`, `channels.dodge`,
+ * boolean `fit: true` on non-image channels) and desugar the universal mark option
+ * `contains` (`true | fn | { where?, padding?, fit? }`) into chart-side container
+ * rules. Never mutates a shared dataset.
  *
  * @param {any[]} features
  * @param {string | null} hierarchyNodes the nodes table, when the structure is a hierarchy
+ * @returns {{ feature: any, where: ((row: any, i: number, rows: any[]) => boolean) | null, padding: any, fit: boolean | 'x' | 'y' }[]}
  */
-export function desugarContainers(features, hierarchyNodes) {
+export function desugarContains(features, hierarchyNodes) {
+    /** @type {{ feature: any, where: ((row: any, i: number, rows: any[]) => boolean) | null, padding: any, fit: boolean | 'x' | 'y' }[]} */
+    const out = [];
     for (const f of features) {
-        if (!f || f.views === 'scale' || f.portHost || !f.channels) continue;
-        const contains = f.channels.contains;
-        // `dodge: false` is a statement too: these rows keep no distance.
-        const dodge = f.channels.dodge === false ? { value: false } : f.channels.dodge;
-        const fitted = Object.keys(f.channels).filter((ch) => f.channels[ch] && f.channels[ch].fit === true);
-        if (!contains && !dodge && !fitted.length) continue;
-        if (contains) delete f.channels.contains;
-        if ('dodge' in f.channels) delete f.channels.dodge;
+        if (!f || f.views === 'scale' || f.portHost) continue;
+        // Guard removed channel-level syntax so scales aren't polluted and authors
+        // get a direct pointer to the new API.
+        if (f.channels) {
+            if ('contains' in f.channels) {
+                warn(
+                    `${markLabel(f)}:channel:contains`,
+                    `mark ${markLabel(f)} puts \`contains\` inside \`channels\`, which is no longer a channel. ` +
+                    'Use `constraints.contain(...)` on the dataset, `layout.contain(...)` in `spec.layout`, ' +
+                    'or the top-level mark option `contains` (e.g. `plot.rect({ contains: ... })`).'
+                );
+                delete f.channels.contains;
+            }
+            if ('dodge' in f.channels) {
+                warn(
+                    `${markLabel(f)}:channel:dodge`,
+                    `mark ${markLabel(f)} puts \`dodge\` inside \`channels\`, which is no longer a channel. ` +
+                    'Add `layout.dodge()` to `spec.layout`: `layout: [layout.dodge({ gap: 8 })]`.'
+                );
+                delete f.channels.dodge;
+            }
+            for (const [ch, spec] of Object.entries(f.channels)) {
+                if (ch === 'image' || ch === 'src' || !spec || typeof spec.fit !== 'boolean') continue;
+                warn(
+                    `${markLabel(f)}:channel:fit:${ch}`,
+                    `mark ${markLabel(f)} puts \`fit: ${spec.fit}\` on channel "${ch}", which is no longer a channel option. ` +
+                    'Pass `fit: true` (or "x" / "y") to `layout.contain({ fit: true })` or the mark option `contains: { fit: true }`.'
+                );
+                delete spec.fit;
+            }
+        }
+
+        const raw = f.contains;
+        if (raw == null || raw === false) continue;
+        delete f.contains;
+
         if (!hierarchyNodes || f.table !== hierarchyNodes) {
             warn(
                 `${markLabel(f)}:contains:table`,
-                `mark ${markLabel(f)} states ${contains ? '`contains`' : dodge ? '`dodge`' : '`fit`'}, but it does not ` +
-                'draw the nodes of a hierarchy, so nothing can be nested in its rows. Declare ' +
-                'schema: { structure: "hierarchy", tables: { nodes, nesting } } and put it on ' +
-                'the mark drawing the nodes.'
+                `mark ${markLabel(f)} states \`contains\`, but it does not draw the nodes of a hierarchy, ` +
+                'so nothing can be nested in its rows. Declare schema: { structure: "hierarchy", tables: { nodes, nesting } } ' +
+                'and put `contains` on the mark drawing the nodes.'
             );
-            for (const ch of fitted) delete f.channels[ch].fit;
             continue;
         }
         if (typeof f.nodeBox !== 'function') {
             warn(
                 `${markLabel(f)}:contains:box`,
-                `mark ${markLabel(f)} states ${contains ? '`contains`' : dodge ? '`dodge`' : '`fit`'}, but it does not ` +
-                'declare the box it draws, so it has no inside. Use a mark that draws a node ' +
-                'shape: point, rect, ellipse, shape, or a composite.'
+                `mark ${markLabel(f)} states \`contains\`, but it does not declare the box it draws, ` +
+                'so it has no inside. Use a mark that draws a node shape: point, rect, ellipse, shape, or a composite.'
             );
             continue;
         }
-        if (contains) f.contains = checkArrange(f, contains === true ? { value: true } : contains);
-        if (dodge) f.dodge = dodge === true ? { value: true } : dodge;
-        for (const ch of fitted) {
-            if (f.channels[ch].field != null) continue;
-            warn(
-                `${markLabel(f)}:fit:${ch}`,
-                `mark ${markLabel(f)} marks channel "${ch}" \`fit: true\` but names no field. ` +
-                'A fitted size is written to a column — that is what keeps the drawing, the ' +
-                `links and getData() in agreement. Name one: ${ch}: { field: '…', fit: true }.`
-            );
-            delete f.channels[ch].fit;
-        }
-    }
-}
 
-/**
- * Check a `contains` channel's `arrange`, `columns` and `keep`. An unknown
- * arrangement warns and falls back to `dodge`; an unknown `keep`, to `distance`.
- * @param {any} f the mark
- * @param {any} contains
- * @returns {any}
- */
-function checkArrange(f, contains) {
-    const { arrange, columns, keep } = contains;
-    if (arrange !== undefined && !ARRANGEMENTS.includes(arrange)) {
-        warn(
-            `${markLabel(f)}:contains:arrange`,
-            `mark ${markLabel(f)} states \`contains: { arrange: ${JSON.stringify(arrange)} }\`, ` +
-            `which is not an arrangement. Use one of ${ARRANGEMENTS.map((a) => `"${a}"`).join(', ')}. ` +
-            'Arranging its contents as "dodge".'
-        );
-        contains = { ...contains, arrange: 'dodge' };
+        /** @type {((row: any, i: number, rows: any[]) => boolean) | null} */
+        let where = null;
+        let padding;
+        /** @type {boolean | 'x' | 'y'} */
+        let fit = false;
+
+        if (typeof raw === 'function') {
+            where = raw;
+        } else if (raw && typeof raw === 'object') {
+            for (const key of Object.keys(raw)) {
+                if (MARK_CONTAINS_KEYS.includes(key)) continue;
+                const hint = ['arrange', 'gap', 'columns', 'keep'].includes(key)
+                    ? 'arrangements moved to `spec.layout`: use layout.row(), layout.column(), layout.grid(), layout.pack() or layout.dodge().'
+                    : key === 'fn'
+                        ? 'the container predicate is `where`: contains: { where: d => … } (or pass the function directly).'
+                        : `options are: ${MARK_CONTAINS_KEYS.join(', ')}.`;
+                warn(`${markLabel(f)}:contains:opt:${key}`, `mark ${markLabel(f)} \`contains: { ${key}: … }\`: ${hint}`);
+            }
+            if (typeof raw.where === 'function') where = raw.where;
+            padding = raw.padding;
+            if (raw.fit !== undefined) {
+                if (VALID_FIT.includes(raw.fit)) fit = raw.fit;
+                else warn(`${markLabel(f)}:contains:fit`, `mark ${markLabel(f)} \`contains: { fit: ${JSON.stringify(raw.fit)} }\`: use true, false, "x" or "y".`);
+            }
+        } else if (raw !== true) {
+            warn(`${markLabel(f)}:contains:type`, `mark ${markLabel(f)} \`contains\` must be true, a predicate function, or { where?, padding?, fit? }.`);
+            continue;
+        }
+
+        out.push({ feature: f, where, padding, fit });
     }
-    if (columns !== undefined && contains.arrange !== 'grid') {
-        warn(
-            `${markLabel(f)}:contains:columns`,
-            `mark ${markLabel(f)} states \`contains: { columns }\`, which only a grid reads. ` +
-            'Add `arrange: "grid"`, or leave `columns` out.'
-        );
-    }
-    if (keep !== undefined && !KEEPS.includes(keep)) {
-        warn(
-            `${markLabel(f)}:contains:keep`,
-            `mark ${markLabel(f)} states \`contains: { keep: ${JSON.stringify(keep)} }\`. ` +
-            `Use one of ${KEEPS.map((k) => `"${k}"`).join(', ')}. Packing by "distance".`
-        );
-        contains = { ...contains, keep: 'distance' };
-    } else if (keep !== undefined && contains.arrange !== 'pack') {
-        warn(
-            `${markLabel(f)}:contains:keep:pack`,
-            `mark ${markLabel(f)} states \`contains: { keep }\`, which only a pack reads. ` +
-            'Add `arrange: "pack"`, or leave `keep` out.'
-        );
-    }
-    return contains;
+    return out;
 }
 
 /**

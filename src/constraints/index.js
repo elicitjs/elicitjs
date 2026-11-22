@@ -13,4 +13,6 @@ export { spacing } from './spacing.js';
 // Coupling rules: columns of one row that move together.
 export { follow } from './follow.js';
 export { symmetric } from './symmetric.js';
+// Hierarchy rules: who may contain whom in the `nesting` table.
+export { contain } from './contain.js';
 

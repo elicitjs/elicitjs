@@ -42,7 +42,7 @@ export function ownersOf(ns, type) {
     if (ns === 'elements') return [baseElement(type) || type];
     if (ns === 'edit') return [`edit.${type}`, 'edit'];
     if (ns === 'widgets') return [`widgets.${type}`, 'widget'];
-    if (ns === 'guides' || ns === 'constraints' || ns === 'looks') return [`${ns}.${type}`];
+    if (ns === 'guides' || ns === 'constraints' || ns === 'looks' || ns === 'layout') return [`${ns}.${type}`];
     return [];
 }
 
@@ -61,6 +61,7 @@ export function signatureOf(owners, key) {
 export function nestedOwners(owners, key) {
     if (key === 'outline') return ['outline'];
     if (key === 'tip' && owners.includes('mark')) return ['tip'];
+    if (key === 'contains' && owners.includes('mark')) return ['contains'];
     if (key === 'grid' && owners.includes('axis')) return ['grid'];
     return null;
 }

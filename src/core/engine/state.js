@@ -23,9 +23,10 @@
  * @property {import('../../types').ScaleMap} scales  the global scales, re-resolved every render
  * @property {boolean} planeRaised  was the interaction plane on top at the last render?
  * @property {boolean} sceneHasOnHover  does the last built scene carry an `onHover` node (a port)?
- * @property {boolean} stroking  is a hierarchy drag stroke in progress? (nothing is pushed apart mid-stroke)
- * @property {any[] | null} strokeNodes  the hierarchy's node rows as the current stroke began
- * @property {number | null} strokeRow  the hierarchy node row the current stroke grabbed
+ * @property {boolean} stroking  is a layout drag stroke in progress? (nothing is pushed apart mid-stroke)
+ * @property {string | null} strokeTable  the layout table the current stroke is dragging in
+ * @property {any[] | null} strokeNodes  the layout table's rows as the current stroke began
+ * @property {number | null} strokeRow  the layout table row the current stroke grabbed
  * @property {boolean} snapNext  draw the next frame at once, not eased (data arrived from outside)
  */
 

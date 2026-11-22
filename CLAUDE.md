@@ -23,6 +23,7 @@ constraints, guides/effects/rendering, elements/legends, public API.
 - `src/edit/index.js` — edits; `src/edit/drivers/` — multi-event lifecycles.
 - `src/elements/index.js` — axis / grid / legend / axisRadial.
 - `src/looks/index.js` — looks (experimental): `rough` redraws the scene by hand, the rest are shaders the canvas renderer runs. `src/core/looks.js` holds the contract.
+- `src/layout/index.js` — spatial layout processes (`spec.layout`): `contain`, `dodge`, `row`, `column`, `grid`, `pack`, `custom`. Settled by `src/core/fit.js` + `src/core/arrange.js`.
 - `src/vocabulary.js` — every factory's option list, and the JSON grammar tables (`SPEC_*`). Imports nothing.
 - `src/json/index.js` — the JSON spec layer: `compile`, `registerFunction`, `recorder`.
 
@@ -64,7 +65,7 @@ not an `isAxis || isLegend` disjunction, when you mean "is this a chart element"
 
 ## Rules that apply everywhere
 
-- **A grammar namespace contains only spec keywords.** `plot.*`, `edit.*`, `constraints.*`, `guides.*`, `elements.*`, `looks.*`, `widgets.*` hold only what can appear in a spec; building blocks (`encodeChannel`, `makeEdit`, `registerDriver`, …) go in `authoring.*`. `compile()` turns a keyword into its factory, so every namespace member is a JSON keyword.
+- **A grammar namespace contains only spec keywords.** `plot.*`, `edit.*`, `constraints.*`, `guides.*`, `elements.*`, `looks.*`, `layout.*`, `widgets.*` hold only what can appear in a spec; building blocks (`encodeChannel`, `makeEdit`, `registerDriver`, …) go in `authoring.*`. `compile()` turns a keyword into its factory, so every namespace member is a JSON keyword.
 - **The JSON spec is the same grammar.** `compile(json)` (`src/json/`) turns `{ "type": "bar", … }` into `plot.bar({ … })` by walking the live namespaces, so while the API changes every change must also compile from JSON:
   - A new factory is a keyword the moment it is exported, and a keyword is permanent. Name it by the conventions below.
   - An option that takes a function, holds another factory's result or holds the author's data needs its entry in `SPEC_FUNCTIONS`, `SPEC_SLOTS` or `SPEC_OPAQUE` (`src/vocabulary.js`). A positional argument needs one in `SPEC_POSITIONAL`.

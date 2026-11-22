@@ -767,14 +767,14 @@ export function orderFieldOf(channels = {}) {
 }
 
 /**
- * The options every mark passes through verbatim: id, edits, table, tip, clip, motion.
+ * The options every mark passes through verbatim: id, edits, table, tip, clip, motion, contains.
  * Spread first in a factory's returned object; a key stated after it wins.
  *
  * `table:` names the one table a mark draws. Without it the mark takes the table
  * filling its `tableRole` (`link` declares 'links'; other marks get the primary
  * table). Names go in `table:`; roles go in `tableRole` and `Edit.table`.
  * @param {any} opts the result of normalizeMarkOptions
- * @returns {{ id: any, edits: any, table: any, tip: any, clip: any, motion: any }}
+ * @returns {{ id: any, edits: any, table: any, tip: any, clip: any, motion: any, contains: any }}
  */
 export function markCommon(opts) {
     return {
@@ -792,6 +792,9 @@ export function markCommon(opts) {
         // `true` eases this mark's drawn nodes to where they belong, and draws a
         // grabbed row at the pointer (engine/carry.js). `spec.motion` keeps the clock.
         motion: opts.motion,
+        // Sugar for hierarchy containers: `true`, `(d, i, rows) => boolean`, or
+        // `{ where?, padding?, fit? }`. Desugars at chart assembly (engine/features.js).
+        contains: opts.contains,
     };
 }
 
@@ -820,6 +823,11 @@ const MISTAKEN_OPTIONS = {
     constraints: 'a constraint is a DATASET invariant — it gates every edit from every '
         + 'mark, whichever one declared it — so writing it inside a mark says something '
         + 'the engine does not mean. Put it on the Elicit spec: constraints: [...].',
+    dodge: 'dodging is a chart-level spatial layout process, not a mark option. '
+        + 'Add layout.dodge() to spec.layout: layout: [layout.dodge({ gap: 8 })].',
+    arrange: 'arrangements are chart-level spatial layout processes, not mark options. '
+        + 'Add layout.row(), layout.column(), layout.grid() or layout.pack() to spec.layout.',
+    layout: 'layout is a chart-level option, not a mark option. Put it on the chart spec: layout: [...].',
     value: 'a constant belongs on a channel: channels.<name> = { value: … } for visual space, { datum: … } for data space.',
     field: 'a field belongs on a channel: channels.<name> = { field: "…" }.',
     ...positionalCorrections(),

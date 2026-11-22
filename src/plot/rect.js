@@ -99,9 +99,11 @@ export function rect(options = {}) {
          * The box this rect draws for one row, from the same extents build() reads.
          * @param {any} d @param {number} i @param {any[]} rows
          * @param {import('../types').ScaleMap} scales @param {number} width @param {number} height
-         * @returns {import('../types').NodeBox}
+         * @returns {import('../types').NodeBox | null}
          */
         nodeBox: (d, i, rows, scales, width, height) => {
+            if ((channels.width && missingValue(channels, 'width', d))
+                || (channels.height && missingValue(channels, 'height', d))) return null;
             const xExt = resolveExtent('x', channels, scales, scales.x, d, xKey, forcedValueAxis === 'x', width, i, rows);
             const yExt = resolveExtent('y', channels, scales, scales.y, d, yKey, forcedValueAxis === 'y', height, i, rows);
             return {

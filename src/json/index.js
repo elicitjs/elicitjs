@@ -12,6 +12,7 @@ import * as edit from '../edit/index.js';
 import * as constraints from '../constraints/index.js';
 import * as guides from '../guides/index.js';
 import * as looks from '../looks/index.js';
+import * as layout from '../layout/index.js';
 import * as widgets from '../widgets/index.js';
 import * as format from '../format.js';
 import { D3Renderer } from '../renderers/d3-renderer/index.js';
@@ -23,7 +24,7 @@ export { registerFunction } from './functions.js';
 
 /** The library's own namespaces, which `compile` resolves keywords in. */
 export const NAMESPACES = {
-    plot, elements, edit, constraints, guides, looks, widgets, format,
+    plot, elements, edit, constraints, guides, looks, layout, widgets, format,
     renderers: { svg: D3Renderer, canvas: CanvasRenderer },
 };
 

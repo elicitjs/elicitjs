@@ -24,7 +24,7 @@ const FRAME_KEYS = ['x', 'y', 'size'];
 
 // Channels about the glyph as one node. They go on one feature (the box in box
 // mode, else the first shaped part), never on every part.
-const GLYPH_KEYS = ['ports', 'contains', 'dodge'];
+const GLYPH_KEYS = ['ports'];
 
 // Counts composite calls so every glyph gets its own paint group.
 let glyphSeq = 0;
@@ -233,6 +233,8 @@ export function composite(options = {}) {
         // Stamped on the box and every part that does not state its own.
         clip,
         motion,
+        // Forwarded to the box (box mode) or the first shaped part (plain mode).
+        contains,
         channels: groupChannels = {},
         // Stamped onto parts that don't state their own.
         discreteScale = 'band'
@@ -260,15 +262,15 @@ export function composite(options = {}) {
         if (GLYPH_KEYS.includes(key)) continue;
         trickle[key] = spec;
     }
-    // A key that is present counts, even when false (`dodge: false`).
     const stated = (/** @type {string} */ key) => groupChannels[key] != null;
-    if (!boxed && GLYPH_KEYS.some(stated)) {
+    if (!boxed && (GLYPH_KEYS.some(stated) || contains !== undefined)) {
         // The glyph's shape, not its label: a `node()`'s dot, not its name.
         const shaped = parts.filter((/** @type {any} */ p) => typeof p.nodeBox === 'function');
         const host = shaped.find((/** @type {any} */ p) => !p.labelBox) || shaped[0] || parts[0];
         for (const key of GLYPH_KEYS) {
             if (host && stated(key)) (host.channels || (host.channels = {}))[key] = groupChannels[key];
         }
+        if (host && contains !== undefined && host.contains === undefined) host.contains = contains;
     }
 
     const wrapped = parts.map((/** @type {any} */ part, /** @type {number} */ i) => {
@@ -389,6 +391,7 @@ export function composite(options = {}) {
         table,
         clip,
         motion,
+        contains,
         discreteScale,
         ...positionalKeys(boxChannels),
         /**

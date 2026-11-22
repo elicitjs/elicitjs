@@ -25,9 +25,18 @@ import type {
   Constraint,
   ConstraintContext,
   ConstraintResult,
+  ContainConstraintOptions,
+  ContainLayoutOptions,
   CountOptions,
   CreateOptions,
   CrosshairGuideOptions,
+  CustomLayoutOptions,
+  DodgeLayoutOptions,
+  FlowLayoutOptions,
+  GridLayoutOptions,
+  LayoutContext,
+  LayoutSpec,
+  PackLayoutOptions,
   QuadrantsGuideOptions,
   TipGuideOptions,
   CurveOptions,
@@ -380,6 +389,32 @@ export const constraints: {
   symmetric(options?: SymmetricOptions): Constraint;
   monotonic(options?: MonotonicOptions): Constraint;
   spacing(options?: SpacingOptions): Constraint;
+  /** Hierarchy nesting rules: who may contain whom, maxDepth and maxChildren. */
+  contain(options?: ContainConstraintOptions): Constraint;
+};
+
+/**
+ * LAYOUT — chart-level spatial settling processes (`spec.layout`). Each reads
+ * rendered mark boxes (`nodeBox`, glyph extents) and writes settled positions
+ * and sizes back into the dataset through the channels' scales on commit/release,
+ * with live drag previews and `motion` easing. Works on tables, networks and
+ * hierarchies (`contain` is hierarchy-only).
+ */
+export const layout: {
+  /** Container enclosure geometry: inner `padding`, optional auto-fit (`fit`), walls and carry. */
+  contain(options?: ContainLayoutOptions): LayoutSpec;
+  /** Push overlapping rows apart by `gap` px. */
+  dodge(options?: DodgeLayoutOptions): LayoutSpec;
+  /** Line items up left to right, wrapping when a fixed width limits them. */
+  row(options?: FlowLayoutOptions): LayoutSpec;
+  /** Stack items top to bottom, wrapping when a fixed height limits them. */
+  column(options?: FlowLayoutOptions): LayoutSpec;
+  /** Place items in equal cells, `columns` to a row. */
+  grid(options?: GridLayoutOptions): LayoutSpec;
+  /** Draw items together where they are, touching at `gap` px (`keep`: 'distance' | 'angle'). */
+  pack(options?: PackLayoutOptions): LayoutSpec;
+  /** Author your own spatial settling process against `LayoutContext`. */
+  custom(fn: (ctx: LayoutContext) => import('./types.js').Datum[] | void, options?: CustomLayoutOptions): LayoutSpec;
 };
 
 /**
@@ -549,6 +584,7 @@ export interface Recorder {
   constraints: typeof constraints;
   guides: typeof guides;
   looks: typeof looks;
+  layout: typeof layout;
   widgets: typeof widgets;
   format: typeof format;
   /** The JSON for a spec built from these namespaces, and the functions it names.

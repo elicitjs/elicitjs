@@ -530,7 +530,7 @@ export const CHART_KEYS = [
     // Scales (per channel). No `domain` here — a domain describes the data.
     'scales', 'projection',
     // Presentation
-    'theme', 'effects', 'motion', 'looks',
+    'theme', 'effects', 'motion', 'looks', 'layout',
     // Chart chrome that reserves layout space like a legend (core/titles.js)
     'title', 'subtitle', 'caption',
     // Multi-stage elicitation

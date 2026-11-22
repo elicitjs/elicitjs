@@ -171,6 +171,7 @@ export function createTables(state, deps) {
             field: context.field,
             tables: state.tables, table,
             schema: fieldsOf(schemaSpec, table),
+            schemaSpec,
             locked: isLockedIn(table),
         };
         let out = rows;

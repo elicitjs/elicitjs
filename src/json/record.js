@@ -288,6 +288,7 @@ export function createRecorder(namespaces) {
             elements: lookalike('elements'),
             guides: lookalike('guides'),
             looks: lookalike('looks'),
+            layout: lookalike('layout'),
             constraints: lookalike('constraints'),
             widgets: lookalike('widgets'),
             edit,

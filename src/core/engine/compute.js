@@ -19,7 +19,10 @@ import { warn } from '../dev.js';
  *   ui: any,
  *   featureNodes: Record<string, any[]>,
  *   hierarchyNodes: string | null,
+ *   layoutTables: string[],
  *   boxHosts: any[],
+ *   fitAxesAt: (table: string, row: any, i: number, rows: any[]) => { x: boolean, y: boolean },
+ *   markContainsGate: ((nestRows: any[], nodeRows: any[]) => boolean) | null,
  *   tableOf: (feature: any) => any[],
  *   targetTableOf: (feature: any, edit: import('../../types').Edit) => string,
  *   isLockedIn: (name: string) => ((d: any, i: number) => boolean) | null,
@@ -28,8 +31,8 @@ import { warn } from '../dev.js';
  *   nodePortsRule: ((row: any, i: number, rows: any[]) => Record<string, string> | null) | null,
  *   containsRule: ((row: any, i: number, rows: any[]) => boolean) | null,
  *   channelsDrawing: (name: string) => Record<string, any> | null,
- *   settleNodes: (before?: any[] | null, frozen?: Set<number> | null, dodge?: any) => void,
- *   settledNodes: (from: Record<string, any[]>, before: any[] | null, frozen: Set<number> | null, dodge?: any) => any[],
+ *   settleNodes: (before?: any[] | null, frozen?: Set<number> | null, dodge?: any, table?: string | null) => void,
+ *   settledNodes: (from: Record<string, any[]>, before: any[] | null, frozen: Set<number> | null, dodge?: any, table?: string | null) => any[],
  *   heldStill: () => Set<number> | null,
  *   activeEdits: (feature: any) => import('../../types').Edit[],
  *   selectionPrimary: () => number | null,
@@ -41,7 +44,8 @@ import { warn } from '../dev.js';
  */
 export function createCompute(chart, deps) {
     const {
-        schemaSpec, seedSchemaSpec, ui, featureNodes, hierarchyNodes, boxHosts,
+        schemaSpec, seedSchemaSpec, ui, featureNodes, hierarchyNodes, layoutTables, boxHosts,
+        fitAxesAt, markContainsGate,
         tableOf, targetTableOf, isLockedIn, checkRows,
         nodeBoxRule, nodePortsRule, containsRule, channelsDrawing,
         settleNodes, settledNodes, heldStill, activeEdits,
@@ -95,7 +99,8 @@ export function createCompute(chart, deps) {
         // channels on a row with children. Its position stays editable.
         if (hierarchyNodes && feature.table === hierarchyNodes && index != null && resolved.length
             && treeOf(schemaSpec, chart.tables).hasChildren(index)) {
-            const derived = fitChannelsOf(markChannels).filter((ch) => axisOf(ch) !== 'x' && axisOf(ch) !== 'y');
+            const fitAxes = fitAxesAt(hierarchyNodes, sourceRows[index], index, sourceRows);
+            const derived = fitChannelsOf(markChannels, fitAxes).filter((ch) => axisOf(ch) !== 'x' && axisOf(ch) !== 'y');
             const free = resolved.filter((ch) => !derived.includes(ch.name));
             derivedOnly = !free.length;
             resolved = free;
@@ -207,11 +212,17 @@ export function createCompute(chart, deps) {
          */
         const runInvariants = (rows, forTable = targetTable) => {
             const own = forTable === targetTable;
-            return checkRows(forTable, rows, {
+            const checked = checkRows(forTable, rows, {
                 activeIndex: own ? activeIndexOf(rows) : null,
                 field: own && resolved[0] ? resolved[0].field : undefined,
                 scales: chart.scales, markChannels,
             }, own ? edit.constrain : []);
+            if (!checked) return null;
+            if (markContainsGate && forTable === schemaSpec.byRole.nesting
+                && !markContainsGate(checked, chart.tables[/** @type {string} */ (hierarchyNodes)] || [])) {
+                return null;
+            }
+            return checked;
         };
 
         // A domain edit returns { domains, data?, tables?, resize? }. The domains
@@ -281,15 +292,20 @@ export function createCompute(chart, deps) {
         }
         recordHistory();
         // Replace the table the edit writes, which may not be the one its mark draws.
-        const nodesBefore = hierarchyNodes ? chart.tables[hierarchyNodes] : null;
-        chart.tables[targetTableOf(feature, edit)] = proposed.rows;
+        const targetTable = targetTableOf(feature, edit);
+        const settleTarget = targetTable === schemaSpec.byRole.nesting ? hierarchyNodes
+            : layoutTables.includes(targetTable) ? targetTable : null;
+        const nodesBefore = settleTarget ? chart.tables[settleTarget] : null;
+        chart.tables[targetTable] = proposed.rows;
         // Drop rows whose `ref` no longer resolves.
         enforceRefs(schemaSpec, chart.tables);
-        // Move subtrees with their container and re-fit fitted containers.
-        settleNodes(nodesBefore, heldStill(), {
-            since: chart.strokeNodes || nodesBefore,
-            yields: index != null && feature.table === hierarchyNodes ? new Set([index]) : null,
-        });
+        // Settle layout geometry (carry, arrange, dodge, fit, custom).
+        if (settleTarget) {
+            settleNodes(nodesBefore, heldStill(), {
+                since: (chart.strokeTable === settleTarget && chart.strokeNodes) || nodesBefore,
+                yields: index != null && feature.table === settleTarget ? new Set([index]) : null,
+            }, settleTarget);
+        }
         ui.preview = null;
         notifyChange();
         return true;
@@ -375,7 +391,7 @@ export function createCompute(chart, deps) {
                 rows: settledNodes(overlay, null, null, {
                     anchors: index != null ? [index] : null, preview: true,
                     yields: index != null ? new Set([index]) : null,
-                }),
+                }, hierarchyNodes),
                 pointer,
                 dropInto: index != null ? tree.parentOf(index) : null,
                 live: true,

@@ -80,6 +80,7 @@ export {
     ELEMENT_OPTIONS, ELEMENT_UNIVERSAL_OPTIONS,
     GUIDE_OPTIONS, GUIDE_UNIVERSAL_OPTIONS,
     EDIT_OPTIONS, EDIT_UNIVERSAL_OPTIONS, CONSTRAINT_OPTIONS,
+    LAYOUT_OPTIONS, LAYOUT_UNIVERSAL_OPTIONS,
 } from '../vocabulary.js';
 export { AXIS_OPTIONS, GRID_OPTIONS } from '../plot/axis.js';
 export { LEGEND_OPTIONS } from '../plot/legend.js';
@@ -131,6 +132,10 @@ export { registerDriver } from '../edit/drivers/index.js';
 // ── Writing a constraint ────────────────────────────────────────────────────
 // The same function as the spec keyword `constraints.custom`.
 export { defineConstraint } from '../constraints/define.js';
+
+// ── Writing a spatial layout process ────────────────────────────────────────
+// The same function as the spec keyword `layout.custom`.
+export { defineLayout } from '../layout/define.js';
 
 // ── Writing a widget, or a design for the built-in ones ─────────────────────
 // The default widget tokens (`DEFAULT_THEME.widget`). The widgets' guides

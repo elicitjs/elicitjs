@@ -6,6 +6,7 @@ import {
     SPEC_SLOTS, SPEC_FUNCTIONS, SPEC_POSITIONAL, baseMark, baseElement,
     MARK_OPTIONS, MARK_SHORTHANDS, MARK_UNIVERSAL_OPTIONS, ELEMENT_OPTIONS, GUIDE_OPTIONS,
     EDIT_OPTIONS, EDIT_UNIVERSAL_OPTIONS, CONSTRAINT_OPTIONS,
+    LAYOUT_OPTIONS, LAYOUT_UNIVERSAL_OPTIONS,
 } from '../src/vocabulary.js';
 import { DATASET_KEYS, CHART_KEYS } from '../src/core/guards.js';
 import { keywordTables } from '../src/json/keywords.js';
@@ -21,6 +22,7 @@ function optionsOf(owner) {
         channel: ['fn', 'scale'],
         mark: [...MARK_SHORTHANDS, ...MARK_UNIVERSAL_OPTIONS],
         tip: GUIDE_OPTIONS.tip,
+        contains: ['where', 'padding', 'fit'],
         axis: ELEMENT_OPTIONS.axis,
         grid: ELEMENT_OPTIONS.grid,
         legend: ELEMENT_OPTIONS.legend,
@@ -37,6 +39,7 @@ function optionsOf(owner) {
     if (ns === 'edit') return [...positional, ...EDIT_UNIVERSAL_OPTIONS, ...(EDIT_OPTIONS[type] || [])];
     // `constraints.custom` takes a meta object, not a vocabulary list.
     if (ns === 'constraints') return [...positional, ...CONSTRAINT_OPTIONS[type], ...(type === 'custom' ? ['guide'] : [])];
+    if (ns === 'layout') return [...positional, ...LAYOUT_UNIVERSAL_OPTIONS, ...LAYOUT_OPTIONS[type]];
     return positional;
 }
 

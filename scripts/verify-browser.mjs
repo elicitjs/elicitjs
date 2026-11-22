@@ -1080,6 +1080,7 @@ async function main() {
         check('glyphs positions: dragging one hourglass changes that task\'s estimate alone',
             gGlass1[0].weeks > gGlass0[0].weeks && gGlass1.slice(1).every((d, i) => d.weeks === gGlass0[i + 1].weeks),
             `weeks ${gGlass0.map((d) => d.weeks)} -> ${gGlass1.map((d) => d.weeks)}`);
+
         // ---- Resize scales the whole glyph (/marks/face) ---------------------
         // `size` is the head's radius AND the frame's half-size, so growing it must
         // grow the eyes with it. That is the frame doing its job: the eye's rx is a
@@ -5194,6 +5195,68 @@ async function main() {
             Math.abs(easeCard.x - (easeX + 200)) < 2 && Math.abs(easeCard.y - (easeY - 70)) < 2, `card ${JSON.stringify(easeCard)} vs pointer ${easeX + 200},${easeY - 70}`);
         check('hierarchy motion: the layout comes to rest after the release',
             Math.abs(easeWRest - (await groupWidth())) < 0.01, `width ${easeWRest}`);
+
+        // ---- Layout: flat table dodge + multi-level board (/layout) -----------
+        console.log('\nLayout: flat-table dodge & multi-level hierarchy (/layout)');
+        await page.emulateMedia({ reducedMotion: 'reduce' });
+        await open('/layout', '#dodge .chart svg rect.mark');
+        {
+            const dSvg = '#dodge .chart svg';
+            const dLabel = async (label) => {
+                const t = page.locator(`${dSvg} text`, { hasText: label }).first();
+                await t.scrollIntoViewIfNeeded();
+                const b = await t.boundingBox();
+                return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+            };
+            const dClarity = await dLabel('Clarity');
+            const dSpeed = await dLabel('Speed');
+            const dBefore = await page.$eval('#dodge .chart > div', (el) => el.__chart.getData());
+            await page.mouse.move(dClarity.x, dClarity.y);
+            await page.mouse.down();
+            for (let i = 1; i <= 12; i++) {
+                await page.mouse.move(dClarity.x + (dSpeed.x - dClarity.x) * i / 12, dClarity.y + (dSpeed.y - dClarity.y) * i / 12);
+                await page.waitForTimeout(6);
+            }
+            await page.mouse.up();
+            await page.waitForTimeout(100);
+            const dAfter = await page.$eval('#dodge .chart > div', (el) => el.__chart.getData());
+            const dRects = await page.$$eval(`${dSvg} rect.mark`, (rs) => rs.map((r) => {
+                const b = r.getBoundingClientRect();
+                return { x: b.x, y: b.y, w: b.width, h: b.height };
+            }));
+            const dOverlap = dRects.some((a, i) => dRects.slice(i + 1).some((b) =>
+                a.x < b.x + b.w - 0.5 && b.x < a.x + a.w - 0.5 && a.y < b.y + b.h - 0.5 && b.y < a.y + a.h - 0.5));
+            const speedMoved = dAfter[1].x !== dBefore[1].x || dAfter[1].y !== dBefore[1].y;
+            check('layout dodge (flat table): dropping a card onto another pushes the other clear',
+                speedMoved && !dOverlap, `speed ${JSON.stringify(dBefore[1])} -> ${JSON.stringify(dAfter[1])}, overlap=${dOverlap}`);
+
+            const cSvg = '#composing .chart svg';
+            const cLabel = async (label) => {
+                const t = page.locator(`${cSvg} text`, { hasText: label }).first();
+                await t.scrollIntoViewIfNeeded();
+                const b = await t.boundingBox();
+                return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+            };
+            const cBefore = await page.$eval('#composing .chart > div', (el) => el.__chart.getData());
+            const todoBefore = cBefore.nodes.find((d) => d.id === 'todo');
+            const cPilot = await cLabel('Pilot');
+            const cRecruit = await cLabel('Recruit');
+            await page.mouse.move(cPilot.x, cPilot.y);
+            await page.mouse.down();
+            for (let i = 1; i <= 12; i++) {
+                await page.mouse.move(cPilot.x + (cRecruit.x - cPilot.x) * i / 12, cPilot.y + (cRecruit.y + 16 - cPilot.y) * i / 12);
+                await page.waitForTimeout(6);
+            }
+            await page.mouse.up();
+            await page.waitForTimeout(100);
+            const cAfter = await page.$eval('#composing .chart > div', (el) => el.__chart.getData());
+            const todoAfter = cAfter.nodes.find((d) => d.id === 'todo');
+            const pilotNested = cAfter.nesting.some((r) => r.child === 'c3' && r.parent === 'todo');
+            check('layout composing: fit:"y" grows lane vertically while preserving width',
+                pilotNested && todoAfter.h > todoBefore.h + 10 && Math.abs(todoAfter.w - todoBefore.w) < 0.5,
+                `nested=${pilotNested}, todo ${todoBefore.w}x${todoBefore.h} -> ${todoAfter.w}x${todoAfter.h}`);
+        }
+        await page.emulateMedia({ reducedMotion: 'no-preference' });
 
         // ---- Widgets: the ranking card, its motion, and the designs --------
         // A card is a glyph whose body alone takes the drag, so a press on its

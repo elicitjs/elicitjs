@@ -21,6 +21,7 @@ import { elementEffectOf } from '../effects.js';
  *   tracksPointer: boolean,
  *   featureNodes: Record<string, any[]>,
  *   hierarchyNodes: string | null,
+ *   layoutTables: string[],
  *   boxHosts: any[],
  *   history: { gestureTxn: (type: string) => void, endTxn: () => void, recordHistory: () => void },
  *   tableOf: (feature: any) => any[],
@@ -32,7 +33,7 @@ import { elementEffectOf } from '../effects.js';
  *   runEdit: (feature: any, edit: import('../../types').Edit, event: any, index: number | null) => boolean,
  *   previewEdit: (feature: any, edit: import('../../types').Edit, event: any, index: number | null) => boolean,
  *   reachableKeys: (feature: any, edit: import('../../types').Edit, index: number | null, node: any, session?: any) => string[] | null,
- *   settledNodes: (from: Record<string, any[]>, before: any[] | null, frozen: Set<number> | null, dodge?: any) => any[],
+ *   settledNodes: (from: Record<string, any[]>, before: any[] | null, frozen: Set<number> | null, dodge?: any, table?: string | null) => any[],
  *   ownsLayout: () => boolean,
  *   heldStill: () => Set<number> | null,
  *   notifyChange: () => void,
@@ -47,7 +48,7 @@ import { elementEffectOf } from '../effects.js';
  */
 export function createDispatch(chart, deps) {
     const {
-        features, featureById, ui, effects, tracksPointer, featureNodes, hierarchyNodes, boxHosts,
+        features, featureById, ui, effects, tracksPointer, featureNodes, hierarchyNodes, layoutTables, boxHosts,
         tableOf, activeEdits, getStage, applyStage, arbitrates, frameScalesFor,
         runEdit, previewEdit, reachableKeys, settledNodes, heldStill, ownsLayout, notifyChange,
         handleKey, visibleAt, hoverLink, hoverWide, commitHover, followsPointer,
@@ -411,16 +412,21 @@ export function createDispatch(chart, deps) {
         // Open or continue this gesture's undo transaction (see engine/history.js).
         history.gestureTxn(event.type);
 
-        // A hierarchy's rows are pushed apart at the END of a stroke, around what it
-        // moved (see `stroking`). A nudge's synthetic drag is a whole gesture.
-        if (hierarchyNodes && !event.nudge) {
+        // A layout table's rows are pushed apart / arranged at the END of a stroke,
+        // around what it moved (see `stroking`). A nudge's synthetic drag is a whole gesture.
+        if (layoutTables.length && !event.nudge) {
             if (event.type === 'dragstart') {
-                chart.stroking = true;
-                chart.strokeNodes = chart.tables[hierarchyNodes];
                 const grabbed = event.node ? featureById.get(event.node.featureId) : null;
-                chart.strokeRow = grabbed && grabbed.table === hierarchyNodes && event.node.index != null ? event.node.index : null;
+                const t = grabbed && layoutTables.includes(grabbed.table) ? grabbed.table : null;
+                if (t) {
+                    chart.stroking = true;
+                    chart.strokeTable = t;
+                    chart.strokeNodes = chart.tables[t];
+                    chart.strokeRow = event.node && event.node.index != null ? event.node.index : null;
+                }
+            } else if (event.type === 'drag' && chart.strokeTable) {
+                chart.stroking = true;
             }
-            else if (event.type === 'drag') chart.stroking = true;
         }
 
         // Grab state: one grabbed row per stroke, for the `grabbed` effect. Render
@@ -466,23 +472,29 @@ export function createDispatch(chart, deps) {
             if (event.type === 'dragend') strokeLive = {};
         }
 
-        // On release, settle the hierarchy held still during the stroke, inside the
+        // On release, settle the layout held still during the stroke, inside the
         // same undo entry. Only when its rows are settled in this chart's pixels: a
         // stroke that committed nothing leaves another chart's layout alone.
-        if (event.type === 'dragend' && hierarchyNodes && boxHosts.length) {
+        if (event.type === 'dragend' && layoutTables.length) {
+            const t = chart.strokeTable || (hierarchyNodes && boxHosts.length ? hierarchyNodes : null);
             chart.stroking = false;
-            // The dropped row never pushes a container aside; it gives way instead.
-            const settled = ownsLayout() ? settledNodes(chart.tables, null, heldStill(), {
-                since: chart.strokeNodes,
-                yields: chart.strokeRow != null ? new Set([chart.strokeRow]) : null,
-            }) : chart.tables[hierarchyNodes];
+            const since = chart.strokeNodes;
+            const strokeRow = chart.strokeRow;
+            chart.strokeTable = null;
             chart.strokeNodes = null;
             chart.strokeRow = null;
-            if (settled !== chart.tables[hierarchyNodes]) {
-                recordHistory();
-                chart.tables[hierarchyNodes] = settled;
-                notifyChange();
-                shouldRender = true;
+            if (t) {
+                // The dropped row never pushes a container aside; it gives way instead.
+                const settled = ownsLayout() ? settledNodes(chart.tables, null, heldStill(), {
+                    since,
+                    yields: strokeRow != null ? new Set([strokeRow]) : null,
+                }, t) : chart.tables[t];
+                if (settled !== chart.tables[t]) {
+                    recordHistory();
+                    chart.tables[t] = settled;
+                    notifyChange();
+                    shouldRender = true;
+                }
             }
         }
 

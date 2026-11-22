@@ -20,7 +20,7 @@ import { createRender } from './engine/render.js';
 import { resolveMotion } from './motion.js';
 import { createChartApi } from './engine/api.js';
 import {
-    assembleFeatures, bindFeatureTables, desugarPorts, desugarContainers, tipGuidesOf, viewerChannelsOf,
+    assembleFeatures, bindFeatureTables, desugarPorts, desugarContains, tipGuidesOf, viewerChannelsOf,
 } from './engine/features.js';
 import { warnUnknownSpecKeys, warnRendererSupport } from './guards.js';
 import { resolveLooks } from './looks.js';
@@ -188,21 +188,23 @@ function createChart(dataset, spec) {
     const nodesTableName = schemaSpec.byRole.nodes || null;
     desugarPorts(features, nodesTableName);
 
-    // `contains` / `dodge` / `fit` under a hierarchy (engine/features.js).
+    // `mark.contains` sugar under a hierarchy, plus guards for removed channel syntax (engine/features.js).
     const hierarchyNodes = nestingOf(schemaSpec) ? nodesTableName : null;
-    desugarContainers(features, hierarchyNodes);
+    const markContains = desugarContains(features, hierarchyNodes);
     // The feature list is fixed from here; on a shared id the first feature wins.
     /** @type {Map<string, any>} */
     const featureById = new Map();
     for (const f of features) if (!featureById.has(f.id)) featureById.set(f.id, f);
 
-    // The node table's rules (box, ports, contains, dodge) and the hierarchy's
-    // settling, read once from the marks that draw the nodes (engine/nodes.js).
+    // The node table's rules (box, ports, contains) and spatial layout settling
+    // (`spec.layout` + `mark.contains`), read once at chart assembly (engine/nodes.js).
     const {
-        boxHosts, nodeBoxRule, nodePortsRule, containsRule,
+        hasLayout, layoutTables, boxHosts, boxHostsOf, fitAxesAt,
+        nodeBoxRule, nodePortsRule, containsRule, markContainsGate,
         settleNodes, settleOwn, settledNodes, inFlight, heldStill,
     } = createNodes(chart, {
-        features, schemaSpec, ui, nodesTableName, hierarchyNodes, isLockedIn,
+        features, schemaSpec, ui, specLayout: spec.layout || [], markContains, constraintsIn,
+        nodesTableName, hierarchyNodes, isLockedIn,
         settleTurn: (stroking) => port.settleTurn(stroking),
     });
     // The channel map of the mark that draws a table (engine/features.js).
@@ -281,7 +283,8 @@ function createChart(dataset, spec) {
         frameScalesFor, arbitrates, runEdit,
         previewEdit, reachableKeys, portAvailable,
     } = createCompute(chart, {
-        schemaSpec, seedSchemaSpec, ui, featureNodes, hierarchyNodes, boxHosts,
+        schemaSpec, seedSchemaSpec, ui, featureNodes, hierarchyNodes, layoutTables, boxHosts,
+        fitAxesAt, markContainsGate,
         tableOf, targetTableOf, isLockedIn, checkRows,
         nodeBoxRule, nodePortsRule, containsRule, channelsDrawing,
         settleNodes, settledNodes, heldStill, activeEdits,
@@ -297,7 +300,7 @@ function createChart(dataset, spec) {
     // Rendering (engine/render.js): the container and its size, and `update()`,
     // which rebuilds the scene from current state and hands it to the renderer.
     const { container, measure, applyResize, update, stopMotion, followsPointer } = createRender(chart, {
-        features, featureById, ui, spec, theme, effects, looks, renderer, mode, overflow, focusOutline, designW, authorMargins, dims, liveSpec, schema, schemaSpec, allGuides, datasetConstraints, tracksPointer, hasLegends, hasAxisTitles, featureNodes, hierarchyNodes, boxHosts, tableOf, targetTableOf, primaryRows, isLockedIn, constraintsIn, nodeBoxRule, nodePortsRule, settleOwn, settledNodes, heldStill, inFlight, activeEdits, getStage, selectionIn, selectionList, selectionPrimary, hoverRow: dataset.hoverRow, hoverLink, hoverWide, portAvailable, handleKey, clipNow, visibleAt,
+        features, featureById, ui, spec, theme, effects, looks, renderer, mode, overflow, focusOutline, designW, authorMargins, dims, liveSpec, schema, schemaSpec, allGuides, datasetConstraints, tracksPointer, hasLegends, hasAxisTitles, featureNodes, hierarchyNodes, hasLayout, layoutTables, boxHosts, boxHostsOf, tableOf, targetTableOf, primaryRows, isLockedIn, constraintsIn, nodeBoxRule, nodePortsRule, settleOwn, settledNodes, heldStill, inFlight, activeEdits, getStage, selectionIn, selectionList, selectionPrimary, hoverRow: dataset.hoverRow, hoverLink, hoverWide, portAvailable, handleKey, clipNow, visibleAt,
         layoutMoved: () => port.layoutMoved(),
         motionDuration: resolveMotion(spec.motion),
         handleEvent: (/** @type {any} */ event) => handleEvent(event),
@@ -306,7 +309,7 @@ function createChart(dataset, spec) {
     // Event routing (engine/dispatch.js): the one path from a renderer's event to
     // the edits — direct to the touched mark, plane gestures through the drivers.
     const { handleEvent, rowTargeted, dropStroke } = createDispatch(chart, {
-        features, featureById, ui, effects, tracksPointer, featureNodes, hierarchyNodes, boxHosts,
+        features, featureById, ui, effects, tracksPointer, featureNodes, hierarchyNodes, layoutTables, boxHosts,
         history: txn, tableOf, activeEdits, getStage, applyStage, arbitrates, frameScalesFor,
         runEdit, previewEdit, reachableKeys, settledNodes, heldStill, notifyChange,
         ownsLayout: () => port.ownsLayout(),
@@ -321,7 +324,7 @@ function createChart(dataset, spec) {
     // dataset redraws only the others (this one renders itself).
     const port = dataset.attach({
         update: () => update(),
-        settles: () => !!hierarchyNodes && boxHosts.length > 0,
+        settles: () => hasLayout,
         showsHover: () => hoverLink() !== false,
         snapshot: () => ({ width: chart.curW, height: chart.curH }),
         restore: (size) => {
@@ -336,6 +339,7 @@ function createChart(dataset, spec) {
             ui.grab = null;
             dropStroke();
             chart.stroking = false;
+            chart.strokeTable = null;
             chart.strokeNodes = null;
             chart.strokeRow = null;
             if (what === 'reseed') chart.snapNext = true;

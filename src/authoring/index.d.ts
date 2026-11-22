@@ -187,14 +187,14 @@ export function resolveStyle(scales: import("../types.js").ScaleMap, channels: R
  */
 export function seriesFieldOf(channels?: Record<string, any>): string | null;
 /**
- * The options every mark passes through verbatim: id, edits, table, tip, clip, motion.
+ * The options every mark passes through verbatim: id, edits, table, tip, clip, motion, contains.
  * Spread first in a factory's returned object; a key stated after it wins.
  *
  * `table:` names the one table a mark draws. Without it the mark takes the table
  * filling its `tableRole` (`link` declares 'links'; other marks get the primary
  * table). Names go in `table:`; roles go in `tableRole` and `Edit.table`.
  * @param {any} opts the result of normalizeMarkOptions
- * @returns {{ id: any, edits: any, table: any, tip: any, clip: any, motion: any }}
+ * @returns {{ id: any, edits: any, table: any, tip: any, clip: any, motion: any, contains: any }}
  */
 export function markCommon(opts: any): {
     id: any;
@@ -203,6 +203,7 @@ export function markCommon(opts: any): {
     tip: any;
     clip: any;
     motion: any;
+    contains: any;
 };
 /**
  * Desugar top-level style shorthands (`fill: 'steelblue'`, `size: 9`) into
@@ -917,6 +918,11 @@ export const EDIT_OPTIONS: Record<string, string[]>;
  *  and omitting it means "the column the dispatching edit writes".
  *  @type {Record<string, string[]>} */
 export const CONSTRAINT_OPTIONS: Record<string, string[]>;
+/** Spatial layout processes (`spec.layout`): what every layout reads, then each one's own.
+ *  @type {string[]} */
+export const LAYOUT_UNIVERSAL_OPTIONS: string[];
+/** @type {Record<string, string[]>} */
+export const LAYOUT_OPTIONS: Record<string, string[]>;
 // ── from src/plot/axis.js ───────────────────────────────────────────────────
 /**
  * `axis`'s option list, on top of the universal chart-element options
@@ -1299,6 +1305,18 @@ export function defineConstraint(reducer: (ctx: import("../types.js").Constraint
     table?: string;
     guide?: (ctx: any) => any[];
 }): import("../types.js").ConstraintSpec;
+// ── from src/layout/define.js ───────────────────────────────────────────────
+/**
+ * Author a spatial layout process (`layout.custom`). Runs after the built-in
+ * passes against `{ rows, tables, tree, nodeBox, extentOf, scales, width, height,
+ * locked, anchors, yields, preview, shift, shiftTree, write }`.
+ * @param {(ctx: import('../types.js').LayoutContext) => any} fn
+ * @param {{ table?: string }} [options]
+ * @returns {import('../types.js').LayoutSpec}
+ */
+export function defineLayout(fn: (ctx: import("../types.js").LayoutContext) => any, options?: {
+    table?: string;
+}): import("../types.js").LayoutSpec;
 // ── from src/widgets/theme.js ───────────────────────────────────────────────
 /** The default widget tokens: `DEFAULT_THEME.widget`. */
 export const THEME: any;
