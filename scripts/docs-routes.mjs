@@ -17,6 +17,7 @@ export const routes = [
     '/editing/history', '/widgets', '/scales', '/schema', '/dataset', '/constraints', '/layout',
     '/effects', '/guides', '/theming', '/theming/themes', '/looks', '/playground',
     '/case-studies/glyphs',
+    '/case-studies/du-bois',
 ];
 
 /**

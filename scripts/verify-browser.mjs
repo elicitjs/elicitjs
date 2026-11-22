@@ -1081,6 +1081,41 @@ async function main() {
             gGlass1[0].weeks > gGlass0[0].weeks && gGlass1.slice(1).every((d, i) => d.weeks === gGlass0[i + 1].weeks),
             `weeks ${gGlass0.map((d) => d.weeks)} -> ${gGlass1.map((d) => d.weeks)}`);
 
+        // ---- Wrapped bars (/case-studies/du-bois) ----------------------------
+        // A shape drawn along a track from its value, and a slide on a length
+        // channel that writes it. Chart pixels are svg pixels (margins are 0).
+        console.log('\nWrapped bars (/case-studies/du-bois)');
+        await open('/case-studies/du-bois', '#courses .chart svg path');
+        const wChart = (id) => page.locator(`#${id} .chart`).first();
+        const wData = async (id) => wChart(id).locator(':scope > div').first().evaluate((e) => e.__chart.getData());
+        const wPath = async (id, points) => {
+            const svg = wChart(id).locator('svg').first();
+            await svg.scrollIntoViewIfNeeded();
+            await page.waitForTimeout(150);
+            const box = await svg.boundingBox();
+            const k = box.width / Number(await svg.getAttribute('width'));
+            const at = ([x, y]) => [box.x + x * k, box.y + y * k];
+            await page.mouse.move(...at(points[0]));
+            await page.mouse.down();
+            for (const p of points.slice(1)) await page.mouse.move(...at(p), { steps: 8 });
+            await page.mouse.up();
+            await page.waitForTimeout(150);
+        };
+        // A slide on Normal's length: 100px down is 100 / 400 of 0..2,700, so
+        // 383 + 675 = 1,058, past the 900 a lane holds.
+        await wPath('courses', [[300, 324], [300, 374], [300, 424]]);
+        const wNormal = (await wData('courses'))[4].students;
+        check('wrapped bars: dragging Normal down slides its value up', wNormal > 1050 && wNormal < 1070, `students ${wNormal}`);
+        // A slide on B's length: 120px down is 120 / 480 of 0..6,000, so
+        // 1,750 + 1,500 = 3,250. B wraps a second time and the rows after it move down.
+        const wLabelY = async () => wChart('threshold').locator('svg text.mark').evaluateAll((ts) =>
+            ts.filter((t) => t.textContent === 'C').map((t) => t.getBoundingClientRect().y)[0]);
+        const wC0 = await wLabelY();
+        await wPath('threshold', [[300, 77], [300, 137], [300, 197]]);
+        const wB = (await wData('threshold'))[1].value;
+        const wC1 = await wLabelY();
+        check('wrapped bars: dragging B down slides its value up', wB > 3200 && wB < 3300, `B ${wB}`);
+        check('wrapped bars: the rows after B move down', wC1 - wC0 > 5, `C label y ${wC0} -> ${wC1}`);
         // ---- Resize scales the whole glyph (/marks/face) ---------------------
         // `size` is the head's radius AND the frame's half-size, so growing it must
         // grow the eyes with it. That is the frame doing its job: the eye's rx is a
