@@ -3376,6 +3376,16 @@ export interface ShapeOptions extends MarkOptions {
    */
   path?: string | ((d: Datum, i: number, data: Datum[]) => string);
 }
+export interface TrackOptions extends MarkOptions {
+  /**
+   * The route: an SVG path, or a function of the row returning one. Each `M`
+   * starts a lane, and only lanes hold value. In plot pixels, unless x, y or
+   * size is bound: then in unit form, placed the way `shape` places one.
+   */
+  path?: string | ((d: Datum, i: number, data: Datum[]) => string);
+  /** What joins one lane to the next. It holds no value. Default 'none'. */
+  join?: 'round' | 'straight' | 'none';
+}
 export interface RectOptions extends MarkOptions {
   orientation?: Orientation;
   gradient?: GradientSpec;

@@ -475,6 +475,8 @@ export function channelRange(channelName, type, dims, theme, opts = {}) {
         // How far a `curve` bows off its chord, as a fraction of the half-chord:
         // 0 is a straight segment, ±1 bows out by the half-chord's length.
         case 'curvature': return [-1, 1];
+        // A track's `length`: the fraction of its route drawn.
+        case 'length': return [0, 1];
         // Degrees, math convention (y-up): left (180°) -> right (0°) over the top.
         // `theta` and `angle` share the default but get separate scales.
         case 'theta': return [180, 0];

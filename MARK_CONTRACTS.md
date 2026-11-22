@@ -89,6 +89,14 @@ N/A = use a different edit family (documented).
 <td><code>discreteScale: point</code></td>
 </tr>
 <tr>
+<td><code>track</code></td>
+<td>data</td>
+<td><b>length</b> (range <code>[0, 1]</code>: the fraction of the route drawn), stroke, strokeWidth; the route is the <code>path</code> option (pixels, or unit form placed by x, y, size, angle). Each <code>M</code> starts a lane; <code>join</code> draws between lanes and holds no value</td>
+<td>natural</td>
+<td>a <code>hit</code> path over the whole route (all rows' hit paths beneath all bars) + the bar; both stamp <code>node.track</code>, which <code>move</code> on <code>length</code> inverts through</td>
+<td><code>discreteScale: point</code></td>
+</tr>
+<tr>
 <td><code>curve</code> / <code>curveX</code> / <code>curveY</code></td>
 <td>data</td>
 <td>chord (x1/x2 or <code>length</code>) + position; <b><code>curvature</code></b> (half-chord fractions), angle</td>

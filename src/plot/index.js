@@ -17,6 +17,7 @@ export { point } from './point.js';
 // One path per row — a pictogram, a d3 symbol, any SVG path — with every
 // x/y mark's behaviour (edits, node box, ports).
 export { shape } from './shape.js';
+export { track } from './track.js';
 export { ellipse } from './ellipse.js';
 // One picture per row at (x, y).
 export { image } from './image.js';

@@ -1082,8 +1082,8 @@ async function main() {
             `weeks ${gGlass0.map((d) => d.weeks)} -> ${gGlass1.map((d) => d.weeks)}`);
 
         // ---- Wrapped bars (/case-studies/du-bois) ----------------------------
-        // A shape drawn along a track from its value, and a slide on a length
-        // channel that writes it. Chart pixels are svg pixels (margins are 0).
+        // A track draws each bar along its route, and move() on length drags the
+        // end of the bar along it. Chart pixels are svg pixels (margins are 0).
         console.log('\nWrapped bars (/case-studies/du-bois)');
         await open('/case-studies/du-bois', '#courses .chart svg path');
         const wChart = (id) => page.locator(`#${id} .chart`).first();
@@ -1101,20 +1101,28 @@ async function main() {
             await page.mouse.up();
             await page.waitForTimeout(150);
         };
-        // A slide on Normal's length: 100px down is 100 / 400 of 0..2,700, so
-        // 383 + 675 = 1,058, past the 900 a lane holds.
-        await wPath('courses', [[300, 324], [300, 374], [300, 424]]);
+        // Normal (383) ends at x 360 on its first lane (y 324). Drag it to the
+        // lane's end at x 590, round the turn and back to x 500 on the second
+        // lane (y 350): 900 + 90 / 400 * 900 = 1,102.
+        await wPath('courses', [[360, 324], [590, 324], [602, 337], [590, 350], [500, 350]]);
         const wNormal = (await wData('courses'))[4].students;
-        check('wrapped bars: dragging Normal down slides its value up', wNormal > 1050 && wNormal < 1070, `students ${wNormal}`);
-        // A slide on B's length: 120px down is 120 / 480 of 0..6,000, so
-        // 1,750 + 1,500 = 3,250. B wraps a second time and the rows after it move down.
+        check('wrapped bars: dragging Normal round the turn carries it into the next lane', wNormal > 1085 && wNormal < 1120, `students ${wNormal}`);
+        // Business (12) has almost no bar. A press further along its route
+        // (y 28, x 500) puts the end there: 310 / 400 * 900 = 698.
+        await wPath('courses', [[500, 28], [500, 28]]);
+        const wBusiness = (await wData('courses'))[0].students;
+        check('wrapped bars: a press on an empty part of a route moves the end there', wBusiness > 680 && wBusiness < 715, `students ${wBusiness}`);
+        // B (1,750) ends on its second lane (y 87.6) at x 462. Drag it back to the
+        // left end, round the turn and along the third lane (y 98.4) to x 200:
+        // 3,000 + 130 / 470 * 1,500 = 3,415. B wraps a second time and the rows
+        // after it move down.
         const wLabelY = async () => wChart('threshold').locator('svg text.mark').evaluateAll((ts) =>
-            ts.filter((t) => t.textContent === 'C').map((t) => t.getBoundingClientRect().y)[0]);
+            ts.filter((t) => t.textContent === 'C').map((t) => t.getBoundingClientRect().y - t.ownerSVGElement.getBoundingClientRect().y)[0]);
         const wC0 = await wLabelY();
-        await wPath('threshold', [[300, 77], [300, 137], [300, 197]]);
+        await wPath('threshold', [[462, 87.6], [300, 87.6], [70, 87.6], [62, 93], [70, 98.4], [200, 98.4]]);
         const wB = (await wData('threshold'))[1].value;
         const wC1 = await wLabelY();
-        check('wrapped bars: dragging B down slides its value up', wB > 3200 && wB < 3300, `B ${wB}`);
+        check('wrapped bars: dragging B round the left turn wraps it again', wB > 3350 && wB < 3480, `B ${wB}`);
         check('wrapped bars: the rows after B move down', wC1 - wC0 > 5, `C label y ${wC0} -> ${wC1}`);
         // ---- Resize scales the whole glyph (/marks/face) ---------------------
         // `size` is the head's radius AND the frame's half-size, so growing it must

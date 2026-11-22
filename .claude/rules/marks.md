@@ -64,6 +64,13 @@ Decide by the data model, not the look. A new mark when the data model changes; 
 
 - `plot.shape` draws one path per row from a `symbol` channel (d3 shape names or SVG path strings) or a `path` option. `plot/shapes.js` keeps unit form; `placeShape` bakes size, angle and position into `d`, plus an outline `points` polygon (`polygon: true`) and `cx`/`cy`. No `angle` on the node; never `d` without `points`. Declares `nodeBox`. `point` draws `symbol` as text and warns if it resolves to a path.
 
+## Tracks
+
+- `plot.track` draws a value as a length along a route (`plot/track.js`, geometry in `plot/trackGeometry.js`). The `length` channel's range is `[0, 1]` (`channelRange`): the fraction of the route's readable length. Rows share a scale only when their routes are the same length; that is the author's route, not a mark option.
+- Each `M` in `path` starts a lane. Only lanes count; `join` (`'round' | 'straight' | 'none'`) draws between them and holds no value. `path` is in pixels unless x, y or size is bound, then unit form placed by `placeShape`.
+- Each row emits a `hit` path over the whole route and the bar. All hit paths go beneath all bars, since routes can run under other rows. Both nodes stamp `node.track` (`{ lanes, total, slack }`, plain data).
+- `move` on `length` inverts through `node.track` (`invertAlongTrack` in `edit/shared.js`): the nearest point, followed from the row's current value so a drag doesn't jump to a lane that only passes close by. `slide` needs nothing (it interpolates the domain).
+
 ## Glyphs (`composite`)
 
 - Prefer a `composite` of ordinary marks over one clever mark. Each handle is its own feature, so a drag on one doesn't touch another. Only when several handles must live on one feature over one datum (derived positions: `trend`, `area` edges) use the node `channel` tag, arbitrated with `claimEdge(edit, name)` from `edit/shared.js` — never a hand-written `when` on `ctx.node.channel` (a plane/probe edit has no node, and that guard would kill it).

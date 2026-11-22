@@ -6,6 +6,7 @@ import { visualForChannel, axisOf } from '../core/encoding.js';
 import { rangeExtent } from '../core/scales.js';
 import { schemaDefaults } from '../core/schema.js';
 import { warn } from '../core/dev.js';
+import { trackFraction } from '../plot/trackGeometry.js';
 import { EDIT_UNIVERSAL_OPTIONS, EDIT_OPTIONS } from '../vocabulary.js';
 
 /**
@@ -404,6 +405,33 @@ export function invertChannel(ch, pointer, center = null) {
     const visual = visualForChannel(ch.name, pointer, center);
     if (visual === undefined) return undefined;
     return ch.scale.invertValue(visual);
+}
+
+/**
+ * The value of a track's `length` channel under the pointer: the fraction of the
+ * route there (followed from the row's current value), through the scale.
+ * The node is the track's, which stamps `track` (`plot/track.js`).
+ * @param {import('../types').ResolvedChannel} ch
+ * @param {any} node
+ * @param {any} datum
+ * @param {{ x: number, y: number }} pointer
+ * @returns {any}
+ */
+export function invertAlongTrack(ch, node, datum, pointer) {
+    if (!ch || !ch.scale || !ch.scale.invertible) return undefined;
+    const track = node && node.track;
+    if (!track) {
+        warn(
+            `length:notrack:${ch.field}`,
+            `An edit on the \`length\` channel needs a route to read the pointer along, and this mark ` +
+            `draws none. \`length\` is a track's channel: use plot.track, or slide() for a drag that ` +
+            `adds to the value.`
+        );
+        return undefined;
+    }
+    const current = datum && datum[ch.field] != null ? ch.scale.encode(datum[ch.field]) : undefined;
+    const f = trackFraction(track, pointer, typeof current === 'number' ? current : undefined, track.slack);
+    return f === undefined ? undefined : ch.scale.invertValue(f);
 }
 
 /**

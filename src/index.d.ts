@@ -98,6 +98,7 @@ import type {
   SymmetricOptions,
   PointOptions,
   ShapeOptions,
+  TrackOptions,
   ImageOptions,
   ImageGuideOptions,
   ProbabilityTokensOptions,
@@ -179,6 +180,8 @@ export const plot: {
   ellipse(options?: EllipseOptions): Mark;
   /** One path per row: a pictogram, a d3 symbol, any SVG path, with every x/y mark's behaviour. */
   shape(options?: ShapeOptions): Mark;
+  /** A value drawn as a length along a route: the `length` channel is the fraction of `path` drawn. */
+  track(options?: TrackOptions): Mark;
   /** One picture per row at (x, y), from the `src` channel, like an <img>. */
   image(options?: ImageOptions): Mark;
   dotStack(options?: DotStackOptions): Mark;

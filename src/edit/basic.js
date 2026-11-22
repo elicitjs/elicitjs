@@ -3,10 +3,17 @@
 // Each factory is a preset over `makeEdit` that fixes a `gesture` and an `apply`
 // mapping the gesture back to data through the channel's scale.
 
-import { makeEdit, markCenter, resolveMarkNode, invertChannel, recenterSpan, mintDatum, linearInvert, channelDomain, discreteDomain, claimPick } from './shared.js';
+import { makeEdit, markCenter, resolveMarkNode, invertChannel, recenterSpan, mintDatum, linearInvert, channelDomain, discreteDomain, claimPick, invertAlongTrack } from './shared.js';
 import { axisOf, pointerDegrees, unwrapDegrees } from '../core/encoding.js';
 import { warn } from '../core/dev.js';
 import { coerceToType } from '../core/schema.js';
+
+const warnRelativeLength = () => warn(
+    'move:relative:length',
+    'move({ mode: "relative" }) on a track\'s `length` reads the pointer along the route, ' +
+    'which has no offset to keep; it moves the end of the bar to the pointer as the default mode does. ' +
+    'For a drag that adds to the value, use slide().'
+);
 
 /**
  * move — inverts the pointer on each positional channel through its scale.
@@ -46,6 +53,13 @@ export function move(options = {}) {
             const lock = relative ? (/** @type {any} */ (ctx.session || {}).move) : null;
             const anchor = lock && lock.anchors;
             for (const ch of ctx.channels) {
+                // A track's length reads the pointer along the route, not an axis.
+                if (ch.name === 'length') {
+                    if (relative) warnRelativeLength();
+                    const value = invertAlongTrack(ch, resolveMarkNode(ctx), ctx.datum, ctx.pointer);
+                    if (value !== undefined) next[ch.field] = value;
+                    continue;
+                }
                 if (relative) {
                     const a = anchor && anchor[ch.field];
                     const axis = axisOf(ch.name);
