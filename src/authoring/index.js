@@ -81,7 +81,12 @@ export {
     GUIDE_OPTIONS, GUIDE_UNIVERSAL_OPTIONS,
     EDIT_OPTIONS, EDIT_UNIVERSAL_OPTIONS, CONSTRAINT_OPTIONS,
     LAYOUT_OPTIONS, LAYOUT_UNIVERSAL_OPTIONS,
+    LOOK_OPTIONS, LOOK_UNIVERSAL_OPTIONS,
+    // the JSON grammar tables `compile` reads.
+    SPEC_SLOTS, SPEC_FUNCTIONS, SPEC_POSITIONAL, SPEC_OPAQUE,
 } from '../vocabulary.js';
+// the namespaces `compile` resolves keywords in.
+export { NAMESPACES } from '../json/index.js';
 export { AXIS_OPTIONS, GRID_OPTIONS } from '../plot/axis.js';
 export { LEGEND_OPTIONS } from '../plot/legend.js';
 export { AXIS_RADIAL_OPTIONS } from '../plot/axisRadial.js';

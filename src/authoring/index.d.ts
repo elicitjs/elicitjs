@@ -923,6 +923,38 @@ export const CONSTRAINT_OPTIONS: Record<string, string[]>;
 export const LAYOUT_UNIVERSAL_OPTIONS: string[];
 /** @type {Record<string, string[]>} */
 export const LAYOUT_OPTIONS: Record<string, string[]>;
+/** Looks (`spec.looks`, experimental): what every look reads, then each one's own.
+ *  @type {string[]} */
+export const LOOK_UNIVERSAL_OPTIONS: string[];
+/** @type {Record<string, string[]>} */
+export const LOOK_OPTIONS: Record<string, string[]>;
+/** An option key that holds factory results: the namespaces its descriptors are
+ *  looked up in, and the signature of a function given in their place.
+ *  `marks` and `parts` also take elements, as the engine does.
+ *  @type {Record<string, { ns: string[], fn?: string[] | string }>} */
+export const SPEC_SLOTS: Record<string, {
+    ns: string[];
+    fn?: string[] | string;
+}>;
+/** Every option that takes a function, by owner. An owner is a keyword's dotted
+ *  path (`plot.rect`, `guides.rule`, `edit.stack.cut`), a kind (`mark`, `channel`,
+ *  `axis`, `grid`, `legend`, `tip`, `outline`, `widget`) or `spec` for the top level.
+ *  A function reference anywhere else is an error.
+ *  @type {Record<string, Record<string, string[] | string>>} */
+export const SPEC_FUNCTIONS: Record<string, Record<string, string[] | string>>;
+/** A factory's leading positional parameters, by dotted path. In JSON each is a
+ *  key of the descriptor: `edit.custom(fn, options)` <-> `{ "type": "custom", "fn": … }`.
+ *  A `when` or `format` member listed here is called; one that is not is the value itself.
+ *  @type {Record<string, string[]>} */
+export const SPEC_POSITIONAL: Record<string, string[]>;
+/** Keys whose value is the author's data, so `compile()` never looks inside:
+ *  rows, schemas, GeoJSON, constants and themes.
+ *  @type {string[]} */
+export const SPEC_OPAQUE: string[];
+// ── from src/json/index.js ──────────────────────────────────────────────────
+/** The library's own namespaces, which `compile` resolves keywords in.
+ *  @type {import('../json/keywords.js').Namespaces} */
+export const NAMESPACES: import("../json/keywords.js").Namespaces;
 // ── from src/plot/axis.js ───────────────────────────────────────────────────
 /**
  * `axis`'s option list, on top of the universal chart-element options

@@ -22,7 +22,8 @@ import { createRecorder } from './record.js';
 
 export { registerFunction } from './functions.js';
 
-/** The library's own namespaces, which `compile` resolves keywords in. */
+/** The library's own namespaces, which `compile` resolves keywords in.
+ *  @type {import('../json/keywords.js').Namespaces} */
 export const NAMESPACES = {
     plot, elements, edit, constraints, guides, looks, layout, widgets, format,
     renderers: { svg: D3Renderer, canvas: CanvasRenderer },
