@@ -356,7 +356,7 @@ function createChart(dataset, spec) {
     const api = createChartApi(chart, {
         dataset: dataset.api, detach: port.detach, renderer, features, listeners, featureNodes, schemaSpec, mode,
         container: /** @type {HTMLDivElement} */ (container),
-        stages, tableOf, rowIndexOf, frameScalesFor, rowTargeted, measure, stopMotion,
+        stages, tableOf, rowIndexOf, frameScalesFor, rowTargeted, arbitrates, measure, stopMotion,
         handleEvent: (/** @type {any} */ event) => handleEvent(event),
         update: () => update(),
     });

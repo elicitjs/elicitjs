@@ -233,7 +233,7 @@ describe('several charts on one dataset', () => {
     it("another chart's commit clears hover and preview; a chart's own commits keep its session", async () => {
         const { ds, A, B } = await pair(
             {},
-            pointView({ edit: edit.slide({ name: 'slide', axis: 'y' }) }),
+            pointView({ edit: edit.move({ name: 'grab', mode: 'relative' }) }),
             pointView({ edit: edit.move({ name: 'probe', pick: 'probe' }) }, { height: 400 }),
         );
         // Hover a point in B, and park a probe preview (a ghost) there.
@@ -242,8 +242,8 @@ describe('several charts on one dataset', () => {
         const circles = B.dom().querySelectorAll('g.mark-layer circle').length;
         B.emit({ type: 'hover', x: 0, y: 200, rawEvent: {} });
         expect(B.dom().querySelectorAll('g.mark-layer circle').length).toBeGreaterThan(circles);
-        // A relative slide in A: each tick reads the anchor its session holds.
-        const a = A.control('slide', 1);
+        // A relative move in A: each tick reads the anchor its session holds.
+        const a = A.control('grab', 1);
         a.begin(); a.set(60);
         const first = ds.getData()[1].y;
         expect(first).toBeGreaterThan(50);
@@ -256,12 +256,12 @@ describe('several charts on one dataset', () => {
     });
 
     it("another chart's commit drops a chart's driver session", async () => {
-        const { ds, A, B } = await pair({}, undefined, pointView({ edit: edit.slide({ name: 'slide', axis: 'y' }) }));
-        const b = B.control('slide', 0);
+        const { ds, A, B } = await pair({}, undefined, pointView({ edit: edit.move({ name: 'grab', mode: 'relative' }) }));
+        const b = B.control('grab', 0);
         b.begin(); b.set(70);
         const moved = ds.getData()[0].y;
         expect(moved).toBeGreaterThan(50);
-        // A commits mid-gesture in B: B's slide anchor is dropped, so its next tick is inert.
+        // A commits mid-gesture in B: B's move anchor is dropped, so its next tick is inert.
         A.control('drag', 1).set(70);
         b.set(90); b.end();
         expect(ds.getData()[0].y).toBe(moved);

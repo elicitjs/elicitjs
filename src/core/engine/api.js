@@ -5,6 +5,7 @@ import { encodeChannel } from '../../plot/mark.js';
 import { fieldsOf } from '../schema.js';
 import { axisOf, pointerForChannel } from '../encoding.js';
 import { warn } from '../dev.js';
+import { driverFor } from '../../edit/drivers/index.js';
 
 /**
  * @typedef {object} ApiDeps
@@ -22,6 +23,7 @@ import { warn } from '../dev.js';
  * @property {(name: string, i: number) => number} rowIndexOf
  * @property {(feature: any, node: any, index?: number | null) => import('../../types').ScaleMap | null} frameScalesFor
  * @property {(edit: import('../../types').Edit) => boolean} rowTargeted
+ * @property {(feature: any, edit: import('../../types').Edit, event: any) => boolean} arbitrates  does the edit's `when` accept the event
  * @property {() => boolean} measure
  * @property {() => void} stopMotion  cancel a pending animation frame
  * @property {(event: any) => void} handleEvent
@@ -38,7 +40,7 @@ import { warn } from '../dev.js';
  */
 export function createChartApi(chart, deps) {
     const {
-        dataset, detach, renderer, features, listeners, featureNodes, schemaSpec, mode, container, stages, tableOf, rowIndexOf, frameScalesFor, rowTargeted, measure, stopMotion,
+        dataset, detach, renderer, features, listeners, featureNodes, schemaSpec, mode, container, stages, tableOf, rowIndexOf, frameScalesFor, rowTargeted, arbitrates, measure, stopMotion,
     } = deps;
     const handleEvent = (/** @type {any} */ event) => deps.handleEvent(event);
     const update = () => deps.update();
@@ -50,19 +52,23 @@ export function createChartApi(chart, deps) {
     // with `x`/`y` in inner (margin-subtracted) pixels.
     const emit = (/** @type {any} */ event) => handleEvent(event);
 
-    // Finds the (feature, edit) with this `name`. Scanned each call to track stages.
+    // Finds the (feature, edit) with this `name`, preferring one active at the
+    // current stage. Scanned each call to track stages.
     const findNamedEdit = (/** @type {string} */ name) => {
-        /** @type {{ feature: any, edit: any } | null} */
+        /** @type {{ feature: any, edit: any, active: boolean } | null} */
         let hit = null;
         // Count distinct edits by `apply`, which survives collectEdits' copy. One
         // edit on several glyph parts (a face's two eyes) is not a collision.
         /** @type {Set<any>} */
         const distinct = new Set();
+        const stage = stages.getStage();
         for (const feature of features) {
             for (const edit of collectEdits(feature)) {
                 if (edit.name !== name) continue;
                 distinct.add(edit.apply);
-                if (!hit) hit = { feature, edit };
+                // The same test as `activeEdits`.
+                const active = edit.stage == null || edit.stage === stage;
+                if (!hit || (active && !hit.active)) hit = { feature, edit, active };
             }
         }
         if (distinct.size === 0) warn(`control:none:${name}`, `chart.control("${name}"): no edit is named "${name}".`);
@@ -70,25 +76,81 @@ export function createChartApi(chart, deps) {
         return hit;
     };
 
-    // The current scene node for a datum (not cached; nodes rebuild each update).
-    const nodeAt = (/** @type {any} */ feature, /** @type {number} */ index) =>
-        (featureNodes[feature.id] || []).find((/** @type {any} */ n) => n && n.index === index) || null;
+    // The scene node an edit acts on for a row: of the row's nodes, the one the
+    // edit `grabs` (a stack's edge handle, an area's y2 handle). Not cached; nodes
+    // rebuild each update.
+    const nodeFor = (/** @type {any} */ feature, /** @type {any} */ edit, /** @type {number} */ row) => {
+        const own = (featureNodes[feature.id] || []).filter((/** @type {any} */ n) => n && !n.ghost && n.index === row);
+        if (typeof edit.grabs !== 'function') return own[0] || null;
+        // A node tagged for exactly this edit beats one any edit may grab.
+        return own.find((/** @type {any} */ n) => n.channel != null && edit.grabs(n))
+            || own.find((/** @type {any} */ n) => edit.grabs(n)) || null;
+    };
+
+    // The open begin()…end() stroke per edit name, shared by every handle, so
+    // `control(n).begin()` and a later `control(n).end()` pair up.
+    /** @type {Map<string, { row: number, node: any }>} */
+    const strokes = new Map();
 
     // A handle bound to a named edit and datum. It routes by the edit's `gesture`;
     // the engine dispatch never knows a controller exists.
     const control = (/** @type {string} */ name, /** @type {number} */ index = 0) => {
         // `index` is row i of getData(); translate it to the mark's table.
         const rowOf = (/** @type {any} */ feature) => rowIndexOf(feature ? feature.table : schemaSpec.primary, index);
+
+        // The edit, row and node a call drives, or null after a warning that says why.
+        /** @param {string} method @returns {{ feature: any, edit: any, row: number, node: any } | null} */
+        const target = (method) => {
+            const found = findNamedEdit(name);
+            if (!found) return null;
+            const { feature, edit } = found;
+            const call = `chart.control("${name}", ${index}).${method}()`;
+            if (!rowTargeted(edit)) {
+                warn(`control:plane:${name}`, `${call}: this edit has pick: "${edit.pick}", which finds its target from the pointer, so a row index cannot drive it. Send the gesture with chart.emit({ type, x, y }) in inner pixels instead.`);
+                return null;
+            }
+            if (!found.active) {
+                warn(`control:stage:${name}`, `${call}: this edit runs at stage ${edit.stage} and the chart is at stage ${stages.getStage()}, so nothing was written.`);
+                return null;
+            }
+            const row = Number.isInteger(index) && index >= 0 ? rowOf(feature) : -1;
+            if (row < 0 || row >= tableOf(feature).length) {
+                warn(`control:index:${name}`, `${call}: there is no row ${index}. The index counts the rows getData() reports, from 0, context rows left out.`);
+                return null;
+            }
+            const node = nodeFor(feature, edit, row);
+            if (!node) {
+                warn(`control:node:${name}:${index}`, `${call}: row ${index} draws no node this edit acts on${typeof edit.grabs === 'function' ? ' (it acts only on some of a row\'s nodes, such as the handle on a boundary, and this row has none)' : ''}.`);
+                return null;
+            }
+            return { feature, edit, row, node };
+        };
+
+        // Does the edit's `when` accept this event? A `when` that reads a modifier
+        // key or the pointer can't be met from outside, so say so.
+        /** @param {{ feature: any, edit: any }} t @param {any} event @param {string} method */
+        const accepted = (t, event, method) => {
+            if (arbitrates(t.feature, t.edit, event)) return true;
+            warn(`control:when:${name}`, `chart.control("${name}", ${index}).${method}(): the edit's \`when\` declined the gesture, so nothing was written. A \`when\` that reads a modifier key or the pointer can't be met by a control.`);
+            return false;
+        };
+
         // Encodes a value to the pointer that would set it, through the scales the
-        // edit inverts. Untouched axes keep the datum's current pixel.
-        const dragPointer = (/** @type {any} */ feature, /** @type {any} */ edit, /** @type {any} */ value) => {
-            const node = nodeAt(feature, rowOf(feature));
+        // edit inverts. Untouched axes keep the datum's current pixel. `encoded` is
+        // false when no channel could carry the value.
+        /** @param {{ feature: any, edit: any, row: number, node: any }} t @param {any} value */
+        const dragPointer = (t, value) => {
+            const { feature, edit, row, node } = t;
             const center = markCenter(node);
-            const datum = tableOf(feature)[rowOf(feature)];
+            const datum = tableOf(feature)[row];
             const channels = feature.channels || {};
-            const editScales = frameScalesFor(feature, node, rowOf(feature)) || chart.scales;
-            let x = datum ? encodeChannel(editScales, channels, 'x', datum, center ? center.cx : 0) : (center ? center.cx : 0);
-            let y = datum ? encodeChannel(editScales, channels, 'y', datum, center ? center.cy : 0) : (center ? center.cy : 0);
+            const editScales = frameScalesFor(feature, node, row) || chart.scales;
+            // A handle sits on its own pixel, not the datum's x/y (a stack's edge).
+            const own = typeof edit.grabs === 'function' && center;
+            let x = datum && !own ? encodeChannel(editScales, channels, 'x', datum, center ? center.cx : 0) : (center ? center.cx : 0);
+            let y = datum && !own ? encodeChannel(editScales, channels, 'y', datum, center ? center.cy : 0) : (center ? center.cy : 0);
+            let encoded = false;
+            if (value === undefined) return { x, y, encoded };
             const resolved = resolveChannels(edit.channels, channels, editScales, feature);
             // `value` is a scalar, or a { channel | field: v } map for a multi-channel edit.
             const valueFor = (/** @type {any} */ ch) => {
@@ -111,71 +173,89 @@ export function createChartApi(chart, deps) {
                 const a = axisOf(ch.name);
                 if (a !== 'y') x = p.x;
                 if (a !== 'x') y = p.y;
+                encoded = true;
             }
-            return { node, x, y };
-        };
-
-        // True between begin() and end(), so `.set` emits a plain `drag` into the
-        // open txn instead of a self-closing `nudge`.
-        let live = false;
-
-        // Warns when the edit needs a pointer, not a row, to drive it.
-        /**
-         * @param {{ feature: any, edit: any } | null} found @param {string} method
-         * @returns {found is { feature: any, edit: any }}
-         */
-        const drivable = (found, method) => {
-            if (!found) return false;
-            if (rowTargeted(found.edit)) return true;
-            warn(`control:plane:${name}`, `chart.control("${name}").${method}(): this edit has pick: "${found.edit.pick}", which finds its target from the pointer, so a row index cannot drive it. Send the gesture with chart.emit({ type, x, y }) in inner pixels instead.`);
-            return false;
+            return { x, y, encoded };
         };
 
         const handle = {
             // Writes a value. A commit-gesture edit gets it as `ctx.value`; a drag edit
             // gets it encoded to a pointer.
             set(/** @type {any} */ value) {
-                const found = findNamedEdit(name);
-                if (!drivable(found, 'set')) return;
-                const { feature, edit } = found;
-                const node = nodeAt(feature, rowOf(feature));
+                const t = target('set');
+                if (!t) return;
+                const { edit, node } = t;
                 // editName keeps a sibling edit on the same gesture from also firing.
                 if (edit.gesture === 'commit') {
-                    emit({ type: 'commit', node, value, editName: name, x: node ? node.cx : 0, y: node ? node.cy : 0 });
+                    const event = { type: 'commit', node, value, editName: name, x: node.cx || 0, y: node.cy || 0 };
+                    if (accepted(t, event, 'set')) emit(event);
                     return;
                 }
-                const { node: n, x, y } = dragPointer(feature, edit, value);
-                emit(live
-                    ? { type: 'drag', node: n, x, y, editName: name }
-                    : { type: 'drag', node: n, x, y, nudge: true, editName: name });
+                const { x, y, encoded } = dragPointer(t, value);
+                // `inverts: 'domain'` (slide) maps pointer travel, not a scale's pixel.
+                if (!encoded || edit.inverts === 'domain') {
+                    warn(`control:encode:${name}`, `chart.control("${name}").set(): this ${edit.type} edit doesn't read its value off a channel's scale, so a value can't be turned into a pointer. Drive it with begin(), emit({ type: "drag", x, y }) in inner pixels, then end().`);
+                    return;
+                }
+                const event = { type: 'drag', node, x, y, editName: name };
+                const s = strokes.get(name);
+                if (s) {
+                    if (s.row !== t.row) {
+                        warn(`control:stroke:${name}`, `chart.control("${name}", ${index}).set(): begin() opened a stroke on another row; end() it first.`);
+                        return;
+                    }
+                    emit(event);
+                    return;
+                }
+                if (!accepted(t, event, 'set')) return;
+                // A driver (relative move) anchors at dragstart, so it gets a whole
+                // stroke. Any other edit takes one self-closing drag.
+                if (driverFor(edit)) {
+                    const at = dragPointer(t, undefined);
+                    emit({ type: 'dragstart', node, x: at.x, y: at.y, editName: name });
+                    emit(event);
+                    emit({ type: 'dragend', node, x, y, editName: name });
+                } else {
+                    emit({ ...event, nudge: true });
+                }
             },
             // begin()/end() bracket one txn, so many .set() ticks are one undo entry.
             begin() {
-                const found = findNamedEdit(name);
-                if (!drivable(found, 'begin')) return;
-                live = true;
+                if (strokes.has(name)) return;
+                const t = target('begin');
+                if (!t) return;
                 // Press at the datum's own pixel, so a relative edit anchors there.
-                const { node, x, y } = dragPointer(found.feature, found.edit, undefined);
-                emit({ type: 'dragstart', node, x, y, editName: name });
+                const { x, y } = dragPointer(t, undefined);
+                const event = { type: 'dragstart', node: t.node, x, y, editName: name };
+                if (!accepted(t, event, 'begin')) return;
+                strokes.set(name, { row: t.row, node: t.node });
+                emit(event);
             },
             end() {
-                const found = findNamedEdit(name);
-                live = false;
-                if (!found) return;
-                emit({ type: 'dragend', node: nodeAt(found.feature, rowOf(found.feature)), editName: name });
+                const s = strokes.get(name);
+                if (!s) return;
+                strokes.delete(name);
+                emit({ type: 'dragend', node: s.node, editName: name });
             },
             // Fires a value-less edit (cycle, remove, toggle) with its own gesture on
             // the datum's node, or with `gesture` if given.
             fire(/** @type {string} */ gesture) {
-                const found = findNamedEdit(name);
-                if (!drivable(found, 'fire')) return;
-                const g = gesture || found.edit.gesture || 'click';
-                emit({ type: g, node: nodeAt(found.feature, rowOf(found.feature)), editName: name });
+                const t = target('fire');
+                if (!t) return;
+                const event = { type: gesture || t.edit.gesture || 'click', node: t.node, editName: name };
+                if (accepted(t, event, 'fire')) emit(event);
             },
-            // Raw passthrough, auto-scoped to this feature's node for the datum.
+            // Raw passthrough, auto-scoped to the node this edit acts on for the datum.
+            // A plane edit gets no node, so its `x`/`y` route through the plane.
             emit(/** @type {any} */ event) {
-                const found = findNamedEdit(name);
-                emit({ node: found ? nodeAt(found.feature, rowOf(found.feature)) : undefined, ...event });
+                const s = strokes.get(name);
+                let node = s ? s.node : undefined;
+                if (!s) {
+                    const found = findNamedEdit(name);
+                    const row = found && Number.isInteger(index) && index >= 0 ? rowOf(found.feature) : -1;
+                    if (found && found.edit.pick === 'direct' && row >= 0) node = nodeFor(found.feature, found.edit, row) || undefined;
+                }
+                emit({ node, ...event });
             },
             // The values this channel accepts, read off its scale, for external UI.
             accepts() {

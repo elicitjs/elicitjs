@@ -75,6 +75,6 @@ describe('control() on plane-pick edits', () => {
         const before = el.getData();
         const warnings = captureWarnings(() => el.control('pen', 0).set(70));
         expect(el.getData()).toEqual(before);
-        expect(warnings.some((w) => w.includes('chart.control("pen").set()') && w.includes('pick: "draw"') && w.includes('chart.emit'))).toBe(true);
+        expect(warnings.some((w) => w.includes('chart.control("pen", 0).set()') && w.includes('pick: "draw"') && w.includes('chart.emit'))).toBe(true);
     });
 });
