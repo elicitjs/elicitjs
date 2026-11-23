@@ -180,6 +180,15 @@ export function effectStyleFor(states) {
  *  CSS variable, no paint at all). A neutral slate, legible on any data colour. */
 export const OUTLINE_FALLBACK = '#475569';
 
+/** Does this node paint nothing: fill and stroke both set to `none` (or transparent)?
+ *  An unset paint takes a default, so it still draws.
+ *  @param {any} node */
+function paintsNothing(node) {
+    if (node.type === 'text' || node.type === 'image' || node.fillGradient || node.fillImage) return false;
+    const off = (/** @type {any} */ p) => p === 'none' || p === 'transparent';
+    return off(node.fill) && (node.stroke == null || off(node.stroke));
+}
+
 /** A parsed, visible colour, or null for none / transparent / unparseable paint
  *  (`url(#gradient)`, `var(--x)`, `currentColor`).
  * @param {any} paint */
@@ -238,6 +247,9 @@ export function outlineColor(node, outline) {
  */
 export function outlineNodes(mark, state) {
     if (!mark || !state || state.enabled === false || !state.outline) return [];
+    // Nothing is drawn there to trace: a glyph's hit circle, or a part painted
+    // `none` (a composite's unlit window).
+    if (mark.hit || paintsNothing(mark)) return [];
     // Trace the declared shape instead. It has no effectShape itself, so this
     // recurses once.
     if (mark.effectShape) {

@@ -134,6 +134,85 @@ async function main() {
         console.log('\nAll routes (elicitjs-docs)');
         for (const r of routes) await visit(r);
 
+        // ---- Intro walkthrough and mark gallery (/) -------------------------
+        // The home page drives its charts with external control: scrolling moves
+        // a drawn pointer that emits drag events on each step, and scrolling back
+        // runs the drag in reverse. Your own pointer over the chart must send it
+        // away, and a real drag must edit.
+        {
+        console.log('\nIntro walkthrough and gallery (/)');
+        await open('/', '.walk-chart svg');
+        const pull = async (from, to) => {
+            await page.mouse.move(from.x, from.y);
+            await page.mouse.down();
+            await page.mouse.move(to.x, to.y, { steps: 12 });
+            await page.mouse.up();
+            await page.waitForTimeout(150);
+        };
+        const shares = async () => (await page.locator('.walk-readout .data-body').innerText())
+            .match(/share: [\d.]+/g)?.map((s) => Number(s.slice(7))) || [];
+        // Put the middle of the window `f` of the way down step `i`.
+        const scrollStep = async (i, f) => {
+            await page.locator('.walk-step').nth(i).evaluate((el, f) => {
+                const r = el.getBoundingClientRect();
+                window.scrollTo(0, window.scrollY + r.top + f * r.height - window.innerHeight / 2);
+            }, f);
+            await page.waitForTimeout(400);
+        };
+        await page.mouse.move(2, 2);
+        await scrollStep(1, 0.1);
+        await page.waitForTimeout(400);
+        const seed = await shares();
+        await scrollStep(1, 0.6);
+        const scrolled = await shares();
+        check('intro: scrolling drags a bar through external control', scrolled[1] > seed[1] + 5,
+            `${JSON.stringify(seed)} -> ${JSON.stringify(scrolled)}`);
+        await scrollStep(1, 0.1);
+        check('intro: scrolling back runs the drag in reverse', JSON.stringify(await shares()) === JSON.stringify(seed),
+            `${JSON.stringify(seed)} -> ${JSON.stringify(await shares())}`);
+
+        await scrollStep(4, 0.6);
+        const view = await page.locator('.walk-view').boundingBox();
+        await page.mouse.move(view.x + 10, view.y + 10);
+        await page.waitForTimeout(300);
+        const resting = await shares();
+        await page.mouse.wheel(0, 120);
+        await page.waitForTimeout(400);
+        check('intro: your pointer over the chart stops the drawn one',
+            JSON.stringify(await shares()) === JSON.stringify(resting)
+            && (await page.locator('.walk-pointer.is-on').count()) === 0);
+        const bar = await page.locator('.walk-chart rect').evaluateAll((rs) => {
+            const r = rs.find((e) => e.__data__ && e.__data__.bandAxis === 'x' && e.__data__.index === 2);
+            const b = r.getBoundingClientRect();
+            return { x: b.x + b.width / 2, y: b.y };
+        });
+        await pull({ x: bar.x, y: bar.y }, { x: bar.x, y: bar.y - 60 });
+        const after = await shares();
+        check('intro: a real drag raises the bar and maintainSum keeps 100',
+            after[2] > resting[2] + 5 && Math.abs(after.reduce((s, v) => s + v, 0) - 100) < 0.5, JSON.stringify(after));
+
+        // The gallery: the large chart and its small copy draw one dataset.
+        await page.locator('#marks').scrollIntoViewIfNeeded();
+        await page.mouse.move(2, 2);
+        const houseIcon = page.locator('.gal-icon', { hasText: 'Raise a house' });
+        await houseIcon.click();
+        await page.waitForTimeout(400);
+        const wallsOf = (sel) => page.locator(`${sel} rect`).evaluateAll((rs) => rs
+            .filter((e) => e.__data__ && e.__data__.cursor === 'ns-resize').map((e) => Math.round(e.__data__.height)));
+        const smallBefore = await wallsOf('.gal-icon.is-active .gal-small');
+        const wall = await page.locator('.gal-big rect').evaluateAll((rs) => {
+            const r = rs.find((e) => e.__data__ && e.__data__.cursor === 'ns-resize' && e.__data__.index === 0);
+            const b = r.getBoundingClientRect();
+            return { x: b.x + b.width / 2, y: b.y + 3 };
+        });
+        await pull({ x: wall.x, y: wall.y }, { x: wall.x, y: wall.y - 50 });
+        await page.waitForTimeout(300);
+        const smallAfter = await wallsOf('.gal-icon.is-active .gal-small');
+        check('intro gallery: the small copy follows a drag in the large chart',
+            smallBefore.length === 4 && smallAfter[0] > smallBefore[0], `${smallBefore} -> ${smallAfter}`);
+
+        }
+
         // ---- Playground: Build dashboard (reactive) -------------------------
         // The builder serialises form state to a spec on every change (every
         // other route just evaluates a hand-written .example.txt), so this is
@@ -156,7 +235,8 @@ async function main() {
         await page.waitForTimeout(600); // debounce (250ms) + re-eval + redraw
         const builderErrs = await page.locator('.canvas-device-frame .live-error').allTextContents();
         check('playground: adding a constraint re-renders with no error', builderErrs.length === 0, builderErrs.join(' | '));
-        const builderChartCount = await page.locator('.canvas-device-frame svg').count();
+        // `:not(.lucide)`: the example toolbar's icons are svgs too.
+        const builderChartCount = await page.locator('.canvas-device-frame svg:not(.lucide)').count();
         check('playground: the live spec mounts a chart', builderChartCount === 1, `svg=${builderChartCount}`);
 
         await page.getByRole('button', { name: /View Code/ }).click();
@@ -1782,7 +1862,7 @@ async function main() {
         // The open-domain chart is the section's SECOND chart (the closed one above it
         // is what the block before this drove).
         const openRows = () => page.$$eval('#slice .chart > div', (els) => els[1].__chart.getData());
-        const openSvg = page.locator('#slice svg').nth(1);
+        const openSvg = page.locator('#slice svg:not(.lucide)').nth(1);
         await openSvg.scrollIntoViewIfNeeded();
         await page.waitForTimeout(150);
         const oSeed = await openRows();
@@ -4943,12 +5023,12 @@ async function main() {
             return t ? t.getAttribute('font-family') : null;
         });
         check('themes: nyt sets its headline in Georgia', thmHeadFont === 'Georgia, serif', `font-family=${thmHeadFont}`);
-        const thmMatRx = await page.$$eval('#product svg', (svgs) => {
+        const thmMatRx = await page.$$eval('#product svg:not(.lucide)', (svgs) => {
             const bar = svgs[svgs.length - 1].querySelector('rect.mark');
             return bar ? bar.getAttribute('rx') : null;
         });
         check('themes: material rounds its bars', thmMatRx === '4', `rx=${thmMatRx}`);
-        const thmPbBg = await page.$$eval('#business svg', (svgs) => svgs[svgs.length - 1].style.background);
+        const thmPbBg = await page.$$eval('#business svg:not(.lucide)', (svgs) => svgs[svgs.length - 1].style.background);
         check('themes: powerbi paints its own canvas', /rgb\(27,\s*26,\s*25\)|#1b1a19/i.test(thmPbBg), `bg=${thmPbBg}`);
         const thmNytGrid = await page.$$eval('#newsroom svg', (svgs) => {
             const lines = [...svgs[0].querySelectorAll('line')];
@@ -4977,7 +5057,7 @@ async function main() {
         check('axis: a "\\n" in a tick label paints two lines', thmTwoLine >= 2, `two-line labels=${thmTwoLine}`);
         // The space-saving axis: labels left-anchored INSIDE the plot (past the
         // first band-edge gridline), above their bars.
-        const thmInside = await page.$$eval('#styling svg', (svgs) => {
+        const thmInside = await page.$$eval('#styling svg:not(.lucide)', (svgs) => {
             const svg = svgs[svgs.length - 1];
             const label = [...svg.querySelectorAll('text')].find((t) => t.textContent === 'Engineering');
             const bars = [...svg.querySelectorAll('rect.mark')].map((r) => r.getBoundingClientRect());

@@ -47,6 +47,18 @@ describe('outline geometry', () => {
         expect(o.strokeWidth).toBe(2 + hovered.outline.width);
     });
 
+    it('draws nothing around a node that paints nothing', () => {
+        expect(outlineNodes({ type: 'rect', x: 0, y: 0, width: 10, height: 10, fill: 'none', stroke: 'none' }, hovered)).toEqual([]);
+        expect(outlineNodes({ type: 'rect', x: 0, y: 0, width: 10, height: 10, fill: 'none' }, hovered)).toEqual([]);
+        // A hollow shape still has its stroke to trace.
+        expect(outlineNodes({ type: 'rect', x: 0, y: 0, width: 10, height: 10, fill: 'none', stroke: '#46596B' }, hovered)).toHaveLength(1);
+    });
+
+    it("draws nothing around a glyph's hit circle", () => {
+        expect(outlineNodes({ type: 'circle', cx: 0, cy: 0, r: 70, fill: 'none', stroke: 'none', hit: true }, hovered)).toEqual([]);
+        expect(outlineNodes({ type: 'circle', cx: 0, cy: 0, r: 70, fill: '#fff', hit: true }, hovered)).toEqual([]);
+    });
+
     it('still pads when asked', () => {
         const [o] = outlineNodes({ type: 'circle', cx: 0, cy: 0, r: 5, fill: '#50AEB7' }, { outline: { width: 2, pad: 4, color: 'auto' } });
         expect(o.r).toBe(9);
