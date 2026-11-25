@@ -2,7 +2,7 @@
 // One list for `check:warnings` and `verify:browser`, so a new page is added once.
 
 export const routes = [
-    '/', '/start', '/api', '/concepts', '/concepts/contracts', '/sizing', '/renderers', '/authoring',
+    '/', '/start', '/api', '/concepts', '/concepts/contracts', '/sizing', '/mobile', '/renderers', '/authoring',
     '/json',
     '/marks/bar', '/marks/rect', '/marks/area', '/marks/tick', '/marks/point',
     '/marks/ellipse', '/marks/curve',

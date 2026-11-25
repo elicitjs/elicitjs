@@ -108,8 +108,8 @@ export const GUIDE_OPTIONS = {
     sliderTrack: ['format'],
     quadrants: ['x', 'y'],
     // Pointer-following guides (guides/tip.js, guides/crosshair.js).
-    tip: ['mark', 'text', 'anchor', 'dx', 'dy', 'fill', 'stroke', 'fontSize', 'format'],
-    crosshair: ['x', 'y', 'readout', 'stroke', 'strokeDash', 'fontSize', 'format'],
+    tip: ['mark', 'text', 'anchor', 'dx', 'dy', 'fill', 'stroke', 'fontSize', 'format', 'touch'],
+    crosshair: ['x', 'y', 'readout', 'stroke', 'strokeDash', 'fontSize', 'format', 'touch'],
     custom: ['tracksPointer'],
 };
 

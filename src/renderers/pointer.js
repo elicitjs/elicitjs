@@ -7,8 +7,8 @@
 //   hover / hoverout           — plane, plane-on-top only
 // Nothing here is canvas-specific, so another single-element renderer can bind it.
 // Keyboard nudge and the text-edit `commit` are not wired here.
-import { hitTest, clipVisible } from '../edit/pick.js';
-import { frameThrottle, MODIFIER_KEYS, CLICK_DISTANCE, PLANE_DRAG_THRESHOLD, wheelDelta } from './shared.js';
+import { hitTestTouch, clipVisible, TOUCH_REACH } from '../edit/pick.js';
+import { frameThrottle, MODIFIER_KEYS, CLICK_DISTANCE, PLANE_DRAG_THRESHOLD, tapDistance, wheelDelta } from './shared.js';
 
 /**
  * The cursor a node asks for: an effect's, else its own when editable.
@@ -30,11 +30,20 @@ function cursorOf(node) {
  */
 export function bindPointerEvents(surface, getCtx) {
     /** @type {any} */
-    let gesture = null;      // { mode, node?, sx, sy, dragging, moved }
+    let gesture = null;      // { mode, node?, sx, sy, dragging, moved, pointerType }
+    // A finger's reach in scene px, from the last press (0 for a mouse). The click
+    // and dblclick that trail a tap carry it too.
+    let reach = 0;
     // The hovered mark as `featureId:index`; pointerover/out fire only when it changes.
     /** @type {string | null} */
     let hoverKey = null;
     let suppressClick = false; // swallow the native click that trails a drag / mark-click
+    // That click comes in the same turn as the release, or never (a finger drag),
+    // so the flag must not outlive it and swallow a later tap.
+    const suppressNextClick = () => {
+        suppressClick = true;
+        setTimeout(() => { suppressClick = false; }, 0);
+    };
     // Where the pointer last was over the surface, in inner scene space.
     /** @type {{ x: number, y: number } | null} */
     let at = null;
@@ -74,8 +83,17 @@ export function bindPointerEvents(surface, getCtx) {
     };
 
     // The editable mark under (x, y); marks clipped out of view are not hit.
-    /** @param {any} ctx @param {number} x @param {number} y @param {boolean} [hover] also a `hoverable` node */
-    const pick = (ctx, x, y, hover = false) => hitTest(clipVisible(ctx.scene.children, x, y, ctx.clip || null), x, y, hover);
+    /** @param {any} ctx @param {number} x @param {number} y @param {boolean} [hover] also a `hoverable` node @param {number} [r] a finger's reach */
+    const pick = (ctx, x, y, hover = false, r = 0) =>
+        hitTestTouch(clipVisible(ctx.scene.children, x, y, ctx.clip || null), x, y, r, hover);
+    // TOUCH_REACH screen px in scene px, for a touch press; else 0.
+    /** @param {PointerEvent} e @returns {number} */
+    const reachOf = (e) => {
+        if (e.pointerType !== 'touch') return 0;
+        const rect = surface.getBoundingClientRect();
+        const ctx = getCtx();
+        return TOUCH_REACH * (rect.width ? ctx.width / rect.width : 1);
+    };
 
     surface.style.touchAction = 'none';
     surface.style.userSelect = 'none';
@@ -124,10 +142,10 @@ export function bindPointerEvents(surface, getCtx) {
                 ctx.onEvent({ type: 'dragend', x, y, node: gesture.node, rawEvent: e });
                 // A still press is a mark click; the trailing native plane click is suppressed.
                 if (released && !gesture.moved) ctx.onEvent({ type: 'click', x, y, node: gesture.node, rawEvent: e });
-                if (released) suppressClick = true;
+                if (released) suppressNextClick();
             } else if (gesture.dragging) {
                 ctx.onEvent({ type: 'dragend', x, y, rawEvent: e });
-                if (released) suppressClick = true;
+                if (released) suppressNextClick();
             }
             // A plane tap that never dragged falls through to the native plane click.
         }
@@ -145,15 +163,19 @@ export function bindPointerEvents(surface, getCtx) {
     on('pointerdown', (e) => {
         const ctx = getCtx();
         const [x, y] = toInner(e);
+        reach = reachOf(e);
+        // A finger has no hover, so a press shows what pointer guides read.
+        if (ctx.tracksPointer) track(e, x, y);
+        const pointerType = e.pointerType;
 
         if (ctx.planeOnTop) {
             // Plane modes: the driver picks its own target from the coordinates.
-            gesture = { mode: 'plane', sx: x, sy: y, dragging: false };
+            gesture = { mode: 'plane', sx: x, sy: y, dragging: false, pointerType };
         } else {
-            const node = pick(ctx, x, y);
+            const node = pick(ctx, x, y, false, reach);
             if (node) {
                 // dragstart on press, so the undo transaction brackets the whole stroke.
-                gesture = { mode: 'direct', node, sx: x, sy: y, moved: false };
+                gesture = { mode: 'direct', node, sx: x, sy: y, moved: false, pointerType };
                 ctx.onEvent({ type: 'dragstart', x, y, node, rawEvent: e });
             } else {
                 // Empty space: let the native click fire a plane click.
@@ -200,12 +222,12 @@ export function bindPointerEvents(surface, getCtx) {
         }
 
         if (gesture.mode === 'direct') {
-            if (Math.hypot(x - gesture.sx, y - gesture.sy) > CLICK_DISTANCE) gesture.moved = true;
+            if (Math.hypot(x - gesture.sx, y - gesture.sy) > tapDistance(gesture.pointerType, CLICK_DISTANCE)) gesture.moved = true;
             ctx.onEvent({ type: 'drag', x, y, node: gesture.node, rawEvent: e });
         } else {
-            if (!gesture.dragging && Math.hypot(x - gesture.sx, y - gesture.sy) > PLANE_DRAG_THRESHOLD) {
+            if (!gesture.dragging && Math.hypot(x - gesture.sx, y - gesture.sy) > tapDistance(gesture.pointerType, PLANE_DRAG_THRESHOLD)) {
                 gesture.dragging = true;
-                ctx.onEvent({ type: 'dragstart', x: gesture.sx, y: gesture.sy, rawEvent: e });
+                ctx.onEvent({ type: 'dragstart', x: gesture.sx, y: gesture.sy, reach, rawEvent: e });
             }
             if (gesture.dragging) ctx.onEvent({ type: 'drag', x, y, rawEvent: e });
         }
@@ -225,7 +247,7 @@ export function bindPointerEvents(surface, getCtx) {
     on('pointerleave', (e) => {
         unwatchModifiers();
         const ctx = getCtx();
-        if (ctx.tracksPointer) ctx.onEvent({ type: 'pointerleave', rawEvent: e });
+        if (ctx.tracksPointer) { track.cancel(); ctx.onEvent({ type: 'pointerleave', rawEvent: e }); }
         if (!gesture) {
             at = null;
             if (ctx.planeOnTop) ctx.onEvent({ type: 'hoverout', rawEvent: e });
@@ -246,15 +268,15 @@ export function bindPointerEvents(surface, getCtx) {
         if (suppressClick) { suppressClick = false; return; }
         const ctx = getCtx();
         const [x, y] = toInner(e);
-        ctx.onEvent({ type: 'click', x, y, rawEvent: e });
+        ctx.onEvent({ type: 'click', x, y, reach, rawEvent: e });
     });
 
     on('dblclick', (e) => {
         const ctx = getCtx();
         const [x, y] = toInner(e);
         // Carry the mark under the pointer, if any; dblclick edits can sit on a node.
-        const node = ctx.planeOnTop ? null : pick(ctx, x, y);
-        ctx.onEvent({ type: 'dblclick', x, y, ...(node ? { node } : {}), rawEvent: e });
+        const node = ctx.planeOnTop ? null : pick(ctx, x, y, false, reach);
+        ctx.onEvent({ type: 'dblclick', x, y, reach, ...(node ? { node } : {}), rawEvent: e });
     });
 
     const unbind = () => {

@@ -8,14 +8,15 @@ import { resolveFormat } from '../format.js';
 
 /**
  * @param {{ x?: boolean, y?: boolean, readout?: boolean, stroke?: string, strokeDash?: string,
- *   fontSize?: number, format?: string | ((v: any) => string) }} [options]
+ *   fontSize?: number, format?: string | ((v: any) => string), touch?: boolean }} [options]
  *   x / y     which rules to draw (default both)
  *   readout   label each rule with the axis value under the pointer (default true)
+ *   touch     show for a finger, while it is on the chart (default true)
  * @returns {import('../types').Guide}
  */
 export function crosshair(options = {}) {
     warnUnknownGuideOptions('crosshair', options, GUIDE_OPTIONS.crosshair);
-    const { x: onX = true, y: onY = true, readout = true, stroke, strokeDash = '3 3', fontSize: fontSizeOpt, format } = options;
+    const { x: onX = true, y: onY = true, readout = true, stroke, strokeDash = '3 3', fontSize: fontSizeOpt, format, touch = true } = options;
     const fmt = format != null ? resolveFormat(format) : null;
     /** @param {any} v @returns {string} */
     const show = (v) => (v == null ? '' : fmt ? fmt(v) : plainValue(v, 100));
@@ -27,6 +28,7 @@ export function crosshair(options = {}) {
         build: (_rows, scales, width, height, ctx) => {
             const p = ctx.ui?.pointer;
             if (!p || p.x < 0 || p.y < 0 || p.x > width || p.y > height) return [];
+            if (p.touch && !touch) return [];
             const rt = ctx.theme?.guide?.rule || {};
             const ink = stroke ?? rt.stroke ?? '#64748b';
             const fontSize = fontSizeOpt ?? (ctx.theme?.font?.size || 10);

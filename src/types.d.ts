@@ -3194,6 +3194,10 @@ export interface GestureEvent {
   // `set()`s on one feature (a face's params) stay independent. Set by `chart.control`;
   // native pointer events leave it unset (and keep the ordinary fan-out).
   editName?: string;
+  // How far from a small mark, in inner px, a finger press may land and still take
+  // it. Renderers set it on a touch press and the click that follows; a mouse
+  // leaves it unset.
+  reach?: number;
   rawEvent?: any;
   [key: string]: any;
 }
@@ -3716,6 +3720,8 @@ export interface TipGuideOptions {
   fontSize?: number;
   /** How a number prints: a d3 format specifier or a function. */
   format?: string | ((v: any) => string);
+  /** Show for a finger, while it is on the chart (default `true`). */
+  touch?: boolean;
 }
 /** `guides.crosshair`: rules that follow the pointer, with the axis value read out at the plot edge. */
 export interface CrosshairGuideOptions {
@@ -3727,6 +3733,8 @@ export interface CrosshairGuideOptions {
   strokeDash?: string;
   fontSize?: number;
   format?: string | ((v: any) => string);
+  /** Show for a finger, while it is on the chart (default `true`). */
+  touch?: boolean;
 }
 
 // ── Widgets ────────────────────────────────────────────────────────────────

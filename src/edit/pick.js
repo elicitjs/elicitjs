@@ -231,17 +231,23 @@ export const HIT_TOLERANCE = 4;
 // Floors only the hit box, never the drawn geometry. The SVG renderer uses it too.
 export const MIN_GRAB = 12;
 
+// A finger takes a small mark within this many screen px of its centre or edge:
+// half the ~44px touch target that platforms recommend. Renderers turn it into
+// scene px (`reach`) for a touch press only.
+export const TOUCH_REACH = 22;
+
 /**
  * A rect node's hit box: its drawn box, each dimension grown symmetrically to at
- * least MIN_GRAB.
+ * least `min`.
  * @param {any} mark
+ * @param {number} [min]
  * @returns {{ x: number, y: number, w: number, h: number }}
  */
-export function rectHitBox(mark) {
+export function rectHitBox(mark, min = MIN_GRAB) {
     const w = mark.width || 0;
     const h = mark.height || 0;
-    const gw = Math.max(w, MIN_GRAB);
-    const gh = Math.max(h, MIN_GRAB);
+    const gw = Math.max(w, min);
+    const gh = Math.max(h, min);
     return {
         x: mark.x - (gw - w) / 2,
         y: mark.y - (gh - h) / 2,
@@ -265,13 +271,78 @@ export function hitTest(marks, px, py, hover = false) {
     const list = marks || [];
     for (let i = list.length - 1; i >= 0; i--) {
         const mark = list[i];
-        if (!mark || !(mark.editable || (hover && mark.hoverable))) continue;
-        // A locked row still answers hover when its chart's hover is row-wide.
-        if ((mark.locked && !(hover && mark.hoverable)) || mark.guide || mark.background) continue;
-        if (mark.pointerEvents === 'none') continue;
-        if (containsPoint(mark, px, py)) return mark;
+        if (pickable(mark, hover) && containsPoint(mark, px, py)) return mark;
     }
     return null;
+}
+
+/**
+ * Can the pointer take this node at all?
+ * @param {any} mark @param {boolean} hover
+ * @returns {boolean}
+ */
+function pickable(mark, hover) {
+    if (!mark || !(mark.editable || (hover && mark.hoverable))) return false;
+    // A locked row still answers hover when its chart's hover is row-wide.
+    if ((mark.locked && !(hover && mark.hoverable)) || mark.guide || mark.background) return false;
+    return mark.pointerEvents !== 'none';
+}
+
+/**
+ * `hitTest` for a finger. The mark under it wins; else the nearest small mark
+ * whose touch target (`reach` around it, in scene px) holds the pointer. The SVG
+ * renderer draws the same targets as invisible shapes (`_drawTouchTargets`).
+ * @param {any[]} marks
+ * @param {number} px @param {number} py
+ * @param {number} reach
+ * @param {boolean} [hover]
+ * @returns {any | null}
+ */
+export function hitTestTouch(marks, px, py, reach, hover = false) {
+    const exact = hitTest(marks, px, py, hover);
+    if (exact || !(reach > 0)) return exact;
+    const list = marks || [];
+    /** @type {any} */
+    let best = null;
+    let bestGap = Infinity;
+    for (let i = list.length - 1; i >= 0; i--) {
+        const mark = list[i];
+        if (!pickable(mark, hover)) continue;
+        const gap = touchGap(mark, px, py, reach);
+        if (gap < bestGap) { best = mark; bestGap = gap; }
+    }
+    return best;
+}
+
+/**
+ * How far the pointer is from a mark's drawn edge, when it lies inside the mark's
+ * touch target; Infinity when it doesn't. Text and sectors get no target: they
+ * are large enough to touch.
+ * @param {any} mark @param {number} px @param {number} py @param {number} reach
+ * @returns {number}
+ */
+function touchGap(mark, px, py, reach) {
+    const p = unrotate(mark, px, py);
+    if (mark.type === 'circle' || mark.type === 'ellipse') {
+        const r = mark.type === 'circle'
+            ? (mark.r != null ? mark.r : 5)
+            : Math.max(mark.rx != null ? mark.rx : 5, mark.ry != null ? mark.ry : 5);
+        const d = Math.hypot(p.x - mark.cx, p.y - mark.cy);
+        return d <= Math.max(r, reach) ? Math.max(0, d - r) : Infinity;
+    }
+    if (mark.type === 'rect' && !mark.sector) {
+        const box = rectHitBox(mark, 2 * reach);
+        if (p.x < box.x || p.x > box.x + box.w || p.y < box.y || p.y > box.y + box.h) return Infinity;
+        const dx = Math.max(mark.x - p.x, 0, p.x - (mark.x + (mark.width || 0)));
+        const dy = Math.max(mark.y - p.y, 0, p.y - (mark.y + (mark.height || 0)));
+        return Math.hypot(dx, dy);
+    }
+    if (mark.type === 'line' || mark.type === 'path') {
+        const half = mark.polygon ? 0 : (mark.strokeWidth || 1) / 2;
+        const d = distanceToMark(mark, px, py) - half;
+        return d <= reach ? Math.max(0, d) : Infinity;
+    }
+    return Infinity;
 }
 
 /**

@@ -1,7 +1,7 @@
 // @ts-check
 import { encodeChannel } from '../../plot/mark.js';
 import { markCenter, nudgeTarget } from '../../edit/shared.js';
-import { hitTest } from '../../edit/pick.js';
+import { hitTest, hitTestTouch } from '../../edit/pick.js';
 import { drivers, driverFor } from '../../edit/drivers/index.js';
 import { elementEffectOf } from '../effects.js';
 
@@ -246,18 +246,25 @@ export function createDispatch(chart, deps) {
     let planeGrab = null;
     // Is the current stroke a direct grab the plane gesture was re-routed to?
     let directStroke = false;
-    /** @param {number} x @param {number} y @param {boolean} [hover] also a hover-only node @returns {any | null} */
-    const hitAny = (x, y, hover = false) => {
+    /**
+     * @param {number} x @param {number} y @param {boolean} [hover] also a hover-only node
+     * @param {number} [reach] a finger's reach in px (the event's `reach`)
+     * @returns {any | null}
+     */
+    const hitAny = (x, y, hover = false, reach = 0) => {
         for (let i = features.length - 1; i >= 0; i--) {
             const hit = hitTest(visibleAt(featureNodes[features[i].id] || [], x, y), x, y, hover);
             if (hit) return hit;
         }
-        return null;
+        if (!(reach > 0)) return null;
+        // Nothing under the finger: the nearest small mark within its reach.
+        const all = features.flatMap((f) => visibleAt(featureNodes[f.id] || [], x, y));
+        return hitTestTouch(all, x, y, reach, hover);
     };
     // The mark under the pointer, when one of its direct edits accepts the gesture as `type`.
     /** @param {any} event @param {string} [type] @returns {any | null} */
     const grabbableAt = (event, type = event.type) => {
-        const hit = hitAny(event.x, event.y);
+        const hit = hitAny(event.x, event.y, false, event.reach);
         const owner = hit ? featureById.get(hit.featureId) : null;
         const accepts = owner && activeEdits(owner).some((e) => e.pick === 'direct'
             && arbitrates(owner, e, { ...event, type, node: hit }));
@@ -265,10 +272,10 @@ export function createDispatch(chart, deps) {
     };
     /** @param {any} event @returns {any | null} */
     const fallbackHit = (event) => {
-        if (event.type === 'dragstart') { planeGrab = hitAny(event.x, event.y); return planeGrab; }
+        if (event.type === 'dragstart') { planeGrab = hitAny(event.x, event.y, false, event.reach); return planeGrab; }
         if (event.type === 'drag') return planeGrab;
         if (event.type === 'dragend') { const g = planeGrab; planeGrab = null; return g; }
-        if (event.type === 'click' || event.type === 'dblclick') return hitAny(event.x, event.y);
+        if (event.type === 'click' || event.type === 'dblclick') return hitAny(event.x, event.y, false, event.reach);
         return null;
     };
 
@@ -297,7 +304,10 @@ export function createDispatch(chart, deps) {
 
         // Pointer position, for guides that follow it. State only, never dispatched.
         if (event.type === 'pointermove' || event.type === 'pointerleave') {
-            const next = event.type === 'pointermove' ? { x: event.x, y: event.y } : null;
+            // `touch`: a finger, which a guide may choose not to follow.
+            const next = event.type === 'pointermove'
+                ? { x: event.x, y: event.y, touch: event.rawEvent?.pointerType === 'touch' }
+                : null;
             const same = (!next && !ui.pointer) || !!(next && ui.pointer && next.x === ui.pointer.x && next.y === ui.pointer.y);
             ui.pointer = next;
             if (tracksPointer && !same) update();

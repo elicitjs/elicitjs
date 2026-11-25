@@ -159,9 +159,10 @@ export function partitionScene(children, opts = {}) {
 
 /**
  * Throttle a handler to one call per animation frame, keeping the last arguments.
+ * `cancel()` drops a pending call.
  * @template {(...args: any[]) => void} F
  * @param {F} fn
- * @returns {F}
+ * @returns {F & { cancel: () => void }}
  */
 export function frameThrottle(fn) {
     /** @type {any[] | null} */
@@ -170,7 +171,7 @@ export function frameThrottle(fn) {
     const raf = typeof requestAnimationFrame === 'function'
         ? requestAnimationFrame
         : (/** @type {() => void} */ cb) => setTimeout(cb, 16);
-    return /** @type {F} */ (/** @type {any} */ ((/** @type {any[]} */ ...args) => {
+    const throttled = /** @type {any} */ ((/** @type {any[]} */ ...args) => {
         pending = args;
         if (scheduled) return;
         scheduled = true;
@@ -180,7 +181,9 @@ export function frameThrottle(fn) {
             pending = null;
             if (a) fn(...a);
         });
-    }));
+    });
+    throttled.cancel = () => { pending = null; };
+    return throttled;
 }
 
 /**
@@ -194,6 +197,28 @@ export const MODIFIER_KEYS = new Set(['Shift', 'Alt', 'Control', 'Meta']);
 export const CLICK_DISTANCE = 4;
 // A press on the plane becomes a drag once it has moved further than this.
 export const PLANE_DRAG_THRESHOLD = 3;
+// A finger wobbles more than a mouse: a touch press is a tap until it moves this far.
+export const TOUCH_TAP_DISTANCE = 10;
+
+/**
+ * How far a press may move and still be a tap (mark click) or not yet a drag
+ * (plane), by what pressed.
+ * @param {string | undefined} pointerType
+ * @param {number} mouse the threshold for a mouse or pen
+ * @returns {number}
+ */
+export function tapDistance(pointerType, mouse) {
+    return pointerType === 'touch' ? Math.max(mouse, TOUCH_TAP_DISTANCE) : mouse;
+}
+
+/**
+ * Does this device have a touch screen? The SVG renderer draws touch targets
+ * then. `any-pointer`, so a laptop with a touch screen counts.
+ * @returns {boolean}
+ */
+export function hasTouch() {
+    return typeof matchMedia === 'function' && matchMedia('(any-pointer: coarse)').matches;
+}
 
 /**
  * A wheel event's deltas in px, whatever unit the browser reports them in.

@@ -47,6 +47,7 @@
     "build:lib": "vite build --config vite.lib.config.js",
     "typecheck": "tsc --noEmit",
     "verify:browser": "node scripts/verify-browser.mjs",
+    "verify:touch": "node scripts/verify-touch.mjs",
     "check:warnings": "node scripts/check-warnings.mjs",
     "check:exports": "node scripts/check-exports.mjs",
     "gen:types": "node scripts/gen-authoring-types.mjs",

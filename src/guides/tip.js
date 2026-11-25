@@ -11,16 +11,17 @@ import { resolveFormat } from '../format.js';
 /**
  * @param {{ mark?: string, text?: string[] | ((row: any, ctx: any) => string | string[]),
  *   anchor?: 'pointer' | 'mark', dx?: number, dy?: number, fill?: string, stroke?: string,
- *   fontSize?: number, format?: string | ((v: any) => string) }} [options]
+ *   fontSize?: number, format?: string | ((v: any) => string), touch?: boolean }} [options]
  *   mark    the id of the mark the tip reads (default: whichever mark is under the pointer)
  *   text    the columns to show, or a function of the row returning a string or lines
  *   anchor  where the box sits: beside the pointer (default) or at the mark's centre
  *   format  how a numeric value prints (a d3 format specifier or a function)
+ *   touch   show for a finger, while it is on the chart (default true)
  * @returns {import('../types').Guide}
  */
 export function tip(options = {}) {
     warnUnknownGuideOptions('tip', options, GUIDE_OPTIONS.tip);
-    const { mark, text, anchor = 'pointer', dx = 12, dy = 12, fill, stroke, fontSize: fontSizeOpt, format } = options;
+    const { mark, text, anchor = 'pointer', dx = 12, dy = 12, fill, stroke, fontSize: fontSizeOpt, format, touch = true } = options;
     const fmt = resolveFormat(format);
     /** @param {any} v @returns {string} */
     const show = (v) => {
@@ -40,7 +41,7 @@ export function tip(options = {}) {
             // A tip bound to a mark reads that mark's own row under the pointer,
             // even when an inert label or another mark is drawn over it.
             const hit = mark != null ? hits.find((/** @type {any} */ h) => h.featureId === mark) : hits[0];
-            if (!hit || !pointer) return [];
+            if (!hit || !pointer || (pointer.touch && !touch)) return [];
             const feature = (ctx.features || []).find((/** @type {any} */ f) => f.id === hit.featureId);
             const row = feature && hit.index != null ? (ctx.tableOf(feature) || [])[hit.index]
                 : (hit.node.data != null ? hit.node.data : null);

@@ -2,10 +2,11 @@
 import * as d3 from "d3";
 import { DEFAULT_EFFECTS, ELEMENT_EFFECT_PROPS } from "../../core/effects.js";
 import { markCenter } from "../../edit/shared.js";
-import { rectHitBox, MIN_GRAB } from "../../edit/pick.js";
+import { rectHitBox, MIN_GRAB, TOUCH_REACH } from "../../edit/pick.js";
 import {
   lineGenerator, STYLE_FIELDS, partitionScene, frameThrottle, MODIFIER_KEYS,
-  CLICK_DISTANCE, PLANE_DRAG_THRESHOLD, wheelDelta, fillBox, imageLayout,
+  CLICK_DISTANCE, PLANE_DRAG_THRESHOLD, TOUCH_TAP_DISTANCE, tapDistance, hasTouch,
+  wheelDelta, fillBox, imageLayout,
 } from "../shared.js";
 import { warn } from "../../core/dev.js";
 
@@ -35,6 +36,12 @@ export class D3Renderer {
     this._planeNode = null;
     // Is a direct-pick (d3.drag) stroke open? See _endMarkDrag.
     this._markDragLive = false;
+    /** @type {any} the d3.drag behaviour, made once (see render) */
+    this._drag = null;
+    // TOUCH_REACH in scene px for this frame, and the reach of the last press
+    // (0 for a mouse), which plane events carry to the engine.
+    this._touchReach = 0;
+    this._pressReach = 0;
   }
 
   /**
@@ -58,6 +65,12 @@ export class D3Renderer {
     }
     this._wheelHandler = null;
     this._wheelNode = null;
+    if (this._touchHandler && this._touchNode) {
+      this._touchNode.removeEventListener("touchmove", this._touchHandler);
+      this._touchNode.removeEventListener("pointerdown", this._pressHandler, true);
+    }
+    this._touchHandler = null;
+    this._touchNode = null;
     this._onEvent = null;
   }
 
@@ -116,8 +129,16 @@ export class D3Renderer {
     this._bindPlaneGestures(plane, pointer, onEvent, planeOnTop);
     this._bindPointerTracking(d3.select(container).select("svg"), pointer, onEvent, !!context.tracksPointer);
     this._bindWheel(d3.select(container).select("svg"), pointer, onEvent, !!context.hasWheel);
+    this._bindTouch(d3.select(container).select("svg"));
+    // TOUCH_REACH screen px in scene px: a 'scale' chart may be drawn smaller.
+    const svgBox = /** @type {any} */ (d3.select(container).select("svg").node()).getBoundingClientRect();
+    this._touchReach = TOUCH_REACH * (svgBox && svgBox.width ? width / svgBox.width : 1);
 
-    const drag = this._makeDrag(onEvent);
+    // One drag behaviour for the renderer's life. d3.drag follows a touch with
+    // listeners on the mark itself, so a behaviour rebuilt each render would
+    // replace them mid-stroke and drop every touch drag.
+    if (!this._drag) this._drag = this._makeDrag((/** @type {any} */ e) => this._onEvent && this._onEvent(e));
+    const drag = this._drag;
     // Hover and keyboard bind to the same nodes as drag.
     const hover = this._makeHover(onEvent, effects.hovered);
     // focusOutline gates only the native focus ring.
@@ -161,6 +182,7 @@ export class D3Renderer {
     this._drawEllipses(layers.marks, ofType(marks, "ellipse"), io);
     this._drawLines(layers.marks, ofType(marks, "line"), io);
     this._drawTextMarks(layers.marks, ofType(marks, "text"), io);
+    this._drawTouchTargets(layers.marks, marks, io);
     this._orderMarkLayer(layers.marks, marks);
 
     // Unclipped chrome (axis handles, interactive legends); empty without `clip`.
@@ -169,6 +191,7 @@ export class D3Renderer {
     this._drawEllipses(layers.chrome, ofType(chrome, "ellipse"), io);
     this._drawLines(layers.chrome, ofType(chrome, "line"), io);
     this._drawTextMarks(layers.chrome, ofType(chrome, "text"), io);
+    this._drawTouchTargets(layers.chrome, chrome, io);
     this._orderMarkLayer(layers.chrome, chrome);
 
     // Rules / constraint ticks / guide labels — in front of marks.
@@ -558,11 +581,11 @@ export class D3Renderer {
           return;
         }
         const [px, py] = pointer(event);
-        onEvent({ type: "click", x: px, y: py, rawEvent: event });
+        onEvent({ type: "click", x: px, y: py, reach: this._pressReach, rawEvent: event });
       })
       .on("dblclick", (/** @type {any} */ event) => {
         const [px, py] = pointer(event);
-        onEvent({ type: "dblclick", x: px, y: py, rawEvent: event });
+        onEvent({ type: "dblclick", x: px, y: py, reach: this._pressReach, rawEvent: event });
       });
 
     if (!planeOnTop) {
@@ -586,6 +609,7 @@ export class D3Renderer {
           down: true,
           dragging: false,
           pointerId: event.pointerId,
+          pointerType: event.pointerType,
         };
         // No setPointerCapture: `plane.raise()` on re-render releases it. Window
         // listeners track the gesture instead.
@@ -640,16 +664,22 @@ export class D3Renderer {
    */
   _bindPointerTracking(svg, pointer, onEvent, tracks) {
     if (!tracks) {
-      svg.on("pointermove.track", null).on("pointerleave.track", null);
+      svg.on("pointermove.track", null).on("pointerdown.track", null).on("pointerleave.track", null);
       return;
     }
     const report = frameThrottle((/** @type {any} */ event) => {
       const [px, py] = pointer(event);
       onEvent({ type: "pointermove", x: px, y: py, rawEvent: event });
     });
+    // A press reports too: a finger has no hover, so a tap shows what is under it.
     svg
       .on("pointermove.track", (/** @type {any} */ event) => report(event))
-      .on("pointerleave.track", (/** @type {any} */ event) => onEvent({ type: "pointerleave", rawEvent: event }));
+      .on("pointerdown.track", (/** @type {any} */ event) => report(event))
+      .on("pointerleave.track", (/** @type {any} */ event) => {
+        // A lifted finger leaves at once; a move still waiting for its frame must not bring the guide back.
+        report.cancel();
+        onEvent({ type: "pointerleave", rawEvent: event });
+      });
   }
 
   /**
@@ -676,6 +706,28 @@ export class D3Renderer {
     // Kept for destroy().
     this._wheelNode = node;
     node.addEventListener("wheel", this._wheelHandler, { passive: false });
+  }
+
+  /**
+   * Bound once per svg, before any touch starts.
+   * - A plane gesture runs on pointer events, which don't stop the browser from
+   *   panning, so cancel the touchmove while one is open. Every other touch over
+   *   the chart still scrolls.
+   * - Note each press's reach (a finger's, or 0), read by the plane events.
+   * @param {any} svg
+   */
+  _bindTouch(svg) {
+    const node = svg.node();
+    if (!node || this._touchNode === node) return;
+    this._touchHandler = (/** @type {any} */ event) => {
+      if (this._planeGesture && event.cancelable) event.preventDefault();
+    };
+    this._pressHandler = (/** @type {any} */ event) => {
+      this._pressReach = event.pointerType === "touch" ? this._touchReach : 0;
+    };
+    this._touchNode = node;
+    node.addEventListener("touchmove", this._touchHandler, { passive: false });
+    node.addEventListener("pointerdown", this._pressHandler, true);
   }
 
   /**
@@ -720,13 +772,15 @@ export class D3Renderer {
     const [px, py] = this._planePointer(event);
     if (
       !gesture.dragging &&
-      Math.hypot(px - gesture.startX, py - gesture.startY) > PLANE_DRAG_THRESHOLD
+      Math.hypot(px - gesture.startX, py - gesture.startY) >
+        tapDistance(gesture.pointerType, PLANE_DRAG_THRESHOLD)
     ) {
       gesture.dragging = true;
       this._onEvent({
         type: "dragstart",
         x: gesture.startX,
         y: gesture.startY,
+        reach: this._pressReach,
         rawEvent: event,
       });
     }
@@ -746,8 +800,10 @@ export class D3Renderer {
     const [px, py] = this._planePointer(event);
     if (gesture.dragging) {
       this._onEvent({ type: "dragend", x: px, y: py, rawEvent: event });
-      // Suppress the native click the browser fires next (see 'click').
+      // Suppress the native click the browser fires next (see 'click'). A finger
+      // drag fires no click, so the flag must not outlive this event.
       this._suppressClick = true;
+      setTimeout(() => { this._suppressClick = false; }, 0);
     }
     // Released off the chart: pointerleave was suppressed during the drag, so end hover here.
     if (!this._pointerOverPlane(event)) {
@@ -841,7 +897,8 @@ export class D3Renderer {
   _makeDrag(onEvent) {
     return d3
       .drag()
-      .clickDistance(CLICK_DISTANCE)
+      // A finger wobbles more than a mouse, so a tap may move further and stay a click.
+      .clickDistance(hasTouch() ? TOUCH_TAP_DISTANCE : CLICK_DISTANCE)
       // Subject is the pointer, not the datum: the default subject offsets a rect
       // drag by its top-left. `event.x/y` is the pointer in scene coordinates.
       .subject((/** @type {any} */ event) => ({ x: event.x, y: event.y }))
@@ -1375,11 +1432,14 @@ export class D3Renderer {
 
     // A zero-area rect can't be hit, so an editable collapsed bar gets a transparent
     // min-sized hit rect (rectHitBox) with the same drag/click. Keys stay on the bar.
+    // On a touch screen the minimum is a finger's target.
+    const minGrab = hasTouch() ? Math.max(MIN_GRAB, 2 * this._touchReach) : MIN_GRAB;
     const hitRects = markRects.filter(
       (/** @type {any} */ d) =>
         d.editable &&
+        !d.locked &&
         d.pointerEvents !== "none" &&
-        ((d.width || 0) < MIN_GRAB || (d.height || 0) < MIN_GRAB),
+        ((d.width || 0) < minGrab || (d.height || 0) < minGrab),
     );
     const hitSel = layer
       .selectAll("rect.mark-hit")
@@ -1389,10 +1449,10 @@ export class D3Renderer {
       .style("pointer-events", "all")
       .style("fill", "transparent")
       .style("cursor", (/** @type {any} */ d) => d.cursor || "move")
-      .attr("x", (/** @type {any} */ d) => rectHitBox(d).x)
-      .attr("y", (/** @type {any} */ d) => rectHitBox(d).y)
-      .attr("width", (/** @type {any} */ d) => rectHitBox(d).w)
-      .attr("height", (/** @type {any} */ d) => rectHitBox(d).h)
+      .attr("x", (/** @type {any} */ d) => rectHitBox(d, minGrab).x)
+      .attr("y", (/** @type {any} */ d) => rectHitBox(d, minGrab).y)
+      .attr("width", (/** @type {any} */ d) => rectHitBox(d, minGrab).w)
+      .attr("height", (/** @type {any} */ d) => rectHitBox(d, minGrab).h)
       // rectHitBox is unrotated; follow the bar's rotation.
       .attr("transform", (/** @type {any} */ d) => this._angleTransform(d))
       .on("click", markClick)
@@ -1420,6 +1480,66 @@ export class D3Renderer {
     this._geomCircle(circleSel);
     this._applyStyle(circleSel, { fill: "black" });
     this._applyEffectStyle(circleSel, "move");
+  }
+
+  /**
+   * On a touch screen, an invisible target under each small editable circle,
+   * ellipse, line and path, so a finger can take it: a circle at least
+   * TOUCH_REACH in radius, or a stroke that wide each side. Rects get theirs in
+   * `_drawMarks`. Same shapes as `hitTestTouch` (canvas). Kept beneath the marks.
+   * @param {any} layer
+   * @param {any[]} nodes
+   * @param {{ drag: any, markClick: (e: any, d: any) => void, markDblClick?: (e: any, d: any) => void, hover: (sel: any) => void }} io
+   */
+  _drawTouchTargets(layer, nodes, io) {
+    const reach = hasTouch() ? this._touchReach : 0;
+    const takes = (/** @type {any} */ d) =>
+      reach > 0 && d.editable && !d.locked && d.pointerEvents !== "none";
+    const radius = (/** @type {any} */ d) =>
+      d.type === "circle"
+        ? (d.r != null ? d.r : 5)
+        : Math.max(d.rx != null ? d.rx : 5, d.ry != null ? d.ry : 5);
+    const dots = nodes.filter((d) =>
+      (d.type === "circle" || d.type === "ellipse") && takes(d) && radius(d) < reach);
+    const strokes = nodes.filter((d) =>
+      (d.type === "line" || (d.type === "path" && (d.d || d.points))) &&
+      takes(d) && (d.strokeWidth || 1) / 2 < reach);
+
+    /** @param {any} sel */
+    const wire = (sel) => sel
+      .attr("class", "mark-hit")
+      .style("cursor", (/** @type {any} */ d) => d.cursor || "move")
+      .on("click", io.markClick)
+      .on("dblclick", this._dblClick(io.markDblClick))
+      .call(io.drag)
+      .call(io.hover)
+      .lower();
+
+    layer.selectAll("circle.mark-hit").data(dots).join("circle")
+      .attr("cx", (/** @type {any} */ d) => d.cx)
+      .attr("cy", (/** @type {any} */ d) => d.cy)
+      .attr("r", reach)
+      .style("fill", "transparent")
+      .style("pointer-events", "all")
+      .call(wire);
+
+    layer.selectAll("line.mark-hit").data(strokes.filter((d) => d.type === "line")).join("line")
+      .call((/** @type {any} */ sel) => this._geomLine(sel))
+      .style("stroke", "transparent")
+      .style("stroke-width", 2 * reach)
+      .style("stroke-linecap", "round")
+      .style("pointer-events", "stroke")
+      .call(wire);
+
+    layer.selectAll("path.mark-hit").data(strokes.filter((d) => d.type === "path")).join("path")
+      .attr("d", (/** @type {any} */ d) => d.d || lineGenerator(d.curve)(d.points || []))
+      .style("fill", "none")
+      .style("stroke", "transparent")
+      .style("stroke-width", 2 * reach)
+      .style("stroke-linecap", "round")
+      .style("stroke-linejoin", "round")
+      .style("pointer-events", "stroke")
+      .call(wire);
   }
 
   /**
