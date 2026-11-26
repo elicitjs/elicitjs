@@ -83,13 +83,13 @@ this codebase is expected to preserve. Read them, `ARCHITECTURE.md` and
 
 ```bash
 npm version prerelease --preid alpha     # 0.1.0-alpha.N → alpha.N+1
-npm publish                              # publishConfig pins --tag alpha
+npm publish --tag alpha                  # publishConfig.tag is not honoured; pass it
 git push && git push --tags
 ```
 
 `prepublishOnly` runs `build:lib`, so `dist/` is always rebuilt from the committed
-source. Check the publish output says **`with tag alpha`** — if it says `latest`,
-you are in the wrong directory.
+source. Check the publish output says **`with tag alpha`**. Add a line to `CHANGELOG.md`
+before `npm version`.
 
 Two things that shipped as real mistakes and are worth guarding against:
 
