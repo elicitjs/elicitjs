@@ -8,6 +8,7 @@
 //   edit.*         edits        a gesture -> data, through the encoding's scale
 //   constraints.*  invariants   rules over the elicited dataset
 //   widgets.*      instruments  whole specs
+// `ui.*` is not grammar: UI laid over a chart after it is made (`ui.attach`).
 // `authoring.*` (also `elicitjs/authoring`) holds the building blocks.
 // `compile(json)` turns a JSON spec into the same spec these factories build.
 import { Elicit } from "./core/elicit.js";
@@ -19,6 +20,7 @@ import * as guides from "./guides/index.js";
 import * as looks from "./looks/index.js";
 import * as layout from "./layout/index.js";
 import * as widgets from "./widgets/index.js";
+import * as ui from "./ui/index.js";
 import * as authoring from "./authoring/index.js";
 import * as format from "./format.js";
 import { D3Renderer } from "./renderers/d3-renderer/index.js";
@@ -42,6 +44,9 @@ export {
   // Spatial layout processes: contain, dodge, row, column, grid, pack, custom.
   layout,
   widgets,
+  // Menus, icons and handles laid over a chart, driving it through external
+  // control. Attached to a chart, never part of a spec.
+  ui,
   // Building blocks for new marks / edits / constraints / widgets.
   authoring,
   format,

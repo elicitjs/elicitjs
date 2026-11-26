@@ -602,6 +602,8 @@ export class D3Renderer {
 
     plane
       .on("pointerdown", (/** @type {any} */ event) => {
+        // Only the primary button starts a gesture; a right-press is the page's.
+        if (event.pointerType === "mouse" && event.button !== 0) return;
         const [px, py] = pointer(event);
         this._planeGesture = {
           startX: px,

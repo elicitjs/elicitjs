@@ -342,7 +342,7 @@ export function createDataset(spec, makeChart) {
     /** @param {string} type @param {Function} cb */
     const on = (type, cb) => {
         if (type !== 'change' && type !== 'select' && type !== 'hover') {
-            warn(`on:${type}`, `on("${type}"): no such event. A dataset fires "change", "select" and "hover"; a chart also fires "stage".`);
+            warn(`on:${type}`, `on("${type}"): no such event. A dataset fires "change", "select" and "hover"; a chart also fires "stage", "render" and "destroy".`);
             return () => false;
         }
         const set = listeners[/** @type {'change' | 'select' | 'hover'} */ (type)];
@@ -364,6 +364,7 @@ export function createDataset(spec, makeChart) {
         redo: history.redo,
         canUndo: history.canUndo,
         canRedo: history.canRedo,
+        transaction: history.transaction,
         on,
         ...selectionApi,
         ...hoverApi,

@@ -353,6 +353,17 @@ async function main() {
             barsAfter[0] === barsBefore[0] && barsAfter[1] === barsBefore[1] && barsAfter[2] === barsBefore[2],
             `${barsBefore} -> ${barsAfter}`);
 
+        // Only the primary button starts a gesture: a right-press is the page's
+        // (a context menu), so dragging with it held moves nothing.
+        await page.mouse.move(colX, dcBox.y + 150);
+        await page.mouse.down({ button: 'right' });
+        for (let k = 1; k <= 6; k++) await page.mouse.move(colX, dcBox.y + 150 + k * 9);
+        await page.mouse.up({ button: 'right' });
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(150);
+        check('canvas: a right-press drag moves nothing', JSON.stringify(await ysOf('#direct')) === JSON.stringify(barsAfter),
+            `${barsAfter} -> ${await ysOf('#direct')}`);
+
         // The cursor and the grab feedback are the engine's, but a canvas has no
         // element to style, so the renderer must apply both itself. Read the cursor
         // off the canvas and the feedback off its pixels (inside bar D, near the base).
@@ -5736,6 +5747,358 @@ async function main() {
             await dragFrom(hb.x + hb.width / 2, hb.y + 2, 0, 40);
             check('hover link: a linked bar still drags', (await dsData('hover'))[0].rent < JSON.parse(hv0)[0].rent - 100,
                 String((await dsData('hover'))[0].rent));
+        }
+
+
+        // ==== The UI layer (ui.*): menus, icons and handles over a chart =========
+        {
+        const chartOf = (id) => `#${id} .chart > div`;
+        const data = (id) => page.$eval(chartOf(id), (e) => e.__chart.getData());
+        // A point of the chart on the page: the centre of the first piece a query names.
+        const at = (id, query, pick = 'center') => page.$eval(chartOf(id), (e, [q, pick]) => {
+            const c = e.__chart;
+            const v = c.scene(q).find((s) => s.center && (pick !== 'line' || (s.type === 'path' && !s.channel)));
+            const p = c.toClient(v.center);
+            return { x: p.x, y: p.y };
+        }, [query, pick]);
+        const buttons = (id) => page.$$eval(`#${id} .elicit-ui-group:not([hidden]) .elicit-ui-button`, (bs) => bs.map((b) => {
+            const r = b.getBoundingClientRect();
+            return { label: b.getAttribute('aria-label'), x: r.x + r.width / 2, y: r.y + r.height / 2 };
+        }));
+        const menuRows = (id) => page.$$eval(`#${id} .elicit-ui-menu [role^=menuitem]`, (rs) => rs.map((r) => r.textContent));
+        // The [elicit] warnings logged while `fn` runs.
+        const warningsDuring = async (fn) => {
+            const seen = [];
+            const listen = (m) => { if (m.text().includes('[elicit]')) seen.push(m.text()); };
+            page.on('console', listen);
+            try { await fn(); } finally { page.off('console', listen); }
+            return seen;
+        };
+        const near = async (p, from = { dx: -24, dy: -18 }) => {
+            await page.mouse.move(p.x + from.dx, p.y + from.dy);
+            await page.mouse.move(p.x, p.y, { steps: 4 });
+            await page.waitForTimeout(150);
+        };
+        const drag = async (from, to) => {
+            await page.mouse.move(from.x, from.y);
+            await page.mouse.down();
+            await page.mouse.move((from.x + to.x) / 2, (from.y + to.y) / 2, { steps: 4 });
+            await page.mouse.move(to.x, to.y, { steps: 4 });
+            await page.mouse.up();
+            await page.waitForTimeout(150);
+        };
+
+        // ---- The UI layer: menu, icons, grips, a custom part ---------------------
+        console.log('\nUI layer (/ui)');
+        await open('/ui', '#menu .chart svg');
+        await page.locator('#menu .chart').scrollIntoViewIfNeeded();
+        await page.waitForSelector('#menu .elicit-ui', { state: 'attached' });
+
+        const m0 = await data('menu');
+        const plot = await page.locator('#menu .chart > div > svg').boundingBox();
+        await page.mouse.click(plot.x + plot.width * 0.45, plot.y + plot.height * 0.3, { button: 'right' });
+        await page.waitForTimeout(150);
+        check('ui menu: right-click on empty space lists the teams to add', JSON.stringify(await menuRows('menu')) === '["Design","Research","Build"]', JSON.stringify(await menuRows('menu')));
+        await page.locator('#menu .elicit-ui-menu [role^=menuitem]', { hasText: 'Research' }).click();
+        await page.waitForTimeout(150);
+        const m1 = await data('menu');
+        check('ui menu: choosing a team adds a point of that team', m1.length === m0.length + 1 && m1[m1.length - 1].team === 'Research', JSON.stringify(m1[m1.length - 1]));
+        await page.$eval(chartOf('menu'), (e) => e.__chart.undo());
+        check('ui menu: the new point and its team are one undo step', (await data('menu')).length === m0.length);
+
+        const p0 = await at('menu', { mark: 'idea', index: 0 });
+        await page.mouse.click(p0.x, p0.y, { button: 'right' });
+        await page.waitForTimeout(150);
+        check('ui menu: right-click on a point offers its team and Remove', JSON.stringify(await menuRows('menu')) === '["Design","Research","Build","Remove"]', JSON.stringify(await menuRows('menu')));
+        await page.locator('#menu .elicit-ui-menu [role^=menuitem]', { hasText: 'Build' }).click();
+        await page.waitForTimeout(150);
+        check('ui menu: a team choice writes the category', (await data('menu'))[0].team === 'Build', (await data('menu'))[0].team);
+        await page.mouse.click(p0.x, p0.y, { button: 'right' });
+        await page.keyboard.press('Escape');
+        check('ui menu: Escape closes it', (await page.locator('#menu .elicit-ui-menu').count()) === 0);
+        // A plain click adds nothing: the create is a commit-gesture edit.
+        const before = (await data('menu')).length;
+        await page.mouse.click(plot.x + plot.width * 0.7, plot.y + plot.height * 0.25);
+        check('ui menu: a plain click on the plot adds nothing', (await data('menu')).length === before);
+
+        // One menu, two fields: a step's kind (its shape) and its status (its colour).
+        await page.locator('#menu-fields .chart').scrollIntoViewIfNeeded();
+        await page.waitForSelector('#menu-fields .elicit-ui', { state: 'attached' });
+        const step = await at('menu-fields', { mark: 'step', index: 2 });
+        await page.mouse.click(step.x, step.y, { button: 'right' });
+        await page.waitForTimeout(150);
+        check('ui menu: a step offers its kind and its status', JSON.stringify(await menuRows('menu-fields'))
+            === '["start","process","decision","data","done","in progress","blocked","not started","Remove"]', JSON.stringify(await menuRows('menu-fields')));
+        await page.locator('#menu-fields .elicit-ui-menu [role^=menuitem]', { hasText: 'decision' }).click();
+        await page.mouse.click(step.x, step.y, { button: 'right' });
+        await page.locator('#menu-fields .elicit-ui-menu [role^=menuitem]', { hasText: 'blocked' }).click();
+        await page.waitForTimeout(150);
+        const f1 = (await data('menu-fields')).steps[2];
+        check('ui menu: kind and status each write their own field', f1.kind === 'decision' && f1.status === 'blocked', JSON.stringify(f1));
+        // Near the bottom the menu spills past the chart: drawn on top, nothing scrolls.
+        const low = await at('menu-fields', { mark: 'step', index: 4 });
+        await page.mouse.click(low.x, low.y, { button: 'right' });
+        await page.waitForTimeout(150);
+        const spill = await page.$eval('#menu-fields .elicit-ui-menu', (m) => {
+            const box = m.closest('.chart');
+            return { top: m.matches(':popover-open'), past: m.getBoundingClientRect().bottom > box.getBoundingClientRect().bottom, scrolls: box.scrollHeight > box.clientHeight };
+        });
+        check('ui menu: a menu past the chart\'s edge is drawn on top and scrolls nothing', spill.top && spill.past && !spill.scrolls, JSON.stringify(spill));
+        await page.mouse.wheel(0, 120);
+        await page.waitForTimeout(200);
+        check('ui menu: scrolling the page closes it', (await page.locator('#menu-fields .elicit-ui-menu').count()) === 0);
+        await page.mouse.wheel(0, -120);
+        await page.waitForTimeout(200);
+
+        const flowMid = await at('menu-fields', { table: 'flows', index: 1 }, 'line');
+        const fw = await warningsDuring(async () => {
+            await page.mouse.click(flowMid.x, flowMid.y, { button: 'right' });
+            await page.waitForTimeout(150);
+        });
+        check('ui menu: a link offers only its own entries, with no warning', JSON.stringify(await menuRows('menu-fields')) === '["Reverse","Remove link"]' && fw.length === 0,
+            `${JSON.stringify(await menuRows('menu-fields'))} ${JSON.stringify(fw)}`);
+        await page.keyboard.press('Escape');
+
+        // Preset values on a continuous channel, and rows of the page's own.
+        await page.locator('#menu-rows .chart').scrollIntoViewIfNeeded();
+        await page.waitForSelector('#menu-rows .elicit-ui', { state: 'attached' });
+        const r0 = (await data('menu-rows')).map((d) => d.hours);
+        const bar0 = await at('menu-rows', { mark: 'bar', index: 0 });
+        await page.mouse.click(bar0.x, bar0.y, { button: 'right' });
+        await page.waitForTimeout(150);
+        check('ui menu: a bar offers the preset values and its own row', JSON.stringify(await menuRows('menu-rows')) === '["0","5","10","15","20","Match the average"]', JSON.stringify(await menuRows('menu-rows')));
+        await page.locator('#menu-rows .elicit-ui-menu [role^=menuitem]', { hasText: /^15$/ }).click();
+        await page.waitForTimeout(150);
+        check('ui menu: a preset value writes the bar', (await data('menu-rows'))[0].hours === 15, String((await data('menu-rows'))[0].hours));
+        const rowsPlot = await page.locator('#menu-rows .chart > div > svg').boundingBox();
+        await page.mouse.click(rowsPlot.x + rowsPlot.width - 30, rowsPlot.y + 25, { button: 'right' });
+        await page.waitForTimeout(150);
+        check('ui menu: empty space offers only the plane row', JSON.stringify(await menuRows('menu-rows')) === '["Even them all out"]', JSON.stringify(await menuRows('menu-rows')));
+        await page.locator('#menu-rows .elicit-ui-menu [role^=menuitem]', { hasText: 'Even' }).click();
+        await page.waitForTimeout(150);
+        const even = (await data('menu-rows')).map((d) => d.hours);
+        check('ui menu: a row of your own writes every bar', new Set(even).size === 1, JSON.stringify(even));
+        await page.$eval(chartOf('menu-rows'), (e) => e.__chart.undo());
+        const back = (await data('menu-rows')).map((d) => d.hours);
+        check('ui menu: its writes in one transaction are one undo step', JSON.stringify(back) === JSON.stringify([15, ...r0.slice(1)]), JSON.stringify(back));
+
+        await page.locator('#actions .chart').scrollIntoViewIfNeeded();
+        const a0 = await data('actions');
+        await near(await at('actions', { mark: 'note/body', index: 1 }));
+        let bs = await buttons('actions');
+        check('ui actions: icons appear beside the note the pointer is near', JSON.stringify(bs.map((b) => b.label)) === '["Move","Remove"]', JSON.stringify(bs.map((b) => b.label)));
+        const grip = bs.find((b) => b.label === 'Move');
+        await drag(grip, { x: grip.x - 60, y: grip.y + 30 });
+        const a1 = await data('actions');
+        check('ui actions: dragging the grip moves the note as far as the pointer went', a1[1].x < a0[1].x - 10 && a1[1].y < a0[1].y - 5, `${a0[1].x},${a0[1].y} -> ${a1[1].x},${a1[1].y}`);
+        await near(await at('actions', { mark: 'note/body', index: 0 }));
+        bs = await buttons('actions');
+        const bin = bs.find((b) => b.label === 'Remove');
+        await page.mouse.click(bin.x, bin.y);
+        await page.waitForTimeout(150);
+        check('ui actions: the bin removes the note', (await data('actions')).length === a0.length - 1);
+
+        await page.locator('#handles .chart').scrollIntoViewIfNeeded();
+        const h0 = await data('handles');
+        const box0 = await page.$eval(chartOf('handles'), (e) => e.__chart.scene({ mark: 'note/body', index: 0 })[0].box);
+        await near(await at('handles', { mark: 'note/body', index: 0 }));
+        const grips = await page.$$eval('#handles .elicit-ui-handle:not([hidden])', (gs) => gs.map((g) => {
+            const r = g.getBoundingClientRect();
+            return { label: g.getAttribute('aria-label'), x: r.x + r.width / 2, y: r.y + r.height / 2 };
+        }));
+        check('ui handles: a grip on each side of the note', grips.length === 2, JSON.stringify(grips.map((g) => g.label)));
+        const right = grips.find((g) => /right/.test(g.label));
+        await drag(right, { x: right.x + 40, y: right.y + 4 });
+        const h1 = await data('handles');
+        const box1 = await page.$eval(chartOf('handles'), (e) => e.__chart.scene({ mark: 'note/body', index: 0 })[0].box);
+        check('ui handles: the right grip widens the note', Math.abs(h1[0].w - (h0[0].w + 40)) <= 1, `${h0[0].w} -> ${h1[0].w}`);
+        check('ui handles: the left side stays where it was', Math.abs(box1.x - box0.x) < 0.5, `${box0.x} -> ${box1.x}`);
+        await page.$eval(chartOf('handles'), (e) => e.__chart.undo());
+        const h2 = await data('handles');
+        check('ui handles: the resize is one undo step', h2[0].w === h0[0].w && h2[0].x === h0[0].x, JSON.stringify(h2[0]));
+
+        await page.locator('#custom .chart').scrollIntoViewIfNeeded();
+        const c0 = await data('custom');
+        const bar = await at('custom', { mark: 'bar', index: 1 });
+        await near(bar, { dx: 0, dy: 20 });
+        const more = page.locator('#custom .elicit-ui-button[aria-label="Five more"]');
+        check('ui custom: the stepper shows over the hovered bar', await more.isVisible());
+        await more.click();
+        await page.waitForTimeout(150);
+        check('ui custom: a custom part writes with set', (await data('custom'))[1].n === c0[1].n + 5, String((await data('custom'))[1].n));
+
+        // ---- The network preset ---------------------------------------------------
+        console.log('\nNetwork UI (/ui/network)');
+        await open('/ui/network', '#board .chart svg');
+        await page.locator('#board .chart').scrollIntoViewIfNeeded();
+        await page.waitForSelector('#board .elicit-ui', { state: 'attached' });
+        const flows = async () => (await data('board')).flows.map((f) => `${f.source}>${f.target}`);
+
+        const labels = async () => (await buttons('board')).map((b) => b.label);
+        const btn = async (label) => (await buttons('board')).find((b) => b.label === label);
+        const ADD = 'Add a linked node', LINK = 'Link to a node';
+        const s3right = { mark: 'note', index: 2, channel: 'port', side: 'right' };
+        await near(await at('board', s3right));
+        check('network ui: a free port offers a new node and a link', JSON.stringify(await labels()) === JSON.stringify([ADD, LINK]), JSON.stringify(await labels()));
+        check('network ui: the port the icons belong to is lit', await page.$eval(chartOf('board'), (e, q) => e.__chart.scene(q)[0].visible, s3right));
+
+        // Travel to the + in small steps: the icons must still be there on arrival.
+        {
+            const from = await at('board', s3right);
+            const plus = await btn(ADD);
+            let lost = 0;
+            for (let i = 1; i <= 12; i++) {
+                await page.mouse.move(from.x + (plus.x - from.x) * i / 12, from.y + (plus.y - from.y) * i / 12);
+                await page.waitForTimeout(40);
+                if ((await buttons('board')).length !== 2) lost++;
+            }
+            check('network ui: the icons stay while the pointer travels to them', lost === 0, 'lost on ' + lost + ' of 12 steps');
+            const before = await data('board');
+            await page.mouse.click(plus.x, plus.y);
+            await page.waitForTimeout(200);
+            const after = await data('board');
+            const fresh = after.steps[after.steps.length - 1];
+            check('network ui: + adds a node, linked from that port', after.steps.length === before.steps.length + 1 && after.flows.length === before.flows.length + 1
+                && after.flows[after.flows.length - 1].source === 's3' && after.flows[after.flows.length - 1].target === fresh.id && after.flows[after.flows.length - 1].fromSide === 'right',
+                JSON.stringify(after.flows[after.flows.length - 1]));
+            check('network ui: the new node is to that side, with the same category and size', fresh.x > before.steps[2].x + 5 && fresh.kind === before.steps[2].kind && fresh.w === before.steps[2].w, JSON.stringify(fresh));
+            await page.$eval(chartOf('board'), (e) => e.__chart.undo());
+            const undone = await data('board');
+            check('network ui: the node and its link are one undo step', undone.steps.length === before.steps.length && undone.flows.length === before.flows.length);
+        }
+
+        const s1right = await at('board', { mark: 'note', index: 0, channel: 'port', side: 'right' });
+        await near(s1right);
+        check('network ui: a port holding a link also offers detach', JSON.stringify(await labels()) === JSON.stringify([ADD, LINK, 'Detach link']), JSON.stringify(await labels()));
+        // Drag detach: that end of the link moves to the note it is dropped on.
+        await drag(await btn('Detach link'), await at('board', { mark: 'note/body', index: 2 }));
+        check('network ui: dragging detach re-points the link\'s end', JSON.stringify(await flows()) === '["s3>s2"]', JSON.stringify(await flows()));
+        await page.$eval(chartOf('board'), (e) => e.__chart.undo());
+        check('network ui: the re-point is one undo step', JSON.stringify(await flows()) === '["s1>s2"]', JSON.stringify(await flows()));
+
+        await near(await at('board', s3right));
+        await drag(await btn(LINK), await at('board', { mark: 'note/body', index: 1 }));
+        check('network ui: dragging the link icon draws a link to where it is dropped', JSON.stringify(await flows()) === '["s1>s2","s3>s2"]', JSON.stringify(await flows()));
+
+        // Drag + onto empty space: the new node is made there.
+        {
+            await near(await at('board', { mark: 'note', index: 1, channel: 'port', side: 'bottom' }));
+            const plus = await btn(ADD);
+            const plotBox = await page.locator('#board .chart > div > svg').boundingBox();
+            const drop = { x: plotBox.x + plotBox.width * 0.78, y: plotBox.y + plotBox.height * 0.82 };
+            const n = (await data('board')).steps.length;
+            await drag(plus, drop);
+            const after = await data('board');
+            check('network ui: dragging + onto empty space makes the node there', after.steps.length === n + 1 && after.flows[after.flows.length - 1].source === 's2', JSON.stringify(after.flows));
+            await page.$eval(chartOf('board'), (e) => e.__chart.undo());
+        }
+
+        // Click the link icon, then click the target: the note under that click must not move.
+        await near(s1right);
+        const steps0 = (await data('board')).steps;
+        const arm = await btn(LINK);
+        await page.mouse.click(arm.x, arm.y);
+        const s3 = await at('board', { mark: 'note/body', index: 2 });
+        await page.mouse.move(s3.x, s3.y - 40, { steps: 4 });
+        await page.mouse.click(s3.x, s3.y);
+        await page.waitForTimeout(150);
+        check('network ui: click the link icon, then a note, links them', (await flows()).includes('s1>s3'), JSON.stringify(await flows()));
+        check('network ui: that second click moved nothing', JSON.stringify((await data('board')).steps) === JSON.stringify(steps0));
+
+        // Two links now leave s1's right side: detach asks which.
+        await near(s1right);
+        const detach = await btn('Detach a link');
+        await page.mouse.click(detach.x, detach.y);
+        await page.waitForTimeout(150);
+        const which = await menuRows('board');
+        check('network ui: with two links at a port, detach lists them', which.length === 2, JSON.stringify(which));
+        await page.locator('#board .elicit-ui-menu [role^=menuitem]', { hasText: 's3' }).click();
+        await page.waitForTimeout(150);
+        check('network ui: the chosen link is removed', JSON.stringify(await flows()) === '["s1>s2","s3>s2"]', JSON.stringify(await flows()));
+
+        // A link's icons come to the pointer, wherever along the link it is.
+        {
+            const ends = await page.$eval(chartOf('board'), (e) => ['source', 'target'].map((ch) => e.__chart.toClient(e.__chart.scene({ mark: 'flow', index: 0, channel: ch })[0].center)));
+            const third = { x: ends[0].x + (ends[1].x - ends[0].x) / 3, y: ends[0].y + (ends[1].y - ends[0].y) / 3 };
+            await near(third, { dx: 14, dy: 18 });
+            bs = await buttons('board');
+            check('network ui: a link offers reverse and remove', JSON.stringify(bs.map((b) => b.label)) === '["Reverse link","Remove link"]', JSON.stringify(bs.map((b) => b.label)));
+            check('network ui: a link\'s icons are beside the pointer', bs.length === 2 && Math.hypot(bs[0].x - third.x, bs[0].y - third.y) < 60, JSON.stringify([bs[0], third]));
+            let lost = 0;
+            for (let i = 1; i <= 12; i++) {
+                await page.mouse.move(third.x + (bs[1].x - third.x) * i / 12, third.y + (bs[1].y - third.y) * i / 12);
+                await page.waitForTimeout(40);
+                if ((await buttons('board')).length !== 2) lost++;
+            }
+            check('network ui: a link\'s icons stay while the pointer travels to them', lost === 0, 'lost on ' + lost + ' of 12 steps');
+            const f0 = (await data('board')).flows[0];
+            await page.mouse.click(bs[0].x, bs[0].y);
+            await page.waitForTimeout(150);
+            const f1 = (await data('board')).flows[0];
+            check('network ui: reverse swaps the link\'s ends', f1.source === f0.target && f1.target === f0.source, JSON.stringify(f1));
+            check('network ui: reverse keeps each node at its port', f1.fromSide === f0.toSide && f1.toSide === f0.fromSide, JSON.stringify([f0, f1]));
+        }
+
+        const board = await page.locator('#board .chart > div > svg').boundingBox();
+        const n0 = (await data('board')).steps.length;
+        await page.mouse.click(board.x + board.width * 0.8, board.y + board.height * 0.85, { button: 'right' });
+        await page.waitForTimeout(150);
+        check('network ui: the board menu lists the categories to add', JSON.stringify(await menuRows('board')) === '["idea","task","risk"]', JSON.stringify(await menuRows('board')));
+        await page.locator('#board .elicit-ui-menu [role^=menuitem]', { hasText: 'risk' }).click();
+        await page.waitForTimeout(150);
+        const added = (await data('board')).steps;
+        check('network ui: Add makes a note of that category', added.length === n0 + 1 && added[n0].kind === 'risk', JSON.stringify(added[n0]));
+        await page.$eval(chartOf('board'), (e) => e.__chart.undo());
+        check('network ui: the note and its category are one undo step', (await data('board')).steps.length === n0);
+
+        await near(await at('board', { mark: 'note/body', index: 1 }), { dx: 0, dy: 0 });
+        const corner = await page.$$eval('#board .elicit-ui-handle:not([hidden])', (gs) => gs.map((g) => {
+            const r = g.getBoundingClientRect();
+            return { label: g.getAttribute('aria-label'), corner: g.dataset.corner != null, x: r.x + r.width / 2, y: r.y + r.height / 2 };
+        }));
+        check('network ui: resize grips take the corners, clear of the ports', corner.length === 2 && corner.every((g) => g.corner), JSON.stringify(corner));
+        const w0 = (await data('board')).steps[1].w;
+        const rg = corner.find((g) => /right/.test(g.label));
+        await drag(rg, { x: rg.x + 30, y: rg.y });
+        check('network ui: a grip resizes the note', Math.abs((await data('board')).steps[1].w - (w0 + 30)) <= 1, `${w0} -> ${(await data('board')).steps[1].w}`);
+
+        // ---- Reading the chart, without the ui namespace --------------------------
+        console.log('\nReading the chart (/editing/external-controls#reading)');
+        await open('/editing/external-controls', '#reading .chart svg');
+        await page.locator('#reading .chart').scrollIntoViewIfNeeded();
+        const labelAt = () => page.$$eval('#reading .chart > div > div', (ls) => ls.filter((l) => !l.classList.contains('elicit-ui')).map((l) => { const r = l.getBoundingClientRect(); return { x: r.x + r.width / 2, text: l.textContent }; }));
+        const l0 = await labelAt();
+        check('reading: a label per dot, from scene()', l0.length === 2, JSON.stringify(l0));
+        const dot = await at('reading', { mark: 'dot', index: 0 });
+        await drag(dot, { x: dot.x + 60, y: dot.y + 20 });
+        const l1 = await labelAt();
+        check('reading: the label follows its dot on render', l1[0].x > l0[0].x + 40 && l1[0].text !== l0[0].text, `${JSON.stringify(l0[0])} -> ${JSON.stringify(l1[0])}`);
+
+        // A right-press is the menu's: dragging with it held moves no note.
+        {
+            await open('/ui/network', '#board .chart svg');
+            await page.locator('#board .chart').scrollIntoViewIfNeeded();
+            const note = await at('board', { mark: 'note/body', index: 1 });
+            const stepsBefore = JSON.stringify((await data('board')).steps);
+            await page.mouse.move(note.x, note.y);
+            await page.mouse.down({ button: 'right' });
+            await page.mouse.move(note.x + 50, note.y + 30, { steps: 4 });
+            await page.mouse.up({ button: 'right' });
+            await page.keyboard.press('Escape');
+            await page.waitForTimeout(150);
+            check('network ui: a right-press drag moves no note', JSON.stringify((await data('board')).steps) === stepsBefore);
+            // Typing into a note writes its label and leaves its category alone.
+            const kindBefore = (await data('board')).steps[1].kind;
+            await page.mouse.dblclick(note.x, note.y);
+            await page.waitForTimeout(200);
+            await page.keyboard.type(' again');
+            await page.keyboard.press('Meta+Enter');
+            await page.keyboard.press('Control+Enter');
+            await page.waitForTimeout(200);
+            const typed = (await data('board')).steps[1];
+            check('network ui: typing in a note writes its label only', /again/.test(typed.label) && typed.kind === kindBefore, JSON.stringify(typed));
+        }
+
         }
 
         check('no page/console errors', errors.length === 0, errors.slice(0, 3).join(' | '));

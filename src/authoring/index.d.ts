@@ -1337,6 +1337,15 @@ export function defineConstraint(reducer: (ctx: import("../types.js").Constraint
     table?: string;
     guide?: (ctx: any) => any[];
 }): import("../types.js").ConstraintSpec;
+// ── from src/ui/icons.js ────────────────────────────────────────────────────
+/**
+ * Register an icon under `name`, so a `ui` part takes `icon: name`. `path` is
+ * SVG path data on a 16 x 16 grid, drawn as a stroke in the current colour.
+ * @param {string} name
+ * @param {string} path
+ * @returns {void}
+ */
+export function registerIcon(name: string, path: string): void;
 // ── from src/layout/define.js ───────────────────────────────────────────────
 /**
  * Author a spatial layout process (`layout.custom`). Runs after the built-in

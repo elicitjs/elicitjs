@@ -6,7 +6,7 @@
 // `opts.key` / `options.key` member access in the factory's file.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { MARK_OPTIONS, MARK_UNIVERSAL_OPTIONS, MARK_SHORTHANDS, GUIDE_OPTIONS, GUIDE_UNIVERSAL_OPTIONS } from '../src/vocabulary.js';
+import { MARK_OPTIONS, MARK_UNIVERSAL_OPTIONS, MARK_SHORTHANDS, GUIDE_OPTIONS, GUIDE_UNIVERSAL_OPTIONS, UI_OPTIONS } from '../src/vocabulary.js';
 
 const FILE = {
     arc: 'arc', area: 'area', bar: 'bar', composite: 'composite', curve: 'curve', dotStack: 'dotStack',
@@ -104,6 +104,25 @@ describe('guide option vocabularies match the factory bodies', () => {
             expect({ undeclared, unread }).toEqual({ undeclared: [], unread: [] });
             // custom takes a builder, so its options are not validated.
             if (name !== 'custom') expect(src).toContain(`warnUnknownGuideOptions('${name}'`);
+        });
+    }
+});
+
+// ── ui parts: the same contract, over src/ui ────────────────────────────────
+const UI_FILE = { contextMenu: 'parts/contextMenu', actions: 'parts/actions', handles: 'parts/handles', network: 'network' };
+
+describe('ui option vocabularies match the part bodies', () => {
+    it('every part has a source file listed', () => {
+        expect(Object.keys(UI_OPTIONS).sort()).toEqual(Object.keys(UI_FILE).sort());
+    });
+    for (const [name, allow] of Object.entries(UI_OPTIONS)) {
+        it(`${name}`, () => {
+            const src = readFileSync(new URL(`../src/ui/${UI_FILE[name]}.js`, import.meta.url), 'utf8');
+            const reads = readsOf(src);
+            const undeclared = [...reads].filter((k) => !allow.includes(k));
+            const unread = allow.filter((k) => !reads.has(k));
+            expect({ undeclared, unread }).toEqual({ undeclared: [], unread: [] });
+            expect(src).toContain(`warnUnknownUiOptions('${name}'`);
         });
     }
 });

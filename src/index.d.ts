@@ -70,6 +70,12 @@ import type {
   LabeledValueOptions,
   LegendEditOptions,
   LegendElementOptions,
+  UiPart,
+  UiContext,
+  ContextMenuOptions,
+  ActionsOptions,
+  HandlesOptions,
+  NetworkOptions,
   LikertOptions,
   LineConeOptions,
   LineOptions,
@@ -455,6 +461,28 @@ export const guides: {
   tip(options?: TipGuideOptions): Guide;
   /** Rules that follow the pointer, with the axis value read out at the plot edge. */
   crosshair(options?: CrosshairGuideOptions): Guide;
+};
+
+/**
+ * UI — menus, icons and handles laid over a chart after it is made. Not a grammar
+ * namespace: nothing here goes in a spec, and none of it has a JSON form. A part
+ * drives the chart through external control, so each action needs a NAMED edit
+ * in the spec, except a value in an existing cell (a category, a width), which
+ * `chart.set` writes when no edit is declared for it.
+ */
+export const ui: {
+  /** Lay parts over a chart. Torn down by `detach()` or by `chart.destroy()`. */
+  attach(chart: Chart, parts: UiPart | (UiPart | UiPart[])[]): { detach(): void };
+  /** A part of your own. */
+  custom(mount: (ctx: UiContext) => void | (() => void)): UiPart;
+  /** A menu on right-click, over a mark or over empty space. */
+  contextMenu(options?: ContextMenuOptions): UiPart;
+  /** Icon buttons beside the drawn piece the pointer is near. */
+  actions(options?: ActionsOptions): UiPart;
+  /** Handles on a mark's box: grips that resize it. */
+  handles(options?: HandlesOptions): UiPart;
+  /** The preset for a node-link chart: port icons, link icons, a menu, resize grips. */
+  network(options?: NetworkOptions): UiPart;
 };
 
 /**

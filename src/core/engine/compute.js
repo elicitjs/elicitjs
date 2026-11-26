@@ -166,6 +166,11 @@ export function createCompute(chart, deps) {
         return { ctx, targetTable, currentData, resolved, derivedOnly };
     };
 
+    // Did external control name this edit (`event.editName`)? `when` arbitrates
+    // between pointer gestures, so a named edit is not asked.
+    /** @param {import('../../types').Edit} edit @param {any} event */
+    const addressed = (edit, event) => !!event && event.editName != null && event.editName === edit.name;
+
     // Does this edit's `when` accept the gesture? Asked before a plane gesture
     // reaches the drivers, so a declined edit never consumes it.
     /**
@@ -175,7 +180,7 @@ export function createCompute(chart, deps) {
      * @returns {boolean}
      */
     const arbitrates = (feature, edit, event) =>
-        !edit.when || !!edit.when(editContext(feature, edit, event, null).ctx);
+        !edit.when || addressed(edit, event) || !!edit.when(editContext(feature, edit, event, null).ctx);
 
     /**
      * @param {any} feature
@@ -191,7 +196,7 @@ export function createCompute(chart, deps) {
         // Every column this edit writes is derived from the row's contents.
         if (derivedOnly) return null;
         const markChannels = ctx.markChannels;
-        if (edit.when && !edit.when(ctx)) return null; // arbitration
+        if (edit.when && !addressed(edit, event) && !edit.when(ctx)) return null; // arbitration
 
         const result = edit.apply(ctx);
         if (result === undefined) return null;
@@ -410,10 +415,12 @@ export function createCompute(chart, deps) {
      * @param {number | null} index the row the drag started on
      * @param {any} node the node it started on
      * @param {any} [session] run against this session instead of the feature's
+     * @param {string} [editName] the edit an external stroke named, so the trial
+     *   skips `when` as the stroke does
      * @returns {string[] | null} the keys a release could land on; null when the
      *   edit declares no targets
      */
-    const reachableKeys = (feature, edit, index, node, session) => {
+    const reachableKeys = (feature, edit, index, node, session, editName) => {
         if (typeof edit.targets !== 'function') return null;
         const table = targetTableOf(feature, edit);
         const probeCtx = /** @type {any} */ ({
@@ -431,7 +438,7 @@ export function createCompute(chart, deps) {
         // No places to try (no ports).
         if (!places) return null;
         for (const t of places) {
-            const trial = computeEdit(feature, edit, { x: t.x, y: t.y, node }, index, false, session);
+            const trial = computeEdit(feature, edit, { x: t.x, y: t.y, node, editName }, index, false, session);
             if (trial !== null) keys.push(t.key);
         }
         return keys;

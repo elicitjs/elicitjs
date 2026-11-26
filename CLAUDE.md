@@ -12,7 +12,7 @@ docs prose.
 
 Detailed design rules live in `.claude/rules/`, scoped by path so they load only when you
 touch that area: data/schema, scales/encoding, marks, network, edits/drivers,
-constraints, guides/effects/rendering, elements/legends, public API.
+constraints, guides/effects/rendering, elements/legends, public API, the UI layer.
 
 ## Entry points
 
@@ -24,6 +24,7 @@ constraints, guides/effects/rendering, elements/legends, public API.
 - `src/elements/index.js` — axis / grid / legend / axisRadial.
 - `src/looks/index.js` — looks (experimental): `rough` redraws the scene by hand, the rest are shaders the canvas renderer runs. `src/core/looks.js` holds the contract.
 - `src/layout/index.js` — spatial layout processes (`spec.layout`): `contain`, `dodge`, `row`, `column`, `grid`, `pack`, `custom`. Settled by `src/core/fit.js` + `src/core/arrange.js`.
+- `src/ui/index.js` — the UI layer: `ui.attach(chart, parts)`, HTML laid over a chart after it is made. Not grammar. `src/core/engine/view.js` is the chart's read surface it is built on.
 - `src/vocabulary.js` — every factory's option list, and the JSON grammar tables (`SPEC_*`). Imports nothing.
 - `src/json/index.js` — the JSON spec layer: `compile`, `registerFunction`, `recorder`.
 
@@ -71,6 +72,7 @@ not an `isAxis || isLegend` disjunction, when you mean "is this a chart element"
   - An option that takes a function, holds another factory's result or holds the author's data needs its entry in `SPEC_FUNCTIONS`, `SPEC_SLOTS` or `SPEC_OPAQUE` (`src/vocabulary.js`). A positional argument needs one in `SPEC_POSITIONAL`.
   - JSON and JS share one spelling for every keyword and option. No JSON-only alias, and no JS-only option without a stated "no JSON form".
   - `check:exports`, `test/json-*.test.js` and the `?spec=json` pass of `check:warnings` hold this. `npm run verify:browser -- --json` runs the gesture checks on charts built from JSON.
+- **`ui.*` is not grammar.** It is attached to a chart, never written in a spec, and has no JSON form: keep it out of `src/json` and out of `ElicitSpec`. A part reads the chart through `scene` / `hit` / `scale` / `edits` and writes through `control`, `emit` and `set` only.
 - **One name per thing.** No aliases, no deprecated wrappers (the library is unreleased; there is nobody to deprecate for). "Author your own X" is `custom` in every namespace.
 - **The schema owns a field's data type and domain** (`spec.schema`, `src/core/schema.js`). A channel never carries `domain` or `range`; a channel's `type` is a data type, its `scale` is the scale.
 - **Never branch on `scale.type`.** Read the capability flags `kind`, `temporal`, `invertible`. A new scale type is a case in `core/scales.js` only.

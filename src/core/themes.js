@@ -659,6 +659,15 @@ const DARK_WIDGET = {
     shadow: 'rgba(0, 0, 0, 0.55)'
 };
 
+// A dark surface's `ui` chrome, shared by the dark themes.
+const DARK_UI = {
+    surface: '#161a21',
+    ink: '#e5e7eb',
+    muted: '#9aa4b2',
+    border: '#38414f',
+    shadow: 'rgba(0, 0, 0, 0.55)'
+};
+
 /** @type {Record<import('../types').ThemeName, import('../types').DeepPartial<import('../types').Theme> & { extends?: string }>} */
 export const themes = {
     // The identity theme — resolves to DEFAULT_THEME unchanged.
@@ -730,6 +739,7 @@ export const themes = {
             legend: { stroke: '#cbd5e1', labelFill: '#cbd5e1', fontSize: 11 }
         },
         constraint: { color: '#fb7185' },
+        ui: { ...DARK_UI, accent: '#38bdf8', danger: '#fb7185' },
         widget: {
             ...DARK_WIDGET,
             accent: '#38bdf8',
@@ -771,6 +781,7 @@ export const themes = {
             target: { outline: { color: DD.blue, width: 2.5, pad: 3, opacity: 0.9 } }
         },
         marks: { bar: { rx: 3 }, rect: { rx: 2 } },
+        ui: { ink: DD.grey900, muted: DD.grey500, border: DD.grey200, accent: DD.blue, danger: DD.coralDark },
         widget: {
             accent: DD.blue,
             ring: DD.grey200,

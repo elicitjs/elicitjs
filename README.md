@@ -67,6 +67,7 @@ A spec has a few parts:
 | `guides.*` | Read-only annotations: `rule`, `region`, `remaining`, `tip`, `crosshair`, `proximity`, `prompt`, `options`, `cellGrid`, `sliderTrack`, `quadrants`, `custom`. |
 | `looks.*` | Experimental. How the finished chart is drawn: `rough` redraws it by hand in either renderer; `sketch`, `cartoon`, `halftone` and `custom` are shaders for the canvas renderer. |
 | `widgets.*` | Survey instruments, one call each: `likert`, `multipleChoice`, `slider`, `matrix`, `ranking`, `allocation`, `probabilityTokens`, `interval`, `histogram`, `region`, `thermometer`, `labeledValue`, `lineCone`. |
+| `ui.*` | UI laid over a chart after it is made: `ui.attach(chart, parts)` with `contextMenu`, `actions`, `handles`, the `network` preset and `custom`. Not part of the spec. |
 | `format.*` | Display formatters: `number`, `percent`, `si`, `time`, `prefix`, `suffix`. |
 | `themes`, `setTheme` | Built-in themes (`survey`, `dark`, `nyt`, `economist`, `swiss` and more) and the app-wide default. A chart takes `theme: "name"` or a partial theme. |
 | `D3Renderer`, `CanvasRenderer` | The SVG renderer (the default) and a canvas renderer. Pass one as `renderer`. |
@@ -81,6 +82,7 @@ A spec has a few parts:
 - `undo()` / `redo()` step through history one gesture at a time.
 - `setData(rows)`, `set(field, value, { index })` and `setDomain(field, domain)` change the data from outside the chart.
 - `chart.control(name, index).set(value)` drives a named edit from your own UI.
+- `chart.scene()`, `chart.hit(point)` and `chart.scale(channel)` report what is drawn and where, for UI you place over the chart. `chart.on("render", cb)` runs after each frame.
 - Call `chart.destroy()` when you unmount the chart.
 
 ## Several charts, one dataset

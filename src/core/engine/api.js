@@ -13,7 +13,9 @@ import { driverFor } from '../../edit/drivers/index.js';
  * @property {() => void} detach  detach the chart from its dataset
  * @property {import('../../types').Renderer} renderer
  * @property {any[]} features
- * @property {{ stage: Set<Function> }} listeners
+ * @property {{ stage: Set<Function>, render: Set<Function>, destroy: Set<Function> }} listeners
+ * @property {ReturnType<typeof import('./view.js').createView>} view  the read surface (engine/view.js)
+ * @property {any} theme  the resolved theme
  * @property {Record<string, any[]>} featureNodes
  * @property {import('../../types').SchemaSpec} schemaSpec
  * @property {'fixed' | 'scale' | 'reflow'} mode
@@ -23,7 +25,8 @@ import { driverFor } from '../../edit/drivers/index.js';
  * @property {(name: string, i: number) => number} rowIndexOf
  * @property {(feature: any, node: any, index?: number | null) => import('../../types').ScaleMap | null} frameScalesFor
  * @property {(edit: import('../../types').Edit) => boolean} rowTargeted
- * @property {(feature: any, edit: import('../../types').Edit, event: any) => boolean} arbitrates  does the edit's `when` accept the event
+ * @property {() => void} abortStroke  drop the gesture in flight, uncommitted
+ * @property {() => void} endTxn  close this chart's undo transaction
  * @property {() => boolean} measure
  * @property {() => void} stopMotion  cancel a pending animation frame
  * @property {(event: any) => void} handleEvent
@@ -40,7 +43,7 @@ import { driverFor } from '../../edit/drivers/index.js';
  */
 export function createChartApi(chart, deps) {
     const {
-        dataset, detach, renderer, features, listeners, featureNodes, schemaSpec, mode, container, stages, tableOf, rowIndexOf, frameScalesFor, rowTargeted, arbitrates, measure, stopMotion,
+        dataset, detach, renderer, features, listeners, view, theme, featureNodes, schemaSpec, mode, container, stages, tableOf, rowIndexOf, frameScalesFor, rowTargeted, abortStroke, endTxn, measure, stopMotion,
     } = deps;
     const handleEvent = (/** @type {any} */ event) => deps.handleEvent(event);
     const update = () => deps.update();
@@ -77,10 +80,12 @@ export function createChartApi(chart, deps) {
     };
 
     // The scene node an edit acts on for a row: of the row's nodes, the one the
-    // edit `grabs` (a stack's edge handle, an area's y2 handle). Not cached; nodes
-    // rebuild each update.
-    const nodeFor = (/** @type {any} */ feature, /** @type {any} */ edit, /** @type {number} */ row) => {
-        const own = (featureNodes[feature.id] || []).filter((/** @type {any} */ n) => n && !n.ghost && n.index === row);
+    // edit `grabs` (a stack's edge handle, an area's y2 handle). `ref` narrows it
+    // to one handle (a port's side, a link's end). Not cached; nodes rebuild each update.
+    const nodeFor = (/** @type {any} */ feature, /** @type {any} */ edit, /** @type {number} */ row, /** @type {any} */ ref = null) => {
+        const own = (featureNodes[feature.id] || []).filter((/** @type {any} */ n) => n && !n.ghost && n.index === row
+            && (!ref || ref.channel == null || n.channel === ref.channel)
+            && (!ref || ref.side == null || n.side === ref.side));
         if (typeof edit.grabs !== 'function') return own[0] || null;
         // A node tagged for exactly this edit beats one any edit may grab.
         return own.find((/** @type {any} */ n) => n.channel != null && edit.grabs(n))
@@ -89,18 +94,24 @@ export function createChartApi(chart, deps) {
 
     // The open begin()…end() stroke per edit name, shared by every handle, so
     // `control(n).begin()` and a later `control(n).end()` pair up.
-    /** @type {Map<string, { row: number, node: any }>} */
+    // `at` is where the stroke's pointer last was, so `end()` releases there.
+    /** @type {Map<string, { row: number, node: any, at: { x: number, y: number } | null }>} */
     const strokes = new Map();
 
     // A handle bound to a named edit and datum. It routes by the edit's `gesture`;
-    // the engine dispatch never knows a controller exists.
-    const control = (/** @type {string} */ name, /** @type {number} */ index = 0) => {
+    // the engine dispatch never knows a controller exists. `target` is a row
+    // index, or `{ index, channel?, side? }` to name one of the row's handles.
+    const control = (/** @type {string} */ name, /** @type {any} */ target = 0) => {
+        const ref = target && typeof target === 'object' ? target : null;
+        /** @type {number} */
+        // A view of a context row or a chart element has a null index: no row.
+        const index = ref ? (ref.index === undefined ? 0 : ref.index === null ? -1 : ref.index) : target;
         // `index` is row i of getData(); translate it to the mark's table.
         const rowOf = (/** @type {any} */ feature) => rowIndexOf(feature ? feature.table : schemaSpec.primary, index);
 
         // The edit, row and node a call drives, or null after a warning that says why.
         /** @param {string} method @returns {{ feature: any, edit: any, row: number, node: any } | null} */
-        const target = (method) => {
+        const resolve = (method) => {
             const found = findNamedEdit(name);
             if (!found) return null;
             const { feature, edit } = found;
@@ -118,21 +129,15 @@ export function createChartApi(chart, deps) {
                 warn(`control:index:${name}`, `${call}: there is no row ${index}. The index counts the rows getData() reports, from 0, context rows left out.`);
                 return null;
             }
-            const node = nodeFor(feature, edit, row);
+            const node = nodeFor(feature, edit, row, ref);
             if (!node) {
-                warn(`control:node:${name}:${index}`, `${call}: row ${index} draws no node this edit acts on${typeof edit.grabs === 'function' ? ' (it acts only on some of a row\'s nodes, such as the handle on a boundary, and this row has none)' : ''}.`);
+                const which = ref && (ref.channel != null || ref.side != null)
+                    ? ` with ${[ref.channel != null ? `channel "${ref.channel}"` : '', ref.side != null ? `side "${ref.side}"` : ''].filter(Boolean).join(' and ')}`
+                    : '';
+                warn(`control:node:${name}:${index}`, `${call}: row ${index} draws no node${which} this edit acts on${typeof edit.grabs === 'function' ? ' (it acts only on some of a row\'s nodes, such as the handle on a boundary, and this row has none)' : ''}.`);
                 return null;
             }
             return { feature, edit, row, node };
-        };
-
-        // Does the edit's `when` accept this event? A `when` that reads a modifier
-        // key or the pointer can't be met from outside, so say so.
-        /** @param {{ feature: any, edit: any }} t @param {any} event @param {string} method */
-        const accepted = (t, event, method) => {
-            if (arbitrates(t.feature, t.edit, event)) return true;
-            warn(`control:when:${name}`, `chart.control("${name}", ${index}).${method}(): the edit's \`when\` declined the gesture, so nothing was written. A \`when\` that reads a modifier key or the pointer can't be met by a control.`);
-            return false;
         };
 
         // Encodes a value to the pointer that would set it, through the scales the
@@ -182,13 +187,13 @@ export function createChartApi(chart, deps) {
             // Writes a value. A commit-gesture edit gets it as `ctx.value`; a drag edit
             // gets it encoded to a pointer.
             set(/** @type {any} */ value) {
-                const t = target('set');
+                const t = resolve('set');
                 if (!t) return;
                 const { edit, node } = t;
-                // editName keeps a sibling edit on the same gesture from also firing.
+                // editName keeps a sibling edit on the same gesture from also firing,
+                // and tells dispatch not to ask the edit's `when`.
                 if (edit.gesture === 'commit') {
-                    const event = { type: 'commit', node, value, editName: name, x: node.cx || 0, y: node.cy || 0 };
-                    if (accepted(t, event, 'set')) emit(event);
+                    emit({ type: 'commit', node, value, editName: name, x: node.cx || 0, y: node.cy || 0 });
                     return;
                 }
                 const { x, y, encoded } = dragPointer(t, value);
@@ -204,10 +209,10 @@ export function createChartApi(chart, deps) {
                         warn(`control:stroke:${name}`, `chart.control("${name}", ${index}).set(): begin() opened a stroke on another row; end() it first.`);
                         return;
                     }
+                    s.at = { x, y };
                     emit(event);
                     return;
                 }
-                if (!accepted(t, event, 'set')) return;
                 // A driver (relative move) anchors at dragstart, so it gets a whole
                 // stroke. Any other edit takes one self-closing drag.
                 if (driverFor(edit)) {
@@ -220,42 +225,50 @@ export function createChartApi(chart, deps) {
                 }
             },
             // begin()/end() bracket one txn, so many .set() ticks are one undo entry.
-            begin() {
+            begin(/** @type {{ x: number, y: number }} */ at) {
                 if (strokes.has(name)) return;
-                const t = target('begin');
+                const t = resolve('begin');
                 if (!t) return;
-                // Press at the datum's own pixel, so a relative edit anchors there.
-                const { x, y } = dragPointer(t, undefined);
-                const event = { type: 'dragstart', node: t.node, x, y, editName: name };
-                if (!accepted(t, event, 'begin')) return;
-                strokes.set(name, { row: t.row, node: t.node });
-                emit(event);
+                // Press at the datum's own pixel, so a relative edit anchors there;
+                // or at `at`, for a stroke that follows a pointer pressed elsewhere.
+                const { x, y } = at && Number.isFinite(at.x) && Number.isFinite(at.y) ? at : dragPointer(t, undefined);
+                strokes.set(name, { row: t.row, node: t.node, at: { x, y } });
+                emit({ type: 'dragstart', node: t.node, x, y, editName: name });
             },
+            // Release where the stroke's pointer last was.
             end() {
                 const s = strokes.get(name);
                 if (!s) return;
                 strokes.delete(name);
-                emit({ type: 'dragend', node: s.node, editName: name });
+                emit({ type: 'dragend', node: s.node, editName: name, ...(s.at || {}) });
+            },
+            // Abandon the open stroke: no release, so a drop commits nothing.
+            cancel() {
+                if (!strokes.delete(name)) return;
+                abortStroke();
+                endTxn();
+                update();
             },
             // Fires a value-less edit (cycle, remove, toggle) with its own gesture on
             // the datum's node, or with `gesture` if given.
             fire(/** @type {string} */ gesture) {
-                const t = target('fire');
+                const t = resolve('fire');
                 if (!t) return;
-                const event = { type: gesture || t.edit.gesture || 'click', node: t.node, editName: name };
-                if (accepted(t, event, 'fire')) emit(event);
+                emit({ type: gesture || t.edit.gesture || 'click', node: t.node, editName: name });
             },
-            // Raw passthrough, auto-scoped to the node this edit acts on for the datum.
-            // A plane edit gets no node, so its `x`/`y` route through the plane.
+            // Raw passthrough to this edit alone, auto-scoped to the node it acts on
+            // for the datum. A plane edit gets no node, so its `x`/`y` route through
+            // the plane.
             emit(/** @type {any} */ event) {
                 const s = strokes.get(name);
                 let node = s ? s.node : undefined;
                 if (!s) {
                     const found = findNamedEdit(name);
                     const row = found && Number.isInteger(index) && index >= 0 ? rowOf(found.feature) : -1;
-                    if (found && found.edit.pick === 'direct' && row >= 0) node = nodeFor(found.feature, found.edit, row) || undefined;
+                    if (found && found.edit.pick === 'direct' && row >= 0) node = nodeFor(found.feature, found.edit, row, ref) || undefined;
                 }
-                emit({ node, ...event });
+                if (s && event && event.x != null && event.y != null) s.at = { x: event.x, y: event.y };
+                emit({ node, editName: name, ...event });
             },
             // The values this channel accepts, read off its scale, for external UI.
             accepts() {
@@ -307,6 +320,9 @@ export function createChartApi(chart, deps) {
         ro.observe(container);
     }
 
+    /** @type {any} */
+    let themeCopy = null;
+
     return {
         // The dataset's methods, delegated (the same functions).
         getData: dataset.getData,
@@ -318,6 +334,7 @@ export function createChartApi(chart, deps) {
         redo: dataset.redo,
         canUndo: dataset.canUndo,
         canRedo: dataset.canRedo,
+        transaction: dataset.transaction,
         getSelection: dataset.getSelection,
         getSelectionAll: dataset.getSelectionAll,
         select: dataset.select,
@@ -329,11 +346,20 @@ export function createChartApi(chart, deps) {
         getHover: dataset.getHover,
         dataset,
         dom: () => container,
-        // `stage` is this chart's; `change`, `select` and `hover` are the dataset's.
+        // `stage`, `render` and `destroy` are this chart's; `change`, `select` and
+        // `hover` are the dataset's.
         on(type, cb) {
-            if (type !== 'stage') return dataset.on(type, cb);
-            listeners.stage.add(cb);
-            return () => listeners.stage.delete(cb);
+            if (type !== 'stage' && type !== 'render' && type !== 'destroy') return dataset.on(type, cb);
+            const set = listeners[type];
+            set.add(cb);
+            return () => set.delete(cb);
+        },
+        // The read surface for outside UI (engine/view.js).
+        ...view,
+        // A copy of the resolved theme, made on first read.
+        get theme() {
+            if (!themeCopy) themeCopy = structuredClone(theme);
+            return themeCopy;
         },
         // Multi-stage controls (see engine/stages.js).
         getStage: stages.api.getStage,
@@ -345,6 +371,9 @@ export function createChartApi(chart, deps) {
         // Detaches from the dataset, disconnects the reflow observer and releases
         // the renderer.
         destroy() {
+            for (const cb of [...listeners.destroy]) cb();
+            listeners.render.clear();
+            listeners.destroy.clear();
             detach();
             if (ro) { ro.disconnect(); ro = null; }
             stopMotion();

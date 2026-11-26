@@ -38,7 +38,34 @@ const pointSpec = (yEdit, extra = {}) => ({
     marks: [plot.point({ channels: { x: { field: 'x' }, y: { field: 'y', edit: yEdit } }, ...extra })],
 });
 
+describe('control().begin(at)', () => {
+    it('presses at the point given, so a relative edit travels as far as the pointer', async () => {
+        const el = mount(pointSpec(edit.move({ name: 'y', mode: 'relative' })));
+        await tick();
+        const before = el.getData()[1].y;
+        const c = el.control('y', 1);
+        // Pressed well away from the point, then moved 20px up.
+        c.begin({ x: 250, y: 150 });
+        c.emit({ type: 'drag', x: 250, y: 130 });
+        c.end();
+        const px = el.scale('y').encode;
+        expect(px(before) - px(el.getData()[1].y)).toBeCloseTo(20, 4);
+        expect(el.undo()).toBe(true);
+        expect(el.getData()[1].y).toBe(before);
+    });
+});
+
 describe('control() targets the node the edit acts on', () => {
+    // `when` arbitrates between pointer gestures; a control names its edit.
+    it('drives an edit whose `when` reads a modifier key', async () => {
+        const el = mount(pointSpec(undefined, { edits: [edit.remove({ name: 'rm', when: edit.when.alt })] }));
+        await tick();
+        const w = captureWarnings(() => el.control('rm', 0).fire());
+        expect(el.getData()).toHaveLength(2);
+        expect(w).toEqual([]);
+    });
+
+
     it('fires stack.merge on the edge handle above row i', async () => {
         const el = mount(stackSpec([edit.stack.merge({ name: 'merge' })]));
         await tick();
@@ -104,13 +131,6 @@ describe('control() warns instead of doing nothing', () => {
         expect(el.getData()[0].y).toBeCloseTo(10, 6);
     });
 
-    it('for an edit whose `when` reads a modifier key', async () => {
-        const el = mount(pointSpec(undefined, { edits: [edit.remove({ name: 'rm', when: edit.when.alt })] }));
-        await tick();
-        const w = captureWarnings(() => el.control('rm', 0).fire());
-        expect(el.getData()).toHaveLength(3);
-        expect(w.some((m) => m.includes('`when` declined'))).toBe(true);
-    });
 
     it('for set() on a slide, whose value is not read off a scale', async () => {
         const el = mount(pointSpec(edit.slide({ name: 's', axis: 'y' })));

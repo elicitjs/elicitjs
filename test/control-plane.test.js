@@ -58,11 +58,12 @@ describe('control() on plane-pick edits', () => {
         expect(el.getData()).toEqual([{ x: 5, y: 9 }, { x: 5, y: 9 }]);
     });
 
-    it('still honours the edit\'s `when`', async () => {
+    // `when` arbitrates between pointer gestures; a control names its edit.
+    it('does not ask the edit\'s `when`', async () => {
         const el = mount(lineSpec(edit.move({ pick: 'sweep', name: 'paint', when: () => false })));
         await tick();
         el.control('paint', 1).set(90);
-        expect(el.getData()[1].y).toBe(50);
+        expect(el.getData()[1].y).toBeCloseTo(90, 6);
     });
 
     it('warns, and writes nothing, for a plane edit that needs a pointer path', async () => {

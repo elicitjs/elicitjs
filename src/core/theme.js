@@ -165,6 +165,22 @@ export const DEFAULT_THEME = {
         rowHeight: 40           // a list row, a card
     },
 
+    // The `ui` layer's chrome (ui/): menus, icon buttons and handles laid over
+    // the chart. Handed to the layer as CSS variables.
+    ui: {
+        surface: '#ffffff',     // a menu, a button
+        ink: '#1f2937',         // labels and icons
+        muted: '#6b7280',       // a heading, an unavailable item
+        border: '#d5dbe5',
+        accent: '#2563eb',      // hover, focus, the active icon
+        danger: '#dc2626',      // an action that removes
+        shadow: 'rgba(15, 23, 42, 0.18)',
+        radius: 8,              // a menu's corner
+        size: 22,               // an icon button's side
+        gap: 6,                 // between a mark and what sits beside it
+        fontSize: 12
+    },
+
     // Sparse per-mark overrides keyed by mark name (`marks: { bar: { fill: 'crimson' } }`).
     // A few marks read geometry here too: `bar.rx`, `rect.rx`, `point.size`.
     marks: {}

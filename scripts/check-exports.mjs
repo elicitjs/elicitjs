@@ -27,6 +27,8 @@ const dtsPath = path.join(root, 'src/index.d.ts');
 // word — exactly the drift worth failing on.
 const NAMESPACES = [
     'plot', 'elements', 'edit', 'constraints', 'guides', 'looks', 'layout', 'widgets', 'format',
+    // Not grammar: `ui` is attached to a chart, so it stays out of the JSON loop below.
+    'ui',
     'authoring',
 ];
 
@@ -163,6 +165,7 @@ const VOCAB = {
     layout: { universal: vocab.LAYOUT_UNIVERSAL_OPTIONS, of: (m) => vocab.LAYOUT_OPTIONS[m] || null },
     constraints: { universal: [], of: (m) => vocab.CONSTRAINT_OPTIONS[m] || null },
     edit: { universal: vocab.EDIT_UNIVERSAL_OPTIONS, of: (m) => vocab.EDIT_OPTIONS[m === 'scale.categories' ? 'scale.addCategory' : m] || null },
+    ui: { universal: [], of: (m) => vocab.UI_OPTIONS[m] || null },
 };
 
 /**

@@ -14,6 +14,7 @@ export const routes = [
     '/editing/handles', '/editing/legend',
     '/editing/existence', '/editing/probe', '/editing/axis',
     '/editing/external-controls',
+    '/ui', '/ui/network',
     '/editing/history', '/widgets', '/scales', '/schema', '/dataset', '/constraints', '/layout',
     '/effects', '/guides', '/theming', '/theming/themes', '/looks', '/playground',
     '/case-studies/glyphs',

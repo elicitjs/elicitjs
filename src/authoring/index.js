@@ -138,6 +138,10 @@ export { registerDriver } from '../edit/drivers/index.js';
 // The same function as the spec keyword `constraints.custom`.
 export { defineConstraint } from '../constraints/define.js';
 
+// ── Extending the `ui` layer ────────────────────────────────────────────────
+// Register an icon under a name a `ui` part takes as `icon`.
+export { registerIcon } from '../ui/icons.js';
+
 // ── Writing a spatial layout process ────────────────────────────────────────
 // The same function as the spec keyword `layout.custom`.
 export { defineLayout } from '../layout/define.js';

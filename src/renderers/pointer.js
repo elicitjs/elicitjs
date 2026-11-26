@@ -161,6 +161,8 @@ export function bindPointerEvents(surface, getCtx) {
     };
 
     on('pointerdown', (e) => {
+        // Only the primary button starts a gesture; a right-press is the page's.
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
         const ctx = getCtx();
         const [x, y] = toInner(e);
         reach = reachOf(e);

@@ -41,13 +41,16 @@ paths:
 - A driver may claim a direct-pick edit by capability (relative `slide`/`move`); `runDrivers` then hands it `ctx.index` and the plane stays down. Don't force an edit onto the plane when it only needs a dragstart snapshot.
 - Sessions are per feature (`ui.session[featureId]`), shared by every driver on that mark. Each driver lists `sessionKeys`; the engine's `session.clear()` nulls exactly those. Never wholesale-clear.
 - `Driver.options` declares the knobs it reads; `warnUnknownEditOptions` subtracts them.
-- `targetsRow: true` (`nearest`, `sweep`) means the driver only chooses a row, so `chart.control(name, i)` runs that edit directly on row `i`. Other plane edits warn on `control()`. Never emulate the plane with a synthetic gesture at the row's pixel.
+- `targetsRow: true` (`nearest`, `sweep`) means the driver only chooses a row, so `chart.control(name, i)` runs that edit directly on row `i`. Other plane edits warn on `control().set()`; `control(name).emit({ type, x, y })` runs one at a point. Never emulate the plane with a synthetic gesture at the row's pixel.
 - A sweep locks an edge; it doesn't run every edit on a band each tick.
 
 ## Dispatch and arbitration
 
 - A drag fans to every direct edit on the touched feature. Two edits on one mark must read different components (x-slide + y-slide), or the first to apply wins. `rotate` is for things grabbed at arm's length; a tilt you grab on top of is a `slide`.
 - A plane gesture fans to every feature's plane edits, so a whole-dataset edit belongs on one mark per table. `warnDuplicatePlaneEdits` groups by the table each edit writes.
+- An event that names its edit (`event.editName`, set by `chart.control`) runs that edit alone, direct or plane, is never re-routed to a mark under it, and skips `when` (`addressed` in `engine/compute.js`): `when` chooses between pointer gestures. Drop-target trials for that stroke skip it too.
+- The inline editor's `commit` names no edit, so it runs only `inline` edits when the feature has one. Otherwise typed text would reach every commit-gesture edit on the mark (a `set()` on `fill`, a commit-gesture `remove`).
+- An edit only external control should fire declares `gesture: 'commit'`: no pointer makes it.
 - Plane arbitration (`livePlaneEdits`): the engine asks each plane edit's `when` on dragstart/click/hover and latches for the stroke. If none accepts, `hitTest` the pointer and re-route as a direct gesture (`fallbackHit`, also latched). A press on a mark whose direct edit accepts it grabs that mark first. Drivers never consult `when` themselves.
 - A proposal is about a table: `ui.preview[featureId]` holds `{ table, rows }`, and with exactly one in flight the ghost pass rebuilds every feature over that table (`sole`). Don't narrow it to the owning feature — `connect` fires on a node mark but the link mark draws the rubber band.
 - A hierarchy drag previews in place (`liveTables` in `engine/render.js`), never as a ghost: a nest proposal is `live` and its settled node rows are drawn instead of the committed ones; with no proposal, the committed rows are drawn settled around the stroke, the container being dragged in keeping its size (`keepSize`). The rows in flight stay committed. The data still changes only on release.

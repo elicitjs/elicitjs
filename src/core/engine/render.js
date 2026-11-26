@@ -81,6 +81,7 @@ function applyGhostStyle(node, ghost) {
  * @property {((row: any, i: number, rows: any[]) => Record<string, string> | null) | null} nodePortsRule
  * @property {() => boolean} settleOwn  settle at render time when this chart may (engine/nodes.js)
  * @property {() => void} layoutMoved  that settle changed the rows: redraw the other charts
+ * @property {() => void} rendered  a frame was drawn: tell the chart's `render` listeners
  * @property {(from: Record<string, any[]>, before: any[] | null, frozen: Set<number> | null, dodge?: any, table?: string | null) => any[]} settledNodes
  * @property {() => Set<number> | null} heldStill
  * @property {() => number[] | null} inFlight
@@ -109,7 +110,7 @@ function applyGhostStyle(node, ghost) {
  */
 export function createRender(chart, deps) {
     const {
-        features, featureById, ui, spec, theme, effects, looks, renderer, mode, overflow, focusOutline, designW, authorMargins, dims, liveSpec, schema, schemaSpec, allGuides, datasetConstraints, tracksPointer, hasLegends, hasAxisTitles, featureNodes, hierarchyNodes, hasLayout, layoutTables, boxHosts, boxHostsOf, tableOf, targetTableOf, primaryRows, isLockedIn, constraintsIn, nodeBoxRule, nodePortsRule, settleOwn, layoutMoved, settledNodes, heldStill, inFlight, activeEdits, getStage, selectionIn, selectionList, selectionPrimary, hoverRow, hoverLink, hoverWide, portAvailable, handleKey, clipNow, visibleAt, motionDuration,
+        features, featureById, ui, spec, theme, effects, looks, renderer, mode, overflow, focusOutline, designW, authorMargins, dims, liveSpec, schema, schemaSpec, allGuides, datasetConstraints, tracksPointer, hasLegends, hasAxisTitles, featureNodes, hierarchyNodes, hasLayout, layoutTables, boxHosts, boxHostsOf, tableOf, targetTableOf, primaryRows, isLockedIn, constraintsIn, nodeBoxRule, nodePortsRule, settleOwn, layoutMoved, settledNodes, heldStill, inFlight, activeEdits, getStage, selectionIn, selectionList, selectionPrimary, hoverRow, hoverLink, hoverWide, portAvailable, handleKey, clipNow, visibleAt, motionDuration, rendered,
     } = deps;
     const handleEvent = (/** @type {any} */ event) => deps.handleEvent(event);
     // Does this feature draw the dataset's rows? Elements draw a scale, and map
@@ -907,6 +908,7 @@ export function createRender(chart, deps) {
             theme,
             onEvent: handleEvent
         });
+        rendered();
         // Keep drawing until everything eased has arrived.
         if (motion && motion.moving() && !frame) frame = raf(() => { frame = 0; update(); });
         // The other charts draw what this settle wrote; they do not settle it again.

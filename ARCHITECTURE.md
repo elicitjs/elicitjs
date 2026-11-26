@@ -189,7 +189,7 @@ ElicitJS is layered for extensibility:
 
 **Plane arbitration and the direct fallback.** With the plane raised, every press is a plane gesture. The engine asks each plane edit's `when` before its driver sees the gesture (arbitrated once per stroke), and when no plane edit accepts it, hit-tests the pointer and re-routes the event as a direct one — so a `move({ when: when.shift })` beside a Shift-gated sweep, or a vertex drag beside a geo draw, is reachable. Element edits (`edit.axis.scale`) are direct edits claimed by their driver by capability, so an editable axis never raises the plane; the renderer lowers the plane when the mode flips back.
 
-**Pointer state.** A tooltip (`guides.tip`, or a mark's `tip:` shorthand) and a crosshair (`guides.crosshair`) are guides that read `ui.pointer` / `ui.hit`, which the engine records from the renderers' root `pointermove` (one report per frame, only when a guide asks). Nothing is dispatched and no node becomes pointer-active, so a tip can never block a gesture.
+**Pointer state.** A tooltip (`guides.tip`, or a mark's `tip:` shorthand) and a crosshair (`guides.crosshair`) are guides that read `ui.pointer` / `ui.hit` (the engine's transient interaction state, `ctx.ui` to a guide; unrelated to the `ui` namespace below), which the engine records from the renderers' root `pointermove` (one report per frame, only when a guide asks). Nothing is dispatched and no node becomes pointer-active, so a tip can never block a gesture.
 
 **Chart titles.** `spec.title` / `subtitle` / `caption` reserve bands of layout space outside the legend bands (`core/titles.js`), the way legends do, so the chart keeps its declared size.
 
@@ -205,7 +205,11 @@ ElicitJS is layered for extensibility:
 
 **Linked hover.** The `hovered` state can be the dataset's too: one row, set by the chart the pointer is in (`effects.hovered.link`), shown by every linked chart, reported by `getHover()` / `on('hover')` and settable with `hover(index | null)`. Same standing as the selection: no `change`, no undo. Highlighting is not a separate state or an edit — it is how a state is painted (see Effects below).
 
-**External control.** `ds.set(field, value, { index, table })` writes a cell from outside any chart. `chart.emit(event)` injects a renderer-shaped gesture; `chart.control(name, index)` returns a handle bound to the edit named `name` (`move({ name })`) with `.set(value)`, `.begin()`/`.end()`, `.fire(gesture?)`, `.emit(event)` and `.accepts()` — a new input SOURCE, not a second interaction system, since it feeds the one dispatch.
+**External control.** `ds.set(field, value, { index, table })` writes a cell from outside any chart. `chart.emit(event)` injects a renderer-shaped gesture; `chart.control(name, target)` returns a handle bound to the edit named `name` (`move({ name })`) with `.set(value)`, `.begin(at?)`/`.end()`/`.cancel()`, `.fire(gesture?)`, `.emit(event)` and `.accepts()` — a new input SOURCE, not a second interaction system, since it feeds the one dispatch. `target` is a row index, or `{ index, channel, side }` for one of a row's handles (a port's side, a link's end). A control names its edit (`event.editName`), so dispatch runs that edit alone and does not ask its `when`: `when` arbitrates between pointer gestures. An edit only a control should fire declares a gesture no pointer makes (`gesture: 'commit'`). `ds.transaction()` holds one undo entry open across several writes.
+
+**Reading the chart.** UI outside the chart reads it through `chart.scene(query)` (the drawn pieces: mark, row, box, centre, state), `chart.hit(point, { reach })`, `chart.scale(channel, { mark })`, `chart.edits(query)`, `chart.metrics()` and `chart.toInner` / `chart.toClient`, and hears each frame with `on('render')` (`core/engine/view.js`). Everything handed out is a copy; nothing here writes.
+
+**The UI layer.** `ui.attach(chart, parts)` (`src/ui/`) lays HTML over a chart after it is made: `contextMenu`, `actions` (icons beside a mark), `handles` (resize grips), the `network` preset, and `custom`. It is not grammar: nothing in `ui.*` appears in a spec or has a JSON form. A part is built only on the read surface above and on external control, so anyone can write the same. It writes two ways: a named edit for anything that adds or removes a row, connects or drags; `chart.set` for a value in an existing cell, unless the spec declares a value edit on that channel.
 
 **Taking it back.** `undo()` / `redo()` step through the dataset's history — one stack for every chart on it — with `canUndo()` / `canRedo()` for a button's disabled state. The unit is a **gesture**, not a commit: a drag writes on every pointermove, so undo reverses the whole drag rather than replaying it backwards a pixel at a time. History is snapshot-based (an edit's `apply` is already pure, so the state before it *is* the undo — no edit describes its own inverse) and covers the schema too, so undoing a category-add puts the domain, the rows and the chart size back together (the size of the chart that grew; each chart keeps its own size in the snapshot). Both fire the ordinary `change` notification.
 
@@ -234,6 +238,7 @@ elicitjs/
 │   │   │   ├── compute.js   # An edit from gesture to commit: context, invariants, commit, preview, trial commits
 │   │   │   ├── dispatch.js  # Event routing: direct / plane / driver dispatch
 │   │   │   ├── api.js       # The public Chart object: dom(), control, emit, stages, destroy, the dataset's methods
+│   │   │   ├── view.js      # The chart's read surface for outside UI: scene, hit, scale, edits, metrics, toInner/toClient
 │   │   │   ├── hover.js     # Linked hover across the charts on one dataset
 │   │   │   ├── carry.js     # Eases a mark's nodes after build() (`motion: true`)
 │   │   │   └── render.js    # Container, sizing, and update(): layout, scales, build, ghost, guides, state pass
@@ -285,6 +290,7 @@ elicitjs/
 │   ├── guides/             # rule / region / remaining / tip / crosshair / proximity / custom
 │   ├── looks/              # rough (geometry) / sketch / cartoon / halftone / custom (shaders); experimental
 │   ├── json/               # The JSON spec layer: compile, expressions, registerFunction, recorder
+│   ├── ui/                 # The UI layer (not grammar): attach, the part context, contextMenu / actions / handles, the network preset
 │   ├── authoring/          # Building blocks for new vocabulary (also `elicitjs/authoring`); index.d.ts is generated
 │   ├── format.js           # Display formatters (number/percent/si/time/prefix/suffix)
 │   ├── renderers/

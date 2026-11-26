@@ -19,6 +19,7 @@ import { createDispatch } from './engine/dispatch.js';
 import { createRender } from './engine/render.js';
 import { resolveMotion } from './motion.js';
 import { createChartApi } from './engine/api.js';
+import { createView } from './engine/view.js';
 import {
     assembleFeatures, bindFeatureTables, desugarPorts, desugarContains, tipGuidesOf, viewerChannelsOf,
 } from './engine/features.js';
@@ -178,7 +179,7 @@ function createChart(dataset, spec) {
     // Dataset accessors (engine/tables.js).
     const {
         tableOf, targetTableOf, primaryRows,
-        rowIndexOf, isLockedIn, constraintsIn, checkRows,
+        rowIndexOf, reportedIndexOf, isLockedIn, constraintsIn, checkRows,
     } = dataset;
 
     // Which table each feature is a view over, by name or by role (engine/features.js).
@@ -251,9 +252,17 @@ function createChart(dataset, spec) {
 
     // Caller-facing observers: `change` per committed edit, `stage` on setStage,
     // `select` on a selection change (no data moved, so not a `change`). `change`
-    // and `select` are the dataset's; `stage` is the chart's.
-    /** @type {{ change: Set<Function>, stage: Set<Function>, select: Set<Function> }} */
-    const listeners = { change: dataset.listeners.change, stage: new Set(), select: dataset.listeners.select };
+    // and `select` are the dataset's; `stage`, `render` and `destroy` are the chart's.
+    /** @type {{ change: Set<Function>, stage: Set<Function>, select: Set<Function>, render: Set<Function>, destroy: Set<Function> }} */
+    const listeners = { change: dataset.listeners.change, stage: new Set(), select: dataset.listeners.select, render: new Set(), destroy: new Set() };
+    // Tell `render` listeners a frame was drawn. A listener that redraws the chart
+    // is not told again from inside its own call.
+    let telling = false;
+    const rendered = () => {
+        if (telling || !listeners.render.size) return;
+        telling = true;
+        try { for (const cb of [...listeners.render]) cb(); } finally { telling = false; }
+    };
     // The hover this chart handed to the dataset, if it is linked.
     /** @param {{ table: string, index: number } | null} row */
     const commitHover = (row) => port.commitHover(row);
@@ -302,6 +311,7 @@ function createChart(dataset, spec) {
     const { container, measure, applyResize, update, stopMotion, followsPointer } = createRender(chart, {
         features, featureById, ui, spec, theme, effects, looks, renderer, mode, overflow, focusOutline, designW, authorMargins, dims, liveSpec, schema, schemaSpec, allGuides, datasetConstraints, tracksPointer, hasLegends, hasAxisTitles, featureNodes, hierarchyNodes, hasLayout, layoutTables, boxHosts, boxHostsOf, tableOf, targetTableOf, primaryRows, isLockedIn, constraintsIn, nodeBoxRule, nodePortsRule, settleOwn, settledNodes, heldStill, inFlight, activeEdits, getStage, selectionIn, selectionList, selectionPrimary, hoverRow: dataset.hoverRow, hoverLink, hoverWide, portAvailable, handleKey, clipNow, visibleAt,
         layoutMoved: () => port.layoutMoved(),
+        rendered,
         motionDuration: resolveMotion(spec.motion),
         handleEvent: (/** @type {any} */ event) => handleEvent(event),
     });
@@ -336,27 +346,41 @@ function createChart(dataset, spec) {
             if (what === 'preview') return;
             // Another chart's commit or new data: the row indices these hold may be stale.
             ui.hover = null;
-            ui.grab = null;
-            dropStroke();
-            chart.stroking = false;
-            chart.strokeTable = null;
-            chart.strokeNodes = null;
-            chart.strokeRow = null;
+            abortStroke();
             if (what === 'reseed') chart.snapNext = true;
         },
     });
+    // Drop the gesture in flight: its proposal, its grab and every driver's latches.
+    const abortStroke = () => {
+        ui.preview = null;
+        ui.grab = null;
+        dropStroke();
+        chart.stroking = false;
+        chart.strokeTable = null;
+        chart.strokeNodes = null;
+        chart.strokeRow = null;
+    };
 
     // Settle a seeded hierarchy now, against the declared size, so `getData()` is
     // already exact before the first (deferred) render. Only the first chart to
     // settle a dataset does; a later one draws the rows as they are.
     if (settleOwn()) port.layoutMoved();
 
+    // What outside UI reads: the drawn nodes, scales, edits and pixel spaces
+    // (engine/view.js).
+    const view = createView(chart, {
+        features, featureNodes, ui, container: /** @type {HTMLElement} */ (container), schemaSpec,
+        tableOf, rowIndexOf, reportedIndexOf, frameScalesFor, activeEdits, isLockedIn, selectionIn,
+        portAvailable, handleKey, visibleAt,
+    });
+
     // The public Chart (engine/api.js). Observation only: edits stay the one
     // path that mutates data.
     const api = createChartApi(chart, {
+        view, theme,
         dataset: dataset.api, detach: port.detach, renderer, features, listeners, featureNodes, schemaSpec, mode,
         container: /** @type {HTMLDivElement} */ (container),
-        stages, tableOf, rowIndexOf, frameScalesFor, rowTargeted, arbitrates, measure, stopMotion,
+        stages, tableOf, rowIndexOf, frameScalesFor, rowTargeted, abortStroke, endTxn: () => port.endTxn(), measure, stopMotion,
         handleEvent: (/** @type {any} */ event) => handleEvent(event),
         update: () => update(),
     });

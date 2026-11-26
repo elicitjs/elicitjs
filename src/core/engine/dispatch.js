@@ -32,7 +32,7 @@ import { elementEffectOf } from '../effects.js';
  *   frameScalesFor: (feature: any, node: any, index?: number | null) => import('../../types').ScaleMap | null,
  *   runEdit: (feature: any, edit: import('../../types').Edit, event: any, index: number | null) => boolean,
  *   previewEdit: (feature: any, edit: import('../../types').Edit, event: any, index: number | null) => boolean,
- *   reachableKeys: (feature: any, edit: import('../../types').Edit, index: number | null, node: any, session?: any) => string[] | null,
+ *   reachableKeys: (feature: any, edit: import('../../types').Edit, index: number | null, node: any, session?: any, editName?: string) => string[] | null,
  *   settledNodes: (from: Record<string, any[]>, before: any[] | null, frozen: Set<number> | null, dodge?: any, table?: string | null) => any[],
  *   ownsLayout: () => boolean,
  *   heldStill: () => Set<number> | null,
@@ -97,8 +97,12 @@ export function createDispatch(chart, deps) {
         const index = event.node && event.node.index != null ? event.node.index : null;
         let changed = false;
         // An external event may name one edit (`event.editName`); then only that one runs.
-        const direct = activeEdits(feature).filter(e => e.pick === 'direct'
+        let direct = activeEdits(feature).filter(e => e.pick === 'direct'
             && (!event.editName || e.name === event.editName));
+        // The inline editor's commit carries typed text: only a typed edit takes it.
+        if (event.type === 'commit' && !event.editName && direct.some(e => e.inline)) {
+            direct = direct.filter(e => e.inline);
+        }
 
         // Direct edits with a driver (e.g. relative `slide`) run their lifecycle on
         // the touched row. They run even without a row (an axis end-handle).
@@ -200,7 +204,7 @@ export function createDispatch(chart, deps) {
                 runEdit: runFeatureEdit,
                 previewEdit: previewFeatureEdit,
                 /** @param {import('../../types').Edit} edit @param {number | null} at @param {any} [node] */
-                reachable: (edit, at, node) => reachableKeys(feature, edit, at, node !== undefined ? node : event.node),
+                reachable: (edit, at, node) => reachableKeys(feature, edit, at, node !== undefined ? node : event.node, undefined, event.editName),
             };
             if (driver.onEvent(dctx)) changed = true;
         }
@@ -230,7 +234,9 @@ export function createDispatch(chart, deps) {
      * @returns {import('../../types').Edit[]}
      */
     const livePlaneEdits = (feature, event) => {
-        const plane = activeEdits(feature).filter(e => e.pick !== 'direct');
+        // An external event may name one edit; then only that one is asked.
+        const plane = activeEdits(feature).filter(e => e.pick !== 'direct'
+            && (!event.editName || e.name === event.editName));
         if (!plane.length) return plane;
         if (event.type === 'drag' || event.type === 'dragend') return strokeLive[feature.id] || [];
         // A hoverout reaches every plane edit, accepted or not, so no hover ring stays lit.
@@ -378,7 +384,9 @@ export function createDispatch(chart, deps) {
         /** @type {Map<string, import('../../types').Edit[]> | null} */
         let planeLive = null;
         // A press on a mark whose direct edit accepts it grabs that mark first.
-        if (!event.node && event.x != null && (event.type === 'dragstart' || event.type === 'click' || event.type === 'dblclick')) {
+        // An event that names its edit goes where it was sent, never to a mark under it.
+        const named = event.editName != null;
+        if (!event.node && !named && event.x != null && (event.type === 'dragstart' || event.type === 'click' || event.type === 'dblclick')) {
             // A new stroke drops whatever a lost dragend left latched.
             if (event.type === 'dragstart') { planeGrab = null; directStroke = false; }
             const hit = grabbableAt(event);
@@ -386,7 +394,7 @@ export function createDispatch(chart, deps) {
                 if (event.type === 'dragstart') { planeGrab = hit; directStroke = true; }
                 event = { ...event, node: hit };
             }
-        } else if (!event.node && directStroke && (event.type === 'drag' || event.type === 'dragend')) {
+        } else if (!event.node && !named && directStroke && (event.type === 'drag' || event.type === 'dragend')) {
             const hit = planeGrab;
             if (event.type === 'dragend') { planeGrab = null; directStroke = false; }
             if (hit) event = { ...event, node: hit };
@@ -406,7 +414,7 @@ export function createDispatch(chart, deps) {
             planeLive = new Map(features.map(f => [f.id, livePlaneEdits(f, event)]));
             let any = false;
             for (const l of planeLive.values()) if (l.length) { any = true; break; }
-            if (!any) {
+            if (!any && !named) {
                 if (event.type === 'hover' || event.type === 'hoverout') {
                     // No plane edit listens: hover the mark under the pointer instead.
                     const hit = event.type === 'hover' ? hitAny(event.x, event.y, true) : null;

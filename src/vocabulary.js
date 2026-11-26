@@ -113,6 +113,16 @@ export const GUIDE_OPTIONS = {
     custom: ['tracksPointer'],
 };
 
+/** The options each `ui.*` part reads (ui/). Not spec keywords: the `ui` layer
+ *  is attached to a chart and has no JSON form.
+ *  @type {Record<string, string[]>} */
+export const UI_OPTIONS = {
+    contextMenu: ['items'],
+    actions: ['on', 'items', 'reach', 'placement'],
+    handles: ['on', 'resize'],
+    network: ['ports', 'links', 'menu', 'resize', 'edits'],
+};
+
 /** The options `makeEdit` reads on every edit. Others come from `EDIT_OPTIONS` or
  *  a driver's `Driver.options`.
  *  @type {string[]} */

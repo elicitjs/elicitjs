@@ -10,6 +10,9 @@
  * for a dataset method. A chart closes only its own, and a commit by another
  * owner records a new step, so events in one chart never merge into or split
  * another chart's gesture.
+ *
+ * `transaction()` overrides all of that until its closer runs: one entry for
+ * everything committed meanwhile. Undo, redo and a reseed close it.
  */
 
 const MAX_HISTORY = 100;
@@ -35,6 +38,10 @@ export function createHistory(state, deps) {
     let txn = null;
     /** @type {any} */
     let wheelTimer = null;
+    // A caller-held transaction (`dataset.transaction()`): every commit until it
+    // closes is one undo entry, whoever makes it. `hold` names the open one.
+    /** @type {{ recorded: boolean } | null} */
+    let hold = null;
 
     // Snapshot every table's schema, plus context membership as row indices
     // (the clone has new row objects, and the context set is keyed by identity).
@@ -81,13 +88,19 @@ export function createHistory(state, deps) {
     const beginTxn = (owner) => { txn = { owner, recorded: false }; };
     // Close `owner`'s transaction; with no owner (a dataset method), whichever is open.
     /** @param {any} [owner] */
-    const endTxn = (owner) => { if (owner === undefined || (txn && txn.owner === owner)) txn = null; };
+    const endTxn = (owner) => {
+        if (hold) return;
+        if (owner === undefined || (txn && txn.owner === owner)) txn = null;
+    };
 
     // Called by every commit path before it mutates state. The first commit in
     // `owner`'s transaction snapshots the state and drops the redo stack.
     /** @param {any} [owner] */
     const recordHistory = (owner) => {
-        if (txn && txn.owner === owner && txn.recorded) return;
+        if (hold) {
+            if (hold.recorded) return;
+            hold.recorded = true;
+        } else if (txn && txn.owner === owner && txn.recorded) return;
         past.push(snapshot());
         if (past.length > MAX_HISTORY) past.shift();
         future = [];
@@ -98,6 +111,7 @@ export function createHistory(state, deps) {
     // opens a fresh one, so a lost dragend can't leak into the next gesture.
     /** @param {string} type the event's type @param {any} owner the chart it reached */
     const gestureTxn = (type, owner) => {
+        if (hold) return;
         // A wheel burst is one transaction, closed by a timer once the wheel goes quiet.
         if (type === 'wheel') {
             if (!txn || txn.owner !== owner || wheelTimer == null) beginTxn(owner);
@@ -107,10 +121,20 @@ export function createHistory(state, deps) {
         else if (!txn) beginTxn(owner);
     };
 
+    // Hold one transaction open across any number of commits. Returns its closer.
+    const transaction = () => {
+        if (hold) return () => {};
+        const mine = { recorded: false };
+        hold = mine;
+        txn = null;
+        return () => { if (hold === mine) { hold = null; txn = null; } };
+    };
+
     // Clear history on a reseed (setData).
     const reset = () => {
         past = [];
         future = [];
+        hold = null;
         endTxn();
     };
 
@@ -121,6 +145,7 @@ export function createHistory(state, deps) {
         if (!past.length) return false;
         future.push(snapshot());
         restoreSnapshot(/** @type {any} */(past.pop()));
+        hold = null;
         endTxn();
         deps.notifyChange();
         deps.update();
@@ -130,11 +155,12 @@ export function createHistory(state, deps) {
         if (!future.length) return false;
         past.push(snapshot());
         restoreSnapshot(/** @type {any} */(future.pop()));
+        hold = null;
         endTxn();
         deps.notifyChange();
         deps.update();
         return true;
     };
 
-    return { endTxn, recordHistory, gestureTxn, reset, canUndo, canRedo, undo, redo };
+    return { endTxn, recordHistory, gestureTxn, transaction, reset, canUndo, canRedo, undo, redo };
 }

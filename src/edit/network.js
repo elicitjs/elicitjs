@@ -304,6 +304,8 @@ export function rewire(options = {}) {
         threshold: threshold != null ? threshold : CONNECT_THRESHOLD,
         ...rest,
         channels: endsAllowed,
+        // It acts on the end handles it may move.
+        grabs: (/** @type {any} */ node) => endsAllowed.includes(node.channel),
         // Only an end handle, not the link body.
         when: andWhen((ctx) => {
             const end = endOf(ctx);
@@ -356,7 +358,8 @@ export function rewire(options = {}) {
 }
 
 /**
- * reverse — click a link to swap its two ends. Goes on the `link` mark.
+ * reverse — click a link to swap its two ends. Goes on the `link` mark. Each
+ * node keeps the port the link met it at: the side columns swap with the ends.
  * @param {any} [options]
  * @returns {import('../types').Edit}
  */
@@ -382,10 +385,22 @@ export function reverse(options = {}) {
                 );
                 return undefined;
             }
+            // Each end keeps its node's port: the side and offset columns swap
+            // with the ends. An end with no column of its own gives the other a null.
+            const channels = /** @type {any} */ (ctx.markChannels || {});
+            const offset = (/** @type {string} */ ch) => (channels[ch] && channels[ch].field != null ? channels[ch].field : null);
+            const d = ctx.datum;
+            /** @param {string | null} a @param {string | null} b */
+            const swapped = (a, b) => ({
+                ...(a ? { [a]: b ? d[b] : null } : {}),
+                ...(b ? { [b]: a ? d[a] : null } : {}),
+            });
             return {
-                ...ctx.datum,
-                [fields.source]: ctx.datum[fields.target],
-                [fields.target]: ctx.datum[fields.source],
+                ...d,
+                [fields.source]: d[fields.target],
+                [fields.target]: d[fields.source],
+                ...swapped(fields.sourceSide, fields.targetSide),
+                ...swapped(offset('sourceOffset'), offset('targetOffset')),
             };
         },
     });

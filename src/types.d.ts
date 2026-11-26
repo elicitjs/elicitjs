@@ -2567,6 +2567,8 @@ export interface Theme {
   // Survey-instrument tokens: the design the widgets are drawn in, and the
   // colours and sizes it reads (widgets/designs.js).
   widget: WidgetTokens;
+  // The `ui` layer's chrome: menus, icon buttons and handles laid over the chart.
+  ui: UiTheme;
   // Sparse per-mark default overrides, keyed by mark name (e.g. { bar: { fill } }).
   marks: Record<string, Record<string, any>>;
 }
@@ -2931,6 +2933,12 @@ export interface Dataset {
   redo(): boolean;
   canUndo(): boolean;
   canRedo(): boolean;
+  // Hold ONE undo entry open: everything committed until the returned function is
+  // called (by `set`, a control, a gesture, in any chart) undoes as one step. For
+  // an action made of several writes — a new row and then its category, a resize
+  // that moves a width and a centre. `change` still fires per commit. Undo, redo
+  // and `setData` close it; calling the closer twice is harmless.
+  transaction(): () => void;
   // Subscribe to committed changes ('change': (data)), selection changes
   // ('select': (primaryIndex | null, indices[])) or hover changes ('hover': (row |
   // null), the dataset's hovered row as getHover reports it). Selection is not the belief data,
@@ -2993,7 +3001,36 @@ export interface Chart extends Omit<Dataset, 'chart' | 'on'> {
   dataset: Dataset;
   // 'change', 'select' and 'hover' are the dataset's (see Dataset.on); 'stage' is
   // this chart's: (stageIndex, stageLabel?) on a stage change.
-  on(type: 'change' | 'stage' | 'select' | 'hover', cb: (...args: any[]) => void): () => void;
+  // 'render' fires after every frame the chart draws (a commit, a resize, each
+  // step of an eased motion): the moment to re-read `scene()` and reposition UI
+  // laid over the chart. 'destroy' fires once, first thing in `destroy()`. A
+  // 'render' listener must not write data.
+  on(type: 'change' | 'stage' | 'select' | 'hover' | 'render' | 'destroy', cb: (...args: any[]) => void): () => void;
+  // ── Reading the chart: for UI built outside it (menus, handles, icons beside a
+  // mark; see the `ui` namespace). Observation only — every value is a copy, and
+  // writes stay on `control`, `emit` and `set`. Pixels are INNER (margin-
+  // subtracted) chart pixels unless a method says otherwise.
+  //
+  // What is drawn: one view per drawn piece, in paint order. A row usually draws
+  // several (a sticker's box and label, a node's ports, a link's line and ends).
+  scene(query?: SceneQuery): SceneView[];
+  // The topmost visible piece at a point, or with `reach` the nearest within that
+  // many pixels. null over nothing.
+  hit(point: Point, options?: { reach?: number }): SceneView | null;
+  // A channel's scale, as the mark named encodes it (the chart's shared scale with
+  // no mark). null when nothing binds a field there. A snapshot of this frame:
+  // read it again after a 'render'.
+  scale(channel: string, options?: { mark?: string; index?: number }): ChartScale | null;
+  // The edits the marks declare and whether each can run now, narrowed by the
+  // query to a mark, a table, a row or one of the row's handles.
+  edits(query?: SceneQuery): EditInfo[];
+  // The chart's size and margins in chart pixels, and how far CSS stretches them.
+  metrics(): ChartMetrics;
+  // Viewport pixels (a pointer event's clientX / clientY) <-> inner chart pixels.
+  toInner(point: Point): Point;
+  toClient(point: Point): Point;
+  // The resolved theme (a copy): DEFAULT_THEME < setTheme() < spec.theme.
+  readonly theme: Theme;
   // Multi-stage controls (see ChartSpec.stage). getStage reads the current index.
   getStage(): number;
   // Optional label for the current stage (from ChartSpec.stageLabels), or null.
@@ -3010,10 +3047,15 @@ export interface Chart extends Omit<Dataset, 'chart' | 'on'> {
   // pixels. Prefer `control` unless you already hold pixels.
   emit(event: GestureEvent): void;
   // High-level: a handle bound to the edit named `name` (see Edit.name) acting on
-  // the datum at `index` (default 0). `.set(value)` drives it by a DATA value —
-  // forward-encoded through the channel's scale for positional edits, or carried
-  // whole for a `set()`/`editText()` value edit.
-  control(name: string, index?: number): EditControl;
+  // the datum at `target` (a row index, default 0). `.set(value)` drives it by a
+  // DATA value — forward-encoded through the channel's scale for positional edits,
+  // or carried whole for a `set()`/`editText()` value edit. A row that draws several
+  // handles takes a `SceneRef` to name one: `{ index, side: 'right' }` for a port,
+  // `{ index, channel: 'target' }` for a link's end.
+  //
+  // A control names its edit, so the edit's `when` is not asked: `when` chooses
+  // between pointer gestures. Constraints, the lock and the stage still apply.
+  control(name: string, target?: number | SceneRef): EditControl;
   // Detach the chart from its dataset, stop its observers (the ResizeObserver of
   // `responsive: 'reflow'`) and release its renderer (`Renderer.destroy`). Call it
   // when unmounting a chart.
@@ -3189,10 +3231,10 @@ export interface GestureEvent {
   // "One press = one complete gesture": a lone `drag` self-closes its undo txn
   // instead of leaking it (the keyboard nudge's trick, reused for one-shot control).
   nudge?: boolean;
-  // Addresses ONE edit by its `name` (Edit.name). Direct dispatch then runs only that
-  // edit instead of fanning to every same-gesture edit on the feature — so several
-  // `set()`s on one feature (a face's params) stay independent. Set by `chart.control`;
-  // native pointer events leave it unset (and keep the ordinary fan-out).
+  // Addresses ONE edit by its `name` (Edit.name). Dispatch then runs only that edit
+  // instead of fanning to every same-gesture edit — so several `set()`s on one
+  // feature (a face's params) stay independent — and does not ask its `when`. Set
+  // by `chart.control`; native pointer events leave it unset (and keep the fan-out).
   editName?: string;
   // How far from a small mark, in inner px, a finger press may land and still take
   // it. Renderers set it on a touch press and the click that follows; a mouse
@@ -3200,6 +3242,115 @@ export interface GestureEvent {
   reach?: number;
   rawEvent?: any;
   [key: string]: any;
+}
+
+// One handle of a row, for `chart.control(name, ref)`: the row, and where a row
+// draws several handles, which one — by the channel it moves (a link's 'source' or
+// 'target' end, a 'port') and/or its side. A SceneView is one.
+export interface SceneRef {
+  index: number | null;
+  channel?: string | null;
+  side?: string | null;
+}
+
+export interface Point { x: number; y: number }
+export interface Box { x: number; y: number; width: number; height: number }
+
+// Which drawn pieces `chart.scene` and `chart.edits` return. `mark` is a mark's
+// `id`. A glyph's id names all its parts ('sticker' covers 'sticker/body',
+// 'sticker/label' and the ports 'sticker/body/ports'); a part's id names that part
+// alone. `index` counts reported rows, like `getData()`.
+export interface SceneQuery {
+  mark?: string;
+  table?: string;
+  index?: number;
+  channel?: string;
+  side?: string;
+}
+
+// One drawn piece of the chart, as `chart.scene` and `chart.hit` report it. A
+// plain copy of this frame: it does not follow the chart, so read again on 'render'.
+export interface SceneView {
+  // The mark that drew it (its `id`; a glyph part is 'id/part').
+  mark: string;
+  // The table its row is in, and the row as `getData()` counts it. Both null for
+  // a chart element (a tick, a swatch); `index` is null for a context row.
+  table: string | null;
+  index: number | null;
+  // The shape: 'rect', 'circle', 'ellipse', 'line', 'path', 'text' or 'image'.
+  type: string;
+  // Which of the row's handles this is, where a row draws several: the channel it
+  // moves ('port', a link's 'source' / 'target') and the side it sits on.
+  channel: string | null;
+  side: string | null;
+  // Its unrotated box and its centre, in inner pixels. A link's centre is the
+  // midpoint of its line. null where a shape states neither.
+  box: Box | null;
+  center: Point | null;
+  // Degrees it is turned about its centre.
+  angle: number;
+  // The row (a copy), or null.
+  readonly datum: Datum | null;
+  // Interaction state: the pointer is on this piece; its row is selected; a drag
+  // holds this piece.
+  hovered: boolean;
+  selected: boolean;
+  grabbed: boolean;
+  // false while the chart hides it: a port or a link's end handle at rest.
+  visible: boolean;
+  // A press on it starts a direct edit; its row is locked.
+  editable: boolean;
+  locked: boolean;
+}
+
+// A declared edit, as `chart.edits` reports it. `name` is what `chart.control`
+// takes; an edit with none can't be driven from outside.
+export interface EditInfo {
+  name: string | null;
+  // The keyword that built it ('move', 'remove', 'network.connect', …).
+  type: string;
+  gesture: string;
+  pick: string;
+  // The channels it writes, and the columns behind them.
+  channels: string[];
+  fields: string[];
+  // The mark that carries it, and that mark's table (what `control`'s index counts).
+  mark: string;
+  table: string | null;
+  // 'append' | 'appendMany' | 'toggle' | 'delete' for an edit that adds or removes rows.
+  cardinality: string | null;
+  // Can it run now: its stage is current, the row is unlocked and, on a port, a
+  // link could land somewhere.
+  available: boolean;
+}
+
+// A channel's scale, from `chart.scale`. Capability flags, never a scale type.
+export interface ChartScale {
+  channel: string;
+  // The column the channel reads, and its table.
+  field: string | null;
+  table: string | null;
+  // Data value -> visual value (a pixel, a colour). null for a raw channel.
+  encode: ((value: any) => any) | null;
+  // Pixel -> data value. null unless `invertible`.
+  invert: ((pixel: number) => any) | null;
+  // The value set (discrete) or [min, max] (continuous), and what it maps onto.
+  domain: any[] | null;
+  range: any[] | null;
+  kind: ScaleKind | null;
+  temporal: boolean;
+  invertible: boolean;
+}
+
+// The chart's size, from `chart.metrics`. `scale` is CSS pixels per chart pixel:
+// 1 unless `responsive: 'scale'` stretches the drawing.
+export interface ChartMetrics {
+  width: number;
+  height: number;
+  margins: { top: number; right: number; bottom: number; left: number };
+  innerWidth: number;
+  innerHeight: number;
+  scale: number;
 }
 
 // A handle bound to a named edit + datum (from `chart.control`). It reads the edit's
@@ -3216,15 +3367,24 @@ export interface EditControl {
   // nothing; drive it with `chart.emit({ type, x, y })`.
   set(value: any): void;
   // Bracket a LIVE drag so many `.set()` ticks collapse into ONE undo entry, exactly
-  // like a pointer drag's dragstart..dragend.
-  begin(): void;
+  // like a pointer drag's dragstart..dragend. `end()` releases where the stroke's
+  // pointer last was (the last `set` or `emit` with x/y), so an edit that commits
+  // on release — a connect, a rewire — lands there. `begin(at)` presses at a
+  // point in inner pixels instead of on the datum: for a stroke that follows a
+  // pointer pressed somewhere else (an icon beside the mark), so a relative edit
+  // travels as far as the pointer does.
+  begin(at?: Point): void;
   end(): void;
+  // Abandon the stroke `begin()` opened: no release, so an edit that commits on
+  // release writes nothing. What earlier ticks already wrote stays, as one entry.
+  cancel(): void;
   // Fire a TRIGGER edit that takes no value (cycle advances a category, remove drops
   // the row, toggle flips it): dispatches the edit's own gesture (a click/dblclick)
   // on the datum's node. `.set` covers commit/drag edits; `.fire` covers these. Pass
   // a gesture to override the edit's own.
   fire(gesture?: string): void;
-  // Raw event passthrough, auto-scoped to this feature's node for the datum.
+  // Raw event passthrough to this edit alone, auto-scoped to its node for the datum.
+  // A plane edit gets no node: `control('add').emit({ type, x, y })` runs it at a point.
   emit(event: GestureEvent): void;
   // What values this channel ACCEPTS, read off its scale — so external UI (dropdown
   // options, slider min/max, colour choices) can respect the scale. null if the edit
@@ -3765,3 +3925,241 @@ export interface RegionWidgetOptions extends WidgetOptions {
 }
 export interface ThermometerOptions extends WidgetOptions { domain?: [number, number]; step?: number; value?: number }
 export interface LabeledValueOptions extends WidgetOptions { input?: 'number' | 'text'; value?: any; domain?: [number, number]; label?: string }
+
+// ── The `ui` layer: menus, icons and handles laid over a chart after it is made
+// (`ui.attach(chart, parts)`). Not part of a spec and with no JSON form. It reads
+// the chart through `scene` / `hit` / `scale` / `edits` and writes through
+// `control`, `emit` and `set`, so anyone can build the same on those.
+
+/** The `ui` layer's tokens (`theme.ui`), handed to the layer as CSS variables. */
+export interface UiTheme {
+  /** A menu's and a button's background. */
+  surface: string;
+  /** Labels and icons. */
+  ink: string;
+  /** A heading, an unavailable item. */
+  muted: string;
+  border: string;
+  /** Hover, focus, the active icon. */
+  accent: string;
+  /** An action that removes. */
+  danger: string;
+  shadow: string;
+  /** A menu's corner radius, px. */
+  radius: number;
+  /** An icon button's side, px. */
+  size: number;
+  /** The space between a mark and what sits beside it, px. */
+  gap: number;
+  fontSize: number;
+}
+
+/** One piece of UI over a chart. `mount` builds it in the layer and may return its teardown. */
+export interface UiPart {
+  /** The keyword that built it ('contextMenu', 'network', 'custom', …). */
+  type: string;
+  mount(ctx: UiContext): void | (() => void);
+}
+
+/** Where an element sits around its anchor: on a side or corner of a view's box, `offset` px out. */
+export interface Placement {
+  at?: 'center' | 'top' | 'right' | 'bottom' | 'left' | 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+  /** How far out from that side, in CSS px. */
+  offset?: number;
+  dx?: number;
+  dy?: number;
+}
+
+/** A built-in or registered icon name, SVG markup, or an element. */
+export type UiIcon = string | Element;
+
+export interface ButtonOptions {
+  icon?: UiIcon;
+  /** The accessible name and tooltip. */
+  label?: string;
+  tone?: 'danger';
+  onClick?: (event: Event) => void;
+}
+
+/** A row of an open menu. */
+export interface MenuItem {
+  label?: string;
+  icon?: UiIcon;
+  /** A colour chip in place of an icon. */
+  swatch?: string;
+  /** Present on a row that is one of a set of choices; true on the current one. */
+  checked?: boolean;
+  disabled?: boolean;
+  tone?: 'danger';
+  onSelect?: () => void;
+  separator?: boolean;
+  /** A caption above the rows that follow. */
+  heading?: string;
+}
+
+/** The pointer over the chart, as a part hears it. `point` is in inner chart pixels. */
+export interface UiPointerEvent {
+  /** 'move' once per frame; 'leave'; 'menu' for a right-click (`event.preventDefault()` takes it). */
+  type: 'move' | 'leave' | 'menu';
+  point: Point | null;
+  event: Event;
+}
+
+/** One step of a drag started on a layer element. `dx`/`dy` are CSS px since the press. */
+export interface UiDragStep {
+  point: Point;
+  dx: number;
+  dy: number;
+  event: Event;
+}
+
+export interface UiDragHandlers {
+  /** On the first movement, with the point where the press went down. */
+  start?: (step: UiDragStep) => void;
+  move?: (step: UiDragStep) => void;
+  end?: (step: UiDragStep) => void;
+  /** Escape, or the pointer was lost. */
+  cancel?: () => void;
+  /** A press that never moved. */
+  click?: (step: UiDragStep) => void;
+}
+
+/** What a part's `mount(ctx)` gets. Everything it registers is released when the layer detaches. */
+export interface UiContext {
+  chart: Chart;
+  /** The layer: one element over the chart's drawing, the parent of everything a part adds. */
+  layer: HTMLElement;
+  /**
+   * Keep `el` at an anchor (a point in inner pixels, a view, or a function read
+   * each frame), re-placed on every render. A view follows its row. Returns its removal.
+   */
+  place(
+    el: HTMLElement,
+    anchor: SceneView | Point | null | (() => SceneView | Point | null),
+    placement?: Placement | (() => Placement),
+  ): () => void;
+  /** Re-run every placement now, after a part changes what it is anchored to. */
+  refresh(): void;
+  /** An icon button, not yet in the layer: `place` it or append it to an element you placed. */
+  button(options: ButtonOptions): HTMLButtonElement;
+  icon(icon: UiIcon): Element;
+  /** Open a menu at a point in inner pixels. One menu is open at a time. */
+  menu(items: MenuItem[], at: Point): { element: HTMLElement; close(): void };
+  onRender(cb: () => void): () => void;
+  onPointer(cb: (event: UiPointerEvent) => void): () => void;
+  /** Make a layer element a drag source. */
+  drag(el: HTMLElement, handlers: UiDragHandlers): () => void;
+  /**
+   * Take the chart's next press for the layer: until the returned function is
+   * called, the chart's own gestures see nothing. For a two-step action.
+   */
+  capture(handlers: { move?: (point: Point) => void; press?: (point: Point) => void; cancel?: () => void }): () => void;
+}
+
+/** The value behind a mark's channel, as a part reads and writes it. */
+export interface UiValue {
+  channel: string;
+  field: string;
+  table: string | null;
+  scale: ChartScale;
+  /** The declared value edit that writes it, or null when `chart.set` does. */
+  edit: string | null;
+  /** The choices, for a discrete channel. */
+  values: any[] | null;
+  swatch(value: any): string | null;
+  read(index: number): any;
+  write(index: number, value: any): void;
+}
+
+/** What a right-click landed on. `view` is null over empty space. */
+export interface MenuTarget {
+  view: SceneView | null;
+  point: Point;
+}
+
+/**
+ * One entry of `ui.contextMenu`. An edit to fire on the row, or at the point for
+ * one that creates (`edit`); a channel whose value to choose (`channel`); both
+ * (add a row with the chosen value); or a row of your own (`label` + `onSelect`).
+ */
+export interface MenuEntry {
+  /** The name of a declared edit. */
+  edit?: string;
+  /** A channel of the mark: one row per value, the current one checked. */
+  channel?: string;
+  /** The mark that channel is on. Default: the mark under the pointer. */
+  mark?: string;
+  /** The choices, for a channel whose scale lists none. */
+  values?: any[];
+  /** The row's text, or the heading over a channel's values (`false` for none). */
+  label?: string | false;
+  icon?: UiIcon;
+  tone?: 'danger';
+  disabled?: boolean;
+  /** Where the entry shows: 'plane' for empty space, or a mark's id. Default: wherever it applies. */
+  on?: string;
+  onSelect?: (target: MenuTarget) => void;
+  separator?: boolean;
+  heading?: string;
+}
+
+export interface ContextMenuOptions {
+  /** The entries, or a function of what was right-clicked. Default: what the spec's named edits allow. */
+  items?: MenuEntry[] | ((target: MenuTarget) => MenuEntry[]);
+}
+
+/** One icon of `ui.actions`: an edit to drive, or a button of your own. */
+export interface ActionItem {
+  icon: UiIcon;
+  label: string;
+  tone?: 'danger';
+  /** The name of a declared edit. A drag edit is dragged from the button. */
+  edit?: string;
+  onClick?: (view: SceneView) => void;
+  /** Leave the icon out for some pieces. */
+  show?: (view: SceneView) => boolean;
+}
+
+export interface ActionsOptions {
+  /** Which drawn pieces get the icons. Default: every row's. */
+  on?: SceneQuery;
+  items?: ActionItem[];
+  /** How near the pointer must come, px. Default 24. */
+  reach?: number;
+  /** Where the icons sit on the piece. Default 'top-right'. */
+  placement?: Placement['at'];
+}
+
+export interface HandlesOptions {
+  /** The mark to put handles on. Default: the first that sizes from data. */
+  on?: { mark?: string };
+  /** Grips that resize along the sides the mark sizes from data (`width`, `height`). Default true. */
+  resize?: boolean;
+}
+
+export interface NetworkOptions {
+  /**
+   * Icons beside a port: "+" adds a node on that side, linked from this one; a
+   * link icon connects to a node already there; detach shows where a link is
+   * docked. Default true.
+   */
+  ports?: boolean;
+  /** Icons on a link: reverse, remove. Default true. */
+  links?: boolean;
+  /** The right-click menu. `{ channel }` names the node channel its categories come from (default: a discrete `fill`). */
+  menu?: boolean | { channel?: string };
+  /** Grips on a node that sizes from data. Default true. */
+  resize?: boolean;
+  /** The edit behind each action, by name. Default: found by what the edit does. */
+  edits?: {
+    connect?: string;
+    rewire?: string;
+    reverse?: string;
+    /** Removes a link. */
+    unlink?: string;
+    /** Removes a node. */
+    remove?: string;
+    /** Adds a node. */
+    create?: string;
+  };
+}
