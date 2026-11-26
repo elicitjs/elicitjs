@@ -30,6 +30,7 @@
     "dist",
     "README.md",
     "ARCHITECTURE.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "engines": {

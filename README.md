@@ -159,6 +159,7 @@ For a plain HTML page, use an import map:
 | 🧾 JSON specs | [elicitjs.github.io/json](https://elicitjs.github.io/json/) |
 | 🎛 Playground | [elicitjs.github.io/playground](https://elicitjs.github.io/playground/) |
 | 🏗 Architecture | [ARCHITECTURE.md](ARCHITECTURE.md) |
+| 📝 Changelog | [CHANGELOG.md](CHANGELOG.md) |
 | 💻 Source | [github.com/elicitjs/elicitjs](https://github.com/elicitjs/elicitjs) |
 | 🐛 Issues | [github.com/elicitjs/elicitjs/issues](https://github.com/elicitjs/elicitjs/issues) |
 
