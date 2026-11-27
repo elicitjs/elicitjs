@@ -125,3 +125,38 @@ describe('placing UI on a turned view', () => {
         expect(distanceToView(view, { x: 115, y: 100 })).toBeCloseTo(5, 6);
     });
 });
+
+describe('a turned sticker', () => {
+    it('turns its label with its body, and keeps the edit on the body', async () => {
+        const el = Elicit({
+            width: 400, height: 300, axes: false,
+            margins: { top: 0, right: 0, bottom: 0, left: 0 },
+            schema: {
+                note: { type: 'categorical', open: true },
+                tilt: { type: 'quantitative', domain: [-180, 180] },
+                x: { type: 'quantitative', domain: [0, 100] },
+                y: { type: 'quantitative', domain: [0, 100] },
+            },
+            data: [{ note: 'Hello', tilt: 30, x: 50, y: 50 }],
+            marks: [plot.sticker({
+                id: 'note',
+                channels: {
+                    x: { field: 'x' },
+                    y: { field: 'y' },
+                    angle: { field: 'tilt', scale: { range: [-180, 180] }, edit: edit.rotate({ name: 'turn' }) },
+                    text: { field: 'note' },
+                },
+            })],
+        });
+        document.body.appendChild(el.dom());
+        await new Promise((r) => setTimeout(r, 0));
+        const [body] = el.scene({ mark: 'note/body', index: 0 });
+        const [label] = el.scene({ mark: 'note/label', index: 0 });
+        expect(body.angle).toBeCloseTo(30, 6);
+        expect(label.angle).toBeCloseTo(30, 6);
+        near(label.center, body.center.x, body.center.y);
+        expect(el.edits({ mark: 'note/label' })).toEqual([]);
+        expect(el.edits({ mark: 'note/body' }).map((e) => e.name)).toContain('turn');
+        el.destroy();
+    });
+});
