@@ -4,6 +4,9 @@ All notable changes. ElicitJS is alpha: minor versions may change the API.
 
 ## Unreleased
 
+**Added**
+- `ui.handles({ rotate, move })`: a grip above the box that turns it (writes `angle`; Shift snaps to 15°) and one below it that moves it (writes `x` and `y`).
+
 **Fixed**
 - A node turned by `angle` turns its box: ports, link ends, self-loops and connect drops follow the turned edges, and layout spaces it by the upright box around it.
 - `ui.*` places icons and resize grips on a turned node's own sides, and a grip drags along the node's axis.

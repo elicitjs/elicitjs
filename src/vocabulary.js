@@ -119,7 +119,7 @@ export const GUIDE_OPTIONS = {
 export const UI_OPTIONS = {
     contextMenu: ['items'],
     actions: ['on', 'items', 'reach', 'placement'],
-    handles: ['on', 'resize'],
+    handles: ['on', 'resize', 'rotate', 'move'],
     network: ['ports', 'links', 'menu', 'resize', 'edits'],
 };
 

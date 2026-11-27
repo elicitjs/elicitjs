@@ -5824,6 +5824,8 @@ async function main() {
         // One menu, two fields: a step's kind (its shape) and its status (its colour).
         await page.locator('#menu-fields .chart').scrollIntoViewIfNeeded();
         await page.waitForSelector('#menu-fields .elicit-ui', { state: 'attached' });
+        // Let the scroll settle before aiming at a node.
+        await page.waitForTimeout(150);
         const step = await at('menu-fields', { mark: 'step', index: 2 });
         await page.mouse.click(step.x, step.y, { button: 'right' });
         await page.waitForTimeout(150);
@@ -5898,7 +5900,7 @@ async function main() {
         await page.waitForTimeout(150);
         check('ui actions: the bin removes the note', (await data('actions')).length === a0.length - 1);
 
-        await page.locator('#handles .chart').scrollIntoViewIfNeeded();
+        await page.locator('#handles .chart').first().scrollIntoViewIfNeeded();
         const h0 = await data('handles');
         const box0 = await page.$eval(chartOf('handles'), (e) => e.__chart.scene({ mark: 'note/body', index: 0 })[0].box);
         await near(await at('handles', { mark: 'note/body', index: 0 }));
@@ -5916,6 +5918,46 @@ async function main() {
         await page.$eval(chartOf('handles'), (e) => e.__chart.undo());
         const h2 = await data('handles');
         check('ui handles: the resize is one undo step', h2[0].w === h0[0].w && h2[0].x === h0[0].x, JSON.stringify(h2[0]));
+
+        // The second chart under #handles: notes turned by a tilt column.
+        {
+            const turnChart = page.locator('#handles .chart').nth(1);
+            await turnChart.scrollIntoViewIfNeeded();
+            const call = (fn, arg) => turnChart.locator(':scope > div').evaluate(fn, arg);
+            const tData = () => call((e) => e.__chart.getData());
+            const centreOf = () => call((e) => { const c = e.__chart; const v = c.scene({ mark: 'note/body', index: 0 })[0]; return c.toClient(v.center); });
+            const gripOf = async (kind) => {
+                const g = turnChart.locator('..').locator(`.elicit-ui-handle[data-kind=${kind}]:not([hidden])`).first();
+                const b = await g.boundingBox();
+                return b ? { x: b.x + b.width / 2, y: b.y + b.height / 2 } : null;
+            };
+            const t0 = await tData();
+            const c0 = await centreOf();
+            await near(c0);
+            const turn = await gripOf('rotate');
+            check('ui handles: a rotate grip sits above the turned note', !!turn && turn.y < c0.y - 20, JSON.stringify({ turn, c0 }));
+            const moveGrip = await gripOf('move');
+            check('ui handles: a move grip sits below it', !!moveGrip && moveGrip.y > c0.y + 20, JSON.stringify({ moveGrip, c0 }));
+            if (turn) {
+                // Dragged to the right of the centre, the note's top turns to face the pointer: -90 degrees.
+                await drag(turn, { x: c0.x + 120, y: c0.y });
+                const t1 = await tData();
+                check('ui handles: dragging the rotate grip turns the note to face the pointer', Math.abs(t1[0].tilt + 90) <= 2, `${t0[0].tilt} -> ${t1[0].tilt}`);
+                await near(c0, { dx: 0, dy: 10 });
+                const after = await gripOf('rotate');
+                check('ui handles: the rotate grip turns with the note', !!after && after.x > c0.x + 20, JSON.stringify({ after, c0 }));
+                await call((e) => e.__chart.undo());
+                check('ui handles: the turn is one undo step', (await tData())[0].tilt === t0[0].tilt, String((await tData())[0].tilt));
+            }
+            await near(c0, { dx: 0, dy: 10 });
+            const mv = await gripOf('move');
+            if (mv) {
+                await drag(mv, { x: mv.x + 40, y: mv.y - 20 });
+                const c1 = await centreOf();
+                check('ui handles: dragging the move grip moves the note as far as the pointer went', Math.abs(c1.x - c0.x - 40) <= 2 && Math.abs(c1.y - c0.y + 20) <= 2, `${JSON.stringify(c0)} -> ${JSON.stringify(c1)}`);
+                await call((e) => e.__chart.undo());
+            }
+        }
 
         await page.locator('#custom .chart').scrollIntoViewIfNeeded();
         const c0 = await data('custom');

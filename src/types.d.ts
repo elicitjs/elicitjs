@@ -4141,6 +4141,10 @@ export interface HandlesOptions {
   on?: { mark?: string };
   /** Grips that resize along the sides the mark sizes from data (`width`, `height`). Default true. */
   resize?: boolean;
+  /** A grip above the box that turns it, writing the mark's `angle` field. Shift snaps to 15°. Default false. */
+  rotate?: boolean;
+  /** A grip below the box that moves it, writing the mark's `x` and `y` fields. Default false. */
+  move?: boolean;
 }
 
 export interface NetworkOptions {
