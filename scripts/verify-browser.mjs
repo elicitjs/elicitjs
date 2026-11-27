@@ -6064,13 +6064,13 @@ async function main() {
             const third = { x: ends[0].x + (ends[1].x - ends[0].x) / 3, y: ends[0].y + (ends[1].y - ends[0].y) / 3 };
             await near(third, { dx: 14, dy: 18 });
             bs = await buttons('board');
-            check('network ui: a link offers reverse and remove', JSON.stringify(bs.map((b) => b.label)) === '["Reverse link","Remove link"]', JSON.stringify(bs.map((b) => b.label)));
-            check('network ui: a link\'s icons are beside the pointer', bs.length === 2 && Math.hypot(bs[0].x - third.x, bs[0].y - third.y) < 60, JSON.stringify([bs[0], third]));
+            check('network ui: a link offers reverse, a node in between and remove', JSON.stringify(bs.map((b) => b.label)) === '["Reverse link","Add a node in between","Remove link"]', JSON.stringify(bs.map((b) => b.label)));
+            check('network ui: a link\'s icons are beside the pointer', bs.length === 3 && Math.hypot(bs[0].x - third.x, bs[0].y - third.y) < 60, JSON.stringify([bs[0], third]));
             let lost = 0;
             for (let i = 1; i <= 12; i++) {
                 await page.mouse.move(third.x + (bs[1].x - third.x) * i / 12, third.y + (bs[1].y - third.y) * i / 12);
                 await page.waitForTimeout(40);
-                if ((await buttons('board')).length !== 2) lost++;
+                if ((await buttons('board')).length !== 3) lost++;
             }
             check('network ui: a link\'s icons stay while the pointer travels to them', lost === 0, 'lost on ' + lost + ' of 12 steps');
             const f0 = (await data('board')).flows[0];
@@ -6079,6 +6079,27 @@ async function main() {
             const f1 = (await data('board')).flows[0];
             check('network ui: reverse swaps the link\'s ends', f1.source === f0.target && f1.target === f0.source, JSON.stringify(f1));
             check('network ui: reverse keeps each node at its port', f1.fromSide === f0.toSide && f1.toSide === f0.fromSide, JSON.stringify([f0, f1]));
+
+            // "+" puts a new node on the link, between its two ends.
+            const d0 = await data('board');
+            await page.mouse.move(third.x + 30, third.y + 40);
+            await page.waitForTimeout(500);
+            await near(third, { dx: 14, dy: 18 });
+            const plus = (await buttons('board')).find((b) => b.label === 'Add a node in between');
+            check('network ui: the + icon shows on the link', !!plus);
+            if (plus) {
+                await page.mouse.click(plus.x, plus.y);
+                await page.waitForTimeout(150);
+                const d1 = await data('board');
+                const added = d1.steps[d1.steps.length - 1];
+                const old = d0.flows[0];
+                check('network ui: + adds a node on the link', d1.steps.length === d0.steps.length + 1 && d1.flows.length === d0.flows.length + 1
+                    && d1.flows[0].source === old.source && d1.flows[0].target === added.id
+                    && d1.flows.some((f) => f.source === added.id && f.target === old.target), JSON.stringify({ old, flows: d1.flows, added: added.id }));
+                await page.$eval(chartOf('board'), (e) => e.__chart.undo());
+                const d2 = await data('board');
+                check('network ui: + is one undo step', d2.steps.length === d0.steps.length && JSON.stringify(d2.flows) === JSON.stringify(d0.flows), JSON.stringify(d2.flows));
+            }
         }
 
         const board = await page.locator('#board .chart > div > svg').boundingBox();

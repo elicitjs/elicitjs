@@ -4154,7 +4154,7 @@ export interface NetworkOptions {
    * docked. Default true.
    */
   ports?: boolean;
-  /** Icons on a link: reverse, remove. Default true. */
+  /** Icons on a link: reverse, "+" to put a new node on it where the pointer met it, remove. Default true. */
   links?: boolean;
   /** The right-click menu. `{ channel }` names the node channel its categories come from (default: a discrete `fill`). */
   menu?: boolean | { channel?: string };
