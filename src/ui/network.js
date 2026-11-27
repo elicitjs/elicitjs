@@ -7,6 +7,7 @@ import { hoverGroup } from './hover.js';
 import { contextMenu } from './parts/contextMenu.js';
 import { handles } from './parts/handles.js';
 import { warnUnknownUiOptions } from './guard.js';
+import { turnOffset } from './place.js';
 
 // How far from a port a link's end may sit and still be docked there, in pixels:
 // several ends at one port spread out along the node's edge.
@@ -23,6 +24,157 @@ const SPAWN_CLEAR = 8;
 const OUTWARD = /** @type {Record<string, { x: number, y: number }>} */ ({
     top: { x: 0, y: -1 }, bottom: { x: 0, y: 1 }, left: { x: -1, y: 0 }, right: { x: 1, y: 0 },
 });
+
+/**
+ * Which way a port faces: its side's outward direction, turned with its node.
+ * @param {import('../types').SceneView} port
+ * @returns {{ x: number, y: number }}
+ */
+function outwardOf(port) {
+    const n = OUTWARD[/** @type {string} */ (port.side)] || OUTWARD.right;
+    return turnOffset(n.x, n.y, port.angle);
+}
+
+/**
+ * Add a node at `spot` (inner pixels) like row `like`: the same category and size.
+ * @param {import('../types').Chart} chart
+ * @param {{ nodes: string, nodeMark: string | null, category: { channel: string, mark: string } | null, create: import('../types').EditInfo, createName: string }} found
+ * @param {import('../types').Point} spot
+ * @param {number | null} like
+ * @returns {number | null} the new row's index, or null when the add was refused
+ */
+function addNodeLike(chart, found, spot, like) {
+    const nodes = found.nodes, nodeMark = found.nodeMark, category = found.category;
+    const before = rowsIn(chart, nodes).length;
+    chart.control(found.createName).emit({ type: found.create.gesture, x: spot.x, y: spot.y });
+    if (rowsIn(chart, nodes).length !== before + 1) return null;
+    if (nodeMark && like != null && like >= 0) {
+        for (const ch of [category ? category.channel : null, 'width', 'height']) {
+            if (!ch || !chart.scale(ch, { mark: nodeMark })) continue;
+            const v = valueOf(chart, 'network', { mark: nodeMark, channel: ch });
+            if (v && v.read(like) != null) v.write(before, v.read(like));
+        }
+    }
+    return before;
+}
+
+/**
+ * A node's ports, nearest a point first.
+ * @param {import('../types').Chart} chart @param {string} nodes @param {number} index
+ * @param {import('../types').Point} point
+ * @returns {import('../types').SceneView[]}
+ */
+function portsNear(chart, nodes, index, point) {
+    const d = (/** @type {import('../types').SceneView} */ p) => Math.hypot(/** @type {any} */ (p.center).x - point.x, /** @type {any} */ (p.center).y - point.y);
+    return chart.scene({ table: nodes, index, channel: 'port' }).filter((p) => p.center).sort((a, b) => d(a) - d(b));
+}
+
+/**
+ * The middle of a node's box: the largest piece its mark draws for the row.
+ * @param {import('../types').Chart} chart @param {string} nodes @param {number} index
+ * @returns {import('../types').Point | null}
+ */
+function centreOf(chart, nodes, index) {
+    const area = (/** @type {import('../types').SceneView} */ v) => (v.box ? v.box.width * v.box.height : 0);
+    const body = chart.scene({ table: nodes, index }).filter((v) => v.channel == null && v.center).sort((a, b) => area(b) - area(a))[0];
+    return body ? /** @type {import('../types').Point} */ (body.center) : null;
+}
+
+/**
+ * Press a control, drag it to `at` and let go.
+ * @param {import('../types').EditControl} control @param {import('../types').Point} at
+ */
+function dropAt(control, at) {
+    control.begin();
+    control.emit({ type: 'drag', x: at.x, y: at.y });
+    control.end();
+}
+
+/**
+ * The columns a link names its two nodes by, and the column that keys a node.
+ * @param {import('../types').Chart} chart
+ * @param {{ nodes: string, links: string }} roles
+ * @param {string} linkMark
+ * @returns {{ source: string, target: string, key: string } | null}
+ */
+function linkColumns(chart, roles, linkMark) {
+    const schema = /** @type {any} */ (chart.getSchema());
+    const tables = (schema && schema.tables) || {};
+    const fieldsOf = (/** @type {string} */ name) => {
+        const t = tables[name] || {};
+        return t.fields || t;
+    };
+    const links = fieldsOf(roles.links);
+    const refs = Object.keys(links).filter((f) => links[f] && links[f].type === 'ref');
+    const named = (/** @type {string} */ ch) => { const s = chart.scale(ch, { mark: linkMark }); return s && s.field != null ? s.field : null; };
+    const source = named('source') || refs[0];
+    const target = named('target') || refs[1];
+    const nodeFields = fieldsOf(roles.nodes);
+    const key = Object.keys(nodeFields).find((f) => nodeFields[f] && nodeFields[f].key);
+    return source && target && key ? { source, target, key } : null;
+}
+
+/**
+ * Put a new node on a link, at `point`: the link now ends at the new node, and a
+ * new link runs on from it to where the old one went. One undo step; if any part
+ * is refused, nothing changes.
+ * @param {import('../types').Chart} chart
+ * @param {{ roles: { nodes: string, links: string }, linkMark: string, nodeMark: string | null, category: { channel: string, mark: string } | null, create: import('../types').EditInfo, createName: string, connectName: string, rewireName: string }} found
+ * @param {number} link the link's row
+ * @param {import('../types').Point} point
+ */
+function splitLink(chart, found, link, point) {
+    const roles = found.roles, connectName = found.connectName, rewireName = found.rewireName;
+    const cols = linkColumns(chart, roles, found.linkMark);
+    if (!cols) {
+        warn('ui:network:split:columns', 'ui.network: "Add node in between" needs the links table\'s two `ref` columns and a `key: true` column on the nodes table.');
+        return;
+    }
+    const linkRows = () => rowsIn(chart, roles.links);
+    const row = linkRows()[link];
+    const nodeRows = rowsIn(chart, roles.nodes);
+    const from = nodeRows.findIndex((r) => r && r[cols.key] === row[cols.source]);
+    const to = nodeRows.findIndex((r) => r && r[cols.key] === row[cols.target]);
+    if (!row || from < 0 || to < 0) return;
+    // Where the link meets each node now. The new link lands where the old one did.
+    const endOf = (/** @type {string} */ channel) => {
+        const v = chart.scene({ table: roles.links, index: link, channel })[0];
+        return v && v.center ? v.center : null;
+    };
+    const fromAt = endOf('source') || centreOf(chart, roles.nodes, from) || point;
+    const landings = /** @type {import('../types').Point[]} */ ([endOf('target'), centreOf(chart, roles.nodes, to)].filter(Boolean));
+
+    const end = chart.transaction();
+    let made = false;
+    let done = false;
+    try {
+        const added = addNodeLike(chart, { nodes: roles.nodes, nodeMark: found.nodeMark, category: found.category, create: found.create, createName: found.createName }, point, from);
+        if (added == null) return;
+        made = true;
+        const key = rowsIn(chart, roles.nodes)[added][cols.key];
+        // The link now ends at the new node: on its port facing the source, else its body.
+        const body = centreOf(chart, roles.nodes, added) || point;
+        for (const at of [...portsNear(chart, roles.nodes, added, fromAt).map((p) => /** @type {import('../types').Point} */ (p.center)), body]) {
+            dropAt(chart.control(rewireName, { index: link, channel: 'target' }), at);
+            if (linkRows()[link][cols.target] === key) break;
+        }
+        if (linkRows()[link][cols.target] !== key) return;
+        // A new link from the new node on to the old target.
+        const before = linkRows().length;
+        const starts = portsNear(chart, roles.nodes, added, landings[0] || point);
+        for (const start of starts.length ? starts : [null]) {
+            for (const at of landings) {
+                dropAt(chart.control(connectName, start ? { index: added, channel: 'port', side: /** @type {string} */ (start.side) } : added), at);
+                if (linkRows().length === before + 1) break;
+            }
+            if (linkRows().length === before + 1) { done = true; break; }
+        }
+    } finally { end(); }
+    if (made && !done && chart.canUndo()) {
+        chart.undo();
+        warn('ui:network:split', 'ui.network: "Add node in between" added a node, but the links to it were refused (a constraint, or ports that only go one way), so nothing changed.');
+    }
+}
 
 /**
  * The tables a network dataset names for its nodes and its links.
@@ -49,7 +201,8 @@ function rolesOf(chart) {
  * - beside a port, "+" adds a new node on that side, linked to this one; a link
  *   icon connects to a node that is already there (drag it, or click and then
  *   click the node); and at a port that holds a link, a third icon detaches it;
- * - on a link, icons to reverse and to remove it;
+ * - on a link, icons to reverse it, to put a new node on it where the pointer
+ *   met it, and to remove it;
  * - a right-click menu: add a node (of a chosen category) on empty space, a
  *   node's category and Remove on a node, Reverse and Remove on a link;
  * - grips to resize a node whose width or height is data.
@@ -95,15 +248,24 @@ export function network(options = {}) {
             const channel = asked || (fill && fill.field != null && fill.kind && fill.kind !== 'continuous' && fill.domain && fill.domain.length ? 'fill' : null);
             const category = channel && nodeMark && fill && fill.field != null ? { channel, mark: nodeMark } : null;
 
+            // A new node put on a link, at a point on it: needs a named create, connect and rewire.
+            const linkMark = rewire ? rootOf(rewire.mark) : null;
+            const split = create && create.name != null && connect && connect.name != null && rewire && rewire.name != null && linkMark
+                ? (/** @type {number} */ link, /** @type {import('../types').Point} */ at) => splitLink(chart, {
+                    roles: /** @type {{ nodes: string, links: string }} */ (roles), linkMark, nodeMark, category,
+                    create, createName: /** @type {string} */ (create.name), connectName: /** @type {string} */ (connect.name), rewireName: /** @type {string} */ (rewire.name),
+                }, link, at)
+                : null;
+
             const showPorts = ports && !!(connect || rewire || unlink);
-            const showLinks = links && !!(reverse || unlink);
+            const showLinks = links && !!(reverse || unlink || split);
             if (showPorts || showLinks) {
                 offs.push(mountIcons(ctx, {
                     roles, nodeMark, category,
                     connect: showPorts ? connect : null,
                     rewire: showPorts ? rewire : null,
                     create: showPorts ? create : null,
-                    unlink, reverse, showPorts, showLinks,
+                    unlink, reverse, split, showPorts, showLinks,
                 }));
             }
 
@@ -137,7 +299,7 @@ export function network(options = {}) {
  *
  * At a port: "+" adds a node on that side, linked from this one; the link icon
  * connects to a node already there; detach shows where a link is docked.
- * On a link: reverse and remove.
+ * On a link: reverse, a new node in between, and remove.
  * @param {import('../types').UiContext} ctx
  * @param {{
  *   roles: { nodes: string | null, links: string | null },
@@ -148,6 +310,7 @@ export function network(options = {}) {
  *   create: import('../types').EditInfo | null,
  *   unlink: import('../types').EditInfo | null,
  *   reverse: import('../types').EditInfo | null,
+ *   split: ((link: number, at: import('../types').Point) => void) | null,
  *   showPorts: boolean,
  *   showLinks: boolean,
  * }} found
@@ -155,7 +318,7 @@ export function network(options = {}) {
  */
 function mountIcons(ctx, found) {
     const { chart } = ctx;
-    const { roles, nodeMark, category, connect, rewire, create, unlink, reverse, showPorts, showLinks } = found;
+    const { roles, nodeMark, category, connect, rewire, create, unlink, reverse, split, showPorts, showLinks } = found;
     const nodes = /** @type {string} */ (roles.nodes);
     const linksTable = /** @type {string} */ (roles.links);
     const gap = chart.theme.ui.gap;
@@ -212,11 +375,14 @@ function mountIcons(ctx, found) {
     // inside the plot, and moved along the side until it overlaps no node.
     /** @param {import('../types').SceneView} port */
     const spotBeside = (port) => {
-        const out = OUTWARD[/** @type {string} */ (port.side)] || OUTWARD.right;
+        // Straight out from the port, turned with its node.
+        const out = outwardOf(port);
         const box = boxOf(/** @type {number} */ (port.index)) || { x: 0, y: 0, width: 80, height: 40 };
         const c = /** @type {import('../types').Point} */ (port.center);
-        const along = out.x ? box.width : box.height;
-        const across = out.x ? box.height : box.width;
+        // The screen axis nearest that direction, for stepping aside.
+        const sideways = Math.abs(out.x) >= Math.abs(out.y);
+        const along = Math.abs(out.x) * box.width + Math.abs(out.y) * box.height;
+        const across = sideways ? box.height : box.width;
         const m = chart.metrics();
         const hw = box.width / 2, hh = box.height / 2;
         // The new node is the size of this one: keep its whole box in the plot.
@@ -235,8 +401,8 @@ function mountIcons(ctx, found) {
                 const further = far * (along + SPAWN_CLEAR * 2);
                 const step = k * (across + SPAWN_CLEAR * 2);
                 const p = fit({
-                    x: base.x + out.x * further + (out.x ? 0 : step),
-                    y: base.y + out.y * further + (out.x ? step : 0),
+                    x: base.x + out.x * further + (sideways ? 0 : step),
+                    y: base.y + out.y * further + (sideways ? step : 0),
                 });
                 if (free(p)) return p;
             }
@@ -254,36 +420,21 @@ function mountIcons(ctx, found) {
         const spot = at || spotBeside(port);
         const linksBefore = rowsIn(chart, linksTable).length;
         const end = chart.transaction();
+        let made = false;
         let linked = false;
         try {
-            const before = rowsIn(chart, nodes).length;
-            chart.control(createName).emit({ type: create.gesture, x: spot.x, y: spot.y });
-            if (rowsIn(chart, nodes).length !== before + 1) return;
-            if (nodeMark) {
-                for (const ch of [category ? category.channel : null, 'width', 'height']) {
-                    if (!ch || !chart.scale(ch, { mark: nodeMark })) continue;
-                    const v = valueOf(chart, 'network', { mark: nodeMark, channel: ch });
-                    if (v && v.read(from) != null) v.write(before, v.read(from));
-                }
-            }
+            const added = addNodeLike(chart, { nodes, nodeMark, category, create, createName }, spot, from);
+            if (added == null) return;
+            made = true;
             // Land on the new node's port nearest this one (the facing side, when
             // the node sits straight out), else on its body.
-            const here = port.center || spot;
-            const facing = chart.scene({ table: nodes, index: before, channel: 'port' })
-                .filter((p) => p.center)
-                .sort((a, b) => Math.hypot(/** @type {any} */ (a.center).x - here.x, /** @type {any} */ (a.center).y - here.y)
-                    - Math.hypot(/** @type {any} */ (b.center).x - here.x, /** @type {any} */ (b.center).y - here.y))[0];
-            const body = boxOf(before);
-            const to = facing && facing.center ? facing.center
-                : body ? { x: body.x + body.width / 2, y: body.y + body.height / 2 } : spot;
-            const c = chart.control(connectName, { index: from, channel: 'port', side });
-            c.begin();
-            c.emit({ type: 'drag', x: to.x, y: to.y });
-            c.end();
+            const facing = portsNear(chart, nodes, added, port.center || spot)[0];
+            const to = facing ? /** @type {import('../types').Point} */ (facing.center) : centreOf(chart, nodes, added) || spot;
+            dropAt(chart.control(connectName, { index: from, channel: 'port', side }), to);
             linked = rowsIn(chart, linksTable).length === linksBefore + 1;
         } finally { end(); }
         // A node the link could not reach is not what was asked for: take it back.
-        if (!linked && chart.canUndo()) {
+        if (made && !linked && chart.canUndo()) {
             chart.undo();
             warn('ui:network:spawn', 'ui.network: "+" added a node but the link to it was refused (a constraint, or a port that only takes incoming links), so the node was removed again.');
         }
@@ -316,7 +467,15 @@ function mountIcons(ctx, found) {
             return p ? p.center : null;
         },
         placement(t) {
-            if (t.kind === 'port') return { at: /** @type {any} */ (t.view.side), offset: gap + 6 };
+            if (t.kind === 'port') {
+                const off = gap + 6;
+                if (!t.view.angle) return { at: /** @type {any} */ (t.view.side), offset: off };
+                // A turned port: out along its normal, from the screen side nearest it.
+                const n = outwardOf(t.view);
+                const at = Math.abs(n.x) >= Math.abs(n.y) ? (n.x > 0 ? 'right' : 'left') : (n.y > 0 ? 'bottom' : 'top');
+                const s = OUTWARD[at];
+                return { at, offset: off, dx: Math.round((n.x - s.x) * off), dy: Math.round((n.y - s.y) * off) };
+            }
             // Off the link's line: out along its normal, on the upper side.
             const far = gap + 6 + chart.theme.ui.size / 2;
             const ends = chart.scene({ mark: t.view.mark, index: /** @type {number} */ (t.view.index) })
@@ -342,6 +501,12 @@ function mountIcons(ctx, found) {
                 if (reverseName) {
                     const btn = ctx.button({ icon: 'swap', label: 'Reverse link' });
                     btn.addEventListener('click', () => { group.show(null); chart.control(reverseName, index).fire(); });
+                    add(btn);
+                }
+                if (split) {
+                    const at = t.at;
+                    const btn = ctx.button({ icon: 'plus', label: 'Add a node in between' });
+                    btn.addEventListener('click', () => { group.show(null); split(index, at); });
                     add(btn);
                 }
                 if (unlinkName) {

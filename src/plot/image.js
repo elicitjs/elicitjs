@@ -49,6 +49,7 @@ export function image(options = {}) {
                 hw: r,
                 hh: r,
                 round: false,
+                angle: encodeAngle(scales, channels, 'angle', d, 0, i, rows) || 0,
             };
         },
 

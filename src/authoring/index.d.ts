@@ -635,6 +635,10 @@ export type LinkBox = {
     cy: number;
     hw: number;
     hh: number;
+    /**
+     * turned about its centre, math degrees
+     */
+    angle?: number | undefined;
 };
 export type LinkShapeOptions = {
     /**

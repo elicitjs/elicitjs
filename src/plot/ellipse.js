@@ -42,6 +42,7 @@ export function ellipse(options = {}) {
                 hw: Math.max(0, +encodeChannel(scales, channels, 'rx', d, size, i, rows) || 0),
                 hh: Math.max(0, +encodeChannel(scales, channels, 'ry', d, size, i, rows) || 0),
                 round: true,
+                angle: encodeAngle(scales, channels, 'angle', d, 0, i, rows) || 0,
             };
         },
 

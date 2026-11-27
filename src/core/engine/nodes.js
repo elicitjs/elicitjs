@@ -1,6 +1,7 @@
 // @ts-check
 import { rawChannel } from '../../plot/mark.js';
 import { portRolesOf } from '../../plot/port.js';
+import { boxBounds } from '../../plot/linkRouter.js';
 import { isDirected } from '../schema.js';
 import { treeOf, nestingOf } from '../hierarchy.js';
 import { settleLayout, paddingOf, fitAxesOf, DEFAULT_GAP } from '../fit.js';
@@ -225,16 +226,17 @@ export function createNodes(chart, deps) {
             ? (row, i, rows) => {
                 const s = chart.scales, w = chart.innerWidth, h = chart.innerHeight;
                 let host = null, own = null;
+                // A turned box takes the upright space around it.
                 for (const f of hosts) {
                     const b = f.nodeBox(row, i, rows, s, w, h);
-                    if (finiteBox(b)) { host = f; own = b; break; }
+                    if (finiteBox(b)) { host = f; own = boxBounds(b); break; }
                 }
                 const parts = host && host.glyph ? glyphParts.get(host.glyph) : null;
                 if (!parts || !own) return own;
                 let x0 = own.cx - own.hw, x1 = own.cx + own.hw, y0 = own.cy - own.hh, y1 = own.cy + own.hh;
                 for (const f of parts) {
                     if (f === host) continue;
-                    const b = f.nodeBox(row, i, rows, s, w, h);
+                    const b = boxBounds(f.nodeBox(row, i, rows, s, w, h));
                     if (!finiteBox(b)) continue;
                     x0 = Math.min(x0, b.cx - b.hw); x1 = Math.max(x1, b.cx + b.hw);
                     y0 = Math.min(y0, b.cy - b.hh); y1 = Math.max(y1, b.cy + b.hh);

@@ -190,6 +190,11 @@ export interface NodeBox {
   // Sides and ports still sit at the four edge midpoints, which an ellipse shares
   // with its bounding box.
   round?: boolean;
+  // Turned about its centre, in math degrees (counter-clockwise, like a node's
+  // `angle`). `hw`/`hh` are the half-extents before turning, and a side names the
+  // node's own edge, so ports and links turn with it. Layout and orthogonal routes
+  // use the upright box around it.
+  angle?: number;
 }
 
 // The node table's box rule, as the engine hands it to `link` and the network edits:
@@ -3728,6 +3733,7 @@ export interface LayoutContext {
   rows: Datum[];
   tables: Record<string, Datum[]>;
   tree: any;
+  // The row's drawn box. A turned node gives the upright box around it.
   nodeBox: (index: number) => NodeBox | null;
   extentOf: (index: number) => NodeBox | null;
   scales: ScaleMap;
@@ -4135,6 +4141,10 @@ export interface HandlesOptions {
   on?: { mark?: string };
   /** Grips that resize along the sides the mark sizes from data (`width`, `height`). Default true. */
   resize?: boolean;
+  /** A grip above the box that turns it, writing the mark's `angle` field. Shift snaps to 15°. Default false. */
+  rotate?: boolean;
+  /** A grip below the box that moves it, writing the mark's `x` and `y` fields. Default false. */
+  move?: boolean;
 }
 
 export interface NetworkOptions {
@@ -4144,7 +4154,7 @@ export interface NetworkOptions {
    * docked. Default true.
    */
   ports?: boolean;
-  /** Icons on a link: reverse, remove. Default true. */
+  /** Icons on a link: reverse, "+" to put a new node on it where the pointer met it, remove. Default true. */
   links?: boolean;
   /** The right-click menu. `{ channel }` names the node channel its categories come from (default: a discrete `fill`). */
   menu?: boolean | { channel?: string };

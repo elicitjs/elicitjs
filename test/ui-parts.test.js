@@ -223,6 +223,119 @@ describe('ui.handles', () => {
         expect(el.scene({ mark: 'note/body', index: 0 })[0].box.x).toBeCloseTo(150, 4);
     });
 
+    it('on a turned box, a grip sits on the turned side and drags along it', async () => {
+        const el = await mount({
+            width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false,
+            schema: {
+                w: { type: 'quantitative', domain: [60, 200] },
+                x: { type: 'quantitative', domain: [0, 100] },
+                y: { type: 'quantitative', domain: [0, 100] },
+            },
+            data: [{ w: 100, x: 50, y: 50 }],
+            marks: [plot.rect({ id: 'box', height: 40, angle: 90, channels: { x: { field: 'x' }, y: { field: 'y' }, width: { field: 'w', scale: { range: [60, 200] } } } })],
+        }, [ui.handles()]);
+        fire(el.dom(), 'pointermove', { x: 200, y: 150 });
+        await frame();
+        // 100 wide turned a quarter: the right side faces up, 50px above the centre.
+        const right = grips(el)[1];
+        expect(right.style.transform).toContain('translate(200px, 100px)');
+        fire(right, 'pointerdown', { x: 200, y: 100 });
+        fire(right, 'pointermove', { x: 200, y: 80 });
+        fire(right, 'pointerup', { x: 200, y: 80 });
+        const row = el.getData()[0];
+        expect(row.w).toBeCloseTo(120, 4);
+        // The left side (now at the bottom, y 200) stays: the centre moves up 10px.
+        expect(row.x).toBeCloseTo(50, 4);
+        expect(300 - row.y * 3).toBeCloseTo(140, 4);
+    });
+
+    // A 100 x 40 box at the centre of the plot, turned by its `a` column.
+    const turnSpec = (a = 0) => ({
+        width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false,
+        schema: {
+            x: { type: 'quantitative', domain: [0, 100] },
+            y: { type: 'quantitative', domain: [0, 100] },
+            a: { type: 'quantitative', domain: [-180, 180] },
+        },
+        data: [{ x: 50, y: 50, a }],
+        marks: [plot.rect({ id: 'box', width: 100, height: 40, channels: { x: { field: 'x' }, y: { field: 'y' }, angle: { field: 'a', scale: { range: [-180, 180] } } } })],
+    });
+    const gripAt = (g) => { const m = /translate\(([-\d.]+)px, ([-\d.]+)px\)/.exec(g.style.transform); return { x: +m[1], y: +m[2] }; };
+    const kind = (el, k) => el.dom().querySelector(`.elicit-ui-handle[data-kind=${k}]:not([hidden])`);
+
+    it('rotate: a grip above the box turns it about its centre, as one undo step', async () => {
+        const el = await mount(turnSpec(), [ui.handles({ rotate: true, resize: false })]);
+        fire(el.dom(), 'pointermove', { x: 200, y: 150 });
+        await frame();
+        const grip = kind(el, 'rotate');
+        expect(grip.getAttribute('aria-label')).toBe('Rotate');
+        const at = gripAt(grip);
+        expect(at.x).toBeCloseTo(200, 4);
+        expect(at.y).toBeLessThan(130);
+        // From above the centre to its right: a quarter turn clockwise.
+        fire(grip, 'pointerdown', at);
+        fire(grip, 'pointermove', { x: 250, y: 140 });
+        fire(grip, 'pointermove', { x: 300, y: 150 });
+        fire(grip, 'pointerup', { x: 300, y: 150 });
+        expect(el.getData()[0].a).toBeCloseTo(-90, 4);
+        expect(el.undo()).toBe(true);
+        expect(el.getData()[0].a).toBe(0);
+        expect(el.canUndo()).toBe(false);
+    });
+
+    it('rotate: Shift snaps to 15 degrees, and the grip follows the turn', async () => {
+        const el = await mount(turnSpec(), [ui.handles({ rotate: true, resize: false })]);
+        fire(el.dom(), 'pointermove', { x: 200, y: 150 });
+        await frame();
+        const grip = kind(el, 'rotate');
+        fire(grip, 'pointerdown', gripAt(grip));
+        // 50px right of the centre and 100px up: about 26.6 degrees clockwise.
+        fire(grip, 'pointermove', { x: 250, y: 50 }, { shiftKey: true });
+        fire(grip, 'pointerup', { x: 250, y: 50 }, { shiftKey: true });
+        expect(el.getData()[0].a).toBeCloseTo(-30, 6);
+        await frame();
+        // Turned 30 degrees clockwise, the grip moves right of the centre.
+        expect(gripAt(kind(el, 'rotate')).x).toBeGreaterThan(200);
+    });
+
+    it('rotate: arrow keys turn it', async () => {
+        const el = await mount(turnSpec(), [ui.handles({ rotate: true, resize: false })]);
+        fire(el.dom(), 'pointermove', { x: 200, y: 150 });
+        await frame();
+        kind(el, 'rotate').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+        expect(el.getData()[0].a).toBeCloseTo(5, 4);
+        kind(el, 'rotate').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', shiftKey: true, bubbles: true }));
+        expect(el.getData()[0].a).toBeCloseTo(-10, 4);
+    });
+
+    it('move: a grip below the box moves it as far as the pointer went', async () => {
+        const el = await mount(turnSpec(), [ui.handles({ move: true, resize: false })]);
+        fire(el.dom(), 'pointermove', { x: 200, y: 150 });
+        await frame();
+        const grip = kind(el, 'move');
+        expect(grip.getAttribute('aria-label')).toBe('Move');
+        const at = gripAt(grip);
+        expect(at.y).toBeGreaterThan(170);
+        fire(grip, 'pointerdown', at);
+        fire(grip, 'pointermove', { x: at.x + 40, y: at.y - 30 });
+        fire(grip, 'pointerup', { x: at.x + 40, y: at.y - 30 });
+        // 40px is 10 on x; 30px up is 10 on y.
+        expect(el.getData()[0]).toMatchObject({ x: 60, y: 60 });
+        expect(el.undo()).toBe(true);
+        expect(el.getData()[0]).toMatchObject({ x: 50, y: 50 });
+        grip.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+        expect(el.getData()[0].x).toBeCloseTo(51, 4);
+    });
+
+    it('warns when the mark binds nothing to turn', async () => {
+        const w = [];
+        const orig = console.warn;
+        console.warn = (...a) => w.push(a.join(' '));
+        setWarnings(true);
+        try { await mount(flowSpec(), [ui.handles({ on: { mark: 'note' }, rotate: true })]); } finally { console.warn = orig; }
+        expect(w.some((s) => s.includes('"angle"'))).toBe(true);
+    });
+
     it('dragging the right grip widens the box and keeps its left side still, as one undo step', async () => {
         const el = await mount(flowSpec(), [ui.handles({ on: { mark: 'note' } })]);
         fire(el.dom(), 'pointermove', px(S[0]));

@@ -17,6 +17,18 @@ const SIDES = /** @type {Record<string, { dx: number, dy: number, tx: string, ty
 
 export const PLACEMENTS = Object.keys(SIDES);
 
+/**
+ * Turn the offset (dx, dy) by `deg`, counter-clockwise on screen like a node's `angle`.
+ * @param {number} dx @param {number} dy @param {number} deg
+ * @returns {import('../types').Point}
+ */
+export function turnOffset(dx, dy, deg) {
+    if (!deg) return { x: dx, y: dy };
+    const a = deg * Math.PI / 180;
+    const c = Math.cos(a), s = Math.sin(a);
+    return { x: dx * c + dy * s, y: -dx * s + dy * c };
+}
+
 /** @param {any} a @returns {a is import('../types').SceneView} */
 const isView = (a) => !!a && typeof a === 'object' && 'mark' in a && 'type' in a;
 
@@ -36,13 +48,8 @@ export function anchorPoint(anchor, at) {
     if (!b || (side.dx === 0 && side.dy === 0)) return { x: c.x, y: c.y };
     // The point on the box, measured from the box's own centre, then turned.
     const bx = b.x + b.width / 2, by = b.y + b.height / 2;
-    let x = bx + side.dx * b.width / 2 - c.x;
-    let y = by + side.dy * b.height / 2 - c.y;
-    if (anchor.angle) {
-        const a = anchor.angle * Math.PI / 180;
-        [x, y] = [x * Math.cos(a) - y * Math.sin(a), x * Math.sin(a) + y * Math.cos(a)];
-    }
-    return { x: c.x + x, y: c.y + y };
+    const t = turnOffset(bx + side.dx * b.width / 2 - c.x, by + side.dy * b.height / 2 - c.y, anchor.angle);
+    return { x: c.x + t.x, y: c.y + t.y };
 }
 
 /**
@@ -80,6 +87,12 @@ export function position(chart, el, anchor, placement = {}) {
 export function distanceToView(view, point) {
     const b = view.box;
     if (!b) return view.center ? Math.hypot(point.x - view.center.x, point.y - view.center.y) : Infinity;
+    // A turned view: measure in its own frame.
+    if (view.angle && view.center) {
+        const c = view.center;
+        const t = turnOffset(point.x - c.x, point.y - c.y, -view.angle);
+        point = { x: c.x + t.x, y: c.y + t.y };
+    }
     const dx = Math.max(b.x - point.x, 0, point.x - (b.x + b.width));
     const dy = Math.max(b.y - point.y, 0, point.y - (b.y + b.height));
     return Math.hypot(dx, dy);

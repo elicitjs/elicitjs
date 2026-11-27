@@ -19,7 +19,7 @@
 // 0 is straight.
 
 import { sampleQuadratic, sampleCubic } from './hitpath.js';
-import { routeOrthogonal, SIDE_NORMALS, LINK_SIDES } from './linkRouter.js';
+import { routeOrthogonal, SIDE_NORMALS, LINK_SIDES, fromBox, turn } from './linkRouter.js';
 
 // How many segments a rounded corner is sampled into.
 const CORNER_SAMPLES = 6;
@@ -51,6 +51,7 @@ export { LINK_SIDES };
  * @typedef {object} LinkBox
  * @property {number} cx @property {number} cy
  * @property {number} hw @property {number} hh
+ * @property {number} [angle] turned about its centre, math degrees
  */
 
 /**
@@ -287,28 +288,34 @@ function loopShape(seg, bow, radius, opts = {}) {
     const back = opts.loopIn || out;
     const gapA = opts.sourceGap || 0;
     const gapB = opts.targetGap || 0;
+    // Worked out on the upright box, then turned with it.
+    const upright = { ...box, angle: 0 };
     const nA = SIDE_NORMALS[out];
     const nB = SIDE_NORMALS[back];
+    /** @param {[number, number]} p @returns {[number, number]} */
+    const turned = (p) => { const q = fromBox(box, { x: p[0], y: p[1] }); return [q.x, q.y]; };
+    const turnedNormal = (/** @type {{ x: number, y: number }} */ n) => turn(n.x, n.y, box.angle || 0);
 
     if (out === back) {
         // A teardrop out and back along a short span of the edge, clockwise.
         const n = nA;
         const t = { x: -n.y, y: n.x };
-        const edgeHalf = n.x ? box.hh : box.hw;
+        const edgeHalf = n.x ? upright.hh : upright.hw;
         const h = Math.min(R * 0.35, edgeHalf * 0.8);
-        const mx = box.cx + n.x * box.hw;
-        const my = box.cy + n.y * box.hh;
-        const a = /** @type {[number, number]} */ ([mx - t.x * h + n.x * gapA, my - t.y * h + n.y * gapA]);
-        const b = /** @type {[number, number]} */ ([mx + t.x * h + n.x * gapB, my + t.y * h + n.y * gapB]);
-        const c1 = /** @type {[number, number]} */ ([mx + n.x * R * 1.8 - t.x * R * 0.9, my + n.y * R * 1.8 - t.y * R * 0.9]);
-        const c2 = /** @type {[number, number]} */ ([mx + n.x * R * 1.8 + t.x * R * 0.9, my + n.y * R * 1.8 + t.y * R * 0.9]);
+        const mx = upright.cx + n.x * upright.hw;
+        const my = upright.cy + n.y * upright.hh;
+        const a = turned([mx - t.x * h + n.x * gapA, my - t.y * h + n.y * gapA]);
+        const b = turned([mx + t.x * h + n.x * gapB, my + t.y * h + n.y * gapB]);
+        const c1 = turned([mx + n.x * R * 1.8 - t.x * R * 0.9, my + n.y * R * 1.8 - t.y * R * 0.9]);
+        const c2 = turned([mx + n.x * R * 1.8 + t.x * R * 0.9, my + n.y * R * 1.8 + t.y * R * 0.9]);
+        const [midX, midY] = turned([mx + n.x * (R * 1.35 + LOOP_LABEL_GAP), my + n.y * (R * 1.35 + LOOP_LABEL_GAP)]);
         return {
             d: `M${a[0]},${a[1]}C${c1[0]},${c1[1]} ${c2[0]},${c2[1]} ${b[0]},${b[1]}`,
             hit: sampleCubic(a, c1, c2, b),
             start: { x: a[0], y: a[1] },
             end: { x: b[0], y: b[1] },
             // Past the apex, since a label plate on the apex would hide the loop.
-            mid: { x: mx + n.x * (R * 1.35 + LOOP_LABEL_GAP), y: my + n.y * (R * 1.35 + LOOP_LABEL_GAP) },
+            mid: { x: midX, y: midY },
             tangentIn: unit(c1[0] - a[0], c1[1] - a[1]),
             tangentOut: unit(b[0] - c2[0], b[1] - c2[1]),
         };
@@ -329,16 +336,16 @@ function loopShape(seg, bow, radius, opts = {}) {
         const viaCw = passes(1);
         dir = viaCw.includes('top') || (!passes(-1).includes('top') && viaCw.includes('right')) ? 1 : -1;
     }
-    const L = box.cx - box.hw - R;
-    const Rx = box.cx + box.hw + R;
-    const T = box.cy - box.hh - R;
-    const B = box.cy + box.hh + R;
+    const L = upright.cx - upright.hw - R;
+    const Rx = upright.cx + upright.hw + R;
+    const T = upright.cy - upright.hh - R;
+    const B = upright.cy + upright.hh + R;
     /** @type {Record<string, [number, number]>} the corner clockwise AFTER each side */
     const cornerAfter = { top: [Rx, T], right: [Rx, B], bottom: [L, B], left: [L, T] };
-    const ax = box.cx + nA.x * box.hw;
-    const ay = box.cy + nA.y * box.hh;
-    const bx = box.cx + nB.x * box.hw;
-    const by = box.cy + nB.y * box.hh;
+    const ax = upright.cx + nA.x * upright.hw;
+    const ay = upright.cy + nA.y * upright.hh;
+    const bx = upright.cx + nB.x * upright.hw;
+    const by = upright.cy + nB.y * upright.hh;
     /** @type {[number, number][]} */
     const pts = [[ax + nA.x * gapA, ay + nA.y * gapA], [ax + nA.x * R, ay + nA.y * R]];
     for (let k = i; k !== j; k = (k + dir + 4) % 4) {
@@ -346,17 +353,18 @@ function loopShape(seg, bow, radius, opts = {}) {
         pts.push(cornerAfter[side]);
     }
     pts.push([bx + nB.x * R, by + nB.y * R], [bx + nB.x * gapB, by + nB.y * gapB]);
-    const points = roundCorners(pts, Number(opts.cornerRadius) || R * 0.4);
-    const first = pts[0];
-    const last = pts[pts.length - 1];
+    const points = roundCorners(pts.map(turned), Number(opts.cornerRadius) || R * 0.4);
+    const first = turned(pts[0]);
+    const last = turned(pts[pts.length - 1]);
+    const outB = turnedNormal(nB);
     return {
         points,
         curve: 'linear',
         start: { x: first[0], y: first[1] },
         end: { x: last[0], y: last[1] },
         mid: polylineMid(points),
-        tangentIn: nA,
-        tangentOut: { x: -nB.x || 0, y: -nB.y || 0 },
+        tangentIn: turnedNormal(nA),
+        tangentOut: { x: -outB.x || 0, y: -outB.y || 0 },
     };
 }
 

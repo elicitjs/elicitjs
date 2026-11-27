@@ -5,6 +5,7 @@
 // position.
 
 import { encodeChannel } from './mark.js';
+import { toBox } from './linkRouter.js';
 
 /**
  * Which channels place a node when no box rule does: the mark's own `x`/`y`, else
@@ -39,7 +40,8 @@ export function boxAt(point, rows, rule, { accepts, rank } = {}) {
         if (!row || (accepts && !accepts(i))) return;
         const box = rule(row, i, rows);
         if (!box || ![box.cx, box.cy, box.hw, box.hh].every(Number.isFinite)) return;
-        if (Math.abs(point.x - box.cx) > box.hw || Math.abs(point.y - box.cy) > box.hh) return;
+        const p = toBox(box, point);
+        if (Math.abs(p.x - box.cx) > box.hw || Math.abs(p.y - box.cy) > box.hh) return;
         const r = rank ? rank(i) : 0;
         const d = Math.hypot(box.cx - point.x, box.cy - point.y);
         if (r > bestRank || (r === bestRank && d < bestDist)) { best = i; bestRank = r; bestDist = d; }

@@ -12,6 +12,8 @@ const registry = new Map(Object.entries({
     palette: 'M8 2.5c2.5 3 4 4.8 4 6.7a4 4 0 0 1-8 0c0-1.9 1.5-3.7 4-6.7z',
     grip: 'M6 3.5v9M10 3.5v9',
     check: 'M3.5 8.5l3 3 6-7',
+    rotate: 'M12.5 8a4.5 4.5 0 1 1-1.3-3.2M12.5 2.5v2.8H9.7',
+    move: 'M8 2v12M2 8h12M6 4l2-2 2 2M6 12l2 2 2-2M4 6l-2 2 2 2M12 6l2 2-2 2',
 }));
 
 const SVG_NS = 'http://www.w3.org/2000/svg';

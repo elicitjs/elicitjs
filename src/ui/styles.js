@@ -27,6 +27,9 @@ const CSS = `
 .elicit-ui-handle{pointer-events:auto;box-sizing:border-box;width:8px;height:22px;padding:0;border:1px solid var(--elicit-ui-accent);border-radius:4px;background:var(--elicit-ui-surface);box-shadow:0 1px 3px var(--elicit-ui-shadow);cursor:ew-resize;touch-action:none}
 .elicit-ui-handle[data-axis=y]{width:22px;height:8px;cursor:ns-resize}
 .elicit-ui-handle[data-corner]{width:10px;height:10px;border-radius:50%}
+.elicit-ui-handle[data-kind]{display:grid;place-items:center;width:var(--elicit-ui-size);height:var(--elicit-ui-size);border-radius:50%;color:var(--elicit-ui-accent);cursor:grab}
+.elicit-ui-handle[data-kind=move]{cursor:move}
+.elicit-ui-handle[data-kind]:hover,.elicit-ui-handle[data-kind]:focus-visible,.elicit-ui-handle[data-kind][data-active]{color:var(--elicit-ui-surface)}
 .elicit-ui-handle:hover,.elicit-ui-handle:focus-visible,.elicit-ui-handle[data-active]{background:var(--elicit-ui-accent);outline:none}
 `;
 

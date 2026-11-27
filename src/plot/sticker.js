@@ -32,8 +32,8 @@ import { noteBox } from '../core/measure.js';
  */
 const LABEL_CHANNELS = ['text', 'fontSize', 'fontWeight', 'fontStyle', 'fontFamily', 'textAnchor', 'lineAnchor', 'dx', 'dy'];
 
-/** Channels given to both parts, so they stay concentric. */
-const SHARED_CHANNELS = ['x', 'y'];
+/** Channels given to both parts, so the label stays centred on the box and turns with it. */
+const SHARED_CHANNELS = ['x', 'y', 'angle'];
 
 /** Channels that size the box and turn its auto-sizing off. */
 const SIZE_CHANNELS = ['width', 'height'];
@@ -151,9 +151,8 @@ export function sticker(options = {}) {
                 lineAnchor: { value: 'middle' },
                 fontSize: { value: fontSize },
                 ...label,
-                // Same position as the box, without the edit.
-                ...(shared.x ? { x: withoutEdit(shared.x) } : {}),
-                ...(shared.y ? { y: withoutEdit(shared.y) } : {}),
+                // Same position and turn as the box, without the edit.
+                ...Object.fromEntries(Object.entries(shared).map(([k, spec]) => [k, withoutEdit(spec)])),
             },
         }),
     ];

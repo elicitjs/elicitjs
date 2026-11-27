@@ -215,7 +215,7 @@ describe('ui.network: on a link', () => {
         const ends = ['source', 'target'].map((ch) => el.scene({ mark: 'flow', channel: ch })[0].center);
         const at = { x: ends[0].x + (ends[1].x - ends[0].x) / 3, y: ends[0].y + (ends[1].y - ends[0].y) / 3 };
         await near(el, at);
-        expect(names(el)).toEqual(['Reverse link', 'Remove link']);
+        expect(names(el)).toEqual(['Reverse link', 'Add a node in between', 'Remove link']);
         const where = el.dom().querySelector('.elicit-ui-group').style.transform;
         // Beside the point the pointer met the link at, not at the link's middle.
         const [gx, gy] = where.match(/translate\(([-\d.]+)px, ([-\d.]+)px\)/).slice(1).map(Number);
@@ -235,10 +235,31 @@ describe('ui.network: on a link', () => {
         expect(el.getData().flows[0]).toEqual({ source: 's2', target: 's1', fromSide: 'left', toSide: 'right' });
     });
 
+    it('"+" puts a new node on the link where the pointer met it, as one undo step', async () => {
+        const el = await mount(flowSpec());
+        const at = lineOf(el).center;
+        await near(el, at);
+        button(el, 'Add a node in between').click();
+        const { steps: rows, flows } = el.getData();
+        expect(rows).toHaveLength(4);
+        const added = rows[3];
+        // Like the node the link came from: its category and its width.
+        expect(added).toMatchObject({ kind: 'a', w: 100 });
+        expect(px(added).x).toBeCloseTo(at.x, 0);
+        expect(px(added).y).toBeCloseTo(at.y, 0);
+        expect(flows).toHaveLength(2);
+        expect(flows[0]).toMatchObject({ source: 's1', target: added.id, fromSide: 'right' });
+        // The new link lands where the old one did.
+        expect(flows[1]).toMatchObject({ source: added.id, target: 's2', toSide: 'left' });
+        expect(el.undo()).toBe(true);
+        expect(el.getData().steps).toHaveLength(3);
+        expect(el.getData().flows).toEqual([{ source: 's1', target: 's2', fromSide: 'right', toSide: 'left' }]);
+    });
+
     it('a port\'s icons take over from a link\'s near the port', async () => {
         const el = await mount(flowSpec());
         await near(el, lineOf(el).center);
-        expect(names(el)).toEqual(['Reverse link', 'Remove link']);
+        expect(names(el)).toEqual(['Reverse link', 'Add a node in between', 'Remove link']);
         await near(el, portOf(el, 0, 'right'));
         expect(names(el)).toEqual([ADD, LINK, DETACH]);
         // One set at a time.
