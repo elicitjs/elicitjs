@@ -27,6 +27,10 @@ import type {
   ConstraintResult,
   ContainConstraintOptions,
   ContainLayoutOptions,
+  ForceLayoutOptions,
+  LayeredLayoutOptions,
+  TidyLayoutOptions,
+  TreeLayoutOptions,
   CountOptions,
   CreateOptions,
   CrosshairGuideOptions,
@@ -406,12 +410,26 @@ export const constraints: {
  * LAYOUT — chart-level spatial settling processes (`spec.layout`). Each reads
  * rendered mark boxes (`nodeBox`, glyph extents) and writes settled positions
  * and sizes back into the dataset through the channels' scales on commit/release,
- * with live drag previews and `motion` easing. Works on tables, networks and
- * hierarchies (`contain` is hierarchy-only).
+ * with live drag previews and `motion` easing. The root layouts work on any table;
+ * `network.*` and `hierarchy.*` need that structure and work on its nodes.
  */
 export const layout: {
-  /** Container enclosure geometry: inner `padding`, optional auto-fit (`fit`), walls and carry. */
-  contain(options?: ContainLayoutOptions): LayoutSpec;
+  /** Layouts that place a network's nodes by its links. */
+  network: {
+    /** Ranks for flowcharts and causal maps: links run one way, crossings cut. */
+    layered(options?: LayeredLayoutOptions): LayoutSpec;
+    /** A tidy tree for trees and mind maps, or rings with `direction: 'radial'`. */
+    tree(options?: TreeLayoutOptions): LayoutSpec;
+    /** A spread for concept maps: linked nodes `length` px apart (stress majorization). */
+    force(options?: ForceLayoutOptions): LayoutSpec;
+  };
+  /** Layouts that need a hierarchy. */
+  hierarchy: {
+    /** Container enclosure geometry: inner `padding`, optional auto-fit (`fit`), walls and carry. */
+    contain(options?: ContainLayoutOptions): LayoutSpec;
+  };
+  /** Line a hand layout up into rows and columns, moving rows as little as it can. */
+  tidy(options?: TidyLayoutOptions): LayoutSpec;
   /** Push overlapping rows apart by `gap` px. */
   dodge(options?: DodgeLayoutOptions): LayoutSpec;
   /** Line items up left to right, wrapping when a fixed width limits them. */

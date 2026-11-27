@@ -181,7 +181,7 @@ const FIXTURES = {
             edits: [edit.move({ mode: 'relative' }), edit.hierarchy.nest()],
         })],
         layout: [
-            layout.contain({ where: (d) => d.kind === 'lane', padding: { top: 24 }, fit: true }),
+            layout.hierarchy.contain({ where: (d) => d.kind === 'lane', padding: { top: 24 }, fit: true }),
             layout.grid({ in: (d) => d.kind === 'lane', gap: 6, columns: 2 }),
             layout.dodge({ gap: 8, in: 'roots' }),
         ],
@@ -200,7 +200,7 @@ const FIXTURES = {
             edits: [edit.move({ mode: 'relative' }), edit.hierarchy.nest()],
         })],
         layout: [
-            layout.contain({ fit: true }),
+            layout.hierarchy.contain({ fit: true }),
             layout.pack({ keep: 'angle', gap: 4 }),
             layout.custom(({ rows }) => rows),
         ],

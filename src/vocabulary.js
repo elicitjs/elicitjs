@@ -206,18 +206,24 @@ export const CONSTRAINT_OPTIONS = {
 };
 
 /** Spatial layout processes (`spec.layout`): what every layout reads, then each one's own.
+ *  `where` picks the rows a layout acts on; `table` is ignored by a scoped layout.
  *  @type {string[]} */
-export const LAYOUT_UNIVERSAL_OPTIONS = ['table'];
+export const LAYOUT_UNIVERSAL_OPTIONS = ['table', 'where'];
 
-/** @type {Record<string, string[]>} */
+/** Keyed by type: a scoped layout's type is its dotted path (`network.layered`).
+ *  @type {Record<string, string[]>} */
 export const LAYOUT_OPTIONS = {
-    contain: ['where', 'padding', 'fit'],
-    dodge: ['gap', 'where', 'in'],
+    dodge: ['gap', 'in'],
     row: ['gap', 'in'],
     column: ['gap', 'in'],
     grid: ['columns', 'gap', 'in'],
     pack: ['gap', 'keep', 'in'],
+    tidy: ['snap', 'gap', 'in'],
     custom: [],
+    'hierarchy.contain': ['padding', 'fit'],
+    'network.layered': ['direction', 'gap', 'rankGap', 'place'],
+    'network.tree': ['direction', 'gap', 'rankGap', 'place'],
+    'network.force': ['length', 'gap', 'place'],
 };
 
 /** Looks (`spec.looks`, experimental): what every look reads, then each one's own.
@@ -324,13 +330,17 @@ export const SPEC_FUNCTIONS = {
     'edit.stack.cut': { label: ['n'] },
     'constraints.contain': { parent: ROW, child: ROW },
     'constraints.custom': { fn: 'ctx', guide: 'fn' },
-    'layout.contain': { where: ROW },
+    'layout.hierarchy.contain': { where: ROW },
     'layout.dodge': { where: ROW, in: ROW },
-    'layout.row': { in: ROW },
-    'layout.column': { in: ROW },
-    'layout.grid': { in: ROW },
-    'layout.pack': { in: ROW },
-    'layout.custom': { fn: 'ctx' },
+    'layout.tidy': { where: ROW, in: ROW },
+    'layout.network.layered': { where: ROW },
+    'layout.network.tree': { where: ROW },
+    'layout.network.force': { where: ROW },
+    'layout.row': { in: ROW, where: ROW },
+    'layout.column': { in: ROW, where: ROW },
+    'layout.grid': { in: ROW, where: ROW },
+    'layout.pack': { in: ROW, where: ROW },
+    'layout.custom': { fn: 'ctx', where: ROW },
     widget: { onChange: 'fn' },
 };
 

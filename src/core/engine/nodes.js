@@ -107,6 +107,17 @@ export function createNodes(chart, deps) {
 
     // ── Bucket `spec.layout` descriptors by target table ────────────────────
     const defaultLayoutTable = hierarchyNodes || schemaSpec.primary;
+    /**
+     * Where a scoped layout finds its nodes, or null when the dataset lacks what it
+     * needs. A network layout needs links: a network, or a hierarchy that declares a
+     * links table. A hierarchy layout needs a hierarchy.
+     * @param {string} structure
+     */
+    const structureNodes = (structure) => {
+        const nodes = schemaSpec.byRole.nodes || null;
+        if (structure === 'network') return schemaSpec.byRole.links ? nodes : null;
+        return schemaSpec.structure === structure ? nodes : null;
+    };
     /** @type {Map<string, import('../../types').LayoutSpec[]>} */
     const layoutsByTable = new Map();
     /** @param {string} t @param {import('../../types').LayoutSpec} l */
@@ -117,6 +128,23 @@ export function createNodes(chart, deps) {
     };
     for (const l of specLayout || []) {
         if (!l || typeof l !== 'object' || typeof l.type !== 'string') continue;
+        // A scoped layout (`layout.network.*`, `layout.hierarchy.*`) needs its structure.
+        if (l.structure) {
+            const nodes = structureNodes(l.structure);
+            if (!nodes) {
+                warn(
+                    `layout:${l.type}:structure`,
+                    l.structure === 'network'
+                        ? `layout.${l.type}() places nodes by their links, but this dataset has no links table ` +
+                          `(a network, or a hierarchy that declares one). Ignoring it.`
+                        : `layout.${l.type}() needs a ${l.structure} (\`schema: { structure: "${l.structure}", tables: { … } }\`), ` +
+                          `but this dataset is a ${schemaSpec.structure}. Ignoring it.`
+                );
+                continue;
+            }
+            addLayout(nodes, l);
+            continue;
+        }
         let target = defaultLayoutTable;
         if (l.table != null) {
             const resolved = schemaSpec.byRole[l.table] || (schemaSpec.tables[l.table] && l.table);
@@ -131,13 +159,6 @@ export function createNodes(chart, deps) {
                 target = resolved;
             }
         }
-        if (l.type === 'contain' && (!hierarchyNodes || target !== hierarchyNodes)) {
-            warn(
-                'layout:contain:structure',
-                'layout.contain() requires a hierarchy structure (`schema: { structure: "hierarchy", tables: { nodes, nesting } }`). Ignoring.'
-            );
-            continue;
-        }
         addLayout(target, l);
     }
 
@@ -150,7 +171,7 @@ export function createNodes(chart, deps) {
 
     const hierarchyLayouts = hierarchyNodes ? (layoutsByTable.get(hierarchyNodes) || []) : [];
     const layoutContainWheres = hierarchyLayouts
-        .filter((l) => l.type === 'contain' && l.options && typeof l.options.where === 'function')
+        .filter((l) => l.type === 'hierarchy.contain' && l.options && typeof l.options.where === 'function')
         .map((l) => /** @type {(row: any, i: number, rows: any[]) => boolean} */ ((l.options || {}).where));
 
     /** Does `mark.contains` entry `m` accept row `i` (it must box the row and pass `where`)? */
@@ -163,7 +184,7 @@ export function createNodes(chart, deps) {
 
     /**
      * Which rows may hold others: respects `constraints.contain({ parent })`,
-     * `mark.contains`, and (when neither restricts) `layout.contain({ where })`.
+     * `mark.contains`, and (when neither restricts) `layout.hierarchy.contain({ where })`.
      * Null when nothing restricts which nodes may be containers (any node may).
      * @type {((row: any, i: number, rows: any[]) => boolean) | null}
      */
@@ -199,6 +220,39 @@ export function createNodes(chart, deps) {
             return true;
         }
         : null;
+
+    /**
+     * The links of a network as pairs of node row indices, source first. The ends are
+     * the columns the link mark binds to `source` / `target`, else the links table's
+     * first two `ref` columns.
+     * @param {Record<string, any[]>} tables
+     * @param {any[]} nodeRows
+     * @returns {[number, number][]}
+     */
+    const linkEdges = (tables, nodeRows) => {
+        const linksName = schemaSpec.byRole.links;
+        const nodesName = schemaSpec.byRole.nodes;
+        if (!linksName || !nodesName) return [];
+        const fields = schemaSpec.tables[linksName].fields;
+        const refs = Object.keys(fields).filter((f) => fields[f] && fields[f].type === 'ref');
+        const linkMark = features.find((f) => f && f.table === linksName && f.channels && (f.channels.source || f.channels.target));
+        const named = (/** @type {string} */ ch) => (linkMark && linkMark.channels[ch] && linkMark.channels[ch].field) || null;
+        const source = named('source') || refs[0];
+        const target = named('target') || refs[1];
+        const key = schemaSpec.tables[nodesName].key;
+        if (!source || !target || !key) return [];
+        /** @type {Map<any, number>} */
+        const at = new Map();
+        nodeRows.forEach((row, i) => { if (row && !at.has(row[key])) at.set(row[key], i); });
+        /** @type {[number, number][]} */
+        const out = [];
+        for (const row of tables[linksName] || []) {
+            if (!row) continue;
+            const s = at.get(row[source]), t = at.get(row[target]);
+            if (s !== undefined && t !== undefined) out.push([s, t]);
+        }
+        return out;
+    };
 
     // ── Per-table layout config (hosts, extents, containOf, arrangeOf, dodges, custom) ──
     /** @type {Map<string, any>} */
@@ -248,10 +302,12 @@ export function createNodes(chart, deps) {
             }
             : null;
 
-        const containLayouts = list.filter((l) => l.type === 'contain');
+        const containLayouts = list.filter((l) => l.type === 'hierarchy.contain');
         const arrangeLayouts = list.filter((l) => SLOTTED.includes(l.type));
         const dodgeLayouts = list.filter((l) => l.type === 'dodge');
-        const customLayouts = list.filter((l) => l.type === 'custom' && typeof l.apply === 'function').map((l) => /** @type {any} */ (l.apply));
+        const customLayouts = list.filter((l) => l.type === 'custom' && typeof l.apply === 'function')
+            .map((l) => ({ fn: /** @type {any} */ (l.apply), where: l.options && typeof l.options.where === 'function' ? l.options.where : null }));
+        const graphLayouts = list.filter((l) => l.structure === 'network' || l.type === 'tidy');
 
         // Warn once if a non-hierarchy table scopes an arrangement to `'containers'`.
         if (!isHierarchy) {
@@ -267,7 +323,7 @@ export function createNodes(chart, deps) {
 
         /**
          * Container geometry (`padding`, `fit`) for row `i` of a hierarchy: merges
-         * matching `mark.contains` sugar first, then explicit `layout.contain(...)`
+         * matching `mark.contains` sugar first, then explicit `layout.hierarchy.contain(...)`
          * rules (later wins). Returns default walls when a hierarchy container has
          * no explicit `contain` geometry.
          * @type {((row: any, i: number, rows: any[]) => { padding: import('../fit.js').Sides, fit: import('../fit.js').FitAxes } | null) | null}
@@ -301,7 +357,7 @@ export function createNodes(chart, deps) {
         /**
          * Slot arrangement matching `parentIndex` (`null` for top-level roots / flat
          * table rows, `>= 0` for a container's children). Last matching rule wins.
-         * @type {((parentIndex: number | null, rows: any[]) => { arrange: string, gap: number, columns: number | null, keep: 'angle' | 'distance' } | null) | null}
+         * @type {((parentIndex: number | null, rows: any[]) => { arrange: string, gap: number, columns: number | null, keep: 'angle' | 'distance', where: ((d: any, i: number, rows: any[]) => boolean) | null } | null) | null}
          */
         const arrangeOf = arrangeLayouts.length
             ? (parentIndex, rows) => {
@@ -325,6 +381,7 @@ export function createNodes(chart, deps) {
                         gap: typeof opt.gap === 'number' && Number.isFinite(opt.gap) ? Math.max(0, opt.gap) : DEFAULT_GAP,
                         columns: typeof opt.columns === 'number' && opt.columns >= 1 ? Math.floor(opt.columns) : null,
                         keep: /** @type {'angle' | 'distance'} */ (opt.keep === 'angle' ? 'angle' : 'distance'),
+                        where: typeof opt.where === 'function' ? opt.where : null,
                     };
                 }
                 return hit;
@@ -357,7 +414,14 @@ export function createNodes(chart, deps) {
             }
             : null;
 
-        tableConfigs.set(table, { hosts, extentRule, containOf, arrangeOf, dodgeRule, customLayouts, isHierarchy });
+        tableConfigs.set(table, {
+            hosts, extentRule, containOf, arrangeOf, dodgeRule, customLayouts, isHierarchy,
+            graph: graphLayouts.length
+                ? { layouts: graphLayouts, edgesOf: graphLayouts.some((l) => l.structure === 'network') ? linkEdges : null }
+                : null,
+            // A network layout places nodes by their links, so a change to the links re-settles it.
+            follows: graphLayouts.some((l) => l.structure === 'network') && schemaSpec.byRole.links ? [schemaSpec.byRole.links] : [],
+        });
     }
 
     const layoutTables = [...tableConfigs.keys()];
@@ -426,6 +490,7 @@ export function createNodes(chart, deps) {
             passing: !!(dodge && dodge.preview),
             holds: cfg.isHierarchy ? containsRule : null,
             extents: cfg.extentRule,
+            graph: cfg.graph,
         });
     };
 
@@ -496,6 +561,18 @@ export function createNodes(chart, deps) {
     const boxHostsOf = (table) => (tableConfigs.get(table) ? tableConfigs.get(table).hosts : []);
 
     /**
+     * The layout table a write to `table` settles: the table itself, or the one
+     * whose layout follows it (a network's nodes follow its links). Null for none.
+     * @param {string} table
+     * @returns {string | null}
+     */
+    const layoutTableFor = (table) => {
+        if (tableConfigs.has(table)) return table;
+        for (const [t, cfg] of tableConfigs) if (cfg.follows.includes(table)) return t;
+        return null;
+    };
+
+    /**
      * Which axes are fitted for `row` in `table` (used by compute.js for the size lock).
      * @param {string} table @param {any} row @param {number} i @param {any[]} rows
      * @returns {import('../fit.js').FitAxes}
@@ -507,7 +584,7 @@ export function createNodes(chart, deps) {
     };
 
     return {
-        hasLayout, layoutTables, boxHosts, boxHostsOf, fitAxesAt,
+        hasLayout, layoutTables, layoutTableFor, boxHosts, boxHostsOf, fitAxesAt,
         nodeBoxRule, nodePortsRule, containsRule, markContainsGate,
         settleNodes, settleOwn, settledNodes, inFlight, heldStill,
     };

@@ -23,7 +23,7 @@ constraints, guides/effects/rendering, elements/legends, public API, the UI laye
 - `src/edit/index.js` — edits; `src/edit/drivers/` — multi-event lifecycles.
 - `src/elements/index.js` — axis / grid / legend / axisRadial.
 - `src/looks/index.js` — looks (experimental): `rough` redraws the scene by hand, the rest are shaders the canvas renderer runs. `src/core/looks.js` holds the contract.
-- `src/layout/index.js` — spatial layout processes (`spec.layout`): `contain`, `dodge`, `row`, `column`, `grid`, `pack`, `custom`. Settled by `src/core/fit.js` + `src/core/arrange.js`.
+- `src/layout/index.js` — spatial layout processes (`spec.layout`): `dodge`, `row`, `column`, `grid`, `pack`, `tidy`, `custom` at the root; `network.layered | tree | force` and `hierarchy.contain` scoped to their structure. Settled by `src/core/fit.js` + `src/core/arrange.js`; the graph algorithms are pure, in `src/core/graph/`.
 - `src/ui/index.js` — the UI layer: `ui.attach(chart, parts)`, HTML laid over a chart after it is made. Not grammar. `src/core/engine/view.js` is the chart's read surface it is built on.
 - `src/vocabulary.js` — every factory's option list, and the JSON grammar tables (`SPEC_*`). Imports nothing.
 - `src/json/index.js` — the JSON spec layer: `compile`, `registerFunction`, `recorder`.

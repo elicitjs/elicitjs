@@ -200,7 +200,7 @@ function createChart(dataset, spec) {
     // The node table's rules (box, ports, contains) and spatial layout settling
     // (`spec.layout` + `mark.contains`), read once at chart assembly (engine/nodes.js).
     const {
-        hasLayout, layoutTables, boxHosts, boxHostsOf, fitAxesAt,
+        hasLayout, layoutTables, layoutTableFor, boxHosts, boxHostsOf, fitAxesAt,
         nodeBoxRule, nodePortsRule, containsRule, markContainsGate,
         settleNodes, settleOwn, settledNodes, inFlight, heldStill,
     } = createNodes(chart, {
@@ -292,7 +292,7 @@ function createChart(dataset, spec) {
         frameScalesFor, arbitrates, runEdit,
         previewEdit, reachableKeys, portAvailable,
     } = createCompute(chart, {
-        schemaSpec, seedSchemaSpec, ui, featureNodes, hierarchyNodes, layoutTables, boxHosts,
+        schemaSpec, seedSchemaSpec, ui, featureNodes, hierarchyNodes, layoutTables, layoutTableFor, boxHosts,
         fitAxesAt, markContainsGate,
         tableOf, targetTableOf, isLockedIn, checkRows,
         nodeBoxRule, nodePortsRule, containsRule, channelsDrawing,

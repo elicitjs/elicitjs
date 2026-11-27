@@ -3748,16 +3748,22 @@ export interface LayoutContext {
   write: (index: number, patch: Record<string, any>) => void;
 }
 export interface LayoutSpec {
+  /** The keyword that built it; a scoped layout's is its dotted path (`'network.layered'`). */
   type: string;
   options?: Record<string, any>;
   table?: string;
+  /** The structure a scoped layout needs. It works on that structure's nodes table. */
+  structure?: 'network' | 'hierarchy';
   apply?: (ctx: LayoutContext) => Datum[] | void;
 }
 export interface LayoutUniversalOptions {
   /** Target table by name or role (defaults to hierarchy `nodes` or primary table). */
   table?: string;
+  /** Which rows the layout acts on (default: every row). The others stay where they are. */
+  where?: (d: Datum, i: number, data: Datum[]) => boolean;
 }
-export interface ContainLayoutOptions extends LayoutUniversalOptions {
+/** `layout.hierarchy.contain`: works on the hierarchy's nodes table. */
+export interface ContainLayoutOptions {
   /** Which rows this container geometry applies to (default: all containers). */
   where?: (d: Datum, i: number, data: Datum[]) => boolean;
   /** Room in px kept between a container's edge and its contents (default 10). */
@@ -3768,8 +3774,6 @@ export interface ContainLayoutOptions extends LayoutUniversalOptions {
 export interface DodgeLayoutOptions extends LayoutUniversalOptions {
   /** Space in px kept between neighbouring boxes (default 8). */
   gap?: number;
-  /** Which rows dodge (default: all rows in the group). */
-  where?: (d: Datum, i: number, data: Datum[]) => boolean;
   /** Which sibling groups dodge: `'all'` (default), `'roots'`, `'containers'`, or a container predicate. */
   in?: 'all' | 'roots' | 'containers' | ((d: Datum, i: number, data: Datum[]) => boolean);
 }
@@ -3796,6 +3800,55 @@ export interface PackLayoutOptions extends LayoutUniversalOptions {
   in?: 'roots' | 'containers' | ((d: Datum, i: number, data: Datum[]) => boolean);
 }
 export interface CustomLayoutOptions extends LayoutUniversalOptions {}
+/** `layout.tidy`: line a hand layout up without redrawing it. */
+export interface TidyLayoutOptions extends LayoutUniversalOptions {
+  /** Centres this close, in px, share a row or a column (default 16). */
+  snap?: number;
+  /** Space in px a node needs clear of its neighbours to keep its cell (default 8). */
+  gap?: number;
+  /** Which sibling groups are tidied: `'all'` (default), `'roots'`, `'containers'`, or a container predicate. */
+  in?: 'all' | 'roots' | 'containers' | ((d: Datum, i: number, data: Datum[]) => boolean);
+}
+/** Which rows a network layout positions: `'new'` only rows with no position yet
+ *  (placed, locked and just-dropped rows stay), `'all'` every row on every commit. */
+export type LayoutPlace = 'new' | 'all';
+/** `layout.network.layered`: works on the nodes table of a dataset with links. */
+export interface LayeredLayoutOptions {
+  /** Which way the links run (default `'down'`). */
+  direction?: 'down' | 'right' | 'up' | 'left';
+  /** Space in px between neighbours in a rank (default 24). */
+  gap?: number;
+  /** Space in px between ranks (default 48). */
+  rankGap?: number;
+  /** Which rows the layout positions (default `'new'`). */
+  place?: LayoutPlace;
+  /** Which nodes the layout places (default: every node). The others stay where they are. */
+  where?: (d: Datum, i: number, data: Datum[]) => boolean;
+}
+/** `layout.network.tree`: works on the nodes table of a dataset with links. */
+export interface TreeLayoutOptions {
+  /** Which way the tree grows from its root, or `'radial'` for rings round it (default `'down'`). */
+  direction?: 'down' | 'right' | 'up' | 'left' | 'radial';
+  /** Space in px between neighbours at one depth (default 12). */
+  gap?: number;
+  /** Space in px between depths (default 40). */
+  rankGap?: number;
+  /** Which rows the layout positions (default `'new'`). */
+  place?: LayoutPlace;
+  /** Which nodes the layout places (default: every node). The others stay where they are. */
+  where?: (d: Datum, i: number, data: Datum[]) => boolean;
+}
+/** `layout.network.force`: works on the nodes table of a dataset with links. */
+export interface ForceLayoutOptions {
+  /** How far apart, in px, two linked nodes' centres sit (default 100). */
+  length?: number;
+  /** Space in px kept between boxes (default 8). */
+  gap?: number;
+  /** Which rows the layout positions (default `'new'`). */
+  place?: LayoutPlace;
+  /** Which nodes the layout places (default: every node). The others stay where they are. */
+  where?: (d: Datum, i: number, data: Datum[]) => boolean;
+}
 
 // ── Guides (every option may be a literal or a function of the chart context) ─
 export interface RuleGuideOptions {

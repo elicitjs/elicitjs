@@ -27,14 +27,15 @@ function flat(ns, skip = []) {
 }
 
 /**
- * The edit namespace: universal edits by bare name, scoped ones by dotted path
- * (`edit.line.draw` -> `line.draw`). `when` holds predicates, not edits.
- * @param {Record<string, any>} edit
+ * A namespace with scoped families: universal members by bare name, scoped ones
+ * by dotted path (`edit.line.draw` -> `line.draw`, `layout.network.tree` ->
+ * `network.tree`). `edit.when` holds predicates, not edits.
+ * @param {Record<string, any>} ns
  * @returns {Map<string, Function>}
  */
-function edits(edit) {
-    const out = flat(edit);
-    for (const [family, members] of Object.entries(edit || {})) {
+function scoped(ns) {
+    const out = flat(ns);
+    for (const [family, members] of Object.entries(ns || {})) {
         if (family === 'when' || !members || typeof members !== 'object') continue;
         for (const [name, member] of Object.entries(members)) {
             if (typeof member === 'function') out.set(`${family}.${name}`, member);
@@ -54,10 +55,10 @@ export function keywordTables(ns) {
         elements: flat(ns.elements),
         guides: flat(ns.guides),
         looks: flat(ns.looks),
-        layout: flat(ns.layout),
+        layout: scoped(ns.layout),
         constraints: flat(ns.constraints),
         widgets: flat(ns.widgets),
-        edit: edits(ns.edit),
+        edit: scoped(ns.edit),
         when: flat(ns.edit && ns.edit.when),
         format: flat(ns.format, NOT_FORMATS),
     };

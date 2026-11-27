@@ -3,8 +3,11 @@
 // (`layout.custom`).
 //
 // A layout is a chart-level spatial settling process over one table's rows:
-//   { type, options, table?, apply? }
-// Built-in layouts (`contain`, `dodge`, `row`, `column`, `grid`, `pack`) are run
+//   { type, options, table?, structure?, apply? }
+// A scoped layout (`layout.network.*`, `layout.hierarchy.*`) names the structure it
+// needs in `structure` and its type is its dotted path (`network.layered`).
+// Built-in layouts (`hierarchy.contain`, `dodge`, `row`, `column`, `grid`, `pack`,
+// `tidy`, `network.*`) are run
 // by `core/fit.js` against the marks' `nodeBox` geometry and inverted back into
 // data through the channels' scales. `custom` runs an author-supplied function
 // against the same layout context.
@@ -20,9 +23,10 @@ const MISTAKEN_LAYOUT_OPTIONS = {
     arrange: 'arrangements are their own layout factories: layout.row(), layout.column(), layout.grid(), layout.pack() or layout.dodge().',
     columns: '`columns` only applies to layout.grid({ columns }).',
     keep: '`keep` only applies to layout.pack({ keep: "distance" | "angle" }).',
-    axis: 'use `fit: true | "x" | "y"` on layout.contain({ fit }) to pick which axes fit.',
-    padding: '`padding` belongs on layout.contain({ padding }).',
-    fit: '`fit` belongs on layout.contain({ fit }).',
+    axis: 'use `fit: true | "x" | "y"` on layout.hierarchy.contain({ fit }) to pick which axes fit.',
+    padding: '`padding` belongs on layout.hierarchy.contain({ padding }).',
+    fit: '`fit` belongs on layout.hierarchy.contain({ fit }).',
+    mode: 'a network layout takes `place: "new" | "all"`: position only rows that have none, or every row.',
 };
 
 /**
@@ -51,7 +55,7 @@ export function layoutOptions(type, options) {
 
 /**
  * Normalize a layout spec into its descriptor.
- * @param {{ type: string, options?: Record<string, any>, table?: string, apply?: (ctx: import('../types').LayoutContext) => any }} spec
+ * @param {{ type: string, options?: Record<string, any>, table?: string, structure?: 'network' | 'hierarchy', apply?: (ctx: import('../types').LayoutContext) => any }} spec
  * @returns {import('../types').LayoutSpec}
  */
 export function makeLayout(spec) {
@@ -59,6 +63,7 @@ export function makeLayout(spec) {
         type: spec.type,
         options: spec.options || {},
         ...(spec.table != null ? { table: spec.table } : {}),
+        ...(spec.structure ? { structure: spec.structure } : {}),
         ...(typeof spec.apply === 'function' ? { apply: spec.apply } : {}),
     };
 }
@@ -66,12 +71,21 @@ export function makeLayout(spec) {
 /**
  * Author a spatial layout process (`layout.custom`). Runs after the built-in
  * passes against `{ rows, tables, tree, nodeBox, extentOf, scales, width, height,
- * locked, anchors, yields, preview, shift, shiftTree, write }`.
+ * locked, anchors, yields, preview, shift, shiftTree, write }`. With `where`, it
+ * changes only the rows `where` picks.
  * @param {(ctx: import('../types').LayoutContext) => any} fn
- * @param {{ table?: string }} [options]
+ * @param {{ table?: string, where?: (d: any, i: number, rows: any[]) => boolean }} [options]
  * @returns {import('../types').LayoutSpec}
  */
 export function defineLayout(fn, options = {}) {
-    const { table } = layoutOptions('custom', options);
-    return makeLayout({ type: 'custom', table, apply: fn });
+    const { table, where } = layoutOptions('custom', options);
+    if (where !== undefined && typeof where !== 'function') {
+        warn('layout:custom:where', 'layout.custom(fn, { where }) takes a function (d, i, rows) => boolean. It may change every row.');
+    }
+    return makeLayout({
+        type: 'custom',
+        table,
+        options: typeof where === 'function' ? { where } : {},
+        apply: fn,
+    });
 }

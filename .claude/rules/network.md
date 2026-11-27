@@ -59,3 +59,14 @@ See also the data rule for `directed`, `multi`, `selfLoops` and referential inte
 
 - `connect` goes on a node mark's `ports` channel (or node mark `edits`) with no `scope`. `rewire`/`reverse` go on `link` with `scope: 'network'`.
 - `connect` beside a plain `move` on the same node fights (`warnConnectConflict`); fix with `when.shift` / `when.noShift`, or better, put `connect` on `ports`.
+
+## Layouts that place nodes
+
+- `layout.network.*` (`src/layout/index.js`) runs in the GRAPH pass of `settleLayout` (`core/fit.js`), before SPACE. The algorithms in `core/graph/` are pure: boxes and index pairs in, centres out. Keep them free of rows, scales and marks.
+- Edges come from `linkEdges` (`engine/nodes.js`): the link mark's `source`/`target` fields, else the links table's first two `ref` columns.
+- They run on a commit or a release, never mid-stroke or in a preview, and a write to the links table re-settles the nodes (`layoutTableFor`).
+- They need a links table, not the `network` structure: a hierarchy that declares links takes them too. `where` (universal to every layout) picks the nodes; rows it doesn't pick and links to them are left out. In a hierarchy, the rows that arrived with no position are noted before PLACE fills them in (`arrivedUnplaced`), and a drawing keeps the middle of the rows it moves, so a group stays in its container.
+- A row no mark can size (an empty size column) warns and is left out. A schema `default` fills a column only for rows made later.
+- `place: 'new'` moves only rows with a missing `x` or `y` value (a null reads as 0 through an identity scale, so test the column, not the box). Locked rows never move. Seed every choice from the current drawing, so a layout of its own output moves nothing.
+- A layout never chooses a link's side. Ranks give links clean ends through the existing sliding ports.
+
