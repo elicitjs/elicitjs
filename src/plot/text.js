@@ -22,6 +22,7 @@
 import { encodeChannel, encodeAngle, resolveStyle, normalizeMarkOptions, rawChannel, markDefaults, positionalKeys, markCommon, themeOf, missingValue } from './mark.js';
 import { MARK_OPTIONS } from '../vocabulary.js';
 import { measureBlock } from '../core/measure.js';
+import { turn } from './linkRouter.js';
 import { resolveFormat } from '../format.js';
 
 /**
@@ -157,7 +158,7 @@ export function text(options = {}) {
         labelBox: true,
         /**
          * The block this row's text occupies, so a label can be a network node.
-         * Anchored and shifted the way the text is drawn; rotation is ignored.
+         * Anchored, shifted and turned the way the text is drawn.
          * @param {any} d @param {number} i @param {any[]} rows
          * @param {import('../types').ScaleMap} scales @param {number} width @param {number} height
          * @returns {import('../types').NodeBox}
@@ -181,12 +182,12 @@ export function text(options = {}) {
             const line = rawChannel(channels, 'lineAnchor', d, 'middle', i, rows);
             const x = at.x + dx;
             const y = at.y + dy;
-            return {
-                cx: anchor === 'start' ? x + hw : anchor === 'end' ? x - hw : x,
-                cy: line === 'top' ? y + hh : line === 'bottom' ? y - hh : y,
-                hw,
-                hh,
-            };
+            const cx = anchor === 'start' ? x + hw : anchor === 'end' ? x - hw : x;
+            const cy = line === 'top' ? y + hh : line === 'bottom' ? y - hh : y;
+            // Text turns about its anchor, which carries the block's centre with it.
+            const angle = encodeAngle(scales, channels, 'angle', d, 0, i, rows) || 0;
+            const c = turn(cx - x, cy - y, angle);
+            return { cx: x + c.x, cy: y + c.y, hw, hh, angle };
         },
     };
 

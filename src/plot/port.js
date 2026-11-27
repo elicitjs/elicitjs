@@ -154,6 +154,8 @@ export function portFeature(host, spec) {
                         channel: 'port',
                         side,
                         portRole: role,
+                        // The node's turn, so a reader knows which way the port faces.
+                        ...(box.angle ? { angle: box.angle } : {}),
                         onHover: true,
                         data: d,
                         index,

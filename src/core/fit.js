@@ -17,6 +17,7 @@ import { scaleFor } from './scales.js';
 import { treeOf, nestingOf } from './hierarchy.js';
 import { SLOTTED, slotsOf, nearestSlot, readingOrder } from './arrange.js';
 import { warn } from './dev.js';
+import { boxBounds } from '../plot/linkRouter.js';
 
 /** Padding between a container's edge and its contents, when none is stated. */
 const DEFAULT_PADDING = 10;
@@ -319,7 +320,8 @@ export function settleLayout({
         const row = from[i];
         if (!row) return null;
         for (const host of hosts) {
-            const box = host.nodeBox(row, i, from, scales, width, height);
+            // A turned box takes the upright space around it.
+            const box = boxBounds(host.nodeBox(row, i, from, scales, width, height));
             if (finite(box)) return { host, box };
         }
         return null;

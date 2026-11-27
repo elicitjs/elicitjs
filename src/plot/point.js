@@ -43,6 +43,7 @@ export function point(options = {}) {
                 // A circle (or a glyph drawn in one) is met on its circle; a square
                 // point on its edges.
                 round: shape !== 'square',
+                angle: encodeAngle(scales, channels, 'angle', d, 0, i, rows) || 0,
             };
         },
 

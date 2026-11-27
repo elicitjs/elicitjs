@@ -33,6 +33,64 @@ const MAX_GRID_POINTS = 250000;
 /** The four edges of a node box: what a side may name. */
 export const LINK_SIDES = ['top', 'right', 'bottom', 'left'];
 
+// A box's `angle` turns it about its centre, in math degrees (counter-clockwise on
+// screen, like a node's `angle`). `hw` / `hh` are its half-extents before turning.
+
+/**
+ * Turn the offset (dx, dy) by `deg` counter-clockwise on screen.
+ * @param {number} dx @param {number} dy @param {number} deg
+ * @returns {{ x: number, y: number }}
+ */
+export function turn(dx, dy, deg) {
+    if (!deg) return { x: dx, y: dy };
+    const a = deg * Math.PI / 180;
+    const c = Math.cos(a), s = Math.sin(a);
+    return { x: dx * c + dy * s, y: -dx * s + dy * c };
+}
+
+/**
+ * A point given as if the box were upright, where it is on the turned box.
+ * @param {LinkBox} box @param {{ x: number, y: number }} p
+ * @returns {{ x: number, y: number }}
+ */
+export function fromBox(box, p) {
+    if (!box.angle) return { x: p.x, y: p.y };
+    const t = turn(p.x - box.cx, p.y - box.cy, box.angle);
+    return { x: box.cx + t.x, y: box.cy + t.y };
+}
+
+/**
+ * A scene point, where it would be if the box were upright.
+ * @param {LinkBox} box @param {{ x: number, y: number }} p
+ * @returns {{ x: number, y: number }}
+ */
+export function toBox(box, p) {
+    if (!box.angle) return { x: p.x, y: p.y };
+    const t = turn(p.x - box.cx, p.y - box.cy, -box.angle);
+    return { x: box.cx + t.x, y: box.cy + t.y };
+}
+
+/**
+ * The upright box around a turned one: the space it takes. An upright box comes
+ * back as it is.
+ * @template {LinkBox} B
+ * @param {B} box
+ * @returns {B}
+ */
+export function boxBounds(box) {
+    if (!box || !box.angle) return box;
+    const a = box.angle * Math.PI / 180;
+    const c = Math.abs(Math.cos(a)), s = Math.abs(Math.sin(a));
+    const { angle, ...rest } = box;
+    if (box.round) {
+        // A turned ellipse's extent; a circle's stays the same.
+        const hw = Math.hypot(box.hw * c, box.hh * s);
+        const hh = Math.hypot(box.hw * s, box.hh * c);
+        return /** @type {B} */ ({ ...rest, hw, hh, round: Math.abs(box.hw - box.hh) < 0.01 });
+    }
+    return /** @type {B} */ ({ ...rest, hw: box.hw * c + box.hh * s, hh: box.hw * s + box.hh * c, round: false });
+}
+
 /**
  * Of the sides a node allows, the one whose midpoint is nearest a point. Used for
  * an unpinned end on a node with ports.
@@ -45,8 +103,8 @@ export function facingSide(box, sides, toward) {
     let best = sides[0];
     let bestDist = Infinity;
     for (const side of sides) {
-        const n = SIDE_NORMALS[side];
-        const d = Math.hypot(box.cx + n.x * box.hw - toward.x, box.cy + n.y * box.hh - toward.y);
+        const at = anchorOn(box, side, 0, 0);
+        const d = Math.hypot(at.x - toward.x, at.y - toward.y);
         if (d < bestDist) { bestDist = d; best = side; }
     }
     return best;
@@ -101,6 +159,16 @@ export const SIDE_NORMALS = {
     left: { x: -1, y: 0 },
 };
 
+/**
+ * A side's outward normal on a box, turned with it.
+ * @param {LinkBox} box @param {string} side
+ * @returns {{ x: number, y: number }}
+ */
+export function sideNormal(box, side) {
+    const n = SIDE_NORMALS[side];
+    return turn(n.x, n.y, box.angle || 0);
+}
+
 /** @type {Record<string, string>} */
 const OPPOSITE = { top: 'bottom', bottom: 'top', left: 'right', right: 'left' };
 
@@ -109,6 +177,8 @@ const OPPOSITE = { top: 'bottom', bottom: 'top', left: 'right', right: 'left' };
  * @typedef {object} LinkBox
  * @property {number} cx @property {number} cy
  * @property {number} hw @property {number} hh
+ * @property {number} [angle] turned about its centre, math degrees
+ * @property {boolean} [round]
  */
 
 /**
@@ -199,12 +269,12 @@ export function anchorOn(box, side, gap, offset, limit = MAX_SLIDE) {
     const half = n.x ? box.hh : box.hw;
     const t = clamp(offset, -limit, limit);
     const along = t * half * 2;
-    return {
-        side,
-        offset: t,
+    // Worked out on the upright box, then turned with it.
+    const p = fromBox(box, {
         x: box.cx + n.x * (box.hw + gap) + -n.y * along,
         y: box.cy + n.y * (box.hh + gap) + n.x * along,
-    };
+    });
+    return { side, offset: t, x: p.x, y: p.y };
 }
 
 /**
@@ -217,8 +287,9 @@ export function anchorOn(box, side, gap, offset, limit = MAX_SLIDE) {
  * @returns {LinkAnchor}
  */
 export function perimeterPort(box, toward, gap, offset = 0) {
-    const dx = toward.x - box.cx;
-    const dy = toward.y - box.cy;
+    const local = toBox(box, toward);
+    const dx = local.x - box.cx;
+    const dy = local.y - box.cy;
     const hw = box.hw || 1e-6;
     const hh = box.hh || 1e-6;
     /** @type {string} */
@@ -416,8 +487,10 @@ export function resolveEnds(A, portA, gapA, B, portB, gapB) {
  * @returns {RouteResult | null} null when there is nothing sensible to draw
  */
 export function routeOrthogonal(req) {
-    const A = req.source.box;
-    const B = req.target.box;
+    // An orthogonal route runs on the screen's axes, so a turned node is routed
+    // as the upright box around it.
+    const A = boxBounds(req.source.box);
+    const B = boxBounds(req.target.box);
     // Concentric boxes have no side facing anything.
     if (A.cx === B.cx && A.cy === B.cy) return null;
     const gapA = req.sourceGap || 0;

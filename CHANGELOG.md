@@ -2,6 +2,12 @@
 
 All notable changes. ElicitJS is alpha: minor versions may change the API.
 
+## Unreleased
+
+**Fixed**
+- A node turned by `angle` turns its box: ports, link ends, self-loops and connect drops follow the turned edges, and layout spaces it by the upright box around it.
+- `ui.*` places icons and resize grips on a turned node's own sides, and a grip drags along the node's axis.
+
 ## 0.3.0-alpha.0
 
 **Added**

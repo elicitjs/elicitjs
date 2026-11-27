@@ -23,7 +23,7 @@ import { MARK_OPTIONS } from '../vocabulary.js';
 import { textNodeAt } from './text.js';
 import { measureBlock } from '../core/measure.js';
 import { LINK_SHAPES, LINK_CURVES, LINK_SIDES } from './linkGeometry.js';
-import { routingGrid, resolveEnds, facingSide, loopSides, SIDE_NORMALS, MAX_SLIDE } from './linkRouter.js';
+import { routingGrid, resolveEnds, facingSide, loopSides, sideNormal, fromBox as fromUpright, toBox as toUpright, boxBounds, MAX_SLIDE } from './linkRouter.js';
 import { roleAllows } from './port.js';
 import { nodeChannelsOf, nodeBoxesOf } from './nodeBox.js';
 import { HIT_WIDTH } from './hitpath.js';
@@ -416,8 +416,9 @@ export function link(options = {}) {
                 );
                 // A container (a hierarchy row with children) is not an obstacle.
                 const tree = treeOf(spec, /** @type {any} */ (context).tables);
+                // Routes run on the screen's axes, so a turned node blocks the upright box around it.
                 obstacles = /** @type {import('./linkRouter.js').LinkBox[]} */ (
-                    built.filter((box, i) => box && !tree.hasChildren(i))
+                    built.filter((box, i) => box && !tree.hasChildren(i)).map((box) => boxBounds(/** @type {any} */ (box)))
                 );
                 grid = routingGrid(obstacles);
                 boxes = built;
@@ -538,6 +539,9 @@ export function link(options = {}) {
                 const endGap = (targetPorts ? 0 : endInset) + (arrows.target ? arrowSize : 0);
 
                 if (entry.anchors === 'box') {
+                    if (/** @type {any} */ (sourceBox).angle || /** @type {any} */ (targetBox).angle) {
+                        warn(`link:${kind}:angle`, `link() with curve: "${kind}" routes on the screen's axes, so it meets a turned node on the upright box around it, not on the node's own sides. Use a chord curve ("line", "bezier", …) to dock on the turned sides.`);
+                    }
                     seg = { x1, y1, x2, y2 };
                     shapeOpts.source = sourceBox;
                     shapeOpts.target = targetBox;
@@ -568,12 +572,13 @@ export function link(options = {}) {
                     );
                     // A round node is met on its ellipse, not its box; the gap grows both radii.
                     const onCircle = (/** @type {any} */ box, /** @type {number} */ gap, /** @type {{ x: number, y: number }} */ toward) => {
-                        const dx = toward.x - box.cx;
-                        const dy = toward.y - box.cy;
+                        const local = toUpright(box, toward);
+                        const dx = local.x - box.cx;
+                        const dy = local.y - box.cy;
                         const rx = box.hw + gap;
                         const ry = box.hh + gap;
                         const t = 1 / (Math.hypot(dx / (rx || 1e-6), dy / (ry || 1e-6)) || 1);
-                        return { x: box.cx + dx * t, y: box.cy + dy * t };
+                        return fromUpright(box, { x: box.cx + dx * t, y: box.cy + dy * t });
                     };
                     const a = !sourcePort.side && /** @type {any} */ (sourceBox).round
                         ? onCircle(sourceBox, startGap, targetPort.side ? ends.b : { x: targetBox.cx, y: targetBox.cy })
@@ -582,8 +587,8 @@ export function link(options = {}) {
                         ? onCircle(targetBox, endGap, sourcePort.side ? ends.a : { x: sourceBox.cx, y: sourceBox.cy })
                         : ends.b;
                     seg = Math.hypot(b.x - a.x, b.y - a.y) < 1 ? null : { x1: a.x, y1: a.y, x2: b.x, y2: b.y };
-                    if (sourcePort.side) shapeOpts.sourceNormal = SIDE_NORMALS[sourcePort.side];
-                    if (targetPort.side) shapeOpts.targetNormal = SIDE_NORMALS[targetPort.side];
+                    if (sourcePort.side) shapeOpts.sourceNormal = sideNormal(sourceBox, sourcePort.side);
+                    if (targetPort.side) shapeOpts.targetNormal = sideNormal(targetBox, targetPort.side);
                 } else {
                     seg = insetSegment(x1, y1, x2, y2, startGap, endGap);
                 }

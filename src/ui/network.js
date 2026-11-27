@@ -7,6 +7,7 @@ import { hoverGroup } from './hover.js';
 import { contextMenu } from './parts/contextMenu.js';
 import { handles } from './parts/handles.js';
 import { warnUnknownUiOptions } from './guard.js';
+import { turnOffset } from './place.js';
 
 // How far from a port a link's end may sit and still be docked there, in pixels:
 // several ends at one port spread out along the node's edge.
@@ -23,6 +24,16 @@ const SPAWN_CLEAR = 8;
 const OUTWARD = /** @type {Record<string, { x: number, y: number }>} */ ({
     top: { x: 0, y: -1 }, bottom: { x: 0, y: 1 }, left: { x: -1, y: 0 }, right: { x: 1, y: 0 },
 });
+
+/**
+ * Which way a port faces: its side's outward direction, turned with its node.
+ * @param {import('../types').SceneView} port
+ * @returns {{ x: number, y: number }}
+ */
+function outwardOf(port) {
+    const n = OUTWARD[/** @type {string} */ (port.side)] || OUTWARD.right;
+    return turnOffset(n.x, n.y, port.angle);
+}
 
 /**
  * The tables a network dataset names for its nodes and its links.
@@ -212,11 +223,14 @@ function mountIcons(ctx, found) {
     // inside the plot, and moved along the side until it overlaps no node.
     /** @param {import('../types').SceneView} port */
     const spotBeside = (port) => {
-        const out = OUTWARD[/** @type {string} */ (port.side)] || OUTWARD.right;
+        // Straight out from the port, turned with its node.
+        const out = outwardOf(port);
         const box = boxOf(/** @type {number} */ (port.index)) || { x: 0, y: 0, width: 80, height: 40 };
         const c = /** @type {import('../types').Point} */ (port.center);
-        const along = out.x ? box.width : box.height;
-        const across = out.x ? box.height : box.width;
+        // The screen axis nearest that direction, for stepping aside.
+        const sideways = Math.abs(out.x) >= Math.abs(out.y);
+        const along = Math.abs(out.x) * box.width + Math.abs(out.y) * box.height;
+        const across = sideways ? box.height : box.width;
         const m = chart.metrics();
         const hw = box.width / 2, hh = box.height / 2;
         // The new node is the size of this one: keep its whole box in the plot.
@@ -235,8 +249,8 @@ function mountIcons(ctx, found) {
                 const further = far * (along + SPAWN_CLEAR * 2);
                 const step = k * (across + SPAWN_CLEAR * 2);
                 const p = fit({
-                    x: base.x + out.x * further + (out.x ? 0 : step),
-                    y: base.y + out.y * further + (out.x ? step : 0),
+                    x: base.x + out.x * further + (sideways ? 0 : step),
+                    y: base.y + out.y * further + (sideways ? step : 0),
                 });
                 if (free(p)) return p;
             }
@@ -316,7 +330,15 @@ function mountIcons(ctx, found) {
             return p ? p.center : null;
         },
         placement(t) {
-            if (t.kind === 'port') return { at: /** @type {any} */ (t.view.side), offset: gap + 6 };
+            if (t.kind === 'port') {
+                const off = gap + 6;
+                if (!t.view.angle) return { at: /** @type {any} */ (t.view.side), offset: off };
+                // A turned port: out along its normal, from the screen side nearest it.
+                const n = outwardOf(t.view);
+                const at = Math.abs(n.x) >= Math.abs(n.y) ? (n.x > 0 ? 'right' : 'left') : (n.y > 0 ? 'bottom' : 'top');
+                const s = OUTWARD[at];
+                return { at, offset: off, dx: Math.round((n.x - s.x) * off), dy: Math.round((n.y - s.y) * off) };
+            }
             // Off the link's line: out along its normal, on the upper side.
             const far = gap + 6 + chart.theme.ui.size / 2;
             const ends = chart.scene({ mark: t.view.mark, index: /** @type {number} */ (t.view.index) })

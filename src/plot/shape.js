@@ -59,6 +59,7 @@ export function shape(options = {}) {
                 cx: encodeChannel(scales, channels, 'x', d, width / 2, i, rows),
                 cy: encodeChannel(scales, channels, 'y', d, height / 2, i, rows),
                 hw: r, hh: r, round: false,
+                angle: encodeAngle(scales, channels, 'angle', d, 0, i, rows) || 0,
             };
         },
 

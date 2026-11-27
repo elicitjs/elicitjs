@@ -190,6 +190,11 @@ export interface NodeBox {
   // Sides and ports still sit at the four edge midpoints, which an ellipse shares
   // with its bounding box.
   round?: boolean;
+  // Turned about its centre, in math degrees (counter-clockwise, like a node's
+  // `angle`). `hw`/`hh` are the half-extents before turning, and a side names the
+  // node's own edge, so ports and links turn with it. Layout and orthogonal routes
+  // use the upright box around it.
+  angle?: number;
 }
 
 // The node table's box rule, as the engine hands it to `link` and the network edits:
@@ -3728,6 +3733,7 @@ export interface LayoutContext {
   rows: Datum[];
   tables: Record<string, Datum[]>;
   tree: any;
+  // The row's drawn box. A turned node gives the upright box around it.
   nodeBox: (index: number) => NodeBox | null;
   extentOf: (index: number) => NodeBox | null;
   scales: ScaleMap;

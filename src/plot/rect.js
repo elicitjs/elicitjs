@@ -111,6 +111,7 @@ export function rect(options = {}) {
                 cy: (yExt.lo + yExt.hi) / 2,
                 hw: (xExt.hi - xExt.lo) / 2,
                 hh: (yExt.hi - yExt.lo) / 2,
+                angle: encodeAngle(scales, channels, 'angle', d, 0, i, rows) || 0,
             };
         },
         /**

@@ -32,6 +32,7 @@ See also the data rule for `directed`, `multi`, `selfLoops` and referential inte
 - The node mark declares `Mark.nodeBox(row, …)` — a pure function of the row. The engine hands that rule to `link` (`context.nodeBox`), ports, and network edits (`ctx.nodeBox`). Boxes come from `plot/nodeBox.js` only.
 - A link never reads another feature's built nodes (a frame behind, absent in a ghost build) and never restates the box (no `nodeWidth`/`nodeHeight`).
 - Where a box is chosen, a mark without `labelBox` wins over `text`, so links meet a node's dot, not its name. Round boxes (`NodeBox.round`) are met on the circle.
+- A mark that draws with `angle` puts it on its box (`NodeBox.angle`). A side names the node's own edge: single-box geometry (`anchorOn`, `perimeterPort`, `boxAt`, loops) works on the upright box and turns the result (`fromBox` / `toBox` in `linkRouter.js`). Layout, obstacles and orthogonal routes use `boxBounds`, the upright box around it.
 
 ## Routing (`plot/linkRouter.js`)
 

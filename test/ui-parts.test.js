@@ -223,6 +223,32 @@ describe('ui.handles', () => {
         expect(el.scene({ mark: 'note/body', index: 0 })[0].box.x).toBeCloseTo(150, 4);
     });
 
+    it('on a turned box, a grip sits on the turned side and drags along it', async () => {
+        const el = await mount({
+            width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false,
+            schema: {
+                w: { type: 'quantitative', domain: [60, 200] },
+                x: { type: 'quantitative', domain: [0, 100] },
+                y: { type: 'quantitative', domain: [0, 100] },
+            },
+            data: [{ w: 100, x: 50, y: 50 }],
+            marks: [plot.rect({ id: 'box', height: 40, angle: 90, channels: { x: { field: 'x' }, y: { field: 'y' }, width: { field: 'w', scale: { range: [60, 200] } } } })],
+        }, [ui.handles()]);
+        fire(el.dom(), 'pointermove', { x: 200, y: 150 });
+        await frame();
+        // 100 wide turned a quarter: the right side faces up, 50px above the centre.
+        const right = grips(el)[1];
+        expect(right.style.transform).toContain('translate(200px, 100px)');
+        fire(right, 'pointerdown', { x: 200, y: 100 });
+        fire(right, 'pointermove', { x: 200, y: 80 });
+        fire(right, 'pointerup', { x: 200, y: 80 });
+        const row = el.getData()[0];
+        expect(row.w).toBeCloseTo(120, 4);
+        // The left side (now at the bottom, y 200) stays: the centre moves up 10px.
+        expect(row.x).toBeCloseTo(50, 4);
+        expect(300 - row.y * 3).toBeCloseTo(140, 4);
+    });
+
     it('dragging the right grip widens the box and keeps its left side still, as one undo step', async () => {
         const el = await mount(flowSpec(), [ui.handles({ on: { mark: 'note' } })]);
         fire(el.dom(), 'pointermove', px(S[0]));
