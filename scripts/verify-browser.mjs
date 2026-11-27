@@ -5389,6 +5389,50 @@ async function main() {
             check('layout composing: fit:"y" grows lane vertically while preserving width',
                 pilotNested && todoAfter.h > todoBefore.h + 10 && Math.abs(todoAfter.w - todoBefore.w) < 0.5,
                 `nested=${pilotNested}, todo ${todoBefore.w}x${todoBefore.h} -> ${todoAfter.w}x${todoAfter.h}`);
+
+            // A network layout settles on release, in the same undo step. Under
+            // place: 'all' a drop reorders siblings; under place: 'new' nothing else moves.
+            const dragLabel = async (svg, from, to, dy) => {
+                const at = async (label) => {
+                    const t = page.locator(`${svg} text`, { hasText: label }).first();
+                    await t.scrollIntoViewIfNeeded();
+                    const b = await t.boundingBox();
+                    return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+                };
+                const a = await at(from), b = await at(to);
+                await page.mouse.move(a.x, a.y);
+                await page.mouse.down();
+                for (let i = 1; i <= 12; i++) {
+                    await page.mouse.move(a.x + (b.x - a.x) * i / 12, a.y + (b.y + dy - a.y) * i / 12);
+                    await page.waitForTimeout(6);
+                }
+                await page.mouse.up();
+                await page.waitForTimeout(100);
+            };
+            const tChart = '#network .chart > div:has(text:text-is("Hiking"))';
+            const tRows = () => page.$eval(tChart, (el) => Object.fromEntries(el.__chart.getData().ideas.map((d) => [d.id, d])));
+            const tBefore = await tRows();
+            await dragLabel(`${tChart} svg`, 'Hiking', 'Museums', 40);
+            const tAfter = await tRows();
+            check('layout.network.tree place:"all": dropping a node below its sibling swaps their order',
+                tBefore.hike.y > tBefore.museum.y && tAfter.hike.y < tAfter.museum.y && Math.abs(tAfter.hike.x - tAfter.museum.x) < 0.01,
+                `hike ${JSON.stringify(tBefore.hike)} -> ${JSON.stringify(tAfter.hike)}, museum ${JSON.stringify(tAfter.museum)}`);
+            await page.$eval(tChart, (el) => el.__chart.undo());
+            await page.waitForTimeout(100);
+            const tUndone = await tRows();
+            check('layout.network.tree: one undo takes back the drop and the re-layout',
+                tUndone.hike.y === tBefore.hike.y && tUndone.museum.y === tBefore.museum.y,
+                `hike ${JSON.stringify(tUndone.hike)}`);
+
+            const fChart = '#place .chart > div';
+            const fRows = () => page.$eval(fChart, (el) => el.__chart.getData().concepts);
+            const fBefore = await fRows();
+            await dragLabel(`${fChart} svg`, 'Forests', 'Oceans', -60);
+            const fAfter = await fRows();
+            const fOthers = fAfter.filter((d, i) => d.id !== 'forest' && (d.x !== fBefore[i].x || d.y !== fBefore[i].y));
+            const fMoved = fAfter.find((d) => d.id === 'forest').y !== fBefore.find((d) => d.id === 'forest').y;
+            check('layout.network.force place:"new": a dragged node moves and nothing else does',
+                fMoved && fOthers.length === 0, `moved others: ${fOthers.map((d) => d.id).join(', ') || 'none'}`);
         }
         await page.emulateMedia({ reducedMotion: 'no-preference' });
 

@@ -113,7 +113,7 @@ describe('multi-level Kanban composition (layout.row + layout.column + layout.co
                 channels: { x: { field: 'x' }, y: { field: 'y' }, width: { field: 'w', scale: null }, height: { field: 'h', scale: null } },
             })],
             layout: [
-                layout.contain({ where: (d) => d.kind === 'lane', padding: { top: 24, left: 10, right: 10, bottom: 10 }, fit: 'y' }),
+                layout.hierarchy.contain({ where: (d) => d.kind === 'lane', padding: { top: 24, left: 10, right: 10, bottom: 10 }, fit: 'y' }),
                 layout.column({ in: (d) => d.kind === 'lane', gap: 6 }),
                 layout.row({ in: 'roots', gap: 16 }),
             ],

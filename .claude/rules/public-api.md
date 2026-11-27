@@ -18,8 +18,9 @@ paths:
 
 - A grammar namespace (`plot.*`, `edit.*`, `constraints.*`, `guides.*`, `elements.*`, `looks.*`, `layout.*`, `widgets.*`) contains only spec keywords; authoring primitives are `authoring.*` (`src/authoring/index.js`, also the `elicitjs/authoring` subpath). `check:exports` can't detect a member in the wrong namespace, so check by hand: anything that appears in a spec's `guides: [...]` is a guide; an option-name list or a helper usable only inside a `{ fn }` channel (e.g. `noteBox`, `measureText`) is authoring.
 - Grammar namespaces and `ElicitSpec` have closed key sets — no index signatures (an unknown name must be a compile error, and the JSON Schema is generated from the key set).
-- One name per concept. Removed aliases must stay removed: `plot.group` (= `composite`), `pie` (= `arc`; `donut` stays — it pins `innerRadius`), `connectedScatter` (= `path`), `z` (= `series`), `edit.arc.edge`, `edit.axis.categories`, `widgets.ci`, `constraints.normalize`, `youDrawIt` (= `sweep`), `Edit.guideColor`, `effects.grab`/`effects.select`, top-level `elicit.when`.
+- One name per concept. Removed aliases must stay removed: `layout.contain` (= `layout.hierarchy.contain`), `plot.group` (= `composite`), `pie` (= `arc`; `donut` stays — it pins `innerRadius`), `connectedScatter` (= `path`), `z` (= `series`), `edit.arc.edge`, `edit.axis.categories`, `widgets.ci`, `constraints.normalize`, `youDrawIt` (= `sweep`), `Edit.guideColor`, `effects.grab`/`effects.select`, top-level `elicit.when`.
 - Mark variants (`barX`/`barY`, …) are keywords, declared in `index.d.ts`.
+- A layout that needs a structure lives in `layout.<structure>.*` (`layout.network.layered`, `layout.hierarchy.contain`): its type is its dotted path and it declares `structure`. One that works on any table stays at the root. `check:exports` asserts both.
 - Every namespace member is a JSON keyword (`{ "type": "barY" }`), so a name is permanent once shipped. See the JSON spec rule.
 
 ## Vocabulary and types

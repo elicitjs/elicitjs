@@ -260,6 +260,23 @@ for (const [ns, family] of EDIT_FAMILIES) {
     }
 }
 
+// ── Every scoped layout's `type` IS its dotted path, and names its structure ──
+// `layout.network.tree()` <-> { "type": "network.tree" }, and it declares
+// `structure: 'network'` so the engine can refuse it on another structure.
+for (const [ns, family] of Object.entries(runtime.layout || {})) {
+    if (!family || typeof family !== 'object') continue;
+    for (const [member, factory] of Object.entries(family)) {
+        if (typeof factory !== 'function') continue;
+        const made = factory({});
+        if (!made || made.type !== `${ns}.${member}`) {
+            fail(`layout.${ns}.${member}() reports type "${made && made.type}"; a scoped layout's type must be its dotted path "${ns}.${member}".`);
+        }
+        if (!made || made.structure !== ns) {
+            fail(`layout.${ns}.${member}() declares structure "${made && made.structure}"; a layout in layout.${ns} must declare structure "${ns}".`);
+        }
+    }
+}
+
 // ── The JSON grammar covers the declared surface ────────────────────────────
 // `compile()` (src/json) turns `{ "type": "bar", … }` into `plot.bar({ … })`. It
 // finds every factory by walking the namespaces, but three facts about a factory

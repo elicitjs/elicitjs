@@ -20,6 +20,7 @@ import { warn } from '../dev.js';
  *   featureNodes: Record<string, any[]>,
  *   hierarchyNodes: string | null,
  *   layoutTables: string[],
+ *   layoutTableFor: (table: string) => string | null,
  *   boxHosts: any[],
  *   fitAxesAt: (table: string, row: any, i: number, rows: any[]) => { x: boolean, y: boolean },
  *   markContainsGate: ((nestRows: any[], nodeRows: any[]) => boolean) | null,
@@ -44,7 +45,7 @@ import { warn } from '../dev.js';
  */
 export function createCompute(chart, deps) {
     const {
-        schemaSpec, seedSchemaSpec, ui, featureNodes, hierarchyNodes, layoutTables, boxHosts,
+        schemaSpec, seedSchemaSpec, ui, featureNodes, hierarchyNodes, layoutTableFor, boxHosts,
         fitAxesAt, markContainsGate,
         tableOf, targetTableOf, isLockedIn, checkRows,
         nodeBoxRule, nodePortsRule, containsRule, channelsDrawing,
@@ -299,7 +300,7 @@ export function createCompute(chart, deps) {
         // Replace the table the edit writes, which may not be the one its mark draws.
         const targetTable = targetTableOf(feature, edit);
         const settleTarget = targetTable === schemaSpec.byRole.nesting ? hierarchyNodes
-            : layoutTables.includes(targetTable) ? targetTable : null;
+            : layoutTableFor(targetTable);
         const nodesBefore = settleTarget ? chart.tables[settleTarget] : null;
         chart.tables[targetTable] = proposed.rows;
         // Drop rows whose `ref` no longer resolves.

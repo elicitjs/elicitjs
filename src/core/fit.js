@@ -11,6 +11,8 @@
 //           pushes overlapping siblings apart
 //   FIT     in the same walk, a fitted container takes its children's union, padded.
 //           One that just lost its last child takes its columns' schema `default`
+//   GRAPH   before SPACE: `layout.network.*` place nodes by their links and
+//           `layout.tidy` lines rows up (core/graph/), in declared order
 //   CUSTOM  any `layout.custom` passes run in declared order
 
 import { scaleFor } from './scales.js';
@@ -18,6 +20,7 @@ import { treeOf, nestingOf } from './hierarchy.js';
 import { SLOTTED, slotsOf, nearestSlot, readingOrder } from './arrange.js';
 import { warn } from './dev.js';
 import { boxBounds } from '../plot/linkRouter.js';
+import { placeNetwork, tidy } from './graph/index.js';
 
 /** Padding between a container's edge and its contents, when none is stated. */
 const DEFAULT_PADDING = 10;
@@ -43,6 +46,10 @@ const PACK_LIMIT = 80;
  * @typedef {{ top: number, right: number, bottom: number, left: number }} Sides
  * @typedef {{ x: boolean, y: boolean }} FitAxes
  */
+
+/** Is a cell empty: no value, or not a number where one was expected?
+ *  @param {any} v */
+const missingValue = (v) => v === undefined || v === null || (typeof v === 'number' && Number.isNaN(v));
 
 /** Would two dodging rows at these centres sit closer than their gap?
  *  @param {Spaced} a @param {Spaced} b @param {number} ax @param {number} ay @param {number} bx @param {number} by */
@@ -263,7 +270,8 @@ export function layoutIO(scales, hosts) {
  *   slot arrangement for a container's children (`parentIndex >= 0`) or roots (`parentIndex === null`)
  * @property {((row: any, i: number, rows: any[], parentIndex: number | null) => number | null) | null} [dodges]
  *   the gap a row keeps from its siblings, or null for none
- * @property {((ctx: import('../types').LayoutContext) => any)[] | null} [custom]
+ * @property {{ fn: (ctx: import('../types').LayoutContext) => any, where: ((d: any, i: number, rows: any[]) => boolean) | null }[] | null} [custom]
+ *   each `layout.custom` pass, and the rows it may change
  *   `layout.custom` passes, run after the built-in passes
  * @property {boolean} [spacing]  push rows apart and put slotted contents in their
  *   slots. Off mid-stroke: rows must not scatter under a carried node
@@ -284,6 +292,9 @@ export function layoutIO(scales, hosts) {
  * @property {((row: any, i: number, rows: any[]) => any) | null} [extents]  the
  *   space a row takes as a whole (a composite: every part, label included). Used
  *   to space rows and to fit containers round them. Omit to use the drawn box
+ * @property {{ layouts: import('../types').LayoutSpec[], edgesOf: ((tables: Record<string, any[]>, rows: any[]) => [number, number][]) | null } | null} [graph]
+ *   the network layouts and tidy passes on this table, and the links between its
+ *   rows by index
  */
 
 /**
@@ -298,7 +309,7 @@ export function settleLayout({
     before = null, frozen = null, locked = null,
     containOf = null, arrangeOf = null, dodges = null, custom = null,
     spacing = false, emptied = null, since = null, anchors = null,
-    extents = null, keepSize = null, yields = null, passing = false, holds = null,
+    extents = null, keepSize = null, yields = null, passing = false, holds = null, graph = null,
 }) {
     const nesting = nestingOf(spec);
     const isHierarchy = !!(nesting && nesting.nodes === table);
@@ -307,9 +318,24 @@ export function settleLayout({
     const tree = isHierarchy ? treeOf(spec, tables) : treeOf(/** @type {any} */ ({}), {});
 
     let work = rows;
+    /** While a `layout.custom` pass with `where` runs: may it change row `i`?
+     *  @type {((i: number) => boolean) | null} */
+    let gate = null;
+    // The rows with no position as they came in, before PLACE gives a nested one a
+    // spot inside its container: a network layout with `place: 'new'` places them.
+    /** @type {Set<number>} */
+    const arrivedUnplaced = new Set();
+    if (graph && graph.layouts.some((l) => l.structure === 'network')) {
+        const xs = channelIO(scales, hosts[0].channels, 'x');
+        const ys = channelIO(scales, hosts[0].channels, 'y');
+        rows.forEach((row, i) => {
+            if (row && ((xs && missingValue(row[xs.field])) || (ys && missingValue(row[ys.field])))) arrivedUnplaced.add(i);
+        });
+    }
     /** @param {number} i @param {Record<string, any>} patch */
     const write = (i, patch) => {
         if (locked && locked(rows[i], i)) return;
+        if (gate && !gate(i)) return;
         if (work === rows) work = rows.slice();
         work[i] = { ...work[i], ...patch };
     };
@@ -439,6 +465,110 @@ export function settleLayout({
         if (isHierarchy) for (const j of tree.descendantsOf(i)) shift(j, dx, dy);
     };
 
+    // ── GRAPH ────────────────────────────────────────────────────────────────
+    // On a commit or a release, never mid-stroke: a layout that owns every
+    // position would pull the row back from under the pointer.
+    if (graph && graph.layouts.length && spacing && !passing) {
+        const lockedRows = new Set();
+        rows.forEach((row, i) => { if (locked && locked(row, i)) lockedRows.add(i); });
+        /** Move row `i` (and what it holds) so its box is centred on `p`. @param {number} i @param {{ x: number, y: number }} p */
+        const moveTo = (i, p) => {
+            const box = extentOf(i);
+            if (box) shiftTree(i, p.x - box.cx, p.y - box.cy);
+        };
+        for (const l of graph.layouts) {
+            if (l.type === 'tidy') {
+                tidyRows(l, lockedRows, moveTo);
+                continue;
+            }
+            // Only the rows `where` picks take part; the others stay where they are.
+            const where = l.options && typeof l.options.where === 'function' ? l.options.where : null;
+            const takesPart = (/** @type {number} */ i) => !!work[i] && (!where || !!where(work[i], i, work));
+            // A row with no position yet starts mid-plot, so its mark can size it.
+            const xs = channelIO(scales, hosts[0].channels, 'x');
+            const ys = channelIO(scales, hosts[0].channels, 'y');
+            /** @type {Set<number>} */
+            const unplaced = new Set();
+            work.forEach((row, i) => {
+                if (!takesPart(i)) return;
+                if (arrivedUnplaced.has(i) || !drawn(i) || (xs && missingValue(row[xs.field])) || (ys && missingValue(row[ys.field]))) unplaced.add(i);
+            });
+            /** @type {Set<number>} */
+            const floating = new Set();
+            if (unplaced.size) {
+                if (!xs || !ys) {
+                    warn(
+                        `layout:${l.type}:position`,
+                        `layout.${l.type}(): the node mark's x and y are not columns with an invertible scale, ` +
+                        `so rows with no position can't be placed. Bind x and y to fields.`
+                    );
+                } else {
+                    for (const i of unplaced) {
+                        if (!drawn(i) || missingValue(work[i][xs.field]) || missingValue(work[i][ys.field])) {
+                            write(i, { [xs.field]: xs.invert(width / 2), [ys.field]: ys.invert(height / 2) });
+                            floating.add(i);
+                        }
+                    }
+                }
+            }
+            // A row its mark can't size (an empty size column) can't be placed: say so.
+            const unsized = work.map((_, i) => i).filter((i) => takesPart(i) && !extentOf(i));
+            if (unsized.length) {
+                warn(
+                    `layout:${l.type}:unsized`,
+                    `layout.${l.type}(): ${unsized.length} node${unsized.length > 1 ? 's have' : ' has'} no box to place ` +
+                    `(row${unsized.length > 1 ? 's' : ''} ${unsized.slice(0, 5).join(', ')}${unsized.length > 5 ? ', …' : ''}), ` +
+                    'so the layout leaves them out. A schema `default` fills a column only for rows made later: give the seed rows their sizes.'
+                );
+            }
+            const places = placeNetwork(l, {
+                boxes: work.map((_, i) => (takesPart(i) ? extentOf(i) : null)),
+                edges: graph.edgesOf ? graph.edgesOf(tables, work) : [],
+                unplaced,
+                floating,
+                locked: lockedRows,
+                held,
+                width,
+                height,
+            });
+            for (const [i, p] of places) moveTo(i, p);
+        }
+    }
+
+    /**
+     * `layout.tidy`: line up each group of siblings (a flat table is one group).
+     * @param {import('../types').LayoutSpec} l
+     * @param {Set<number>} lockedRows
+     * @param {(i: number, p: { x: number, y: number }) => void} moveTo
+     */
+    function tidyRows(l, lockedRows, moveTo) {
+        const opt = l.options || {};
+        const scope = opt.in;
+        /** @type {number[][]} */
+        const groups = [];
+        if (!isHierarchy) {
+            groups.push(work.map((_, i) => i));
+        } else {
+            const roots = work.map((_, i) => i).filter((i) => tree.parentOf(i) === null);
+            if (scope === undefined || scope === 'all' || scope === 'roots') groups.push(roots);
+            if (scope !== 'roots') {
+                work.forEach((row, i) => {
+                    if (!tree.hasChildren(i)) return;
+                    if (typeof scope === 'function' && !scope(row, i, work)) return;
+                    groups.push(tree.childrenOf(i));
+                });
+            }
+        }
+        for (const group of groups) {
+            const ids = group.filter((i) => work[i] && extentOf(i) && (typeof opt.where !== 'function' || opt.where(work[i], i, work)));
+            if (ids.length < 2) continue;
+            const boxes = ids.map((i) => /** @type {any} */ (extentOf(i)));
+            const fixed = new Set(ids.map((i, k) => (lockedRows.has(i) ? k : -1)).filter((k) => k >= 0));
+            const pts = tidy(boxes, { snap: opt.snap, gap: opt.gap, fixed });
+            pts.forEach((p, k) => { if (!fixed.has(k)) moveTo(ids[k], p); });
+        }
+    }
+
     /**
      * Space one group of siblings: keep them inside `bounds` and push dodging rows
      * apart along the axis of least overlap, moving whichever does not hold its
@@ -557,12 +687,14 @@ export function settleLayout({
      * @param {{ cx: number, cy: number, hw: number, hh: number }} box the enclosing box (or plot)
      * @param {Sides} pad
      * @param {{ x: boolean, y: boolean }} grows the axes along which it fits
-     * @param {{ arrange: string, gap: number, columns: number | null, keep: 'angle' | 'distance' }} arr
+     * @param {{ arrange: string, gap: number, columns: number | null, keep: 'angle' | 'distance', where?: ((d: any, i: number, rows: any[]) => boolean) | null }} arr
      */
     const slot = (kids, box, pad, grows, arr) => {
         /** @type {{ k: number, cx: number, cy: number, hw: number, hh: number, round: boolean, moved: boolean }[]} */
         const live = [];
         for (const k of kids) {
+            // Only the rows `where` picks take a slot; the others stay where they are.
+            if (arr.where && !arr.where(work[k], k, work)) continue;
             const b = extentOf(k);
             if (b) live.push({ k, cx: b.cx, cy: b.cy, hw: b.hw, hh: b.hh, round: !!b.round && Math.abs(b.hw - b.hh) < EPSILON, moved: relocated.has(k) });
         }
@@ -722,7 +854,9 @@ export function settleLayout({
     // ── CUSTOM LAYOUTS ───────────────────────────────────────────────────────
     if (custom && custom.length) {
         const nodeBox = (/** @type {number} */ i) => { const d = drawn(i); return d ? d.box : null; };
-        for (const fn of custom) {
+        for (const { fn, where } of custom) {
+            const start = work;
+            gate = where ? (i) => !!start[i] && !!where(start[i], i, start) : null;
             const res = fn({
                 rows: work,
                 tables: work === tables[table] ? tables : { ...tables, [table]: work },
@@ -741,8 +875,13 @@ export function settleLayout({
                 write,
             });
             if (Array.isArray(res) && res !== work) {
-                work = res.map((row, i) => (locked && locked(rows[i], i) ? rows[i] : row));
+                const before = work;
+                work = res.map((row, i) => {
+                    if (locked && locked(rows[i], i)) return rows[i];
+                    return gate && !gate(i) ? before[i] : row;
+                });
             }
+            gate = null;
         }
     }
 

@@ -559,7 +559,7 @@ describe('container padding', () => {
     it('takes a side each, so a fitted container leaves room for a title', () => {
         const el = chart(
             { nodes: [box('g', 0, 0), box('a', 100, 100)], nesting: [nest('a', 'g')] },
-            [layout.contain({ padding: { top: 30, left: 4 }, fit: true })]
+            [layout.hierarchy.contain({ padding: { top: 30, left: 4 }, fit: true })]
         );
         const g = byId(el).g;
         expect(g.w).toBeCloseTo(40 + 4 + 10, 5);   // right takes the default
@@ -571,7 +571,7 @@ describe('container padding', () => {
     it('keeps the contents of a fixed-size container inside its padding', () => {
         const el = chart(
             { nodes: [box('g', 200, 150, 200, 100), box('a', 105, 150), box('b', 200, 300)], nesting: [nest('a', 'g'), nest('b', 'g')] },
-            [layout.contain({ padding: 12, fit: false })]
+            [layout.hierarchy.contain({ padding: 12, fit: false })]
         );
         const d = byId(el);
         expect(d.g.w).toBe(200);
@@ -582,7 +582,7 @@ describe('container padding', () => {
 
 describe('dodge', () => {
     const chart = (data, { edits = [], dodge = layout.dodge(), fit = true } = {}) => {
-        const lay = [layout.contain({ where: (d) => d.id.startsWith('g'), fit })];
+        const lay = [layout.hierarchy.contain({ where: (d) => d.id.startsWith('g'), fit })];
         if (dodge) lay.push(dodge);
         const el = Elicit({
             width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false, motion: false,
@@ -892,7 +892,7 @@ describe('arranged contents', () => {
         },
         edits: [edit.move({ channels: ['x', 'y'], mode: 'relative' }), edit.hierarchy.nest()],
     });
-    const chart = (data, lay = [layout.contain({ where: (d) => d.id.startsWith('L'), padding: 10, fit: true }), layout.column({ gap: 6 })]) => {
+    const chart = (data, lay = [layout.hierarchy.contain({ where: (d) => d.id.startsWith('L'), padding: 10, fit: true }), layout.column({ gap: 6 })]) => {
         const el = Elicit({
             width: 400, height: 300, margins: { top: 0, right: 0, bottom: 0, left: 0 }, axes: false, motion: false,
             schema: boxSchema, data, marks: [laneMark()], layout: lay,
@@ -975,10 +975,10 @@ describe('arranged contents', () => {
             nodes: [{ id: 'L', x: 200, y: 150, w: 130, h: 100 }, ...kids.map((id, k) => box(id, 150 + k * 10, 150))],
             nesting: kids.map((id) => nest(id, 'L')),
         });
-        const grown = byId(chart(data(), [layout.contain({ where: (d) => d.id === 'L', padding: 10, fit: true }), layout.row({ gap: 6 })]));
+        const grown = byId(chart(data(), [layout.hierarchy.contain({ where: (d) => d.id === 'L', padding: 10, fit: true }), layout.row({ gap: 6 })]));
         expect(kids.map((id) => grown[id].x)).toEqual([90, 136, 182, 228].map((x) => x + grown.a.x - 90));
         expect(new Set(kids.map((id) => grown[id].y)).size).toBe(1);
-        const wrapped = byId(chart(data(), [layout.contain({ where: (d) => d.id === 'L', padding: 10, fit: false }), layout.row({ gap: 6 })]));
+        const wrapped = byId(chart(data(), [layout.hierarchy.contain({ where: (d) => d.id === 'L', padding: 10, fit: false }), layout.row({ gap: 6 })]));
         expect(wrapped.L.w).toBe(130);
         // 110px inside: two 40px cards to a line
         expect(wrapped.a.y).toBe(wrapped.b.y);
@@ -1004,7 +1004,7 @@ describe('arranged contents', () => {
         const el = chart({
             nodes: [box('L', 200, 150), ...kids.map((id, k) => box(id, 150 + k * 10, 150 - k))],
             nesting: kids.map((id) => nest(id, 'L')),
-        }, [layout.contain({ where: (d) => d.id === 'L', padding: 10, fit: true }), layout.grid({ columns: 2, gap: 6 })]);
+        }, [layout.hierarchy.contain({ where: (d) => d.id === 'L', padding: 10, fit: true }), layout.grid({ columns: 2, gap: 6 })]);
         const d = byId(el);
         expect(new Set(kids.map((id) => d[id].x)).size).toBe(2);
         expect(new Set(kids.map((id) => d[id].y)).size).toBe(3);
@@ -1024,7 +1024,7 @@ describe('arranged contents', () => {
                 channels: { x: { field: 'x' }, y: { field: 'y' }, size: { field: 'r', scale: null } },
             })],
             layout: [
-                layout.contain({ where: (d) => d.id === 'S', padding: 6, fit: true }),
+                layout.hierarchy.contain({ where: (d) => d.id === 'S', padding: 6, fit: true }),
                 layout.pack({ gap: 4 }),
             ],
         });
@@ -1075,7 +1075,7 @@ describe('arranged contents', () => {
         const el = chart({
             nodes: [box('L', 200, 150, 380, 280), ...kids.map(([id, x, y]) => box(id, x, y))],
             nesting: kids.map(([id]) => nest(id, 'L')),
-        }, [layout.contain({ where: (d) => d.id === 'L', fit: false }), layout.pack({ keep: 'angle', gap: 4 })]);
+        }, [layout.hierarchy.contain({ where: (d) => d.id === 'L', fit: false }), layout.pack({ keep: 'angle', gap: 4 })]);
         const d = byId(el);
         for (const [id, x, y] of kids.slice(1)) {
             expect(Math.atan2(d[id].y - 150, d[id].x - 200)).toBeCloseTo(Math.atan2(y - 150, x - 200), 6);

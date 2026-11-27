@@ -84,14 +84,21 @@ export function createRecorder(namespaces) {
             }];
         }));
 
+        /** A namespace with scoped families (`edit.line.*`, `layout.network.*`).
+         *  @param {string} ns @returns {Record<string, any>} */
+        const families = (ns) => {
+            /** @type {Record<string, any>} */
+            const out = lookalike(ns);
+            for (const [type, factory] of tables[ns]) {
+                if (!type.includes('.')) continue;
+                const [family, name] = type.split('.');
+                (out[family] ||= {})[name] = recording(ns, type, factory);
+            }
+            return out;
+        };
         const when = callable('when');
         /** @type {Record<string, any>} */
-        const edit = { ...lookalike('edit'), when };
-        for (const [type, factory] of tables.edit) {
-            if (!type.includes('.')) continue;
-            const [family, name] = type.split('.');
-            (edit[family] ||= {})[name] = recording('edit', type, factory);
-        }
+        const edit = { ...families('edit'), when };
 
         /** @type {Map<Function, string>} */
         const names = new Map();
@@ -288,7 +295,7 @@ export function createRecorder(namespaces) {
             elements: lookalike('elements'),
             guides: lookalike('guides'),
             looks: lookalike('looks'),
-            layout: lookalike('layout'),
+            layout: families('layout'),
             constraints: lookalike('constraints'),
             widgets: lookalike('widgets'),
             edit,
